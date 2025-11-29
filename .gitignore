@@ -1,11 +1,7 @@
 # .gitignore для проекта HelixDB
 
-# Ansible
-ansible/*.retry
-ansible/.tmp/
-ansible/vault/.vault_pass
-ansible/molecule/.molecule/
-ansible/__pycache__/
+# Ansible - ПОЛНОСТЬЮ ИСКЛЮЧИТЬ (креды и IP!)
+ansible/
 
 # k6 results
 k6/results/*.json
