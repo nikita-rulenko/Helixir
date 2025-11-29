@@ -163,9 +163,7 @@ QUERY vectorSearch(query_vector: [F64], user_id: String, limit: I64, min_score: 
 QUERY smartVectorSearchWithChunks(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   memories <- embeddings::In<HAS_EMBEDDING>
-  chunks <- memories::Out<HAS_CHUNK>
-  parent_memories <- chunks::TRAVERSE(In<HAS_CHUNK>)
-  RETURN memories, chunks, parent_memories
+  RETURN memories
 QUERY searchSimilarEntities(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<EntityEmbedding>(query_vector, limit)
   RETURN embeddings
