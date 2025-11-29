@@ -1,22 +1,10 @@
-# .gitignore для проекта HelixDB
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
 
-# Ansible - ПОЛНОСТЬЮ ИСКЛЮЧИТЬ (креды и IP!)
+# Ansible - содержит креды и IP!
 ansible/
-
-# k6 results
-k6/results/*.json
-k6/results/*.html
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-.venv/
-venv/
-ENV/
-env/
 
 # IDE
 .vscode/
@@ -24,46 +12,21 @@ env/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
-*.out
 
-# Temporary files
-tmp/
-temp/
-.tmp/
-
-# OS
-Thumbs.db
-.DS_Store
-
-# Secrets (important!)
+# Secrets
 *.pem
 *.key
 *.crt
 *_rsa
 *_rsa.pub
-secrets/
-credentials/
 
-# Backup files
-*.bak
-*.backup
-*~
-
-# Deployment reports (failures)
-fucked/
-
-# Version history
-.version_history/
-schema/.history/
-helixir/schema/.history/
-
-# Schema generated (optional - for review before commit)
-# helixir/schema/_generated/*.hx
-
-# Tests (local development only)
+# Tests & Scripts (local only)
 tests/
-
+scripts/
