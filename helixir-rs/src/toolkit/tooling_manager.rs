@@ -193,10 +193,12 @@ impl ToolingManager {
         user_id: &str,
         _agent_id: Option<&str>,
         _metadata: Option<HashMap<String, serde_json::Value>>,
+        context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, ToolingError> {
         
         let preview: String = message.chars().take(50).collect();
-        info!("Adding memory for user={}: {}...", user_id, preview);
+        let tags = context_tags.unwrap_or("");
+        info!("Adding memory for user={}: {}... [tags={}]", user_id, preview, tags);
 
         
         debug!("Step 1: LLM extraction");
@@ -287,14 +289,14 @@ impl ToolingManager {
                         target_id.to_string()
                     } else {
                         
-                        let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector).await?;
+                        let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector, tags).await?;
                         chunks_created += new_chunks;
                         new_id
                     }
                 }
                 MemoryOperation::Supersede => {
                     
-                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector).await?;
+                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector, tags).await?;
                     chunks_created += new_chunks;
                     if let Some(old_id) = &decision.supersedes_memory_id {
                         debug!("SUPERSEDE: {} supersedes {}", new_id, old_id);
@@ -308,7 +310,7 @@ impl ToolingManager {
                 }
                 MemoryOperation::Contradict => {
                     
-                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector).await?;
+                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector, tags).await?;
                     chunks_created += new_chunks;
                     if let Some(contra_id) = &decision.contradicts_memory_id {
                         debug!("CONTRADICT: {} contradicts {}", new_id, contra_id);
@@ -325,14 +327,14 @@ impl ToolingManager {
                         debug!("DELETE: removing {} before adding new", target_id);
                         let _ = self.delete_memory(target_id).await;
                     }
-                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector).await?;
+                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector, tags).await?;
                     chunks_created += new_chunks;
                     added_ids.push(new_id.clone());
                     new_id
                 }
                 MemoryOperation::Add => {
                     
-                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector).await?;
+                    let (new_id, new_chunks) = self.store_new_memory(&memory, user_id, &vector, tags).await?;
                     chunks_created += new_chunks;
                     added_ids.push(new_id.clone());
                     new_id
@@ -517,6 +519,7 @@ impl ToolingManager {
         memory: &crate::llm::extractor::ExtractedMemory,
         user_id: &str,
         vector: &[f32],
+        context_tags: &str,
     ) -> Result<(String, usize), ToolingError> {
         let memory_id = format!(
             "mem_{}",
@@ -554,7 +557,7 @@ impl ToolingManager {
             importance: memory.importance as i64,
             created_at: now.clone(),
             updated_at: now.clone(),
-            context_tags: String::new(),
+            context_tags: context_tags.to_string(),
             source: "llm_extraction".to_string(),
             metadata: "{}".to_string(),
         };
@@ -749,6 +752,56 @@ impl ToolingManager {
                 method: r.method,
                 metadata: r.metadata,
                 created_at: r.created_at,
+            })
+            .collect())
+    }
+
+    /// Search memories by context tag (e.g., "incomplete_thought")
+    pub async fn search_by_tag(
+        &self,
+        tag: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
+        info!("Searching by tag: {} [limit={}]", tag, limit);
+
+        #[derive(serde::Deserialize)]
+        struct TaggedMemory {
+            memory_id: String,
+            content: String,
+            context_tags: String,
+            created_at: String,
+        }
+
+        // HelixDB returns the array directly under the query return name
+        #[derive(serde::Deserialize)]
+        struct QueryResult {
+            memories: Vec<TaggedMemory>,
+        }
+
+        let result: QueryResult = self
+            .db
+            .execute_query(
+                "searchByContextTag",
+                &serde_json::json!({
+                    "tag": tag,
+                    "limit": limit as i64
+                }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+
+        info!("Found {} memories with tag '{}'", result.memories.len(), tag);
+
+        Ok(result
+            .memories
+            .into_iter()
+            .map(|m| SearchMemoryResult {
+                memory_id: m.memory_id,
+                content: m.content,
+                score: 1.0, // Tag match is exact
+                method: "tag_search".to_string(),
+                metadata: HashMap::new(),
+                created_at: m.created_at,
             })
             .collect())
     }

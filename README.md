@@ -67,6 +67,41 @@ Same features, 10x faster, zero dependencies.
 - **🏷️ Ontology Mapping** — skill, preference, goal, fact, opinion, experience, achievement
 - **📡 MCP Server** — Native integration with AI assistants
 - **🧩 Semantic Chunking** — Automatic splitting of long texts
+- **🧠 FastThink** — In-memory working memory for complex reasoning (scratchpad)
+- **🎯 Cognitive Protocol** — Built-in triggers and filters that shape AI behavior
+
+---
+
+## 🎯 Cognitive Protocol
+
+Helixir-RS is more than memory storage — it actively shapes how your AI thinks.
+
+### Automatic Recall Triggers
+
+The AI automatically recalls context when it detects patterns in your message:
+
+| You say | AI does |
+|---------|---------|
+| "remember", "recall" | Searches recent memory |
+| "we discussed", "last time" | Deep search in history |
+| "why did we" | Retrieves reasoning chains |
+| "what's next", "plan" | Recalls task context |
+| "like before" | Looks up preferences |
+
+### Importance Filter
+
+Not everything should be saved. Built-in heuristics keep memory clean:
+
+| Save | Skip |
+|------|------|
+| Decisions, outcomes | Search/grep results |
+| Architecture details | Compiler output |
+| Errors and fixes | Temporary debug data |
+| User preferences | Duplicate information |
+
+### The Result
+
+Your AI develops consistent habits: recalls context at session start, saves important decisions, uses structured reasoning for complex problems, and builds knowledge over time.
 
 ---
 
@@ -81,8 +116,8 @@ cd helixir-rs
 
 # Create config
 cat > .env << 'EOF'
-LLM_API_KEY=your_cerebras_or_openai_key
-EMBEDDING_API_KEY=your_openrouter_or_openai_key
+HELIX_LLM_API_KEY=your_cerebras_or_openai_key
+HELIX_EMBEDDING_API_KEY=your_openrouter_or_openai_key
 EOF
 
 # Start HelixDB + deploy schema
@@ -100,7 +135,7 @@ docker-compose up -d
 # Linux x86_64
 curl -L https://github.com/nikita-rulenko/helixir-rs/releases/latest/download/helixir-linux-x86_64.tar.gz | tar xz
 
-# macOS Apple Silicon  
+# macOS Apple Silicon
 curl -L https://github.com/nikita-rulenko/helixir-rs/releases/latest/download/helixir-macos-arm64.tar.gz | tar xz
 
 # macOS Intel
@@ -148,12 +183,12 @@ Edit `~/.cursor/mcp.json`:
       "env": {
         "HELIX_HOST": "localhost",
         "HELIX_PORT": "6969",
-        "LLM_PROVIDER": "cerebras",
-        "LLM_MODEL": "llama-3.3-70b",
-        "LLM_API_KEY": "YOUR_API_KEY",
-        "EMBEDDING_PROVIDER": "openai",
-        "EMBEDDING_URL": "https://openrouter.ai/api/v1",
-        "EMBEDDING_API_KEY": "YOUR_API_KEY"
+        "HELIX_LLM_PROVIDER": "cerebras",
+        "HELIX_LLM_MODEL": "llama-3.3-70b",
+        "HELIX_LLM_API_KEY": "YOUR_API_KEY",
+        "HELIX_EMBEDDING_PROVIDER": "openai",
+        "HELIX_EMBEDDING_URL": "https://openrouter.ai/api/v1",
+        "HELIX_EMBEDDING_API_KEY": "YOUR_API_KEY"
       }
     }
   }
@@ -173,8 +208,8 @@ Edit `~/.cursor/mcp.json`:
       "env": {
         "HELIX_HOST": "localhost",
         "HELIX_PORT": "6969",
-        "LLM_API_KEY": "YOUR_API_KEY",
-        "EMBEDDING_API_KEY": "YOUR_API_KEY"
+        "HELIX_LLM_API_KEY": "YOUR_API_KEY",
+        "HELIX_EMBEDDING_API_KEY": "YOUR_API_KEY"
       }
     }
   }
@@ -186,10 +221,13 @@ Edit `~/.cursor/mcp.json`:
 To make your AI assistant actually USE the memory, add these rules to **Cursor Settings → Rules**:
 
 ```
-- Always use Helixir MCP to remember important things about the project
+# Core Memory Behavior
+- At conversation start, call search_memory to recall relevant context
 - Always use Helixir MCP first to recall context about the current project
-- At the start of chat, store the user's prompt to always remember your role and goals
-- After reaching context window limit (when Cursor summarizes), read your role and user goals from memory again
+- After completing tasks, save key outcomes with add_memory
+- After reaching context window limit (when Cursor summarizes), read your role and goals from memory
+
+# Search Strategy
 - For memory search, use appropriate mode:
   - "recent" for quick context (last 4 hours)
   - "contextual" for balanced search (30 days)
@@ -197,11 +235,23 @@ To make your AI assistant actually USE the memory, add these rules to **Cursor S
   - "full" for complete history
 - Use search_by_concept for skill/preference/goal queries
 - Use search_reasoning_chain for "why" questions and logical connections
+
+# FastThink for Complex Reasoning
+- Before major decisions, use FastThink to structure your reasoning
+- Flow: think_start → think_add (multiple thoughts) → think_recall (get context) → think_conclude → think_commit
+- Use think_recall to pull relevant facts from main memory into your thinking session
+- If session times out, partial thoughts are auto-saved — continue with search_incomplete_thoughts
+
+# What to Save
+- ALWAYS save: decisions, outcomes, architecture changes, error fixes
+- NEVER save: grep results, lint output, temporary data
 ```
 
 ---
 
 ## 📚 MCP Tools
+
+### Memory Operations
 
 | Tool | Description |
 |------|-------------|
@@ -211,6 +261,18 @@ To make your AI assistant actually USE the memory, add these rules to **Cursor S
 | `search_reasoning_chain` | Find logical connections: `IMPLIES`, `BECAUSE`, `CONTRADICTS` |
 | `get_memory_graph` | Visualize memory as nodes and edges |
 | `update_memory` | Update existing memory content |
+
+### FastThink (Working Memory)
+
+| Tool | Description |
+|------|-------------|
+| `think_start` | Start isolated thinking session → `{session_id, root_thought_idx}` |
+| `think_add` | Add thought to session → `{thought_idx, thought_count, depth}` |
+| `think_recall` | Recall facts from main memory (read-only) → `{recalled_count, thought_indices}` |
+| `think_conclude` | Mark conclusion → `{conclusion_idx, status: "decided"}` |
+| `think_commit` | Save conclusion to main memory → `{memory_id, thoughts_processed}` |
+| `think_discard` | Discard session without saving → `{discarded_thoughts}` |
+| `think_status` | Get session status → `{thought_count, depth, has_conclusion, elapsed_ms}` |
 
 ### Usage Examples
 
@@ -241,6 +303,84 @@ To make your AI assistant actually USE the memory, add these rules to **Cursor S
 → Returns: last 4 hours of activity
 ```
 
+**Complex reasoning with FastThink:**
+```
+"Let me think through this architecture decision..."
+→ think_start(session_id="arch_decision")
+→ think_add("Option A: microservices...")
+→ think_add("Option B: monolith...")
+→ think_recall("previous architecture decisions")  // pulls from main memory
+→ think_conclude("Microservices because of scaling requirements")
+→ think_commit()  // saves conclusion to persistent memory
+```
+
+---
+
+## 🧠 FastThink (Working Memory)
+
+FastThink provides **isolated scratchpad memory** for complex reasoning tasks. Think of it as a whiteboard that doesn't pollute your main memory until you're ready to commit.
+
+### Why FastThink?
+
+| Problem | Solution |
+|---------|----------|
+| Thinking out loud pollutes memory | Isolated session, commit only conclusions |
+| Need to recall facts while thinking | `think_recall` reads main memory (read-only) |
+| Analysis paralysis | Built-in limits: max thoughts, timeout, depth |
+| Lost train of thought | Graph structure preserves reasoning chain |
+
+### Flow
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ think_start │ ──▶ │  think_add  │ ──▶ │think_recall │
+└─────────────┘     │  (repeat)   │     │ (optional)  │
+                    └─────────────┘     └─────────────┘
+                           │                   │
+                           ▼                   ▼
+                    ┌─────────────┐     ┌─────────────┐
+                    │think_conclude│ ──▶ │think_commit │
+                    └─────────────┘     └─────────────┘
+                           │                   │
+                           ▼                   ▼
+                    ┌─────────────┐     Saved to main
+                    │think_discard│     memory as fact
+                    └─────────────┘
+```
+
+### Limits (configurable)
+
+| Limit | Default | Purpose |
+|-------|:-------:|---------|
+| `max_thoughts` | 100 | Prevent infinite loops |
+| `max_depth` | 10 | Limit reasoning depth |
+| `thinking_timeout` | 30s | Prevent stuck sessions |
+| `session_ttl` | 5min | Auto-cleanup stale sessions |
+
+### Timeout Recovery
+
+If a session times out, **partial thoughts are automatically saved** to main memory with `[INCOMPLETE]` marker:
+
+```
+⏰ Timeout detected
+    ↓
+📝 Thoughts saved with [INCOMPLETE] marker
+    ↓
+💾 Stored in main memory
+    ↓
+🔍 Found at next session start via search_memory("[INCOMPLETE]")
+    ↓
+🔄 Continue research or dismiss
+```
+
+**Recovery flow:**
+1. At session start, AI searches for `[INCOMPLETE]` memories
+2. If found, offers to continue the research
+3. New FastThink session pulls context via `think_recall`
+4. After completion, `update_memory` removes `[INCOMPLETE]` marker
+
+No work is lost — incomplete reasoning becomes a starting point for next session.
+
 ---
 
 ## 📊 Search Modes
@@ -262,14 +402,14 @@ To make your AI assistant actually USE the memory, add these rules to **Cursor S
 |----------|:--------:|---------|-------------|
 | `HELIX_HOST` | ✅ | `localhost` | HelixDB server address |
 | `HELIX_PORT` | ✅ | `6969` | HelixDB port |
-| `LLM_API_KEY` | ✅ | — | API key for LLM provider |
-| `EMBEDDING_API_KEY` | ✅ | — | API key for embeddings |
-| `LLM_PROVIDER` | | `cerebras` | `cerebras`, `openai`, `ollama` |
-| `LLM_MODEL` | | `llama-3.3-70b` | Model name |
-| `LLM_BASE_URL` | | — | Custom endpoint (Ollama) |
-| `EMBEDDING_PROVIDER` | | `openai` | `openai`, `ollama` |
-| `EMBEDDING_URL` | | `https://openrouter.ai/api/v1` | Embedding API URL |
-| `EMBEDDING_MODEL` | | `all-mpnet-base-v2` | Embedding model |
+| `HELIX_LLM_API_KEY` | ✅ | — | API key for LLM provider |
+| `HELIX_EMBEDDING_API_KEY` | ✅ | — | API key for embeddings |
+| `HELIX_LLM_PROVIDER` | | `cerebras` | `cerebras`, `openai`, `ollama` |
+| `HELIX_LLM_MODEL` | | `llama-3.3-70b` | Model name |
+| `HELIX_LLM_BASE_URL` | | — | Custom endpoint (Ollama) |
+| `HELIX_EMBEDDING_PROVIDER` | | `openai` | `openai`, `ollama` |
+| `HELIX_EMBEDDING_URL` | | `https://openrouter.ai/api/v1` | Embedding API URL |
+| `HELIX_EMBEDDING_MODEL` | | `all-mpnet-base-v2` | Embedding model |
 
 ### Provider Configurations
 
@@ -278,14 +418,14 @@ To make your AI assistant actually USE the memory, add these rules to **Cursor S
 Ultra-fast inference + cheap embeddings:
 
 ```bash
-LLM_PROVIDER=cerebras
-LLM_MODEL=llama-3.3-70b
-LLM_API_KEY=csk-xxx              # https://cloud.cerebras.ai
+HELIX_LLM_PROVIDER=cerebras
+HELIX_LLM_MODEL=llama-3.3-70b
+HELIX_LLM_API_KEY=csk-xxx              # https://cloud.cerebras.ai
 
-EMBEDDING_PROVIDER=openai
-EMBEDDING_URL=https://openrouter.ai/api/v1
-EMBEDDING_MODEL=openai/text-embedding-3-large
-EMBEDDING_API_KEY=sk-or-xxx      # https://openrouter.ai/keys
+HELIX_EMBEDDING_PROVIDER=openai
+HELIX_EMBEDDING_URL=https://openrouter.ai/api/v1
+HELIX_EMBEDDING_MODEL=openai/text-embedding-3-large
+HELIX_EMBEDDING_API_KEY=sk-or-xxx      # https://openrouter.ai/keys
 ```
 
 #### Option 2: Fully Local (Ollama)
@@ -297,13 +437,13 @@ No API keys, fully private:
 ollama pull llama3:8b
 ollama pull nomic-embed-text
 
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3:8b
-LLM_BASE_URL=http://localhost:11434
+HELIX_LLM_PROVIDER=ollama
+HELIX_LLM_MODEL=llama3:8b
+HELIX_LLM_BASE_URL=http://localhost:11434
 
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_URL=http://localhost:11434
-EMBEDDING_MODEL=nomic-embed-text
+HELIX_EMBEDDING_PROVIDER=ollama
+HELIX_EMBEDDING_URL=http://localhost:11434
+HELIX_EMBEDDING_MODEL=nomic-embed-text
 ```
 
 #### Option 3: OpenAI Only
@@ -311,13 +451,13 @@ EMBEDDING_MODEL=nomic-embed-text
 Simple setup, one API key:
 
 ```bash
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=sk-xxx
+HELIX_LLM_PROVIDER=openai
+HELIX_LLM_MODEL=gpt-4o-mini
+HELIX_LLM_API_KEY=sk-xxx
 
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_API_KEY=sk-xxx
+HELIX_EMBEDDING_PROVIDER=openai
+HELIX_EMBEDDING_MODEL=text-embedding-3-small
+HELIX_EMBEDDING_API_KEY=sk-xxx
 ```
 
 ---
@@ -329,15 +469,19 @@ EMBEDDING_API_KEY=sk-xxx
 │                      MCP Server (stdio)                      │
 ├─────────────────────────────────────────────────────────────┤
 │                      HelixirClient                           │
-├─────────────────────────────────────────────────────────────┤
-│                     ToolingManager                           │
-├──────────┬──────────┬──────────┬──────────┬────────────────┤
-│ LLM      │ Decision │ Entity   │ Reasoning│ Search         │
-│ Extractor│ Engine   │ Manager  │ Engine   │ Engine         │
-├──────────┴──────────┴──────────┴──────────┴────────────────┤
+├───────────────────────────┬─────────────────────────────────┤
+│      ToolingManager       │        FastThinkManager         │
+│                           │     (in-memory scratchpad)      │
+├──────────┬────────┬───────┼─────────────────────────────────┤
+│ LLM      │Decision│Entity │  petgraph::StableDiGraph        │
+│ Extractor│ Engine │Manager│  (thoughts, entities, concepts) │
+├──────────┼────────┼───────┼─────────────────────────────────┤
+│ Reasoning│ Search │Ontology│         ↓ commit               │
+│ Engine   │ Engine │Manager │         ↓                      │
+├──────────┴────────┴───────┴─────────────────────────────────┤
 │                      HelixDB Client                          │
 ├─────────────────────────────────────────────────────────────┤
-│                        HelixDB                               │
+│                   HelixDB (graph + vector)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

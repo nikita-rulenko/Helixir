@@ -2,3 +2,6 @@
 target/
 *.log
 /ansible/
+/tests/
+/scripts/
+.DS_Store

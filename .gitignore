@@ -1,32 +1,8 @@
-# Rust
-/target/
-**/*.rs.bk
-Cargo.lock
-
-# Ansible - содержит креды и IP!
-ansible/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+.helix/
+target/
 *.log
-
-# Secrets
-*.pem
-*.key
-*.crt
-*_rsa
-*_rsa.pub
-
-# Tests & Scripts (local only)
-tests/
-scripts/
+/ansible/
+/tests/
+/scripts/
+.DS_Store
+Cargo.lock

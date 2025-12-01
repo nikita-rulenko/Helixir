@@ -201,10 +201,22 @@ impl HelixirClient {
         agent_id: Option<&str>,
         metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_with_tags(message, user_id, agent_id, metadata, None).await
+    }
+
+    /// Add memory with optional context tags that are inherited by all extracted facts
+    pub async fn add_with_tags(
+        &self,
+        message: &str,
+        user_id: &str,
+        agent_id: Option<&str>,
+        metadata: Option<HashMap<String, serde_json::Value>>,
+        context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
         let result = self.tooling_manager
-            .add_memory(message, user_id, agent_id, metadata)
+            .add_memory(message, user_id, agent_id, metadata, context_tags)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 

@@ -536,3 +536,7 @@ QUERY countUserMemories(user_id: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
   count <- user::Out<HAS_MEMORY>::COUNT
   RETURN count
+
+QUERY searchByContextTag(tag: String, limit: I64) =>
+  memories <- N<Memory>::WHERE(_::{context_tags}::EQ(tag))::RANGE(0, limit)
+  RETURN memories
