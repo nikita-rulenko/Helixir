@@ -59,19 +59,19 @@ jobs:
       - name: Build (native)
         if: ${{ !matrix.cross }}
         run: |
-          cd helixir-rs
+          cd helixir
           cargo build --release --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.cross
         run: |
-          cd helixir-rs
+          cd helixir
           cross build --release --target ${{ matrix.target }}
 
       - name: Package artifacts
         shell: bash
         run: |
-          cd helixir-rs
+          cd helixir
           mkdir -p dist
           cp target/${{ matrix.target }}/release/helixir-mcp${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-deploy${{ matrix.ext || '' }} dist/
@@ -83,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: helixir-rs/${{ matrix.artifact }}.tar.gz
+          path: helixir/${{ matrix.artifact }}.tar.gz
 
   docker:
     name: Build Docker Image
@@ -104,11 +104,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./helixir-rs
+          context: ./helixir
           push: true
           tags: |
-            helixir/helixir-rs:latest
-            helixir/helixir-rs:${{ github.ref_name }}
+            helixir/helixir:latest
+            helixir/helixir:${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
 
   release:

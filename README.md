@@ -66,7 +66,7 @@ This combination delivers **sub-second memory operations** with the 70B paramete
 
 ## 🎯 Cognitive Protocol
 
-Helixir-RS is more than memory storage — it actively shapes how your AI thinks.
+Helixir is more than memory storage — it actively shapes how your AI thinks.
 
 ### Automatic Recall Triggers
 
@@ -104,7 +104,7 @@ Your AI develops consistent habits: recalls context at session start, saves impo
 ```bash
 # Clone and start everything
 git clone https://github.com/nikita-rulenko/Helixir
-cd helixir-rs
+cd helixir
 
 # Create config
 cat > .env << 'EOF'
@@ -149,7 +149,7 @@ export EMBEDDING_API_KEY=your_key
 
 ```bash
 git clone https://github.com/nikita-rulenko/Helixir
-cd helixir-rs
+cd helixir
 
 # Build
 cargo build --release
@@ -495,13 +495,13 @@ docker-compose logs -f helixir-mcp
 
 ```bash
 # Build
-docker build -t helixir-rs .
+docker build -t helixir .
 
 # Run with external HelixDB
 docker run -e HELIX_HOST=your_helixdb_host \
            -e LLM_API_KEY=xxx \
            -e EMBEDDING_API_KEY=xxx \
-           helixir-rs
+           helixir
 ```
 
 ---
