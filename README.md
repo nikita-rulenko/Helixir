@@ -124,14 +124,8 @@ docker-compose up -d
 
 ```bash
 # 1. Download binary for your platform
-# Linux x86_64
-curl -L https://github.com/nikita-rulenko/Helixir/releases/latest/download/helixir-linux-x86_64.tar.gz | tar xz
-
-# macOS Apple Silicon
-curl -L https://github.com/nikita-rulenko/Helixir/releases/latest/download/helixir-macos-arm64.tar.gz | tar xz
-
-# macOS Intel
-curl -L https://github.com/nikita-rulenko/Helixir/releases/latest/download/helixir-macos-x86_64.tar.gz | tar xz
+curl -fL https://github.com/nikita-rulenko/Helixir/archive/refs/tags/Think_fast.tar.gz \
+  | tar xzf -
 
 # 2. Start HelixDB (if not running)
 docker run -d -p 6969:6969 helixdb/helixdb:latest
