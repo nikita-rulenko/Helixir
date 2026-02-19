@@ -35,10 +35,10 @@ Built on [HelixDB](https://github.com/HelixDB/helix-db) graph-vector database wi
 ### ⚡ Recommended Stack: Cerebras + OpenRouter
 
 For **maximum speed**, use:
-- **[Cerebras](https://cloud.cerebras.ai)** for LLM inference — 70x faster than GPU, free tier available
+- **[Cerebras](https://cloud.cerebras.ai)** for LLM inference — ~3,000 tokens/sec on `gpt-oss-120b`, free tier available
 - **[OpenRouter](https://openrouter.ai)** for embeddings — cheap, reliable, many models
 
-This combination delivers **sub-second memory operations** with the 70B parameter Llama 3.3 model.
+This combination delivers **sub-second memory operations** with OpenAI's `gpt-oss-120b` (120B MoE, 5.1B active params, 128k context).
 
 ### 🦀 Why Rust?
 
@@ -170,7 +170,7 @@ Edit `~/.cursor/mcp.json`:
         "HELIX_HOST": "localhost",
         "HELIX_PORT": "6969",
         "HELIX_LLM_PROVIDER": "cerebras",
-        "HELIX_LLM_MODEL": "llama-3.3-70b",
+        "HELIX_LLM_MODEL": "gpt-oss-120b",
         "HELIX_LLM_API_KEY": "YOUR_API_KEY",
         "HELIX_EMBEDDING_PROVIDER": "openai",
         "HELIX_EMBEDDING_URL": "https://openrouter.ai/api/v1",
@@ -391,7 +391,7 @@ No work is lost — incomplete reasoning becomes a starting point for next sessi
 | `HELIX_LLM_API_KEY` | ✅ | — | API key for LLM provider |
 | `HELIX_EMBEDDING_API_KEY` | ✅ | — | API key for embeddings |
 | `HELIX_LLM_PROVIDER` | | `cerebras` | `cerebras`, `openai`, `ollama` |
-| `HELIX_LLM_MODEL` | | `llama-3.3-70b` | Model name |
+| `HELIX_LLM_MODEL` | | `gpt-oss-120b` | Model name |
 | `HELIX_LLM_BASE_URL` | | — | Custom endpoint (Ollama) |
 | `HELIX_EMBEDDING_PROVIDER` | | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | | `https://openrouter.ai/api/v1` | Embedding API URL |
@@ -401,11 +401,11 @@ No work is lost — incomplete reasoning becomes a starting point for next sessi
 
 #### Option 1: Cerebras + OpenRouter (Recommended)
 
-Ultra-fast inference + cheap embeddings:
+Ultra-fast inference (~3,000 tok/s) + cheap embeddings:
 
 ```bash
 HELIX_LLM_PROVIDER=cerebras
-HELIX_LLM_MODEL=llama-3.3-70b
+HELIX_LLM_MODEL=gpt-oss-120b
 HELIX_LLM_API_KEY=csk-xxx              # https://cloud.cerebras.ai
 
 HELIX_EMBEDDING_PROVIDER=openai
