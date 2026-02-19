@@ -361,5 +361,19 @@ impl ThinkingSession {
             })
             .collect()
     }
+
+    pub fn get_supporting_memory_ids(&self) -> Vec<String> {
+        self.graph
+            .node_indices()
+            .filter_map(|idx| {
+                let thought = self.graph.node_weight(idx)?;
+                if thought.is_recall() {
+                    thought.source_memory_id.clone()
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 

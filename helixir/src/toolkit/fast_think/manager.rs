@@ -173,21 +173,21 @@ impl FastThinkManager {
         }
 
         let conclusion_content = session.build_conclusion_content();
-        let supporting_evidence = session.get_supporting_evidence();
+        let supporting_ids: Vec<String> = session.get_supporting_memory_ids();
 
-        let full_content = if supporting_evidence.is_empty() {
+        let content_for_storage = if supporting_ids.is_empty() {
             conclusion_content
         } else {
             format!(
-                "{}\n\n[Based on: {}]",
+                "{}\n\n[Evidence: {}]",
                 conclusion_content,
-                supporting_evidence.join("; ")
+                supporting_ids.join(", ")
             )
         };
 
         let result = self
             .main_memory
-            .add(&full_content, user_id, None, None)
+            .add(&content_for_storage, user_id, None, None)
             .await
             .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
 

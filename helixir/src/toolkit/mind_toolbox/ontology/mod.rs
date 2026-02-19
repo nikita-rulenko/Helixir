@@ -100,11 +100,11 @@ impl OntologyManager {
     }
 
     pub fn map_memory_to_concepts(&self, content: &str, memory_type: Option<&str>) -> Vec<ConceptMatch> {
-        if !self.is_loaded {
-            return Vec::new();
-        }
-
-        let mut matches = self.mapper.map_to_concepts(content, 30);
+        let mut matches = if self.is_loaded {
+            self.mapper.map_to_concepts(content, 30)
+        } else {
+            Vec::new()
+        };
 
         if let Some(mt) = memory_type {
             let concept_id = match mt.to_lowercase().as_str() {

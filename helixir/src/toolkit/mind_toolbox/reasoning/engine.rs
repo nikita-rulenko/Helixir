@@ -166,8 +166,23 @@ impl ReasoningEngine {
         strength: i32,
         reasoning_id: Option<&str>,
     ) -> Result<ReasoningRelation, ReasoningError> {
-        
         let strength = strength.clamp(0, 100);
+
+        if self.edge_exists(from_id, to_id, relation_type).await {
+            debug!(
+                "Skipping duplicate {} edge: {} -> {}",
+                relation_type.edge_name(), crate::safe_truncate(from_id, 12), crate::safe_truncate(to_id, 12)
+            );
+            return Ok(ReasoningRelation {
+                relation_id: format!("rel_{}_{}", crate::safe_truncate(from_id, 8), crate::safe_truncate(to_id, 8)),
+                from_memory_id: from_id.to_string(),
+                to_memory_id: to_id.to_string(),
+                to_memory_content: String::new(),
+                relation_type,
+                strength,
+                reasoning_id: reasoning_id.map(String::from),
+            });
+        }
 
         let relation = ReasoningRelation {
             relation_id: format!("rel_{}_{}", crate::safe_truncate(from_id, 8), crate::safe_truncate(to_id, 8)),
@@ -179,7 +194,6 @@ impl ReasoningEngine {
             reasoning_id: reasoning_id.map(String::from),
         };
 
-        
         #[derive(Deserialize)]
         struct EdgeResponse {
             #[serde(default)]
@@ -504,7 +518,47 @@ Only output relations with strength >= 60. If no meaningful relation exists, out
         }
     }
 
-    
+    async fn edge_exists(&self, from_id: &str, to_id: &str, relation_type: ReasoningType) -> bool {
+        #[derive(Deserialize)]
+        struct ConnectionsResult {
+            #[serde(default)]
+            implies_out: Vec<MemNode>,
+            #[serde(default)]
+            because_out: Vec<MemNode>,
+            #[serde(default)]
+            contradicts_out: Vec<MemNode>,
+            #[serde(default)]
+            relation_out: Vec<MemNode>,
+        }
+
+        #[derive(Deserialize)]
+        struct MemNode {
+            #[serde(default)]
+            memory_id: String,
+        }
+
+        let result = match self
+            .client
+            .execute_query::<ConnectionsResult, _>(
+                "getMemoryLogicalConnections",
+                &serde_json::json!({"memory_id": from_id}),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+
+        let targets = match relation_type {
+            ReasoningType::Implies => &result.implies_out,
+            ReasoningType::Because => &result.because_out,
+            ReasoningType::Contradicts => &result.contradicts_out,
+            ReasoningType::Supports => &result.relation_out,
+        };
+
+        targets.iter().any(|n| n.memory_id == to_id)
+    }
+
     fn build_reasoning_trail(&self, relations: &[ReasoningRelation]) -> String {
         if relations.is_empty() {
             return "No reasoning chain found.".to_string();

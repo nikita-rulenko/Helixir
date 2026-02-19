@@ -428,14 +428,10 @@ impl ToolingManager {
             
             let concept_links: Vec<(String, String, i32)> = {
                 let ontology = self.ontology_manager.read();
-                if ontology.is_loaded() {
-                    ontology.map_memory_to_concepts(&memory.text, Some(&memory.memory_type))
-                        .into_iter()
-                        .map(|m| (m.concept.id.clone(), m.concept.name.clone(), (m.confidence * 100.0) as i32))
-                        .collect()
-                } else {
-                    Vec::new()
-                }
+                ontology.map_memory_to_concepts(&memory.text, Some(&memory.memory_type))
+                    .into_iter()
+                    .map(|m| (m.concept.id.clone(), m.concept.name.clone(), (m.confidence * 100.0) as i32))
+                    .collect()
             };
             
             for (concept_id, concept_name, confidence) in concept_links {
@@ -663,6 +659,8 @@ impl ToolingManager {
         }
 
         
+        self.ensure_user_exists(user_id).await;
+
         #[derive(Serialize)]
         struct LinkUserInput {
             user_id: String,
@@ -670,13 +668,16 @@ impl ToolingManager {
             context: String,
         }
 
-        let _ = self.db
+        if let Err(e) = self.db
             .execute_query::<serde_json::Value, _>("linkUserToMemory", &LinkUserInput {
                 user_id: user_id.to_string(),
                 memory_id: memory_id.clone(),
                 context: "created".to_string(),
             })
-            .await;
+            .await
+        {
+            warn!("Failed to link user {} to memory {}: {}", user_id, memory_id, e);
+        }
         
 
         let mut chunk_count = 0usize;
@@ -768,22 +769,55 @@ impl ToolingManager {
 
     async fn get_memory_type(&self, memory_id: &str) -> Option<String> {
         #[derive(serde::Deserialize)]
-        struct MemoryNode {
+        struct GetMemoryResponse {
+            #[serde(default)]
+            memory: Option<MemoryFields>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct MemoryFields {
             #[serde(default)]
             memory_type: String,
         }
 
         self.db
-            .execute_query::<MemoryNode, _>(
+            .execute_query::<GetMemoryResponse, _>(
                 "getMemory",
                 &serde_json::json!({"memory_id": memory_id}),
             )
             .await
             .ok()
+            .and_then(|r| r.memory)
             .and_then(|m| if m.memory_type.is_empty() { None } else { Some(m.memory_type) })
     }
 
-    
+    async fn ensure_user_exists(&self, user_id: &str) {
+        #[derive(serde::Deserialize)]
+        struct UserResponse {
+            #[serde(default)]
+            user: Option<serde_json::Value>,
+        }
+
+        let exists = self.db
+            .execute_query::<UserResponse, _>(
+                "getUser",
+                &serde_json::json!({"user_id": user_id}),
+            )
+            .await
+            .map(|r| r.user.is_some())
+            .unwrap_or(false);
+
+        if !exists {
+            let _ = self.db
+                .execute_query::<serde_json::Value, _>(
+                    "addUser",
+                    &serde_json::json!({"user_id": user_id, "name": user_id}),
+                )
+                .await;
+            debug!("Created user node: {}", user_id);
+        }
+    }
+
     pub async fn search_memory(
         &self,
         query: &str,

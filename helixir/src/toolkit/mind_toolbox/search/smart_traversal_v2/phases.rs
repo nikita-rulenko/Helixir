@@ -83,14 +83,12 @@ pub async fn vector_search_phase(
     info!("Starting Phase 1: Vector search with top_k={}", top_k);
 
     
+    let fetch_limit = if user_id.is_some() { top_k as i64 * 3 } else { top_k as i64 };
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
     let params = serde_json::json!({
         "query_vector": query_vector,
-        "limit": top_k as i64
+        "limit": fetch_limit
     });
-    
-    
-    let _ = (user_id, min_score); 
 
     let response: VectorSearchResponse = client
         .execute_query("smartVectorSearchWithChunks", &params)
@@ -101,6 +99,12 @@ pub async fn vector_search_phase(
     let mut seen_ids = HashSet::new();
 
     for memory in response.memories {
+        if let Some(uid) = user_id {
+            if !memory.user_id.is_empty() && memory.user_id != uid {
+                continue;
+            }
+        }
+
         if seen_ids.contains(&memory.memory_id) {
             continue;
         }
