@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-1.75+-orange.svg" alt="Rust"/>
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License"/>
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"/>
   <img src="https://img.shields.io/badge/MCP-compatible-green.svg" alt="MCP"/>
 </p>
 
@@ -518,9 +518,7 @@ cargo fmt --check
 
 ## 📄 License
 
-[AGPL-3.0-or-later](LICENSE)
-
-⚠️ **This is NOT MIT!** If you modify and deploy Helixir as a service, you must open-source your codebase.
+[MIT](LICENSE)
 
 ---
 
