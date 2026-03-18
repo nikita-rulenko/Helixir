@@ -116,6 +116,9 @@ impl HelixirConfig {
         if let Ok(key) = std::env::var("HELIX_LLM_API_KEY") {
             config.llm_api_key = Some(key);
         }
+        if let Ok(url) = std::env::var("HELIX_LLM_BASE_URL") {
+            config.llm_base_url = Some(url);
+        }
         if let Ok(provider) = std::env::var("HELIX_EMBEDDING_PROVIDER") {
             config.embedding_provider = provider;
         }
@@ -136,6 +139,26 @@ impl HelixirConfig {
 impl Default for HelixirConfig {
     fn default() -> Self {
         Self::new("localhost", 6969)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HelixirConfig;
+
+    #[test]
+    fn test_from_env_reads_llm_base_url() {
+        unsafe {
+            std::env::set_var("HELIX_LLM_BASE_URL", "http://localhost:11434");
+        }
+
+        let config = HelixirConfig::from_env();
+
+        assert_eq!(config.llm_base_url.as_deref(), Some("http://localhost:11434"));
+
+        unsafe {
+            std::env::remove_var("HELIX_LLM_BASE_URL");
+        }
     }
 }
 

@@ -24,7 +24,7 @@
 #
 # 4. Run helixir-mcp on host (MCP uses stdio, not HTTP):
 #    HELIX_HOST=localhost HELIX_PORT=6969 \
-#    LLM_API_KEY=xxx EMBEDDING_API_KEY=xxx \
+#    HELIX_LLM_API_KEY=xxx HELIX_EMBEDDING_API_KEY=xxx \
 #    ./target/release/helixir-mcp
 
 services:
