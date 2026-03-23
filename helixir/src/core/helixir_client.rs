@@ -241,12 +241,13 @@ impl HelixirClient {
         search_mode: Option<&str>,
         temporal_days: Option<f64>,
         graph_depth: Option<usize>,
+        scope: Option<&str>,
     ) -> Result<Vec<SearchResult>, HelixirClientError> {
         self.ensure_initialized().await?;
 
         let mode = search_mode.unwrap_or(&self.config.default_search_mode);
         let results = self.tooling_manager
-            .search_memory(query, user_id, limit, mode, temporal_days, graph_depth)
+            .search_memory(query, user_id, limit, mode, temporal_days, graph_depth, scope.unwrap_or("personal"))
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 

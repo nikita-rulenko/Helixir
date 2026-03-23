@@ -1,0 +1,128 @@
+direction: down
+
+title: {
+  label: "Helixir-rs — Data Flow"
+  near: top-center
+  shape: text
+  style.font-size: 28
+  style.bold: true
+}
+
+ingestion: "Ingestion" {
+  style.fill: "#E3F2FD"
+  style.border-radius: 12
+
+  input: "User Message\n(raw text)" {
+    shape: page
+    style.fill: "#FFFFFF"
+  }
+
+  extract: "LLM Extraction\n(memories, entities,\nrelations)" {
+    style.fill: "#BBDEFB"
+    style.border-radius: 8
+  }
+
+  embed: "Embedding\nGeneration\n(768-dim vector)" {
+    style.fill: "#90CAF9"
+    style.border-radius: 8
+  }
+
+  input -> extract: "raw text"
+  extract -> embed: "memory text"
+}
+
+dedup: "Deduplication" {
+  style.fill: "#FFF3E0"
+  style.border-radius: 12
+
+  phase1: "Phase 1:\nPersonal Search\n(same user_id)" {
+    style.fill: "#FFE0B2"
+    style.border-radius: 8
+  }
+
+  decision1: "LLM Decision\n(Add / Update / Noop /\nSupersede / Contradict)" {
+    style.fill: "#FFB74D"
+    style.border-radius: 8
+  }
+
+  phase1 -> decision1: "similar\nmemories"
+}
+
+storage: "Storage" {
+  style.fill: "#E8F5E9"
+  style.border-radius: 12
+
+  store: "Store Memory\n+ Embedding\n+ User Link" {
+    style.fill: "#A5D6A7"
+    style.border-radius: 8
+  }
+
+  graph_db: "HelixDB\n(15 nodes, 33 edges,\n4 vectors)" {
+    shape: cylinder
+    style.fill: "#2E7D32"
+    style.font-color: white
+  }
+
+  store -> graph_db: "addMemory\n+ addEmbedding\n+ linkUser"
+}
+
+hive: "Hive Memory" {
+  style.fill: "#F3E5F5"
+  style.border-radius: 12
+
+  phase2: "Phase 2:\nGlobal Search\n(all users)" {
+    style.fill: "#CE93D8"
+    style.border-radius: 8
+  }
+
+  cross_dedup: "Cross-User Decision\n(LinkExisting /\nCrossContradict)" {
+    style.fill: "#AB47BC"
+    style.font-color: white
+    style.border-radius: 8
+  }
+
+  phase2 -> cross_dedup: "cross-user\nmatches"
+}
+
+enrichment: "Enrichment" {
+  style.fill: "#FFEBEE"
+  style.border-radius: 12
+
+  entities: "Entity\nExtraction\n& Linking" {
+    style.fill: "#EF9A9A"
+    style.border-radius: 8
+  }
+
+  concepts: "Concept\nMapping\n(ontology)" {
+    style.fill: "#EF9A9A"
+    style.border-radius: 8
+  }
+
+  reasoning: "Reasoning\nRelations\n(IMPLIES, BECAUSE)" {
+    style.fill: "#EF9A9A"
+    style.border-radius: 8
+  }
+}
+
+result: "AddMemoryResult\n(added, updated, skipped,\nentities, relations)" {
+  shape: page
+  style.fill: "#E8F5E9"
+}
+
+ingestion.embed -> dedup.phase1: "vector"
+dedup.decision1 -> storage.store: "ADD" {
+  style.stroke: "#4CAF50"
+}
+dedup.decision1 -> result: "NOOP / UPDATE" {
+  style.stroke: "#FF9800"
+  style.stroke-dash: 3
+}
+storage.store -> hive.phase2: "new memory"
+hive.cross_dedup -> storage.graph_db: "link / contradict" {
+  style.stroke: "#9C27B0"
+}
+storage.store -> enrichment.entities: "memory_id"
+enrichment.entities -> storage.graph_db
+enrichment.concepts -> storage.graph_db
+enrichment.reasoning -> storage.graph_db
+storage.graph_db -> result

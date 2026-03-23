@@ -99,6 +99,7 @@ impl FastThinkManager {
                 Some("contextual"),
                 None,
                 None,
+                None,
             )
             .await
             .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;

@@ -1,0 +1,117 @@
+direction: down
+
+title: {
+  label: "Helixir-rs — User Flow (MCP Tools)"
+  near: top-center
+  shape: text
+  style.font-size: 28
+  style.bold: true
+}
+
+start: "Agent starts\nconversation" {
+  shape: oval
+  style.fill: "#C8E6C9"
+}
+
+recall: "search_memory\n(mode=recent)" {
+  style.fill: "#BBDEFB"
+  style.border-radius: 8
+}
+
+has_context: "Context\nfound?" {
+  shape: diamond
+  style.fill: "#FFF9C4"
+}
+
+deep_search: "search_memory\n(mode=deep)" {
+  style.fill: "#90CAF9"
+  style.border-radius: 8
+}
+
+work: "Agent works\non task" {
+  style.fill: "#E1BEE7"
+  style.border-radius: 8
+}
+
+need_think: "Complex\ndecision?" {
+  shape: diamond
+  style.fill: "#FFF9C4"
+}
+
+fast_think: "FastThink\nWorkflow" {
+  style.fill: "#F3E5F5"
+  style.border-radius: 12
+
+  think_start: "think_start" {
+    style.fill: "#CE93D8"
+  }
+  think_add: "think_add\n(multiple)" {
+    style.fill: "#CE93D8"
+  }
+  think_recall: "think_recall\n(pull from memory)" {
+    style.fill: "#CE93D8"
+  }
+  think_conclude: "think_conclude" {
+    style.fill: "#CE93D8"
+  }
+  think_commit: "think_commit\n(save to memory)" {
+    style.fill: "#CE93D8"
+  }
+
+  think_start -> think_add
+  think_add -> think_recall
+  think_recall -> think_add: "iterate" {style.stroke-dash: 3}
+  think_add -> think_conclude
+  think_conclude -> think_commit
+}
+
+save: "add_memory\n(outcomes, decisions)" {
+  style.fill: "#C5E1A5"
+  style.border-radius: 8
+}
+
+concept_search: "search_by_concept\n(skills, preferences)" {
+  style.fill: "#80DEEA"
+  style.border-radius: 8
+}
+
+reasoning: "search_reasoning_chain\n(causal / forward)" {
+  style.fill: "#FFCC80"
+  style.border-radius: 8
+}
+
+graph: "get_memory_graph\n(explore connections)" {
+  style.fill: "#FFAB91"
+  style.border-radius: 8
+}
+
+update: "update_memory\n(fix outdated info)" {
+  style.fill: "#EF9A9A"
+  style.border-radius: 8
+}
+
+collective: "search_memory\n(scope=collective)\nHive search" {
+  style.fill: "#B39DDB"
+  style.border-radius: 8
+}
+
+end_turn: "End of turn" {
+  shape: oval
+  style.fill: "#FFCDD2"
+}
+
+start -> recall
+recall -> has_context
+has_context -> work: "yes"
+has_context -> deep_search: "no"
+deep_search -> work
+work -> need_think
+need_think -> fast_think: "yes"
+need_think -> save: "no"
+fast_think -> save
+work -> concept_search: "need by type" {style.stroke-dash: 3}
+work -> reasoning: "need WHY" {style.stroke-dash: 3}
+work -> graph: "explore" {style.stroke-dash: 3}
+work -> update: "fix info" {style.stroke-dash: 3}
+work -> collective: "cross-user" {style.stroke-dash: 3}
+save -> end_turn

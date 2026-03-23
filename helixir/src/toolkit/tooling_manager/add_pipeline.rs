@@ -69,7 +69,7 @@ impl ToolingManager {
                 .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
             let similar_results = self.search_engine
-                .search(&memory.text, &vector, user_id, 5, "contextual", None)
+                .search(&memory.text, &vector, user_id, 5, "contextual", None, "personal")
                 .await
                 .unwrap_or_default();
 
@@ -80,6 +80,8 @@ impl ToolingManager {
                     content: r.content.clone(),
                     score: r.score as f64,
                     created_at: None,
+                    user_id: None,
+                    is_cross_user: false,
                 })
                 .collect();
 
@@ -162,9 +164,75 @@ impl ToolingManager {
                     added_ids.push(new_id.clone());
                     new_id
                 }
+                MemoryOperation::LinkExisting | MemoryOperation::CrossContradict => {
+                    unreachable!("Phase 1 should not produce cross-user operations");
+                }
                 MemoryOperation::Add => {
                     let (new_id, new_chunks) = self.store_new_memory(memory, user_id, &vector, tags).await?;
                     chunks_created += new_chunks;
+
+                    debug!("Phase 2: Global cross-user dedup search for {}", new_id);
+                    let global_results = self.search_engine
+                        .search(&memory.text, &vector, user_id, 5, "contextual", None, "collective")
+                        .await
+                        .unwrap_or_default();
+
+                    let cross_user_similar: Vec<SimilarMemory> = global_results
+                        .iter()
+                        .filter(|r| {
+                            let result_user = r.metadata.get("user_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            !result_user.is_empty() && result_user != user_id && r.memory_id != new_id
+                        })
+                        .map(|r| SimilarMemory {
+                            id: r.memory_id.clone(),
+                            content: r.content.clone(),
+                            score: r.score as f64,
+                            created_at: Some(r.created_at.clone()),
+                            user_id: r.metadata.get("user_id")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            is_cross_user: true,
+                        })
+                        .collect();
+
+                    if !cross_user_similar.is_empty() {
+                        let cross_decision = self.decision_engine
+                            .decide(&memory.text, &cross_user_similar, user_id)
+                            .await;
+
+                        match cross_decision.operation {
+                            MemoryOperation::LinkExisting => {
+                                if let Some(link_id) = &cross_decision.link_to_memory_id {
+                                    info!("LINK_EXISTING: linking user {} to existing memory {}", user_id, link_id);
+                                    self.link_user_to_existing_memory(user_id, link_id).await;
+                                }
+                            }
+                            MemoryOperation::CrossContradict => {
+                                if let Some(contra_id) = &cross_decision.contradicts_memory_id {
+                                    info!("CROSS_CONTRADICT: {} contradicts {} (cross-user)", new_id, contra_id);
+                                    self.add_cross_user_contradiction(
+                                        &new_id,
+                                        contra_id,
+                                        cross_decision.conflict_type.as_deref().unwrap_or("preference"),
+                                        &cross_decision.reasoning,
+                                    ).await;
+                                    relations_created += 1;
+                                }
+                            }
+                            MemoryOperation::Noop => {
+                                debug!("Cross-user check: same fact already shared, linking user");
+                                if let Some(existing) = cross_user_similar.first() {
+                                    self.link_user_to_existing_memory(user_id, &existing.id).await;
+                                }
+                            }
+                            _ => {
+                                debug!("Cross-user check: no cross-user action needed");
+                            }
+                        }
+                    }
+
                     added_ids.push(new_id.clone());
                     new_id
                 }

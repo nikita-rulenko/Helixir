@@ -20,10 +20,11 @@ impl ToolingManager {
         mode: &str,
         temporal_days: Option<f64>,
         _graph_depth: Option<usize>,
+        scope: &str,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
         info!(
-            "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}]",
-            safe_truncate(query, 50), mode, limit, temporal_days
+            "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, scope={}]",
+            safe_truncate(query, 50), mode, limit, temporal_days, scope
         );
 
         let query_embedding = self
@@ -32,27 +33,67 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
-        let results = self
-            .search_engine
-            .search(query, &query_embedding, user_id, limit.unwrap_or(10), mode, temporal_days)
-            .await?;
+        let effective_limit = limit.unwrap_or(10);
 
-        info!("Found {} memories via SearchEngine [method={}]",
+        let results = match scope {
+            "collective" | "all" => {
+                self.search_engine
+                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, scope)
+                    .await?
+            }
+            _ => {
+                self.search_engine
+                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, "personal")
+                    .await?
+            }
+        };
+
+        info!("Found {} memories via SearchEngine [method={}, scope={}]",
             results.len(),
-            results.first().map(|r| r.method.as_str()).unwrap_or("none")
+            results.first().map(|r| r.method.as_str()).unwrap_or("none"),
+            scope
         );
 
-        Ok(results
+        let mut search_results: Vec<SearchMemoryResult> = results
             .into_iter()
-            .map(|r| SearchMemoryResult {
-                memory_id: r.memory_id,
-                content: r.content,
-                score: r.score as f64,
-                method: r.method,
-                metadata: r.metadata,
-                created_at: r.created_at,
+            .map(|r| {
+                let mut result = SearchMemoryResult {
+                    memory_id: r.memory_id,
+                    content: r.content,
+                    score: r.score as f64,
+                    method: r.method,
+                    metadata: r.metadata,
+                    created_at: r.created_at,
+                };
+                if let Some(uc) = r.user_count {
+                    result.metadata.insert(
+                        "user_count".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(uc)),
+                    );
+                }
+                if let Some(ref controversy) = r.controversy {
+                    result.metadata.insert(
+                        "controversy".to_string(),
+                        serde_json::to_value(controversy).unwrap_or_default(),
+                    );
+                }
+                result
             })
-            .collect())
+            .collect();
+
+        if scope == "collective" || scope == "all" {
+            search_results.sort_by(|a, b| {
+                let a_uc = a.metadata.get("user_count")
+                    .and_then(|v| v.as_u64()).unwrap_or(1);
+                let b_uc = b.metadata.get("user_count")
+                    .and_then(|v| v.as_u64()).unwrap_or(1);
+                let a_combined = a.score * (1.0 + (a_uc as f64 - 1.0) * 0.1);
+                let b_combined = b.score * (1.0 + (b_uc as f64 - 1.0) * 0.1);
+                b_combined.partial_cmp(&a_combined).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        Ok(search_results)
     }
 
     pub async fn search_by_tag(
@@ -127,7 +168,7 @@ impl ToolingManager {
 
         let candidates = self
             .search_engine
-            .search(query, &query_embedding, user_id, limit * 3, mode, None)
+            .search(query, &query_embedding, user_id, limit * 3, mode, None, "personal")
             .await?;
 
         let mut results = Vec::new();

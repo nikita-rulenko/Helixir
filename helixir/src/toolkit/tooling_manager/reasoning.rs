@@ -24,7 +24,7 @@ impl ToolingManager {
 
         let seed_results = self
             .search_engine
-            .search(query, &query_embedding, user_id, limit, "contextual", None)
+            .search(query, &query_embedding, user_id, limit, "contextual", None, "personal")
             .await?;
 
         if seed_results.is_empty() {

@@ -1,0 +1,150 @@
+direction: down
+
+title: {
+  label: "Helixir-rs — Component Diagram"
+  near: top-center
+  shape: text
+  style.font-size: 28
+  style.bold: true
+}
+
+mcp: "MCP Layer" {
+  style.fill: "#E8F4FD"
+  style.border-radius: 12
+
+  server: "HelixirMcpServer\n14 tools, 2 prompts" {
+    style.fill: "#1168BD"
+    style.font-color: white
+  }
+  params: "Params\n(SearchMemoryParams,\nAddMemoryParams, ...)" {
+    style.fill: "#438DD5"
+    style.font-color: white
+  }
+  prompts: "Prompts\n(cognitive roles,\ntool guide)" {
+    style.fill: "#438DD5"
+    style.font-color: white
+  }
+}
+
+core: "Core Layer" {
+  style.fill: "#FFF3E0"
+  style.border-radius: 12
+
+  client: "HelixirClient\n(facade)" {
+    style.fill: "#E65100"
+    style.font-color: white
+  }
+  config: "HelixirConfig\n(from env)" {
+    style.fill: "#FF9800"
+    style.font-color: white
+  }
+  events: "EventBus" {
+    style.fill: "#FF9800"
+    style.font-color: white
+  }
+  search_modes: "SearchModes\n(recent/contextual/\ndeep/full)" {
+    style.fill: "#FF9800"
+    style.font-color: white
+  }
+}
+
+tooling: "Tooling Manager" {
+  style.fill: "#E8F5E9"
+  style.border-radius: 12
+
+  add_pipeline: "AddPipeline\n(2-phase dedup,\ncross-user)" {
+    style.fill: "#2E7D32"
+    style.font-color: white
+  }
+  search_mgr: "SearchManager\n(scope routing)" {
+    style.fill: "#2E7D32"
+    style.font-color: white
+  }
+  helpers: "Helpers\n(link_user, contradiction)" {
+    style.fill: "#43A047"
+    style.font-color: white
+  }
+  reasoning_mgr: "ReasoningManager" {
+    style.fill: "#43A047"
+    style.font-color: white
+  }
+}
+
+mind: "Mind Toolbox" {
+  style.fill: "#F3E5F5"
+  style.border-radius: 12
+
+  search_engine: "SearchEngine\n(SmartTraversalV2,\nHybrid, BM25)" {
+    style.fill: "#6A1B9A"
+    style.font-color: white
+  }
+  entity: "EntityManager" {
+    style.fill: "#8E24AA"
+    style.font-color: white
+  }
+  reasoning: "ReasoningEngine\n(IMPLIES, BECAUSE,\nCONTRADICTS)" {
+    style.fill: "#8E24AA"
+    style.font-color: white
+  }
+  ontology: "OntologyManager\n(concept mapping)" {
+    style.fill: "#8E24AA"
+    style.font-color: white
+  }
+  chunking: "ChunkingManager\n(text splitting)" {
+    style.fill: "#8E24AA"
+    style.font-color: white
+  }
+  fast_think: "FastThinkManager\n(reasoning sessions)" {
+    style.fill: "#8E24AA"
+    style.font-color: white
+  }
+}
+
+llm: "LLM Layer" {
+  style.fill: "#FFEBEE"
+  style.border-radius: 12
+
+  decision: "LLMDecisionEngine\n(Add/Update/Noop/\nLinkExisting/CrossContradict)" {
+    style.fill: "#B71C1C"
+    style.font-color: white
+  }
+  extractor: "MemoryExtractor\n(LLM-based)" {
+    style.fill: "#C62828"
+    style.font-color: white
+  }
+  providers: "Providers\n(Cerebras, OpenAI,\nOllama)" {
+    style.fill: "#D32F2F"
+    style.font-color: white
+  }
+  prompt: "PromptBuilder\n(dynamic cross-user)" {
+    style.fill: "#D32F2F"
+    style.font-color: white
+  }
+}
+
+db: "Database Layer" {
+  style.fill: "#ECEFF1"
+  style.border-radius: 12
+
+  helix_client: "HelixClient\n(HTTP to HelixDB)" {
+    shape: cylinder
+    style.fill: "#37474F"
+    style.font-color: white
+  }
+}
+
+mcp.server -> core.client: "API calls"
+core.client -> tooling.add_pipeline: "add_memory"
+core.client -> tooling.search_mgr: "search_memory"
+tooling.add_pipeline -> mind.search_engine: "Phase 1+2 search"
+tooling.add_pipeline -> llm.decision: "dedup decision"
+tooling.add_pipeline -> llm.extractor: "extract memories"
+tooling.search_mgr -> mind.search_engine: "scope routing"
+mind.search_engine -> db.helix_client: "HQL queries"
+llm.decision -> llm.providers: "LLM call"
+llm.extractor -> llm.providers: "LLM call"
+mind.search_engine -> mind.entity
+mind.search_engine -> mind.reasoning
+tooling.add_pipeline -> mind.ontology: "concept mapping"
+tooling.add_pipeline -> mind.chunking: "chunk large texts"
+mcp.server -> mind.fast_think: "FastThink tools"

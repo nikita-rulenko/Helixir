@@ -46,7 +46,8 @@ N::Memory {
   metadata: String DEFAULT "{}",
   is_deleted: I64 DEFAULT 0,
   deleted_at: String DEFAULT "",
-  deleted_by: String DEFAULT ""
+  deleted_by: String DEFAULT "",
+  user_count: I64 DEFAULT 1
 }
 N::Entity {
   entity_id: String,

@@ -25,6 +25,8 @@ pub struct SearchMemoryParams {
     pub temporal_days: Option<f64>,
     #[schemars(description = "Override graph depth")]
     pub graph_depth: Option<i32>,
+    #[schemars(description = "Search scope: 'personal' (only this user), 'collective' (all users, ranked by consensus), 'all' (combined). Default: 'personal'")]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]

@@ -1,0 +1,52 @@
+direction: right
+
+title: {
+  label: "Helixir-rs — C4 System Context"
+  near: top-center
+  shape: text
+  style.font-size: 28
+  style.bold: true
+}
+
+cursor: "Cursor IDE\n[AI Code Editor]" {
+  shape: person
+  style.fill: "#08427B"
+  style.font-color: white
+}
+
+helixir: "Helixir-rs\n[MCP Memory Server]\nPersistent memory system\nfor AI agents" {
+  style.fill: "#1168BD"
+  style.font-color: white
+  style.border-radius: 12
+}
+
+helixdb: "HelixDB v2.3.3\n[Graph-Vector Database]\nDocker on VM 192.168.50.11" {
+  shape: cylinder
+  style.fill: "#999999"
+  style.font-color: white
+}
+
+localai: "LocalAI\n[Embedding Service]\nnomic-embed-text-v1.5\n192.168.50.2:8080" {
+  shape: cloud
+  style.fill: "#999999"
+  style.font-color: white
+}
+
+cerebras: "Cerebras API\n[LLM Provider]\ngpt-oss-120b" {
+  shape: cloud
+  style.fill: "#999999"
+  style.font-color: white
+}
+
+cursor -> helixir: "MCP Protocol\n(stdio)" {
+  style.stroke: "#0077FF"
+}
+helixir -> helixdb: "HQL over HTTP\n:6969" {
+  style.stroke: "#438DD5"
+}
+helixir -> localai: "OpenAI-compatible\nEmbedding API" {
+  style.stroke: "#438DD5"
+}
+helixir -> cerebras: "LLM generation\n(decisions, extraction)" {
+  style.stroke: "#438DD5"
+}

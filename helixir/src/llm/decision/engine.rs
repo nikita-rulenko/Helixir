@@ -132,4 +132,99 @@ mod tests {
         assert_eq!(supersede.operation, MemoryOperation::Supersede);
         assert_eq!(supersede.supersedes_memory_id, Some("mem_old".to_string()));
     }
+
+    #[test]
+    fn test_link_existing_builder() {
+        let link = MemoryDecision::link_existing("mem_shared", 90, "same fact from different user");
+        assert_eq!(link.operation, MemoryOperation::LinkExisting);
+        assert_eq!(link.link_to_memory_id, Some("mem_shared".to_string()));
+        assert_eq!(link.confidence, 90);
+        assert!(link.target_memory_id.is_none());
+        assert!(link.conflict_type.is_none());
+    }
+
+    #[test]
+    fn test_cross_contradict_builder() {
+        let cc = MemoryDecision::cross_contradict(
+            "mem_other", "preference", 85, "opposing preferences"
+        );
+        assert_eq!(cc.operation, MemoryOperation::CrossContradict);
+        assert_eq!(cc.contradicts_memory_id, Some("mem_other".to_string()));
+        assert_eq!(cc.conflict_type, Some("preference".to_string()));
+        assert_eq!(cc.confidence, 85);
+        assert!(cc.link_to_memory_id.is_none());
+    }
+
+    #[test]
+    fn test_similar_memory_cross_user_fields() {
+        let personal = SimilarMemory {
+            id: "mem_1".to_string(),
+            content: "test".to_string(),
+            score: 0.9,
+            created_at: None,
+            user_id: None,
+            is_cross_user: false,
+        };
+        assert!(!personal.is_cross_user);
+
+        let cross = SimilarMemory {
+            id: "mem_2".to_string(),
+            content: "test".to_string(),
+            score: 0.85,
+            created_at: None,
+            user_id: Some("other_user".to_string()),
+            is_cross_user: true,
+        };
+        assert!(cross.is_cross_user);
+        assert_eq!(cross.user_id, Some("other_user".to_string()));
+    }
+
+    #[test]
+    fn test_prompt_includes_cross_user_section() {
+        use super::super::prompt::build_decision_prompt;
+
+        let cross_memories = vec![SimilarMemory {
+            id: "mem_other".to_string(),
+            content: "I prefer dark mode".to_string(),
+            score: 0.88,
+            created_at: Some("2025-01-01T00:00:00Z".to_string()),
+            user_id: Some("user_b".to_string()),
+            is_cross_user: true,
+        }];
+
+        let prompt = build_decision_prompt(
+            "I prefer light mode",
+            &cross_memories,
+            "user_a",
+        );
+
+        assert!(prompt.contains("LINK_EXISTING"));
+        assert!(prompt.contains("CROSS_CONTRADICT"));
+        assert!(prompt.contains("DIFFERENT USER"));
+        assert!(prompt.contains("link_to_memory_id"));
+    }
+
+    #[test]
+    fn test_prompt_no_cross_user_section_for_personal() {
+        use super::super::prompt::build_decision_prompt;
+
+        let personal_memories = vec![SimilarMemory {
+            id: "mem_mine".to_string(),
+            content: "Rust is my favorite language".to_string(),
+            score: 0.9,
+            created_at: None,
+            user_id: None,
+            is_cross_user: false,
+        }];
+
+        let prompt = build_decision_prompt(
+            "Rust is great",
+            &personal_memories,
+            "user_a",
+        );
+
+        assert!(!prompt.contains("LINK_EXISTING"));
+        assert!(!prompt.contains("CROSS_CONTRADICT"));
+        assert!(!prompt.contains("DIFFERENT USER"));
+    }
 }

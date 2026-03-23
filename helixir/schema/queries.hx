@@ -540,3 +540,29 @@ QUERY countUserMemories(user_id: String) =>
 QUERY searchByContextTag(tag: String, limit: I64) =>
   memories <- N<Memory>::WHERE(_::{context_tags}::EQ(tag))::RANGE(0, limit)
   RETURN memories
+
+QUERY getMemoryUsers(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  users <- memory::In<HAS_MEMORY>
+  RETURN users
+
+QUERY updateMemoryUserCount(memory_id: String, user_count: I64, updated_at: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ user_count: user_count, updated_at: updated_at })
+  RETURN updated
+
+QUERY checkUserMemoryLink(user_id: String, memory_id: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  memories <- user::Out<HAS_MEMORY>
+  RETURN memories
+
+QUERY getMemoryContradictions(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  contradicts_out <- memory::Out<CONTRADICTS>
+  contradicts_in <- memory::In<CONTRADICTS>
+  RETURN contradicts_out, contradicts_in
+
+QUERY globalVectorSearch(query_vector: [F64], limit: I64) =>
+  embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
+  memories <- embeddings::In<HAS_EMBEDDING>
+  RETURN memories

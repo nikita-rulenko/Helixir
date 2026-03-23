@@ -78,6 +78,14 @@ impl Default for SearchEngineConfig {
 }
 
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ControversyInfo {
+    pub conflicting_memory_id: String,
+    pub conflicting_content: String,
+    pub conflicting_user_id: String,
+    pub conflict_type: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct UnifiedSearchResult {
     pub memory_id: String,
@@ -86,6 +94,8 @@ pub struct UnifiedSearchResult {
     pub method: String,
     pub metadata: HashMap<String, serde_json::Value>,
     pub created_at: String,
+    pub user_count: Option<u32>,
+    pub controversy: Option<ControversyInfo>,
 }
 
 pub struct SearchEngine {
@@ -121,6 +131,7 @@ impl SearchEngine {
         limit: usize,
         mode: &str,
         temporal_days: Option<f64>,
+        scope: &str,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
         
         let query_preview: String = query.chars().take(30).collect();
@@ -134,10 +145,15 @@ impl SearchEngine {
             let millis = (days * 24.0 * 60.0 * 60.0 * 1000.0) as i64;
             Utc::now() - Duration::milliseconds(millis)
         });
+
+        let effective_user_id: Option<&str> = match scope {
+            "collective" | "all" => None,
+            _ => Some(user_id),
+        };
         
         info!(
-            "SearchEngine.search: query='{}...', user={}, mode={}, limit={}, temporal_days={:?}", 
-            query_preview, user_id, mode, limit, effective_temporal_days
+            "SearchEngine.search: query='{}...', user={}, mode={}, limit={}, scope={}, temporal_days={:?}", 
+            query_preview, user_id, mode, limit, scope, effective_temporal_days
         );
 
         let results = match mode.to_lowercase().as_str() {
@@ -145,8 +161,8 @@ impl SearchEngine {
                 
                 if let Some(ref traversal) = self.smart_traversal {
                     debug!(
-                        "Using SmartTraversalV2 for mode={}, temporal_cutoff={:?}", 
-                        mode, temporal_cutoff
+                        "Using SmartTraversalV2 for mode={}, temporal_cutoff={:?}, scope={}", 
+                        mode, temporal_cutoff, scope
                     );
                     let config = SearchConfig {
                         vector_top_k: limit,
@@ -156,7 +172,7 @@ impl SearchEngine {
                         ..Default::default()
                     };
                     let traversal_results = traversal
-                        .search(query, query_embedding, Some(user_id), config, temporal_cutoff)
+                        .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
                         .await
                         .unwrap_or_default();
                     
@@ -169,19 +185,21 @@ impl SearchEngine {
                             method: format!("smart_v2_{}", mode),
                             metadata: r.metadata.unwrap_or_default(),
                             created_at: r.created_at.unwrap_or_default(),
+                            user_count: None,
+                            controversy: None,
                         })
                         .collect()
                 } else {
                     
-                    self.vector_search_unified(query, Some(user_id), limit).await?
+                    self.vector_search_unified(query, effective_user_id, limit).await?
                 }
             }
             "deep" => {
                 
                 if let Some(ref traversal) = self.smart_traversal {
                     debug!(
-                        "Using SmartTraversalV2 for deep search, temporal_cutoff={:?}", 
-                        temporal_cutoff
+                        "Using SmartTraversalV2 for deep search, temporal_cutoff={:?}, scope={}", 
+                        temporal_cutoff, scope
                     );
                     let config = SearchConfig {
                         vector_top_k: limit * 2,
@@ -190,7 +208,7 @@ impl SearchEngine {
                         ..Default::default()
                     };
                     let traversal_results = traversal
-                        .search(query, query_embedding, Some(user_id), config, temporal_cutoff)
+                        .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
                         .await
                         .unwrap_or_default();
                     
@@ -204,16 +222,18 @@ impl SearchEngine {
                             method: "smart_v2_deep".to_string(),
                             metadata: r.metadata.unwrap_or_default(),
                             created_at: r.created_at.unwrap_or_default(),
+                            user_count: None,
+                            controversy: None,
                         })
                         .collect()
                 } else {
-                    self.vector_search_unified(query, Some(user_id), limit).await?
+                    self.vector_search_unified(query, effective_user_id, limit).await?
                 }
             }
             "full" => {
                 
                 if let Some(ref traversal) = self.smart_traversal {
-                    debug!("Using SmartTraversalV2 for full mode (no temporal filter)");
+                    debug!("Using SmartTraversalV2 for full mode (no temporal filter), scope={}", scope);
                     let config = SearchConfig {
                         vector_top_k: limit * 2,
                         graph_depth: 4,
@@ -221,7 +241,7 @@ impl SearchEngine {
                         ..Default::default()
                     };
                     let traversal_results = traversal
-                        .search(query, query_embedding, Some(user_id), config, None)
+                        .search(query, query_embedding, effective_user_id, config, None)
                         .await
                         .unwrap_or_default();
                     
@@ -235,6 +255,8 @@ impl SearchEngine {
                             method: "smart_v2_full".to_string(),
                             metadata: r.metadata.unwrap_or_default(),
                             created_at: r.created_at.unwrap_or_default(),
+                            user_count: None,
+                            controversy: None,
                         })
                         .collect()
                 } else {
@@ -245,12 +267,85 @@ impl SearchEngine {
             _ => {
                 
                 debug!("Unknown mode '{}', falling back to vector search", mode);
-                self.vector_search_unified(query, Some(user_id), limit).await?
+                self.vector_search_unified(query, effective_user_id, limit).await?
             }
         };
 
-        info!("SearchEngine.search complete: {} results", results.len());
-        Ok(results)
+        let mut final_results = results;
+
+        if (scope == "collective" || scope == "all") && !final_results.is_empty() {
+            for result in &mut final_results {
+                if let Ok(user_count) = self.fetch_memory_user_count(&result.memory_id).await {
+                    result.user_count = Some(user_count);
+                }
+                if let Ok(controversy) = self.fetch_controversy(&result.memory_id, user_id).await {
+                    result.controversy = controversy;
+                }
+            }
+        }
+
+        info!("SearchEngine.search complete: {} results (scope={})", final_results.len(), scope);
+        Ok(final_results)
+    }
+
+    async fn fetch_memory_user_count(&self, memory_id: &str) -> Result<u32, SearchError> {
+        #[derive(serde::Deserialize)]
+        struct UsersResult {
+            #[serde(default)]
+            users: Vec<serde_json::Value>,
+        }
+
+        let result: UsersResult = self.client
+            .execute_query("getMemoryUsers", &serde_json::json!({"memory_id": memory_id}))
+            .await
+            .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
+
+        Ok(result.users.len().max(1) as u32)
+    }
+
+    async fn fetch_controversy(
+        &self,
+        memory_id: &str,
+        current_user_id: &str,
+    ) -> Result<Option<ControversyInfo>, SearchError> {
+        #[derive(serde::Deserialize)]
+        struct ContradictionsResult {
+            #[serde(default)]
+            contradicts_out: Vec<ContradictedMemory>,
+            #[serde(default)]
+            contradicts_in: Vec<ContradictedMemory>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ContradictedMemory {
+            #[serde(default)]
+            memory_id: String,
+            #[serde(default)]
+            content: String,
+            #[serde(default)]
+            user_id: String,
+        }
+
+        let result: ContradictionsResult = self.client
+            .execute_query("getMemoryContradictions", &serde_json::json!({"memory_id": memory_id}))
+            .await
+            .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
+
+        let all_contradictions: Vec<&ContradictedMemory> = result.contradicts_out.iter()
+            .chain(result.contradicts_in.iter())
+            .filter(|m| !m.memory_id.is_empty() && m.user_id != current_user_id)
+            .collect();
+
+        if let Some(conflict) = all_contradictions.first() {
+            Ok(Some(ControversyInfo {
+                conflicting_memory_id: conflict.memory_id.clone(),
+                conflicting_content: conflict.content.clone(),
+                conflicting_user_id: conflict.user_id.clone(),
+                conflict_type: "preference_conflict".to_string(),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     
@@ -273,6 +368,8 @@ impl SearchEngine {
                 method: "vector".to_string(),
                 metadata: r.metadata,
                 created_at: r.created_at,
+                user_count: None,
+                controversy: None,
             })
             .collect())
     }

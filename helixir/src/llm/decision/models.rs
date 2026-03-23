@@ -20,6 +20,10 @@ pub enum MemoryOperation {
     Supersede,
     
     Contradict,
+
+    LinkExisting,
+
+    CrossContradict,
 }
 
 impl Default for MemoryOperation {
@@ -59,6 +63,12 @@ pub struct MemoryDecision {
     
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relates_to: Option<Vec<(String, String)>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_to_memory_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_type: Option<String>,
 }
 
 impl MemoryDecision {
@@ -73,6 +83,8 @@ impl MemoryDecision {
             supersedes_memory_id: None,
             contradicts_memory_id: None,
             relates_to: None,
+            link_to_memory_id: None,
+            conflict_type: None,
         }
     }
 
@@ -87,6 +99,8 @@ impl MemoryDecision {
             supersedes_memory_id: None,
             contradicts_memory_id: None,
             relates_to: None,
+            link_to_memory_id: None,
+            conflict_type: None,
         }
     }
 
@@ -106,6 +120,8 @@ impl MemoryDecision {
             supersedes_memory_id: None,
             contradicts_memory_id: None,
             relates_to: None,
+            link_to_memory_id: None,
+            conflict_type: None,
         }
     }
 
@@ -124,6 +140,47 @@ impl MemoryDecision {
             supersedes_memory_id: Some(supersedes_id.into()),
             contradicts_memory_id: None,
             relates_to: None,
+            link_to_memory_id: None,
+            conflict_type: None,
+        }
+    }
+
+    pub fn link_existing(
+        memory_id: impl Into<String>,
+        confidence: u8,
+        reasoning: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation: MemoryOperation::LinkExisting,
+            target_memory_id: None,
+            confidence,
+            reasoning: reasoning.into(),
+            merged_content: None,
+            supersedes_memory_id: None,
+            contradicts_memory_id: None,
+            relates_to: None,
+            link_to_memory_id: Some(memory_id.into()),
+            conflict_type: None,
+        }
+    }
+
+    pub fn cross_contradict(
+        memory_id: impl Into<String>,
+        conflict_type: impl Into<String>,
+        confidence: u8,
+        reasoning: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation: MemoryOperation::CrossContradict,
+            target_memory_id: None,
+            confidence,
+            reasoning: reasoning.into(),
+            merged_content: None,
+            supersedes_memory_id: None,
+            contradicts_memory_id: Some(memory_id.into()),
+            relates_to: None,
+            link_to_memory_id: None,
+            conflict_type: Some(conflict_type.into()),
         }
     }
 }
@@ -136,5 +193,9 @@ pub struct SimilarMemory {
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub is_cross_user: bool,
 }
 

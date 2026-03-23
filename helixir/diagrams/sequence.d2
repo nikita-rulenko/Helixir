@@ -1,0 +1,70 @@
+shape: sequence_diagram
+
+cursor: Cursor IDE
+mcp: MCP Server
+client: HelixirClient
+tooling: ToolingManager
+search: SearchEngine
+llm_ext: LLM Extractor
+llm_dec: LLM Decision
+embed: Embedding Service
+db: HelixDB
+
+add_memory: "add_memory flow" {
+  cursor -> mcp: "add_memory(message, user_id)"
+  mcp -> client: "add(message, user_id)"
+  client -> tooling: "add_memory()"
+
+  tooling -> llm_ext: "extract(message)"
+  llm_ext -> tooling: "memories[], entities[], relations[]"
+
+  tooling -> embed: "generate(memory.text)"
+  embed -> tooling: "vector[768]"
+
+  tooling -> search: "search(text, vector, user_id, scope=personal)"
+  search -> db: "smartVectorSearchWithChunks"
+  db -> search: "similar memories"
+  search -> tooling: "UnifiedSearchResult[]"
+
+  tooling -> llm_dec: "decide(new_memory, similar)"
+  llm_dec -> tooling: "MemoryDecision{operation: ADD}"
+
+  tooling -> db: "addMemory + addMemoryEmbedding + linkUserToMemory"
+  db -> tooling: "memory_id"
+
+  tooling -> search: "search(text, vector, user_id, scope=collective)"
+  search -> db: "globalVectorSearch"
+  db -> search: "cross-user matches"
+  search -> tooling: "cross-user results"
+
+  tooling -> llm_dec: "decide(new, cross_user_similar)"
+  llm_dec -> tooling: "{LINK_EXISTING | CROSS_CONTRADICT | NOOP}"
+
+  tooling -> db: "linkUserToMemory / addContradiction"
+
+  tooling -> client: "AddMemoryResult"
+  client -> mcp: "result"
+  mcp -> cursor: "JSON response"
+}
+
+search_memory: "search_memory flow" {
+  cursor -> mcp: "search_memory(query, user_id, scope)"
+  mcp -> client: "search(query, scope)"
+  client -> tooling: "search_memory(scope)"
+  tooling -> embed: "generate(query)"
+  embed -> tooling: "vector[768]"
+
+  tooling -> search: "search(query, vector, scope)"
+  search -> db: "smartVectorSearchWithChunks"
+  db -> search: "memories"
+
+  search -> db: "getMemoryUsers (if collective)"
+  db -> search: "user_count"
+  search -> db: "getMemoryContradictions (if collective)"
+  db -> search: "controversies"
+
+  search -> tooling: "UnifiedSearchResult[] + user_count + controversy"
+  tooling -> client: "SearchMemoryResult[]"
+  client -> mcp: "results"
+  mcp -> cursor: "JSON [{id, content, score, metadata}]"
+}

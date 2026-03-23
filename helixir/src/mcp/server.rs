@@ -91,18 +91,19 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Smart memory search with automatic strategy selection. Modes: 'recent' (4h, fast), 'contextual' (30d, balanced), 'deep' (90d), 'full' (all). Returns: [{memory_id, content, score, metadata}]")]
+    #[tool(description = "Smart memory search with automatic strategy selection. Modes: 'recent' (4h, fast), 'contextual' (30d, balanced), 'deep' (90d), 'full' (all). Scope: 'personal' (this user only), 'collective' (all users, ranked by consensus), 'all' (combined with controversy annotations). Returns: [{memory_id, content, score, metadata}]")]
     async fn search_memory(
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
         let mode = params.mode.unwrap_or_else(|| "recent".to_string());
         let limit = params.limit.map(|l| l as usize);
+        let scope = params.scope.unwrap_or_else(|| "personal".to_string());
 
         let query_preview: String = params.query.chars().take(50).collect();
         info!(
-            "🔍 Searching: '{}' [mode={}, limit={:?}]",
-            query_preview, mode, limit
+            "🔍 Searching: '{}' [mode={}, limit={:?}, scope={}]",
+            query_preview, mode, limit, scope
         );
 
         let results = self.client
@@ -113,6 +114,7 @@ impl HelixirMcpServer {
                 Some(&mode),
                 params.temporal_days,
                 params.graph_depth.map(|d| d as usize),
+                Some(&scope),
             )
             .await
             .map_err(Self::convert_error)?;

@@ -307,7 +307,7 @@ impl RetrievalManager {
         };
 
         let search_results = self.search_engine
-            .search(query, query_embedding, user_id, limit, mode, None)
+            .search(query, query_embedding, user_id, limit, mode, None, "personal")
             .await?;
 
         
