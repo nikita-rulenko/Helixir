@@ -36,7 +36,7 @@ impl ContextDef {
     
     pub fn new(name: String, properties: Option<HashMap<String, serde_json::Value>>) -> Self {
         Self {
-            context_id: format!("ctx_{}", Uuid::new_v4().to_string().replace("-", "")[..12].to_string()),
+            context_id: format!("ctx_{}", &Uuid::new_v4().to_string().replace("-", "")[..12]),
             name,
             properties: properties.unwrap_or_default(),
             created_at: Utc::now(),
@@ -199,13 +199,14 @@ impl ContextManager {
     
     pub async fn get_context_by_name(&self, name: &str) -> Option<ContextDef> {
         
-        let cache = self.context_cache.read();
-        for context in cache.values() {
-            if context.name.eq_ignore_ascii_case(name) {
-                return Some(context.clone());
+        {
+            let cache = self.context_cache.read();
+            for context in cache.values() {
+                if context.name.eq_ignore_ascii_case(name) {
+                    return Some(context.clone());
+                }
             }
         }
-        drop(cache);
 
         
         #[derive(Serialize)]
@@ -268,7 +269,7 @@ impl ContextManager {
     
     pub fn activate_context(&self, user_id: &str, context_id: &str) -> bool {
         let mut active = self.active_contexts.write();
-        let user_contexts = active.entry(user_id.to_string()).or_insert_with(Vec::new);
+        let user_contexts = active.entry(user_id.to_string()).or_default();
         
         if !user_contexts.contains(&context_id.to_string()) {
             user_contexts.push(context_id.to_string());
@@ -322,13 +323,10 @@ impl ContextManager {
                 
                 let memory_contexts: Vec<String> = if memory.context_tags.is_empty() {
                     Vec::new()
+                } else if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
+                    parsed.keys().map(|k| k.to_lowercase()).collect()
                 } else {
-                    
-                    if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
-                        parsed.keys().map(|k| k.to_lowercase()).collect()
-                    } else {
-                        vec![memory.context_tags.to_lowercase()]
-                    }
+                    vec![memory.context_tags.to_lowercase()]
                 };
 
                 if match_all {
@@ -354,12 +352,10 @@ impl ContextManager {
 
         let memory_contexts: Vec<String> = if memory.context_tags.is_empty() {
             Vec::new()
+        } else if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
+            parsed.keys().map(|k| k.to_lowercase()).collect()
         } else {
-            if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
-                parsed.keys().map(|k| k.to_lowercase()).collect()
-            } else {
-                vec![memory.context_tags.to_lowercase()]
-            }
+            vec![memory.context_tags.to_lowercase()]
         };
 
         if memory_contexts.is_empty() {

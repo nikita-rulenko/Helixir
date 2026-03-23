@@ -566,3 +566,193 @@ QUERY globalVectorSearch(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   memories <- embeddings::In<HAS_EMBEDDING>
   RETURN memories
+
+QUERY addUserToSession(user_id: String, session_id: String, role: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
+  link <- AddE<IN_SESSION>({ role: role })::From(user)::To(session)
+  RETURN link
+
+QUERY getUserSessions(user_id: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  sessions <- user::Out<IN_SESSION>
+  RETURN sessions
+
+QUERY getSessionUsers(session_id: String) =>
+  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
+  users <- session::In<IN_SESSION>
+  RETURN users
+
+QUERY linkMemoryToSession(memory_id: String, session_id: String, sequence: I64) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
+  link <- AddE<CREATED_IN>({ sequence: sequence })::From(memory)::To(session)
+  RETURN link
+
+QUERY getSessionMemories(session_id: String) =>
+  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
+  memories <- session::In<CREATED_IN>
+  RETURN memories
+
+QUERY getMemorySession(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  session <- memory::Out<CREATED_IN>
+  RETURN session
+
+QUERY addAgent(agent_id: String, name: String, role: String, capabilities: String, agent_version: String, created_at: String) =>
+  agent <- AddN<Agent>({ agent_id: agent_id, name: name, role: role, capabilities: capabilities, agent_version: agent_version, created_at: created_at })
+  RETURN agent
+
+QUERY getAgent(agent_id: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  RETURN agent
+
+QUERY linkAgentToMemory(agent_id: String, memory_id: String, timestamp: String, method: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  link <- AddE<AGENT_CREATED>({ timestamp: timestamp, method: method })::From(agent)::To(memory)
+  RETURN link
+
+QUERY getAgentMemories(agent_id: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  memories <- agent::Out<AGENT_CREATED>
+  RETURN memories
+
+QUERY getMemoryAgent(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  agent <- memory::In<AGENT_CREATED>
+  RETURN agent
+
+QUERY addConceptIsA(child_id: String, parent_id: String, inheritance_type: String) =>
+  child <- N<Concept>::WHERE(_::{concept_id}::EQ(child_id))::FIRST
+  parent <- N<Concept>::WHERE(_::{concept_id}::EQ(parent_id))::FIRST
+  link <- AddE<IS_A>({ inheritance_type: inheritance_type })::From(child)::To(parent)
+  RETURN link
+
+QUERY getConceptParentsIsA(concept_id: String) =>
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  parents <- concept::Out<IS_A>
+  RETURN parents
+
+QUERY getConceptChildrenIsA(concept_id: String) =>
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  children <- concept::In<IS_A>
+  RETURN children
+
+QUERY addConceptRelation(from_id: String, to_id: String, relation_type: String) =>
+  from_concept <- N<Concept>::WHERE(_::{concept_id}::EQ(from_id))::FIRST
+  to_concept <- N<Concept>::WHERE(_::{concept_id}::EQ(to_id))::FIRST
+  link <- AddE<CONCEPT_RELATED_TO>({ relation_type: relation_type })::From(from_concept)::To(to_concept)
+  RETURN link
+
+QUERY getRelatedConcepts(concept_id: String) =>
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  related <- concept::Out<CONCEPT_RELATED_TO>
+  RETURN related
+
+QUERY linkConceptToExample(concept_id: String, example_id: String) =>
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  example <- N<CodeExample>::WHERE(_::{example_id}::EQ(example_id))::FIRST
+  link <- AddE<CONCEPT_HAS_EXAMPLE>::From(concept)::To(example)
+  RETURN link
+
+QUERY getConceptExamples(concept_id: String) =>
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  examples <- concept::Out<CONCEPT_HAS_EXAMPLE>
+  RETURN examples
+
+QUERY addEntityRelation(from_id: String, to_id: String, relationship_type: String, strength: I64, bidirectional: I64) =>
+  from_entity <- N<Entity>::WHERE(_::{entity_id}::EQ(from_id))::FIRST
+  to_entity <- N<Entity>::WHERE(_::{entity_id}::EQ(to_id))::FIRST
+  link <- AddE<RELATES_TO>({ relationship_type: relationship_type, strength: strength, bidirectional: bidirectional })::From(from_entity)::To(to_entity)
+  RETURN link
+
+QUERY getEntityRelations(entity_id: String) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
+  outgoing <- entity::Out<RELATES_TO>
+  incoming <- entity::In<RELATES_TO>
+  RETURN outgoing, incoming
+
+QUERY addEntityPartOf(part_id: String, whole_id: String) =>
+  part <- N<Entity>::WHERE(_::{entity_id}::EQ(part_id))::FIRST
+  whole <- N<Entity>::WHERE(_::{entity_id}::EQ(whole_id))::FIRST
+  link <- AddE<PART_OF>::From(part)::To(whole)
+  RETURN link
+
+QUERY getEntityParts(entity_id: String) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
+  parts <- entity::In<PART_OF>
+  RETURN parts
+
+QUERY getEntityWhole(part_id: String) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(part_id))::FIRST
+  whole <- entity::Out<PART_OF>
+  RETURN whole
+
+QUERY addMemoryValidIn(memory_id: String, context_id: String, priority: I64, exclusive: I64) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
+  link <- AddE<VALID_IN>({ priority: priority, exclusive: exclusive })::From(memory)::To(context)
+  RETURN link
+
+QUERY getMemoryValidContexts(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  contexts <- memory::Out<VALID_IN>
+  RETURN contexts
+
+QUERY getContextValidMemories(context_id: String) =>
+  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
+  memories <- context::In<VALID_IN>
+  RETURN memories
+
+QUERY addConstraint(constraint_id: String, rule: String, constraint_type: String, priority: I64, active: I64) =>
+  constraint <- AddN<Constraint>({ constraint_id: constraint_id, rule: rule, constraint_type: constraint_type, priority: priority, active: active })
+  RETURN constraint
+
+QUERY addConstraintToContext(constraint_id: String, context_id: String) =>
+  constraint <- N<Constraint>::WHERE(_::{constraint_id}::EQ(constraint_id))::FIRST
+  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
+  link <- AddE<APPLIES_IN>::From(constraint)::To(context)
+  RETURN link
+
+QUERY getContextConstraints(context_id: String) =>
+  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
+  constraints <- context::In<APPLIES_IN>
+  RETURN constraints
+
+QUERY addMemoryHistoryEvent(memory_id: String, event_id: String, action: String, old_value: String, new_value: String, timestamp: String, actor: String) =>
+  event <- AddN<HistoryEvent>({ event_id: event_id, memory_id: memory_id, action: action, old_value: old_value, new_value: new_value, timestamp: timestamp, actor: actor })
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  link <- AddE<HAS_HISTORY>::From(memory)::To(event)
+  RETURN event
+
+QUERY getMemoryHistory(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  history <- memory::Out<HAS_HISTORY>
+  RETURN history
+
+QUERY linkDocChunkToConcept(chunk_id: String, concept_id: String, relevance_score: F64) =>
+  chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  link <- AddE<CHUNK_MENTIONS_CONCEPT>({ relevance_score: relevance_score })::From(chunk)::To(concept)
+  RETURN link
+
+QUERY getChunkConcepts(chunk_id: String) =>
+  chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
+  concepts <- chunk::Out<CHUNK_MENTIONS_CONCEPT>
+  RETURN concepts
+
+QUERY addErrorCode(code: String, title: String, description: String, solution: String) =>
+  error <- AddN<ErrorCode>({ code: code, title: title, description: description, solution: solution })
+  RETURN error
+
+QUERY linkErrorToConcept(code: String, concept_id: String) =>
+  error <- N<ErrorCode>::WHERE(_::{code}::EQ(code))::FIRST
+  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
+  link <- AddE<ERROR_REFERENCES_CONCEPT>::From(error)::To(concept)
+  RETURN link
+
+QUERY getErrorConcepts(code: String) =>
+  error <- N<ErrorCode>::WHERE(_::{code}::EQ(code))::FIRST
+  concepts <- error::Out<ERROR_REFERENCES_CONCEPT>
+  RETURN concepts

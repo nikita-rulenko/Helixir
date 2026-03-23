@@ -201,8 +201,8 @@ mod tests {
 
     #[test]
     fn test_client_from_env() {
-        std::env::set_var("HELIX_HOST", "localhost");
-        std::env::set_var("HELIX_PORT", "6969");
+        unsafe { std::env::set_var("HELIX_HOST", "localhost"); }
+        unsafe { std::env::set_var("HELIX_PORT", "6969"); }
         
         let client = HelixClient::from_env();
         assert!(client.is_ok());

@@ -15,7 +15,9 @@ pub use scoring::{
     calculate_temporal_freshness,
     calculate_graph_score,
     calculate_vector_combined_score,
+    calculate_vector_combined_score_weighted,
     calculate_graph_combined_score,
+    calculate_graph_combined_score_weighted,
 };
 
 

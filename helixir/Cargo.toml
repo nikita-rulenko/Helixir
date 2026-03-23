@@ -74,6 +74,7 @@ petgraph = "0.8"
 
 # JSON Schema (for MCP tool parameters)
 schemars = "1.0"
+moka = { version = "0.12.15", features = ["future"] }
 
 # MCP (Model Context Protocol)
 # TODO: Add mcp-rust-sdk when available or implement manually

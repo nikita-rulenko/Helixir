@@ -3,11 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 use tracing::{info, debug};
 
+use crate::utils::nullable_string;
 use super::helpers::safe_truncate;
-
-fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
-}
 use super::types::{SearchMemoryResult, ToolingError};
 use super::ToolingManager;
 
@@ -47,6 +44,8 @@ impl ToolingManager {
                     .await?
             }
         };
+
+        self.emit_search_executed(user_id, mode, results.len()).await;
 
         info!("Found {} memories via SearchEngine [method={}, scope={}]",
             results.len(),
@@ -263,8 +262,7 @@ impl ToolingManager {
             }
         }
 
-        if results.is_empty() && concept_type.is_some() {
-            let ct = concept_type.unwrap();
+        if let Some(ct) = concept_type.filter(|_| results.is_empty()) {
             debug!("Vector search yielded no concept matches for type='{}', falling back to getUserMemories", ct);
 
             #[derive(serde::Deserialize)]

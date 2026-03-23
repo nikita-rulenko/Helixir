@@ -68,6 +68,17 @@ impl Bm25Search {
         limit: usize,
         min_score: f64,
     ) -> Vec<SearchResult> {
+        Self::search_with_params(query, documents, limit, min_score, 1.5, 0.75)
+    }
+
+    pub fn search_with_params(
+        query: &str,
+        documents: &[(String, String)],
+        limit: usize,
+        min_score: f64,
+        k1: f64,
+        b: f64,
+    ) -> Vec<SearchResult> {
         if documents.is_empty() {
             return Vec::new();
         }
@@ -89,7 +100,7 @@ impl Bm25Search {
             .iter()
             .zip(doc_tokens.iter())
             .filter_map(|((memory_id, content), tokens)| {
-                let score = Self::calculate_score(&query_tokens, tokens, avg_doc_length, 1.5, 0.75);
+                let score = Self::calculate_score(&query_tokens, tokens, avg_doc_length, k1, b);
                 if score >= min_score {
                     Some(SearchResult {
                         memory_id: memory_id.clone(),

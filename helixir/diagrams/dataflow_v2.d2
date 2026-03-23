@@ -1,0 +1,85 @@
+direction: down
+
+title: |md
+  # Helixir-rs Data Flow
+| {
+  near: top-center
+  shape: text
+}
+
+ingestion: Ingestion {
+  input: User Message {shape: page}
+  guard: "Truncation\n(≤15 facts)"
+  extract: "LLM Extraction\n→ memories · entities\n→ relations · context"
+  embed: "Batch Embedding\n768-dim vectors"
+
+  input -> guard -> extract -> embed
+}
+
+dedup: Deduplication {
+  phase1: "Phase 1\nPersonal Search"
+  decision: "LLM Decision\n(retry + validation)" {
+    tooltip: "ADD | UPDATE | NOOP | SUPERSEDE | CONTRADICT"
+  }
+  dup_check: "Exact\nduplicate?" {shape: diamond}
+
+  phase1 -> decision -> dup_check
+}
+
+storage: Persistence {
+  store: "Store Memory\n+ Embedding\n+ User Link\n+ History"
+  db: "HelixDB v2.3.3\n117 HQL queries" {shape: cylinder}
+
+  store -> db
+}
+
+hive: Hive Layer {
+  cache: "Moka Cache\nSHA-256 · TTL 60s"
+  phase2: "Phase 2\nGlobal Search"
+  cross: "Cross-User Decision\nLink | Contradict"
+
+  cache -> phase2: miss
+  phase2 -> cross
+}
+
+enrichment: Enrichment {
+  grid-columns: 3
+  entities: "Entity Linking\n+ Relations"
+  concepts: "Ontology Mapping\n7 concept types"
+  reasoning: "Reasoning Edges\nIMPLIES · BECAUSE\nCONTRADICTS · SUPPORTS"
+  context: "Context Linking\nVALID_IN · APPLIES_IN"
+  agent: "Agent Tracking\nAGENT_CREATED\nIN_SESSION"
+  history: "History Events\nHAS_HISTORY"
+}
+
+events: EventBus {
+  style.double-border: true
+  bus: "memory.added · updated\nsuperseded · deduplicated\nsearch.executed\nllm.decision.made"
+}
+
+result: "AddMemoryResult\nmemories · entities\nrelations · timing" {shape: page}
+
+ingestion.embed -> dedup.phase1: vectors
+dedup.decision -> storage.store: "ADD / UPDATE"
+dedup.decision -> result: "NOOP" {style.stroke-dash: 3}
+dedup.dup_check -> hive.cache: "no dup → Phase 2"
+dedup.dup_check -> result: "dup → skip" {style.stroke-dash: 3}
+
+storage.store -> enrichment.entities
+storage.store -> enrichment.concepts
+storage.store -> enrichment.reasoning
+storage.store -> enrichment.context
+storage.store -> enrichment.agent
+storage.store -> enrichment.history
+
+enrichment.entities -> storage.db
+enrichment.concepts -> storage.db
+enrichment.reasoning -> storage.db
+enrichment.context -> storage.db
+enrichment.agent -> storage.db
+enrichment.history -> storage.db
+
+hive.cross -> storage.db: "link / contradict"
+
+storage.store -> events.bus: emit {style.stroke-dash: 3}
+storage.db -> result

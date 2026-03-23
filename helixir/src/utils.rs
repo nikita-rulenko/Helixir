@@ -1,4 +1,9 @@
 
+use serde::{Deserialize, Deserializer};
+
+pub fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
+}
 
 #[inline]
 pub fn safe_truncate(s: &str, max_chars: usize) -> String {

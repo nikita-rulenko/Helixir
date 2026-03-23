@@ -126,8 +126,7 @@ Decide what to do with the new memory. Choose ONE operation:
 - SUPERSEDE for temporal evolution, UPDATE for adding details
 - CONTRADICT keeps both, DELETE removes one
 - Be conservative with DELETE
-- Use NOOP to avoid duplicates
-- For cross-user memories: LINK_EXISTING when same fact, CROSS_CONTRADICT when opposing views"#
+- Use NOOP to avoid duplicates"#
     )
 }
 

@@ -113,6 +113,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "Unknown provider")]
     fn test_unknown_provider_panics() {
-        LlmProviderFactory::create("unknown", "model", None, None, 0.5);
+        let _ = LlmProviderFactory::create("unknown", "model", None, None, 0.5);
     }
 }

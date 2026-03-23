@@ -29,8 +29,19 @@ pub struct ExtractedMemory {
     pub importance: i32,
     
     pub entities: Vec<String>,
+
+    #[serde(default)]
+    pub context: Option<String>,
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractedEntityRelation {
+    pub target_entity: String,
+    pub relationship_type: String,
+    #[serde(default = "default_strength_i64")]
+    pub strength: i64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntity {
@@ -41,6 +52,9 @@ pub struct ExtractedEntity {
     
     #[serde(rename = "type")]
     pub entity_type: String,
+
+    #[serde(default)]
+    pub relations: Option<Vec<ExtractedEntityRelation>>,
 }
 
 
@@ -68,6 +82,7 @@ pub struct ExtractedRelation {
 }
 
 fn default_strength() -> i32 { 80 }
+fn default_strength_i64() -> i64 { 80 }
 fn default_confidence() -> i32 { 80 }
 
 
@@ -160,9 +175,15 @@ Output JSON with this structure:
       "memory_type": "fact|preference|skill|goal|opinion|experience|achievement",
       "certainty": 80,
       "importance": 50,
-      "entities": ["entity_id1", "entity_id2"]
+      "entities": ["entity_id1", "entity_id2"],
+      "context": "work|personal|health|project:name|conversation:topic"
     }
-  ]"#,
+  ]
+
+For each memory, optionally include "context" — the situational context this memory applies in:
+- Examples: "work", "personal", "health", "project:name", "conversation:topic"
+- Only set if the context is clearly identifiable from the text
+- Omit or set to null if the context is ambiguous or universal"#,
         );
 
         if extract_entities {
@@ -172,9 +193,22 @@ Output JSON with this structure:
     {
       "id": "unique_id",
       "name": "Entity Name",
-      "type": "person|organization|location|concept|system"
+      "type": "person|organization|location|concept|system",
+      "relations": [
+        {
+          "target_entity": "other_entity_id",
+          "relationship_type": "works_at|part_of|collaborates_with|uses|related_to",
+          "strength": 80
+        }
+      ]
     }
-  ]"#,
+  ]
+
+For each entity, optionally include "relations" — connections to OTHER entities mentioned in the same text:
+- target_entity: the "id" of the related entity (must reference another entity in this extraction)
+- relationship_type: type of relationship (works_at, part_of, collaborates_with, uses, created_by, belongs_to, located_in, related_to, etc.)
+- strength: 1-100 confidence in the relationship
+- Omit "relations" if no inter-entity relationships are evident"#,
             );
         } else {
             prompt.push_str(r#",
@@ -204,7 +238,15 @@ Relation types:
 - CONTRADICTS: memory A conflicts with memory B
 - SUPPORTS: memory A provides evidence for memory B
 
-Always look for causal and logical connections between extracted memories. If the text contains cause-effect, reasoning, or contradictions, you MUST extract them as relations."#);
+Always look for causal and logical connections between extracted memories. If the text contains cause-effect, reasoning, or contradictions, you MUST extract them as relations.
+
+CRITICAL relation extraction rules:
+- If memory A is the REASON for memory B → relation_type: "BECAUSE"
+- If memory A logically LEADS TO memory B → relation_type: "IMPLIES"
+- If memory A CONFLICTS with memory B → relation_type: "CONTRADICTS"
+- If memory A provides EVIDENCE for memory B → relation_type: "SUPPORTS"
+- Even for 2 memories, check if there is a logical connection between them.
+- Use from_memory_index and to_memory_index (0-based indices into the memories array)."#);
         } else {
             prompt.push_str(r#",
   "relations": []"#);
@@ -214,11 +256,15 @@ Always look for causal and logical connections between extracted memories. If th
 }
 
 Rules:
-- Extract atomic, standalone facts. Each memory must be self-contained.
+- Extract atomic, standalone facts. Each memory must be self-contained and express EXACTLY ONE idea.
+- CRITICAL: If the input contains multiple facts, numbered lists, or compound statements joined by "and"/"also"/"additionally", you MUST split them into separate memories. Example: "I like Rust and Python" → two memories: "I like Rust" and "I like Python".
+- Never merge or consolidate distinct pieces of information into a single memory. More granular = better.
 - Use ALL 7 memory_type values when appropriate. Do not collapse skill/achievement into fact/experience.
 - "skilled at", "can", "able to", "expert in" → always "skill".
 - "achieved", "built", "completed", "finished", "won" → always "achievement".
-- When uncertain between two types, prefer the more specific one (skill > fact, achievement > experience)."#);
+- When uncertain between two types, prefer the more specific one (skill > fact, achievement > experience).
+- Extract entities for EVERY named thing: people, tools, languages, frameworks, systems, projects.
+- If you see causal or logical connections between extracted memories (cause→effect, evidence→conclusion, contradiction), you MUST include them in the "relations" array."#);
 
         prompt
     }
@@ -237,11 +283,13 @@ mod tests {
                 certainty: 90,
                 importance: 70,
                 entities: vec!["rust".to_string()],
+                context: Some("work".to_string()),
             }],
             entities: vec![ExtractedEntity {
                 id: "rust".to_string(),
                 name: "Rust".to_string(),
                 entity_type: "concept".to_string(),
+                relations: None,
             }],
             relations: vec![],
         };

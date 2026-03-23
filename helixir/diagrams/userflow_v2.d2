@@ -1,0 +1,79 @@
+direction: down
+
+title: |md
+  # Helixir-rs User Flow
+| {
+  near: top-center
+  shape: text
+}
+
+start: "Conversation Start" {shape: oval}
+
+check_incomplete: "search_incomplete_thoughts\n(resume timed-out sessions)" {
+  style.stroke-dash: 3
+}
+
+recall: "search_memory\nmode = recent"
+
+has_context: "Context\nfound?" {shape: diamond}
+
+deep_search: "search_memory\nmode = deep / full"
+
+work: "Agent works on task"
+
+need_think: "Complex\ndecision?" {shape: diamond}
+
+fast_think: "FastThink  ·  90s MCP preset" {
+  ft_start: "think_start\n(create session)"
+  ft_add: "think_add\nreasoning · hypothesis\nobservation · question"
+  ft_recall: "think_recall\n(pull from memory)"
+  ft_status: think_status {style.stroke-dash: 3}
+  ft_conclude: think_conclude
+
+  decide: "Save?" {shape: diamond}
+  ft_commit: "think_commit\n→ persist to memory"
+  ft_discard: "think_discard\n→ clear session"
+
+  ft_start -> ft_add
+  ft_add -> ft_recall
+  ft_recall -> ft_add: iterate {style.stroke-dash: 3}
+  ft_add -> ft_status: check {style.stroke-dash: 3}
+  ft_add -> ft_conclude
+  ft_conclude -> decide
+  decide -> ft_commit: yes
+  decide -> ft_discard: no
+}
+
+save: "add_memory\n→ atomic facts\n→ entities + relations\n→ reasoning edges"
+
+concept: "search_by_concept\nskill · preference · goal\nfact · opinion\nexperience · achievement"
+
+chain: "search_reasoning_chain\ncausal · forward\nboth · deep"
+
+graph: "get_memory_graph\nnodes + reasoning edges"
+
+update: "update_memory\nnew content + embedding"
+
+collective: "search_memory\nscope = collective / all\nHive · controversy"
+
+end: "End of Turn" {shape: oval}
+
+start -> check_incomplete {style.stroke-dash: 3}
+start -> recall
+recall -> has_context
+has_context -> work: yes
+has_context -> deep_search: no
+deep_search -> work
+work -> need_think
+need_think -> fast_think: yes
+need_think -> save: no
+fast_think.ft_commit -> save
+fast_think.ft_discard -> work: retry {style.stroke-dash: 3}
+
+work -> concept: "by type" {style.stroke-dash: 3}
+work -> chain: "why?" {style.stroke-dash: 3}
+work -> graph: explore {style.stroke-dash: 3}
+work -> update: fix {style.stroke-dash: 3}
+work -> collective: "cross-user" {style.stroke-dash: 3}
+
+save -> end

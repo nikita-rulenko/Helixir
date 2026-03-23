@@ -89,7 +89,7 @@ impl SearchMode {
 
     
     #[must_use]
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_mode(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "recent" => Self::Recent,
             "contextual" => Self::Contextual,
@@ -102,13 +102,13 @@ impl SearchMode {
 
 impl From<&str> for SearchMode {
     fn from(s: &str) -> Self {
-        Self::from_str(s)
+        Self::parse_mode(s)
     }
 }
 
 impl From<String> for SearchMode {
     fn from(s: String) -> Self {
-        Self::from_str(&s)
+        Self::parse_mode(&s)
     }
 }
 
@@ -205,11 +205,11 @@ mod tests {
 
     #[test]
     fn test_search_mode_from_str() {
-        assert_eq!(SearchMode::from_str("recent"), SearchMode::Recent);
-        assert_eq!(SearchMode::from_str("CONTEXTUAL"), SearchMode::Contextual);
-        assert_eq!(SearchMode::from_str("Deep"), SearchMode::Deep);
-        assert_eq!(SearchMode::from_str("full"), SearchMode::Full);
-        assert_eq!(SearchMode::from_str("unknown"), SearchMode::Recent);
+        assert_eq!(SearchMode::parse_mode("recent"), SearchMode::Recent);
+        assert_eq!(SearchMode::parse_mode("CONTEXTUAL"), SearchMode::Contextual);
+        assert_eq!(SearchMode::parse_mode("Deep"), SearchMode::Deep);
+        assert_eq!(SearchMode::parse_mode("full"), SearchMode::Full);
+        assert_eq!(SearchMode::parse_mode("unknown"), SearchMode::Recent);
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn test_token_cost_estimate() {
         let estimate = estimate_token_cost(SearchMode::Recent, None, None);
-        assert_eq!(estimate.cost_tier, "low");
+        assert_eq!(estimate.cost_tier, "medium");
 
         let estimate = estimate_token_cost(SearchMode::Full, Some(100), Some(4));
         assert!(estimate.total_cost > 10000);

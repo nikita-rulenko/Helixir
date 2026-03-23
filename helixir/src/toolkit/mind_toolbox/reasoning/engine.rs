@@ -349,7 +349,7 @@ impl ReasoningEngine {
                         .map(|n| (n.clone(), ReasoningType::Implies, false))
                         .collect()
                 }
-                "both" | "deep" | _ => {
+                _ => {
                     let mut all = Vec::new();
                     for n in &result.implies_out {
                         all.push((n.clone(), ReasoningType::Implies, false));
@@ -574,7 +574,7 @@ Only output relations with strength >= 60. If no meaningful relation exists, out
             };
 
             if i > 0 {
-                trail.push_str(" ");
+                trail.push(' ');
             }
             trail.push_str(&format!(
                 "[{}] {} [{}]",
@@ -644,6 +644,7 @@ mod tests {
             relation_id: "test".to_string(),
             from_memory_id: "mem_1".to_string(),
             to_memory_id: "mem_2".to_string(),
+            to_memory_content: "test content".to_string(),
             relation_type: ReasoningType::Implies,
             strength: 80,
             reasoning_id: None,
@@ -660,6 +661,7 @@ mod tests {
                 relation_id: "r1".to_string(),
                 from_memory_id: "mem_aaaa".to_string(),
                 to_memory_id: "mem_bbbb".to_string(),
+                to_memory_content: "test content".to_string(),
                 relation_type: ReasoningType::Implies,
                 strength: 90,
                 reasoning_id: None,
@@ -668,13 +670,15 @@ mod tests {
                 relation_id: "r2".to_string(),
                 from_memory_id: "mem_bbbb".to_string(),
                 to_memory_id: "mem_cccc".to_string(),
+                to_memory_content: "test content".to_string(),
                 relation_type: ReasoningType::Because,
                 strength: 85,
                 reasoning_id: None,
             },
         ];
 
-        let client = HelixDB::new(None, None, None);
+        use std::sync::Arc;
+        let client = Arc::new(crate::db::HelixClient::new("localhost", 6969).unwrap());
         let engine = ReasoningEngine::new(client, None, 100);
         let trail = engine.build_reasoning_trail(&relations);
 

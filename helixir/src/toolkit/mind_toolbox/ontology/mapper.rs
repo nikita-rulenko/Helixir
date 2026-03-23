@@ -82,6 +82,12 @@ lazy_static! {
 
 pub struct ConceptMapper;
 
+impl Default for ConceptMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConceptMapper {
     
     #[must_use]
@@ -132,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_map_preference() {
-        let mapper = ConceptMapper::new(HashMap::new());
+        let mapper = ConceptMapper::new();
         let matches = mapper.map_to_concepts("I love programming", 3);
 
         assert!(!matches.is_empty());
@@ -141,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_map_skill() {
-        let mapper = ConceptMapper::new(HashMap::new());
+        let mapper = ConceptMapper::new();
         let matches = mapper.map_to_concepts("I can write Rust code", 3);
 
         assert!(!matches.is_empty());
@@ -153,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_no_match() {
-        let mapper = ConceptMapper::new(HashMap::new());
+        let mapper = ConceptMapper::new();
         let matches = mapper.map_to_concepts("xyz123", 3);
 
         assert!(matches.is_empty());
@@ -161,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive() {
-        let mapper = ConceptMapper::new(HashMap::new());
+        let mapper = ConceptMapper::new();
         let matches1 = mapper.map_to_concepts("I LOVE RUST", 3);
         let matches2 = mapper.map_to_concepts("i love rust", 3);
 

@@ -151,7 +151,7 @@ impl MemoryCrud {
             }
         }
 
-        if let Err(_) = self.client.execute_query::<serde_json::Value, _>("getUser", &serde_json::json!({"user_id": user_id.clone()})).await {
+        if self.client.execute_query::<serde_json::Value, _>("getUser", &serde_json::json!({"user_id": user_id.clone()})).await.is_err() {
             let user_input = AddUserInput { user_id: user_id.clone(), name: user_id.clone() };
             if let Err(e) = self.client.execute_query::<(), _>("addUser", &user_input).await {
                 warn!("Failed to create user {}: {}", user_id, e);

@@ -1,0 +1,73 @@
+direction: down
+
+title: |md
+  # Helixir-rs Components
+| {
+  near: top-center
+  shape: text
+}
+
+mcp: "MCP Layer  ·  v2.0.0" {
+  server: "HelixirMcpServer\n14 tools · 2 prompts\n2 resources"
+  params: "Typed Params\n(per tool)"
+  prompts: "Cognitive Protocol\nMemory Summary"
+}
+
+core: Core {
+  client: "HelixirClient\n(facade)"
+  config: "Config\nSearchThresholds\nmax_facts_per_call" {shape: page}
+  events: "EventBus\n6 event types" {style.double-border: true}
+  modes: "Search Modes\nrecent · contextual\ndeep · full"
+}
+
+tooling: ToolingManager {
+  pipeline: "Add Pipeline\n2-phase dedup\nbatch embed"
+  search_mgr: "Search Router\nscope dispatch"
+  helpers: "Graph Helpers\n13 edge types\nsession · agent\ncontext · history"
+  emitters: "Event Emitters\nmemory · search · llm"
+}
+
+mind: Mind Toolbox {
+  search: "SearchEngine\nSmartTraversalV2\nHybrid · BM25\n+ Moka cache"
+  entity: EntityManager
+  reasoning: "ReasoningEngine\nIMPLIES · BECAUSE\nCONTRADICTS · SUPPORTS"
+  ontology: "OntologyManager\n7 concept types"
+  chunking: ChunkingManager
+  fast_think: "FastThink\nMCP preset · 90s\n150 thoughts"
+}
+
+llm: LLM Layer {
+  decision: "Decision Engine\nretry · validation\nmetrics"
+  extractor: "Memory Extractor\natomization rules\nentity relations"
+  embeddings: "Embeddings\nbatch + single\nfallback chain"
+  providers: "Providers\nCerebras · OpenAI\nOllama"
+}
+
+db: Database {
+  helix: "HelixDB Client\nHTTP → HelixDB\n117 HQL queries" {shape: cylinder}
+}
+
+mcp.server -> core.client: API
+mcp.server -> mind.fast_think: "FastThink (90s)"
+core.client -> tooling.pipeline: add_memory
+core.client -> tooling.search_mgr: search_memory
+core.config -> tooling.pipeline: thresholds {style.stroke-dash: 3}
+core.config -> llm.decision: thresholds {style.stroke-dash: 3}
+
+tooling.pipeline -> llm.extractor: extract
+tooling.pipeline -> llm.embeddings: "batch embed"
+tooling.pipeline -> mind.search: "Phase 1 + 2"
+tooling.pipeline -> llm.decision: decide
+tooling.pipeline -> mind.ontology: concepts
+tooling.pipeline -> mind.reasoning: relations
+tooling.pipeline -> mind.entity: entities
+tooling.pipeline -> mind.chunking: chunk
+tooling.pipeline -> tooling.helpers
+tooling.emitters -> core.events: emit {style.stroke-dash: 3}
+tooling.search_mgr -> mind.search: route
+
+mind.search -> db.helix: HQL
+tooling.helpers -> db.helix: "33 edge types"
+llm.decision -> llm.providers
+llm.extractor -> llm.providers
+llm.embeddings -> llm.providers: "embedding API"

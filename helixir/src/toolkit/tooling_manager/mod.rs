@@ -1,5 +1,6 @@
 mod add_pipeline;
 mod crud;
+mod events;
 mod graph;
 pub(crate) mod helpers;
 mod reasoning;
@@ -12,6 +13,8 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
+use crate::core::config::HelixirConfig;
+use crate::core::events::EventBus;
 use crate::db::HelixClient;
 use crate::llm::decision::LLMDecisionEngine;
 use crate::llm::extractor::LlmExtractor;
@@ -34,6 +37,8 @@ pub struct ToolingManager {
     pub(crate) ontology_manager: parking_lot::RwLock<OntologyManager>,
     pub(crate) reasoning_engine: ReasoningEngine,
     pub(crate) search_engine: SearchEngine,
+    pub(crate) config: HelixirConfig,
+    pub(crate) event_bus: Arc<EventBus>,
 }
 
 impl ToolingManager {
@@ -41,11 +46,18 @@ impl ToolingManager {
         db: Arc<HelixClient>,
         embedder: Arc<EmbeddingGenerator>,
         llm_provider: Arc<dyn LlmProvider>,
+        config: &HelixirConfig,
     ) -> Self {
         info!("ToolingManager initialized with full pipeline");
 
+        let thresholds = &config.search_thresholds;
+
         let extractor = LlmExtractor::new(Arc::clone(&llm_provider));
-        let decision_engine = LLMDecisionEngine::new(Arc::clone(&llm_provider));
+        let decision_engine = LLMDecisionEngine::with_thresholds(
+            Arc::clone(&llm_provider),
+            thresholds.similarity_threshold,
+            thresholds.exact_duplicate_score,
+        );
         let chunking_manager = ChunkingManager::new(
             Arc::clone(&db),
             Some(Arc::clone(&embedder)),
@@ -60,8 +72,12 @@ impl ToolingManager {
         let search_engine = SearchEngine::new(
             Arc::clone(&db),
             Arc::clone(&embedder),
-            SearchEngineConfig::default(),
+            SearchEngineConfig {
+                search_thresholds: config.search_thresholds.clone(),
+                ..SearchEngineConfig::default()
+            },
         );
+        let event_bus = Arc::new(EventBus::new());
 
         Self {
             db,
@@ -74,6 +90,8 @@ impl ToolingManager {
             ontology_manager,
             reasoning_engine,
             search_engine,
+            config: config.clone(),
+            event_bus,
         }
     }
 

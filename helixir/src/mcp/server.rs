@@ -36,7 +36,7 @@ impl HelixirMcpServer {
         let client_arc = Arc::new(client);
         let fast_think = Arc::new(FastThinkManager::new(
             client_arc.clone(),
-            FastThinkLimits::default(),
+            FastThinkLimits::mcp(),
         ));
         
         Self {
@@ -69,7 +69,7 @@ impl HelixirMcpServer {
 
 #[tool_router]
 impl HelixirMcpServer {
-    #[tool(description = "Add memory with LLM-powered extraction. Extracts atomic facts, generates embeddings, creates graph relations. Returns: {memories_added, entities, relations, memory_ids, chunks_created}")]
+    #[tool(description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats.processing_time_ms}")]
     async fn add_memory(
         &self,
         Parameters(params): Parameters<AddMemoryParams>,
@@ -234,7 +234,7 @@ impl HelixirMcpServer {
             .start_thinking(&params.session_id, &params.initial_thought)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "session_id": params.session_id,
             "root_thought_idx": result.index(),
             "status": "thinking"
@@ -270,7 +270,7 @@ impl HelixirMcpServer {
                     .get_session_status(&params.session_id)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-                let json = Self::result_to_json(&json!({
+                let json = Self::result_to_json(json!({
                     "thought_idx": node.index(),
                     "thought_count": status.thought_count,
                     "depth": status.current_depth
@@ -285,7 +285,7 @@ impl HelixirMcpServer {
 
                 match commit_result {
                     Ok(cr) => {
-                        let json = Self::result_to_json(&json!({
+                        let json = Self::result_to_json(json!({
                             "status": "timeout_committed",
                             "memory_id": cr.memory_id,
                             "thoughts_saved": cr.thoughts_processed,
@@ -319,7 +319,7 @@ impl HelixirMcpServer {
 
         info!("✅ Recalled {} facts", results.len());
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "recalled_count": results.len(),
             "thought_indices": indices
         }))?;
@@ -344,7 +344,7 @@ impl HelixirMcpServer {
             .conclude(&params.session_id, &params.conclusion, &supporting)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "conclusion_idx": result.index(),
             "status": "decided"
         }))?;
@@ -368,7 +368,7 @@ impl HelixirMcpServer {
             result.thoughts_processed, result.memory_id
         );
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "memory_id": result.memory_id,
             "thoughts_processed": result.thoughts_processed,
             "entities_extracted": result.entities_extracted,
@@ -389,7 +389,7 @@ impl HelixirMcpServer {
             .discard(&params.session_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "discarded_thoughts": result.thoughts_discarded,
             "elapsed_ms": result.elapsed.as_millis()
         }))?;
@@ -405,7 +405,7 @@ impl HelixirMcpServer {
             .get_session_status(&params.session_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "session_id": status.id,
             "status": status.status.to_string(),
             "thought_count": status.thought_count,
@@ -433,14 +433,14 @@ impl HelixirMcpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         if results.is_empty() {
-            let json = Self::result_to_json(&json!({
+            let json = Self::result_to_json(json!({
                 "found": 0,
                 "message": "No incomplete thoughts found"
             }))?;
             return Ok(CallToolResult::success(vec![Content::text(json)]));
         }
 
-        let json = Self::result_to_json(&json!({
+        let json = Self::result_to_json(json!({
             "found": results.len(),
             "incomplete_thoughts": results.iter().map(|r| {
                 json!({

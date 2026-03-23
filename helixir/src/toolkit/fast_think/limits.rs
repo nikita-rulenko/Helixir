@@ -38,6 +38,21 @@ impl FastThinkLimits {
         }
     }
 
+    /// Limits tuned for MCP usage where inter-call latency eats into the
+    /// thinking budget. Timeout is 90s (vs 30s default) because each tool call
+    /// through MCP adds 3-8s of transport overhead.
+    pub fn mcp() -> Self {
+        Self {
+            max_thoughts: 150,
+            max_entities: 80,
+            max_concepts: 40,
+            max_depth: 12,
+            thinking_timeout: Duration::from_secs(90),
+            session_ttl: Duration::from_secs(600),
+            max_recall_results: 8,
+        }
+    }
+
     pub fn strict() -> Self {
         Self {
             max_thoughts: 50,

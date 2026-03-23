@@ -57,7 +57,6 @@ impl HybridSearch {
 
         let (vector_results, bm25_results) = tokio::join!(vector_future, bm25_future);
         let vector_results = vector_results?;
-        let bm25_results = bm25_results;
 
         let mut combined_scores: HashMap<String, (String, String, f64, HashMap<String, f64>)> = HashMap::new();
 

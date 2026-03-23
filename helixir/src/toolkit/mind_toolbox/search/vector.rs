@@ -1,11 +1,9 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use serde::{Deserialize, Deserializer, Serialize};
-
-fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
-}
 use thiserror::Error;
+
+use crate::utils::nullable_string;
 use tracing::{debug, info, warn};
 
 use super::models::{SearchResult, SearchMethod};

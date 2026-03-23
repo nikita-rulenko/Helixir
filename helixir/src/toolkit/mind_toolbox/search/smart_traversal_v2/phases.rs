@@ -5,13 +5,10 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing::{debug, info, warn};
-use super::models::{SearchResult, edge_weights};
+use super::models::{SearchResult, SearchConfig, edge_weights};
 use super::scoring::{calculate_temporal_freshness, calculate_graph_score};
 use crate::db::HelixClient;
-
-fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
-}
+use crate::utils::nullable_string;
 
 
 #[derive(Debug, thiserror::Error)]
@@ -84,10 +81,11 @@ pub async fn vector_search_phase(
     client: Arc<HelixClient>,
     query_embedding: &[f32],
     user_id: Option<&str>,
-    top_k: usize,
-    min_score: f64,
+    config: &SearchConfig,
     temporal_cutoff: Option<DateTime<Utc>>,
 ) -> Result<Vec<SearchResult>, TraversalError> {
+    let top_k = config.vector_top_k;
+    let min_score = config.min_vector_score;
     info!("Starting Phase 1: Vector search with top_k={}", top_k);
 
     
@@ -106,9 +104,17 @@ pub async fn vector_search_phase(
     let mut results = Vec::new();
     let mut seen_ids = HashSet::new();
 
+    // Personal scope: skip only when Memory.user_id is set and disagrees.
+    // Empty user_id on the node is unreliable (legacy / bad writes); keep the hit and log so
+    // operators can fix data; downstream layers may still use HAS_MEMORY where needed.
     for memory in response.memories {
         if let Some(uid) = user_id {
-            if !memory.user_id.is_empty() && memory.user_id != uid {
+            if memory.user_id.is_empty() {
+                warn!(
+                    "Memory {} has empty user_id, including in results for verification",
+                    memory.memory_id
+                );
+            } else if memory.user_id != uid {
                 continue;
             }
         }
@@ -126,13 +132,15 @@ pub async fn vector_search_phase(
             }
         }
 
-        let temporal_score = calculate_temporal_freshness(&memory.created_at, 30.0);
+        let temporal_score = calculate_temporal_freshness(&memory.created_at, config.temporal_decay_days);
         
-        let mut result = SearchResult::from_vector(
+        let mut result = SearchResult::from_vector_weighted(
             &memory.memory_id,
             &memory.content,
             0.8,
             temporal_score,
+            config.vector_weight,
+            config.temporal_weight,
         );
         result.created_at = Some(memory.created_at.clone());
 
@@ -153,19 +161,26 @@ pub async fn graph_expansion_phase(
     client: Arc<HelixClient>,
     vector_hits: &[SearchResult],
     query_embedding: &[f32],
-    max_depth: u32,
-    edge_types: &[String],
+    config: &SearchConfig,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     info!("Starting Phase 2: Graph expansion from {} vector hits", vector_hits.len());
 
     let mut all_results = Vec::new();
     let mut expansion_tasks = Vec::new();
 
+    let max_depth = config.graph_depth;
+    let graph_weights = (
+        config.graph_semantic_weight,
+        config.graph_graph_weight,
+        config.graph_temporal_weight,
+        config.temporal_decay_days,
+    );
+
     for hit in vector_hits {
         let client = Arc::clone(&client);
         let query_embedding = query_embedding.to_vec();
         let hit = hit.clone();
-        let edge_types = edge_types.to_vec();
+        let weights = graph_weights;
 
         let task = tokio::spawn(async move {
             let mut visited = HashSet::new();
@@ -179,6 +194,7 @@ pub async fn graph_expansion_phase(
                 max_depth,
                 &mut visited,
                 hit.combined_score,
+                weights,
             ).await
         });
 
@@ -207,6 +223,7 @@ async fn expand_from_node(
     max_depth: u32,
     visited: &mut HashSet<String>,
     parent_score: f64,
+    graph_weights: (f64, f64, f64, f64),
 ) -> Result<Vec<SearchResult>, TraversalError> {
     debug!("Expanding from node {} at depth {}", node_id, current_depth);
 
@@ -231,6 +248,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -241,6 +259,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -251,6 +270,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -261,6 +281,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     
@@ -272,6 +293,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -282,6 +304,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -292,6 +315,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     process_edge_collection(
@@ -302,6 +326,7 @@ async fn expand_from_node(
         visited,
         &mut results,
         &mut neighbors,
+        graph_weights,
     );
 
     
@@ -319,6 +344,7 @@ async fn expand_from_node(
                     max_depth,
                     visited,
                     neighbor_score,
+                    graph_weights,
                 )).await?;
                 results.extend(expanded);
             }
@@ -337,26 +363,31 @@ fn process_edge_collection(
     visited: &HashSet<String>,
     results: &mut Vec<SearchResult>,
     neighbors: &mut Vec<(String, f64)>,
+    graph_weights: (f64, f64, f64, f64),
 ) {
+    let (semantic_w, graph_w, temporal_w, decay_days) = graph_weights;
+
     for mem in memories {
         if visited.contains(&mem.memory_id) {
             continue;
         }
 
-        let temporal_score = calculate_temporal_freshness(&mem.created_at, 30.0);
+        let temporal_score = calculate_temporal_freshness(&mem.created_at, decay_days);
         let graph_score = calculate_graph_score(edge_weight, parent_score);
-        
         
         let semantic_sim = 0.5;
         
-        let result = SearchResult::from_graph(
+        let result = SearchResult::from_graph_weighted(
             &mem.memory_id,
             &mem.content,
             semantic_sim,
             graph_score,
             temporal_score,
-            1, 
+            1,
             vec![edge_type.to_string()],
+            semantic_w,
+            graph_w,
+            temporal_w,
         );
 
         results.push(result);

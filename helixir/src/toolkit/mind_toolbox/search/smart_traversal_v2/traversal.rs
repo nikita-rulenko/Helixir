@@ -66,8 +66,7 @@ impl SmartTraversalV2 {
             Arc::clone(&self.client),
             query_embedding,
             user_id,
-            config.vector_top_k,
-            config.min_vector_score,
+            &config,
             temporal_cutoff,
         ).await?;
         let phase1_duration = phase1_start.elapsed();
@@ -83,13 +82,11 @@ impl SmartTraversalV2 {
         
         
         let phase2_start = Instant::now();
-        let edge_types = config.edge_types.as_deref().unwrap_or(&[]);
         let graph_results = graph_expansion_phase(
             Arc::clone(&self.client),
             &vector_hits,
             query_embedding,
-            config.graph_depth,
-            edge_types,
+            &config,
         ).await?;
         let phase2_duration = phase2_start.elapsed();
         

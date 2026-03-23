@@ -4,6 +4,42 @@ use serde::{Deserialize, Serialize};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchThresholds {
+    pub similarity_threshold: f64,
+    pub exact_duplicate_score: f64,
+    pub min_vector_score: f64,
+    pub min_combined_score: f64,
+    pub vector_weight: f64,
+    pub temporal_weight: f64,
+    pub graph_semantic_weight: f64,
+    pub graph_graph_weight: f64,
+    pub graph_temporal_weight: f64,
+    pub default_temporal_days: f64,
+    pub bm25_k1: f64,
+    pub bm25_b: f64,
+}
+
+impl Default for SearchThresholds {
+    fn default() -> Self {
+        Self {
+            similarity_threshold: 0.70,
+            exact_duplicate_score: 0.98,
+            min_vector_score: 0.5,
+            min_combined_score: 0.3,
+            vector_weight: 0.7,
+            temporal_weight: 0.3,
+            graph_semantic_weight: 0.3,
+            graph_graph_weight: 0.5,
+            graph_temporal_weight: 0.2,
+            default_temporal_days: 30.0,
+            bm25_k1: 1.5,
+            bm25_b: 0.75,
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixirConfig {
     
     pub host: String,
@@ -46,6 +82,10 @@ pub struct HelixirConfig {
     pub vector_search_enabled: bool,
     pub graph_search_enabled: bool,
     pub bm25_search_enabled: bool,
+
+    pub search_thresholds: SearchThresholds,
+
+    pub max_facts_per_call: usize,
 }
 
 impl HelixirConfig {
@@ -86,6 +126,10 @@ impl HelixirConfig {
             vector_search_enabled: true,
             graph_search_enabled: true,
             bm25_search_enabled: true,
+
+            search_thresholds: SearchThresholds::default(),
+
+            max_facts_per_call: 15,
         }
     }
 
@@ -127,6 +171,11 @@ impl HelixirConfig {
         }
         if let Ok(key) = std::env::var("HELIX_EMBEDDING_API_KEY") {
             config.embedding_api_key = Some(key);
+        }
+        if let Ok(val) = std::env::var("HELIX_MAX_FACTS_PER_CALL") {
+            if let Ok(n) = val.parse::<usize>() {
+                config.max_facts_per_call = n;
+            }
         }
 
         config

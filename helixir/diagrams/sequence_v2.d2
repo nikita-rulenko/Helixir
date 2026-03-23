@@ -1,0 +1,82 @@
+shape: sequence_diagram
+
+cursor: Cursor IDE
+mcp: MCP Server
+client: HelixirClient
+tooling: ToolingManager
+search: SearchEngine
+extractor: LLM Extractor
+decision: LLM Decision
+embed: Embeddings
+db: HelixDB
+events: EventBus
+cache: Moka Cache
+
+add: "add_memory" {
+  cursor -> mcp: "add_memory(message, user_id)"
+  mcp -> client: "add()"
+  client -> tooling: "add_memory()"
+
+  tooling -> extractor: "extract(text, entities=true, relations=true)"
+  extractor -> tooling: "memories[] · entities[] · relations[]"
+
+  tooling -> embed: "generate_batch(texts[])"
+  embed -> tooling: "vectors[]"
+
+  tooling -> search: "search(vector, scope=personal)"
+  search -> db: "smartVectorSearch"
+  db -> search: "similar[]"
+  search -> tooling: "results"
+
+  tooling -> decision: "decide(new, similar)"
+  decision -> tooling: "ADD (confidence=85)"
+  tooling -> events: "llm.decision.made" {style.stroke-dash: 3}
+
+  tooling -> db: "addMemory + Embedding + UserLink + History"
+  db -> tooling: "memory_id"
+  tooling -> events: "memory.added" {style.stroke-dash: 3}
+
+  tooling -> cache: "lookup(SHA-256)"
+  cache -> tooling: "miss"
+  tooling -> search: "search(vector, scope=collective)"
+  search -> db: "globalVectorSearch"
+  db -> search: "cross-user matches"
+  search -> tooling: "results"
+  tooling -> cache: "insert(results)"
+
+  tooling -> decision: "decide(new, cross-user)"
+  decision -> tooling: "LINK_EXISTING"
+  tooling -> db: "linkUser + updateUserCount"
+
+  tooling -> db: "entities · concepts · reasoning edges"
+
+  tooling -> client: "AddMemoryResult"
+  client -> mcp: "result"
+  mcp -> cursor: "JSON"
+}
+
+search_flow: "search_memory" {
+  cursor -> mcp: "search_memory(query, scope=collective)"
+  mcp -> client: "search()"
+  client -> tooling: "search_memory()"
+
+  tooling -> embed: "generate(query)"
+  embed -> tooling: "vector"
+
+  tooling -> search: "search(vector, scope=collective)"
+  search -> cache: "lookup"
+  cache -> search: "miss"
+  search -> db: "smartVectorSearch"
+  db -> search: "memories"
+  search -> db: "getMemoryUsers"
+  db -> search: "user_count"
+  search -> db: "getMemoryContradictions"
+  db -> search: "controversies"
+  search -> cache: "insert"
+  search -> tooling: "results + metadata"
+
+  tooling -> events: "search.executed" {style.stroke-dash: 3}
+  tooling -> client: "SearchResult[]"
+  client -> mcp: "results"
+  mcp -> cursor: "JSON [{id, content, score, user_count}]"
+}

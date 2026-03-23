@@ -1,0 +1,28 @@
+direction: right
+
+title: |md
+  # Helixir-rs System Context  ·  C4
+| {
+  near: top-center
+  shape: text
+}
+
+cursor: "Cursor IDE\nAI Code Editor" {shape: person}
+
+helixir: "Helixir-rs v2.0.0\nMCP Memory Server\n14 tools · 2 prompts\ngraph reasoning\ncross-user dedup\nontology mapping" {
+  style.border-radius: 8
+}
+
+helixdb: "HelixDB v2.3.3\nGraph-Vector DB\n15 nodes · 33 edges\n117 HQL queries\nDocker · 192.168.50.11" {shape: cylinder}
+
+localai: "LocalAI\nnomic-embed-text-v1.5\nbatch + single\n192.168.50.2:8080" {shape: cloud}
+
+cerebras: "Cerebras API\ngpt-oss-120b\ndecisions · extraction" {shape: cloud}
+
+ansible: "Ansible\nschema deploy\nHelix build + restart" {shape: hexagon}
+
+cursor -> helixir: "MCP (stdio)"
+helixir -> helixdb: "HQL over HTTP :6969"
+helixir -> localai: "Embedding API\n(batch & single)"
+helixir -> cerebras: "LLM calls\n(JSON structured)"
+ansible -> helixdb: "deploy schema.hx\n+ queries.hx" {style.stroke-dash: 3}

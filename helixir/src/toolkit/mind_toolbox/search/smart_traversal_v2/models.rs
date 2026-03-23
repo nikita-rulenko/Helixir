@@ -65,7 +65,20 @@ impl SearchResult {
         vector_score: f64,
         temporal_score: f64,
     ) -> Self {
-        let combined = vector_score * 0.7 + temporal_score * 0.3;
+        Self::from_vector_weighted(memory_id, content, vector_score, temporal_score, 0.7, 0.3)
+    }
+
+    pub fn from_vector_weighted(
+        memory_id: impl Into<String>,
+        content: impl Into<String>,
+        vector_score: f64,
+        temporal_score: f64,
+        vector_weight: f64,
+        temporal_weight: f64,
+    ) -> Self {
+        let combined = super::scoring::calculate_vector_combined_score_weighted(
+            vector_score, temporal_score, vector_weight, temporal_weight,
+        );
         Self {
             memory_id: memory_id.into(),
             content: content.into(),
@@ -91,8 +104,28 @@ impl SearchResult {
         depth: u32,
         edge_path: Vec<String>,
     ) -> Self {
-        
-        let combined = semantic_sim * 0.3 + graph_score * 0.5 + temporal_score * 0.2;
+        Self::from_graph_weighted(
+            memory_id, content, semantic_sim, graph_score, temporal_score,
+            depth, edge_path, 0.3, 0.5, 0.2,
+        )
+    }
+
+    pub fn from_graph_weighted(
+        memory_id: impl Into<String>,
+        content: impl Into<String>,
+        semantic_sim: f64,
+        graph_score: f64,
+        temporal_score: f64,
+        depth: u32,
+        edge_path: Vec<String>,
+        semantic_weight: f64,
+        graph_weight: f64,
+        temporal_weight: f64,
+    ) -> Self {
+        let combined = super::scoring::calculate_graph_combined_score_weighted(
+            semantic_sim, graph_score, temporal_score,
+            semantic_weight, graph_weight, temporal_weight,
+        );
         Self {
             memory_id: memory_id.into(),
             content: content.into(),
@@ -128,6 +161,13 @@ pub struct SearchConfig {
     pub min_combined_score: f64,
     
     pub edge_types: Option<Vec<String>>,
+
+    pub vector_weight: f64,
+    pub temporal_weight: f64,
+    pub graph_semantic_weight: f64,
+    pub graph_graph_weight: f64,
+    pub graph_temporal_weight: f64,
+    pub temporal_decay_days: f64,
 }
 
 impl Default for SearchConfig {
@@ -142,6 +182,12 @@ impl Default for SearchConfig {
                 "IMPLIES".to_string(),
                 "MEMORY_RELATION".to_string(),
             ]),
+            vector_weight: 0.7,
+            temporal_weight: 0.3,
+            graph_semantic_weight: 0.3,
+            graph_graph_weight: 0.5,
+            graph_temporal_weight: 0.2,
+            temporal_decay_days: 30.0,
         }
     }
 }

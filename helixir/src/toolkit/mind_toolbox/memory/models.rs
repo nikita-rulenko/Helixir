@@ -183,7 +183,7 @@ impl MemoryBuilder {
     pub fn build(self) -> Memory {
         let now = Utc::now().to_rfc3339();
         Memory {
-            memory_id: self.memory_id.unwrap_or_else(|| format!("mem_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string())),
+            memory_id: self.memory_id.unwrap_or_else(|| format!("mem_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12])),
             content: self.content.unwrap_or_default(),
             memory_type: self.memory_type.unwrap_or_else(|| "fact".to_string()),
             user_id: self.user_id.unwrap_or_default(),

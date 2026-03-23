@@ -46,7 +46,16 @@ pub fn calculate_temporal_freshness(created_at: &str, decay_days: f64) -> f64 {
 
 
 pub fn calculate_vector_combined_score(vector_score: f64, temporal_score: f64) -> f64 {
-    (vector_score * 0.7 + temporal_score * 0.3).clamp(0.0, 1.0)
+    calculate_vector_combined_score_weighted(vector_score, temporal_score, 0.7, 0.3)
+}
+
+pub fn calculate_vector_combined_score_weighted(
+    vector_score: f64,
+    temporal_score: f64,
+    vector_weight: f64,
+    temporal_weight: f64,
+) -> f64 {
+    (vector_score * vector_weight + temporal_score * temporal_weight).clamp(0.0, 1.0)
 }
 
 
@@ -55,7 +64,18 @@ pub fn calculate_graph_combined_score(
     graph_score: f64,
     temporal_score: f64,
 ) -> f64 {
-    (semantic_sim * 0.3 + graph_score * 0.5 + temporal_score * 0.2).clamp(0.0, 1.0)
+    calculate_graph_combined_score_weighted(semantic_sim, graph_score, temporal_score, 0.3, 0.5, 0.2)
+}
+
+pub fn calculate_graph_combined_score_weighted(
+    semantic_sim: f64,
+    graph_score: f64,
+    temporal_score: f64,
+    semantic_weight: f64,
+    graph_weight: f64,
+    temporal_weight: f64,
+) -> f64 {
+    (semantic_sim * semantic_weight + graph_score * graph_weight + temporal_score * temporal_weight).clamp(0.0, 1.0)
 }
 
 

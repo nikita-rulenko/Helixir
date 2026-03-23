@@ -1,12 +1,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing::{info, debug};
 
+use crate::utils::nullable_string;
 use super::types::ToolingError;
 use super::ToolingManager;
-
-fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Option::<String>::deserialize(d).map(|o| o.unwrap_or_default())
-}
 
 impl ToolingManager {
     pub async fn update_memory(

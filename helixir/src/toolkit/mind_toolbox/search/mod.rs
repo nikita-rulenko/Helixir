@@ -36,6 +36,7 @@ pub use onto_search::{
 
 pub use query_processor::{QueryProcessor, QueryIntent, EnhancedQuery};
 
+use crate::core::config::SearchThresholds;
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
 use crate::core::search_modes::SearchMode;
@@ -44,6 +45,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc, Duration};
 use tracing::{debug, info};
+use moka::future::Cache as MokaCache;
+use sha2::{Sha256, Digest};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -63,6 +66,7 @@ pub struct SearchEngineConfig {
     pub enable_smart_traversal: bool,
     pub vector_weight: f64,
     pub bm25_weight: f64,
+    pub search_thresholds: SearchThresholds,
 }
 
 impl Default for SearchEngineConfig {
@@ -73,6 +77,7 @@ impl Default for SearchEngineConfig {
             enable_smart_traversal: true,
             vector_weight: 0.6,
             bm25_weight: 0.4,
+            search_thresholds: SearchThresholds::default(),
         }
     }
 }
@@ -104,6 +109,15 @@ pub struct SearchEngine {
     hybrid: HybridSearch,
     smart_traversal: Option<SmartTraversalV2>,
     config: SearchEngineConfig,
+    cross_user_cache: MokaCache<String, Vec<UnifiedSearchResult>>,
+}
+
+fn embedding_cache_key(embedding: &[f32]) -> String {
+    let mut hasher = Sha256::new();
+    for &v in embedding {
+        hasher.update(v.to_le_bytes());
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 impl SearchEngine {
@@ -119,7 +133,11 @@ impl SearchEngine {
         } else {
             None
         };
-        Self { client, vector, hybrid, smart_traversal, config }
+        let cross_user_cache = MokaCache::builder()
+            .max_capacity(1000)
+            .time_to_live(std::time::Duration::from_secs(60))
+            .build();
+        Self { client, vector, hybrid, smart_traversal, config, cross_user_cache }
     }
 
     
@@ -137,7 +155,7 @@ impl SearchEngine {
         let query_preview: String = query.chars().take(30).collect();
         
         
-        let search_mode = SearchMode::from_str(mode);
+        let search_mode = SearchMode::parse_mode(mode);
         let mode_defaults = search_mode.get_defaults();
         let effective_temporal_days = temporal_days.or(mode_defaults.temporal_days);
         
@@ -156,6 +174,14 @@ impl SearchEngine {
             query_preview, user_id, mode, limit, scope, effective_temporal_days
         );
 
+        if effective_user_id.is_none() {
+            let cache_key = embedding_cache_key(query_embedding);
+            if let Some(cached) = self.cross_user_cache.get(&cache_key).await {
+                info!("Cross-user cache hit for scope={}", scope);
+                return Ok(cached);
+            }
+        }
+
         let results = match mode.to_lowercase().as_str() {
             "recent" | "contextual" => {
                 
@@ -164,13 +190,12 @@ impl SearchEngine {
                         "Using SmartTraversalV2 for mode={}, temporal_cutoff={:?}, scope={}", 
                         mode, temporal_cutoff, scope
                     );
-                    let config = SearchConfig {
-                        vector_top_k: limit,
-                        graph_depth: if mode == "recent" { 1 } else { 2 },
-                        min_vector_score: mode_defaults.min_vector_score,
-                        min_combined_score: mode_defaults.min_combined_score,
-                        ..Default::default()
-                    };
+                    let config = self.make_search_config(
+                        limit,
+                        if mode == "recent" { 1 } else { 2 },
+                        mode_defaults.min_vector_score,
+                        mode_defaults.min_combined_score,
+                    );
                     let traversal_results = traversal
                         .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
                         .await
@@ -201,12 +226,12 @@ impl SearchEngine {
                         "Using SmartTraversalV2 for deep search, temporal_cutoff={:?}, scope={}", 
                         temporal_cutoff, scope
                     );
-                    let config = SearchConfig {
-                        vector_top_k: limit * 2,
-                        graph_depth: 3,
-                        min_combined_score: mode_defaults.min_combined_score,
-                        ..Default::default()
-                    };
+                    let config = self.make_search_config(
+                        limit * 2,
+                        3,
+                        self.config.search_thresholds.min_vector_score,
+                        mode_defaults.min_combined_score,
+                    );
                     let traversal_results = traversal
                         .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
                         .await
@@ -234,12 +259,12 @@ impl SearchEngine {
                 
                 if let Some(ref traversal) = self.smart_traversal {
                     debug!("Using SmartTraversalV2 for full mode (no temporal filter), scope={}", scope);
-                    let config = SearchConfig {
-                        vector_top_k: limit * 2,
-                        graph_depth: 4,
-                        min_combined_score: 0.3,
-                        ..Default::default()
-                    };
+                    let config = self.make_search_config(
+                        limit * 2,
+                        4,
+                        self.config.search_thresholds.min_vector_score,
+                        self.config.search_thresholds.min_combined_score,
+                    );
                     let traversal_results = traversal
                         .search(query, query_embedding, effective_user_id, config, None)
                         .await
@@ -282,6 +307,11 @@ impl SearchEngine {
                     result.controversy = controversy;
                 }
             }
+        }
+
+        if effective_user_id.is_none() {
+            let cache_key = embedding_cache_key(query_embedding);
+            self.cross_user_cache.insert(cache_key, final_results.clone()).await;
         }
 
         info!("SearchEngine.search complete: {} results (scope={})", final_results.len(), scope);
@@ -349,6 +379,33 @@ impl SearchEngine {
     }
 
     
+    fn make_search_config(
+        &self,
+        vector_top_k: usize,
+        graph_depth: u32,
+        min_vector_score: f64,
+        min_combined_score: f64,
+    ) -> SearchConfig {
+        let t = &self.config.search_thresholds;
+        SearchConfig {
+            vector_top_k,
+            graph_depth,
+            min_vector_score,
+            min_combined_score,
+            edge_types: Some(vec![
+                "BECAUSE".to_string(),
+                "IMPLIES".to_string(),
+                "MEMORY_RELATION".to_string(),
+            ]),
+            vector_weight: t.vector_weight,
+            temporal_weight: t.temporal_weight,
+            graph_semantic_weight: t.graph_semantic_weight,
+            graph_graph_weight: t.graph_graph_weight,
+            graph_temporal_weight: t.graph_temporal_weight,
+            temporal_decay_days: t.default_temporal_days,
+        }
+    }
+
     async fn vector_search_unified(
         &self,
         query: &str,

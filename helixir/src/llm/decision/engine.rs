@@ -1,6 +1,7 @@
 
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{debug, info, warn};
 
 use super::models::{MemoryDecision, MemoryOperation, SimilarMemory};
@@ -9,52 +10,112 @@ use crate::llm::providers::base::LlmProvider;
 
 
 pub struct LLMDecisionEngine {
-    
     llm: Arc<dyn LlmProvider>,
-    
     similarity_threshold: f64,
+    exact_duplicate_score: f64,
+    retry_count: AtomicUsize,
+    fallback_count: AtomicUsize,
+    total_decisions: AtomicUsize,
 }
 
 impl LLMDecisionEngine {
-    
     pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+        Self::with_thresholds(llm, 0.70, 0.98)
+    }
+
+    pub fn with_thresholds(llm: Arc<dyn LlmProvider>, similarity_threshold: f64, exact_duplicate_score: f64) -> Self {
         info!(
-            "LLMDecisionEngine initialized: provider={}",
-            llm.provider_name()
+            "LLMDecisionEngine initialized: provider={}, similarity_threshold={}, exact_duplicate_score={}",
+            llm.provider_name(), similarity_threshold, exact_duplicate_score
         );
 
         Self {
             llm,
-            similarity_threshold: 0.70,
+            similarity_threshold,
+            exact_duplicate_score,
+            retry_count: AtomicUsize::new(0),
+            fallback_count: AtomicUsize::new(0),
+            total_decisions: AtomicUsize::new(0),
         }
     }
 
-    
     pub fn with_threshold(mut self, threshold: f64) -> Self {
         self.similarity_threshold = threshold;
         self
     }
 
-    
+    pub fn metrics(&self) -> (usize, usize, usize) {
+        (
+            self.retry_count.load(Ordering::Relaxed),
+            self.fallback_count.load(Ordering::Relaxed),
+            self.total_decisions.load(Ordering::Relaxed),
+        )
+    }
+
+    fn validate_decision(&self, decision: &mut MemoryDecision, similar_memories: &[SimilarMemory]) -> bool {
+        if decision.confidence > 100 {
+            warn!("Confidence {} out of range, clamping to 100", decision.confidence);
+            decision.confidence = 100;
+        }
+
+        let needs_target = matches!(
+            decision.operation,
+            MemoryOperation::Update | MemoryOperation::Supersede | MemoryOperation::Delete | MemoryOperation::Contradict
+        );
+
+        if needs_target {
+            let highest = similar_memories
+                .iter()
+                .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+
+            if decision.target_memory_id.is_none() {
+                if let Some(best) = highest {
+                    warn!(
+                        "Operation {:?} missing target_memory_id, using highest-scoring similar memory: {}",
+                        decision.operation, best.id
+                    );
+                    decision.target_memory_id = Some(best.id.clone());
+                } else {
+                    warn!(
+                        "Operation {:?} requires target but no similar memories available, falling back to ADD",
+                        decision.operation
+                    );
+                    return false;
+                }
+            } else if let Some(ref id) = decision.target_memory_id {
+                let exists = similar_memories.iter().any(|m| m.id == *id);
+                if !exists {
+                    warn!("target_memory_id '{}' not found in similar memories", id);
+                    if let Some(best) = highest {
+                        warn!("Replacing with highest-scoring similar memory: {}", best.id);
+                        decision.target_memory_id = Some(best.id.clone());
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
     pub async fn decide(
         &self,
         new_memory: &str,
         similar_memories: &[SimilarMemory],
         user_id: &str,
     ) -> MemoryDecision {
+        self.total_decisions.fetch_add(1, Ordering::Relaxed);
+
         debug!(
             "Making decision: new_memory='{}...', similar_count={}",
-            crate::safe_truncate(&new_memory, 50),
+            crate::safe_truncate(new_memory, 50),
             similar_memories.len()
         );
 
-        
         if similar_memories.is_empty() {
             debug!("No similar memories, quick ADD");
             return MemoryDecision::add(100, "No similar memories found, adding as new.");
         }
 
-        
         let highly_similar: Vec<_> = similar_memories
             .iter()
             .filter(|m| m.score >= self.similarity_threshold)
@@ -72,16 +133,18 @@ impl LLMDecisionEngine {
             );
         }
 
-        
         let prompt = build_decision_prompt(new_memory, &highly_similar, user_id);
 
         debug!("Calling LLM for decision with {} candidates", highly_similar.len());
 
         match self.llm.generate(SYSTEM_PROMPT, &prompt, Some("json_object")).await {
             Ok((response, _metadata)) => {
-                
                 match serde_json::from_str::<MemoryDecision>(&response) {
-                    Ok(decision) => {
+                    Ok(mut decision) => {
+                        if !self.validate_decision(&mut decision, &highly_similar) {
+                            self.fallback_count.fetch_add(1, Ordering::Relaxed);
+                            return MemoryDecision::add(50, "Validation failed, defaulting to ADD.");
+                        }
                         info!(
                             "Decision made: operation={:?}, confidence={}, target={:?}",
                             decision.operation, decision.confidence, decision.target_memory_id
@@ -91,22 +154,56 @@ impl LLMDecisionEngine {
                     Err(e) => {
                         warn!("Failed to parse LLM response as JSON: {}", e);
                         warn!("Response was: {}", crate::safe_truncate(&response, 200));
-                        MemoryDecision::add(50, format!("JSON parse failed ({}), defaulting to ADD.", e))
+                        self.retry_count.fetch_add(1, Ordering::Relaxed);
+
+                        let retry_prompt = format!(
+                            "{}\n\nIMPORTANT: Your previous response was not valid JSON. Error: {}. Output ONLY valid JSON with no markdown fences, no explanation.",
+                            prompt, e
+                        );
+
+                        match self.llm.generate(SYSTEM_PROMPT, &retry_prompt, Some("json_object")).await {
+                            Ok((retry_response, _)) => {
+                                match serde_json::from_str::<MemoryDecision>(&retry_response) {
+                                    Ok(mut decision) => {
+                                        info!("Retry succeeded for JSON parse");
+                                        if !self.validate_decision(&mut decision, &highly_similar) {
+                                            self.fallback_count.fetch_add(1, Ordering::Relaxed);
+                                            return MemoryDecision::add(50, "Validation failed after retry, defaulting to ADD.");
+                                        }
+                                        info!(
+                                            "Decision made (after retry): operation={:?}, confidence={}, target={:?}",
+                                            decision.operation, decision.confidence, decision.target_memory_id
+                                        );
+                                        decision
+                                    }
+                                    Err(e2) => {
+                                        warn!("Retry also failed to parse JSON: {}", e2);
+                                        self.fallback_count.fetch_add(1, Ordering::Relaxed);
+                                        MemoryDecision::add(50, format!("JSON parse failed after retry ({}), defaulting to ADD.", e2))
+                                    }
+                                }
+                            }
+                            Err(e2) => {
+                                warn!("Retry LLM call failed: {}", e2);
+                                self.fallback_count.fetch_add(1, Ordering::Relaxed);
+                                MemoryDecision::add(50, format!("Retry LLM call failed ({}), defaulting to ADD.", e2))
+                            }
+                        }
                     }
                 }
             }
             Err(e) => {
                 warn!("LLM call failed: {}", e);
+                self.fallback_count.fetch_add(1, Ordering::Relaxed);
                 MemoryDecision::add(50, format!("LLM call failed ({}), defaulting to ADD.", e))
             }
         }
     }
 
-    
     pub fn is_likely_duplicate(&self, similar_memories: &[SimilarMemory]) -> bool {
         similar_memories
             .iter()
-            .any(|m| m.score >= 0.98) 
+            .any(|m| m.score >= self.exact_duplicate_score)
     }
 }
 
