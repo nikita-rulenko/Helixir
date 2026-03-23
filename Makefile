@@ -1,4 +1,4 @@
-.PHONY: build test check run deploy-schema setup config docker-up docker-down clean help
+.PHONY: build test test-e2e-hive check run deploy-schema setup config docker-up docker-down clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
@@ -17,6 +17,9 @@ build: ## Build release binaries
 
 test: ## Run all tests
 	cd helixir && $(CARGO) test
+
+test-e2e-hive: ## Hive cross-user E2E (needs live HelixDB + LLM + embeddings; same env as MCP)
+	cd helixir && HELIX_E2E=1 $(CARGO) test hive_cross_user_collective_link_e2e --test hive_memory_e2e -- --ignored --nocapture
 
 check: ## Run cargo check + clippy
 	cd helixir && $(CARGO) check && $(CARGO) clippy

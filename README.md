@@ -432,7 +432,10 @@ make run            # Run MCP server locally (debug)
 make deploy-schema  # Deploy schema to running HelixDB
 make docker-up      # Start HelixDB container
 make docker-down    # Stop HelixDB container
+make test-e2e-hive  # Hive cross-user E2E (HelixDB + LLM + embeddings; set HELIX_* like MCP)
 ```
+
+**Hive E2E:** `make test-e2e-hive` runs `hive_cross_user_collective_link_e2e` (ignored by default in `cargo test`). It adds the same fact for two `user_id` values and asserts collective `user_count ≥ 2` on the first memory. LLM decisions can be flaky—retry if needed.
 
 ### Project structure
 
