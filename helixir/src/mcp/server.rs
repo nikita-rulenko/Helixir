@@ -523,7 +523,7 @@ impl ServerHandler for HelixirMcpServer {
                 .build(),
             server_info: Implementation {
                 name: "helixir".into(),
-                version: "0.2.1".into(),
+                version: "0.2.2".into(),
                 ..Default::default()
             },
             instructions: Some(prompts::get_server_instructions()),
@@ -556,7 +556,7 @@ impl ServerHandler for HelixirMcpServer {
                 let config = self.client.config();
                 
                 let content = serde_json::to_string_pretty(&json!({
-                    "version": "0.2.1",
+                    "version": "0.2.2",
                     "helixdb": {
                         "host": config.host,
                         "port": config.port,

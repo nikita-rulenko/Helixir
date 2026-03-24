@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 REPO="https://github.com/nikita-rulenko/Helixir.git"
 DEFAULT_DIR="$HOME/.helixir"
 HELIX_PORT=6969
