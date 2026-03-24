@@ -47,14 +47,27 @@ pub fn build_decision_prompt(
 
 **Cross-User Operations (use ONLY when memories are from DIFFERENT users):**
 
-7. **LINK_EXISTING** - Same fact/knowledge from another user
-   - Use when: The new memory says the same thing as another user's memory
+7. **LINK_EXISTING** - Same fact/knowledge from another user (PREFERRED for cross-user duplicates)
+   - Use when: The new memory conveys the same meaning/fact as another user's memory, even if worded differently
+   - This is the MOST COMMON cross-user operation — if two users know the same thing, LINK them
    - Set `link_to_memory_id` to the existing memory ID
 
 8. **CROSS_CONTRADICT** - Conflicting preference/opinion across users
-   - Use when: Different users have opposing preferences or opinions
+   - Use when: Different users have clearly opposing preferences, opinions, or beliefs about the same topic
+   - Example: User A says "Python is best" vs User B says "Rust is best"
    - Set `contradicts_memory_id` to the conflicting memory ID
-   - Set `conflict_type` to describe the conflict (e.g., "preference", "opinion", "approach")"#
+   - Set `conflict_type` to describe the conflict (e.g., "preference", "opinion", "approach")
+
+**CRITICAL cross-user rules:**
+- If a DIFFERENT USER already has the same fact/knowledge → ALWAYS use LINK_EXISTING (not ADD or NOOP)
+- If a DIFFERENT USER has an opposing opinion/preference → ALWAYS use CROSS_CONTRADICT (not CONTRADICT)
+- Never use ADD when a cross-user memory says the same thing — that creates wasteful duplicates"#
+    } else {
+        ""
+    };
+
+    let cross_user_reminder = if has_cross_user {
+        "\n- For DIFFERENT USER memories: prefer LINK_EXISTING (same fact) or CROSS_CONTRADICT (opposing views)"
     } else {
         ""
     };
@@ -126,7 +139,7 @@ Decide what to do with the new memory. Choose ONE operation:
 - SUPERSEDE for temporal evolution, UPDATE for adding details
 - CONTRADICT keeps both, DELETE removes one
 - Be conservative with DELETE
-- Use NOOP to avoid duplicates"#
+- Use NOOP to avoid duplicates{cross_user_reminder}"#
     )
 }
 

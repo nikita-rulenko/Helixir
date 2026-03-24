@@ -1,6 +1,6 @@
 
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -143,6 +143,17 @@ pub async fn vector_search_phase(
             config.temporal_weight,
         );
         result.created_at = Some(memory.created_at.clone());
+
+        let mut meta = HashMap::new();
+        if !memory.user_id.is_empty() {
+            meta.insert("user_id".to_string(), serde_json::Value::String(memory.user_id.clone()));
+        }
+        if !memory.memory_type.is_empty() {
+            meta.insert("memory_type".to_string(), serde_json::Value::String(memory.memory_type.clone()));
+        }
+        if !meta.is_empty() {
+            result.metadata = Some(meta);
+        }
 
         if result.combined_score >= min_score {
             results.push(result);

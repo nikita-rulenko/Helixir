@@ -350,11 +350,18 @@ impl ToolingManager {
         new_memory_id: &str,
         relations_created: &mut usize,
     ) -> Result<(), ToolingError> {
-        debug!("Phase 2: Global cross-user dedup search for {}", new_memory_id);
+        info!("Phase 2: Global cross-user dedup search for {} (user={})", new_memory_id, user_id);
         let global_results = self.search_engine
-            .search(&memory.text, vector, user_id, 5, "contextual", None, "collective")
+            .search(&memory.text, vector, user_id, 10, "full", None, "collective")
             .await
             .unwrap_or_default();
+
+        info!("Phase 2: global search returned {} results", global_results.len());
+        for r in &global_results {
+            let r_user = r.metadata.get("user_id").and_then(|v| v.as_str()).unwrap_or("<none>");
+            debug!("  Phase 2 candidate: {} user={} score={:.3} '{}'",
+                r.memory_id, r_user, r.score, &r.content.chars().take(60).collect::<String>());
+        }
 
         let cross_user_similar: Vec<SimilarMemory> = global_results
             .iter()
@@ -376,10 +383,14 @@ impl ToolingManager {
             })
             .collect();
 
+        info!("Phase 2: found {} cross-user candidates after filtering", cross_user_similar.len());
+
         if !cross_user_similar.is_empty() {
+            info!("Phase 2: sending {} candidates to LLM decision engine", cross_user_similar.len());
             let cross_decision = self.decision_engine
                 .decide(&memory.text, &cross_user_similar, user_id)
                 .await;
+            info!("Phase 2: LLM decided {:?} (confidence={})", cross_decision.operation, cross_decision.confidence);
 
             match cross_decision.operation {
                 MemoryOperation::LinkExisting => {
