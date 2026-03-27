@@ -103,10 +103,15 @@ pub async fn vector_search_phase(
 
     let mut results = Vec::new();
     let mut seen_ids = HashSet::new();
+    let mut accepted_rank: usize = 0;
 
-    // Personal scope: skip only when Memory.user_id is set and disagrees.
-    // Empty user_id on the node is unreliable (legacy / bad writes); keep the hit and log so
-    // operators can fix data; downstream layers may still use HAS_MEMORY where needed.
+    // SearchV returns results ordered by cosine similarity (best first).
+    // HelixDB does not propagate the raw score through edge traversal, so we
+    // approximate using exponential rank decay: score = 0.95 * 0.92^rank.
+    // This gives meaningful discrimination: rank 0 → 0.95, rank 4 → 0.66, rank 9 → 0.41.
+    const RANK_BASE: f64 = 0.95;
+    const RANK_DECAY: f64 = 0.92;
+
     for memory in response.memories {
         if let Some(uid) = user_id {
             if memory.user_id.is_empty() {
@@ -132,12 +137,15 @@ pub async fn vector_search_phase(
             }
         }
 
+        let vector_score = RANK_BASE * RANK_DECAY.powi(accepted_rank as i32);
+        accepted_rank += 1;
+
         let temporal_score = calculate_temporal_freshness(&memory.created_at, config.temporal_decay_days);
         
         let mut result = SearchResult::from_vector_weighted(
             &memory.memory_id,
             &memory.content,
-            0.8,
+            vector_score,
             temporal_score,
             config.vector_weight,
             config.temporal_weight,
@@ -163,7 +171,16 @@ pub async fn vector_search_phase(
     
     results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
 
-    info!("Phase 1 completed: {} results", results.len());
+    if !results.is_empty() {
+        let top = results.first().unwrap().combined_score;
+        let bottom = results.last().unwrap().combined_score;
+        info!(
+            "Phase 1 completed: {} results, score range {:.4}..{:.4} (spread {:.4})",
+            results.len(), top, bottom, top - bottom
+        );
+    } else {
+        info!("Phase 1 completed: 0 results");
+    }
     Ok(results)
 }
 

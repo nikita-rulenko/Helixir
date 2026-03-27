@@ -136,5 +136,25 @@ mod tests {
         
         assert!((graph_combined - 0.73).abs() < 0.01);
     }
+
+    #[test]
+    fn test_rank_based_scoring_discrimination() {
+        const RANK_BASE: f64 = 0.95;
+        const RANK_DECAY: f64 = 0.92;
+
+        let scores: Vec<f64> = (0..10)
+            .map(|rank| RANK_BASE * RANK_DECAY.powi(rank))
+            .collect();
+
+        assert!(scores[0] > 0.94, "Top result should be ~0.95");
+        assert!(scores[9] < 0.50, "Rank 9 should be below 0.50");
+
+        let spread = scores[0] - scores[9];
+        assert!(spread > 0.4, "Score spread should be >0.4 for 10 results, got {spread}");
+
+        for w in scores.windows(2) {
+            assert!(w[0] > w[1], "Scores must be strictly decreasing");
+        }
+    }
 }
 

@@ -174,7 +174,7 @@ Output JSON with this structure:
 {
   "memories": [
     {
-      "text": "atomic standalone fact",
+      "text": "self-contained informative statement with key context",
       "memory_type": "fact|preference|skill|goal|opinion|experience|achievement|action",
       "certainty": 80,
       "importance": 50,
@@ -259,9 +259,12 @@ CRITICAL relation extraction rules:
 }
 
 Rules:
-- Extract atomic, standalone facts. Each memory must be self-contained and express EXACTLY ONE idea.
-- CRITICAL: If the input contains multiple facts, numbered lists, or compound statements joined by "and"/"also"/"additionally", you MUST split them into separate memories. Example: "I like Rust and Python" → two memories: "I like Rust" and "I like Python".
-- Never merge or consolidate distinct pieces of information into a single memory. More granular = better.
+- Each memory must be SELF-CONTAINED and INFORMATIVE — a reader must understand it without seeing the original text.
+- Preserve key context: names, numbers, versions, dates, relationships. BAD: "X is a test". GOOD: "Integration test TestProductCRUD validates CRUD operations against SQLite".
+- Split ONLY when the input contains genuinely distinct topics. Do NOT split a single coherent statement into trivial fragments.
+- Example of GOOD splitting: "I like Rust for systems and Python for ML" → two memories with context.
+- Example of BAD splitting: "The Eiffel Tower is in Paris" → do NOT split into "The Eiffel Tower exists" + "The Eiffel Tower is in Paris".
+- Aim for 1-3 memories per input sentence. Fewer, richer memories are better than many trivial ones.
 - Use ALL 8 memory_type values when appropriate. Do not collapse skill/achievement into fact/experience, and do not collapse action into experience.
 - "skilled at", "can", "able to", "expert in" → always "skill".
 - "achieved", "built", "completed", "finished", "won" → always "achievement".
