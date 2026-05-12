@@ -152,6 +152,40 @@ bug to file — not a feature to copy.
   Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
   None are configurable from env or `HelixirConfig`.
 
+- **Shared memory across users (deduplicated knowledge graph).** This is the
+  single most important invariant for anyone reading API responses. A fact is
+  stored exactly once as a `Memory` node, regardless of how many users know it.
+
+  Each user that knows the fact is connected to the same node by a
+  `User -[HasMemory]-> Memory` edge. The node's `user_count` field tracks how
+  many users are linked.
+
+  The flow that creates this in `add_memory`:
+  1. New `add_memory` call hits `tooling_manager::add_pipeline`.
+  2. If the (content + embedding) closely matches an existing `Memory`, the
+     pipeline emits `emit_memory_deduplicated(target_id, user_id)` instead of
+     creating a new node (see `add_pipeline.rs:405`).
+  3. In a background task, `link_user_to_memory_bg(db, user_id, memory_id)`:
+     - `getUser` / `addUser` to make sure the User node exists,
+     - `linkUserToMemory` to add the `HasMemory` edge,
+     - `getMemoryUsers` to recount, then `updateMemoryUserCount` to persist
+       the new `user_count`.
+
+  Consequences for API consumers:
+  - `list_memories(user_id=B)` legitimately returns memories whose serialised
+    `user_id` field is `A`, with `user_count >= 2`. Those records are linked
+    to `B` via `HasMemory`; the `user_id` field is just the original author.
+  - `search_memory` honours a `scope` parameter:
+    - `personal` — anchor the traversal on the caller's `HasMemory` edges.
+    - `collective` / `all` — fan out across all `HasMemory` edges with
+      consensus ranking.
+  - Tools that do **not** expose `scope` (e.g. `list_memories`,
+    `search_by_concept`) implicitly behave like `personal`: they return what
+    the user knows, which includes shared knowledge.
+
+  This is not a privacy leak — see the closed-as-`not planned` discussion on
+  issue #21.
+
 ## 5. Boundaries the tests should defend (but mostly don't)
 
 - L4 ↔ L3: every MCP tool maps to exactly one `HelixirClient` method. There is
