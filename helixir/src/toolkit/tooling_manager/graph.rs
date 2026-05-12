@@ -19,6 +19,11 @@ impl ToolingManager {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut visited = std::collections::HashSet::new();
+        // Tracks `(source, target, edge_type)` triples already emitted so symmetric
+        // `*_in` / `*_out` traversal doesn't surface the same logical edge twice.
+        // See issue #18.
+        let mut emitted_edges: std::collections::HashSet<(String, String, &'static str)> =
+            std::collections::HashSet::new();
 
         let start_ids: Vec<String> = if let Some(mid) = memory_id {
             vec![mid.to_string()]
@@ -136,28 +141,36 @@ impl ToolingManager {
                     )
                     .await
                 {
-                    let edge_groups: &[(&Vec<ConnectedMemory>, &str, bool)] = &[
+                    let edge_groups: &[(&Vec<ConnectedMemory>, &'static str, bool)] = &[
                         (&conns.implies_out, "IMPLIES", true),
                         (&conns.implies_in, "IMPLIES", false),
                         (&conns.because_out, "BECAUSE", true),
                         (&conns.because_in, "BECAUSE", false),
                         (&conns.contradicts_out, "CONTRADICTS", true),
+                        (&conns.contradicts_in, "CONTRADICTS", false),
                         (&conns.relation_out, "SUPPORTS", true),
+                        (&conns.relation_in, "SUPPORTS", false),
                     ];
 
                     for (group, edge_type, is_outgoing) in edge_groups {
                         for conn in group.iter() {
+                            if conn.memory_id.is_empty() {
+                                continue;
+                            }
                             let (source, target) = if *is_outgoing {
-                                (mid.as_str(), conn.memory_id.as_str())
+                                (mid.to_string(), conn.memory_id.clone())
                             } else {
-                                (conn.memory_id.as_str(), mid.as_str())
+                                (conn.memory_id.clone(), mid.to_string())
                             };
-                            edges.push(serde_json::json!({
-                                "source": source,
-                                "target": target,
-                                "type": edge_type,
-                                "weight": 1.0,
-                            }));
+                            let key = (source.clone(), target.clone(), *edge_type);
+                            if emitted_edges.insert(key) {
+                                edges.push(serde_json::json!({
+                                    "source": source,
+                                    "target": target,
+                                    "type": edge_type,
+                                    "weight": 1.0,
+                                }));
+                            }
                             next_ids.push(conn.memory_id.clone());
                         }
                     }
