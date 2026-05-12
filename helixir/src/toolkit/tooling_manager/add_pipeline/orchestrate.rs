@@ -10,7 +10,7 @@ use crate::llm::decision::SimilarMemory;
 use crate::llm::extractor::ExtractedMemory;
 
 use super::super::ToolingManager;
-use super::super::helpers::safe_truncate;
+use crate::safe_truncate;
 use super::super::types::{AddMemoryResult, ToolingError};
 
 impl ToolingManager {

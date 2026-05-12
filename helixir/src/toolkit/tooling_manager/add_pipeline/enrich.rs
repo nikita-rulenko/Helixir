@@ -1,7 +1,8 @@
 //! Post-store enrichment: LLM-inferred reasoning relations + entity-linking
-//! + ontology concept linking + downstream entity↔entity edges. Also
-//! resolves explicit `ExtractedRelation`s emitted by the LLM into stored
-//! reasoning edges.
+//! + ontology concept linking + downstream entity↔entity edges.
+//!
+//! Also resolves explicit `ExtractedRelation`s emitted by the LLM into
+//! stored reasoning edges.
 
 use std::collections::HashMap;
 
@@ -13,7 +14,7 @@ use crate::toolkit::mind_toolbox::entity::EntityEdgeType;
 use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
 
 use super::super::ToolingManager;
-use super::super::helpers::safe_truncate;
+use crate::safe_truncate;
 use super::super::types::ToolingError;
 
 impl ToolingManager {

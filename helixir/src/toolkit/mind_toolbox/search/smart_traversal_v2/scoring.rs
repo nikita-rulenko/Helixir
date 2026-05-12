@@ -1,6 +1,18 @@
 use chrono::{DateTime, Utc};
 
-pub fn cosine_similarity(vec1: &[f32], vec2: &[f32]) -> f64 {
+/// Cosine **score** in `[0, 1]` — the cosine similarity of two embedding
+/// vectors, affinely remapped from its mathematical range `[-1, 1]`.
+///
+/// Returned value is `(cos + 1) / 2`, i.e. orthogonal vectors yield `0.5`,
+/// identical yield `1.0`, antiparallel yield `0.0`. This is the form
+/// required by the rerank step in `traversal.rs`, where it is mixed with
+/// the temporal score under a `clamp(0, 1)` (negative values would silently
+/// invert the combined score otherwise).
+///
+/// Distinct from the mathematical `cosine_similarity` (range `[-1, 1]`) by
+/// design — see issue #25 / `helixir/doc/duplication-audit.md` D1 for the
+/// historical duplication this name resolves.
+pub fn cosine_score(vec1: &[f32], vec2: &[f32]) -> f64 {
     if vec1.is_empty() || vec2.is_empty() || vec1.len() != vec2.len() {
         return 0.0;
     }
@@ -87,26 +99,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cosine_similarity_identical() {
+    fn cosine_score_identical_is_one() {
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![1.0, 0.0, 0.0];
-        let sim = cosine_similarity(&vec1, &vec2);
+        let sim = cosine_score(&vec1, &vec2);
         assert!((sim - 1.0).abs() < 0.01);
     }
 
     #[test]
-    fn test_cosine_similarity_orthogonal() {
+    fn cosine_score_orthogonal_is_half() {
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![0.0, 1.0, 0.0];
-        let sim = cosine_similarity(&vec1, &vec2);
+        let sim = cosine_score(&vec1, &vec2);
         assert!((sim - 0.5).abs() < 0.01);
     }
 
     #[test]
-    fn test_cosine_similarity_opposite() {
+    fn cosine_score_antiparallel_is_zero() {
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![-1.0, 0.0, 0.0];
-        let sim = cosine_similarity(&vec1, &vec2);
+        let sim = cosine_score(&vec1, &vec2);
         assert!((sim - 0.0).abs() < 0.01);
     }
 

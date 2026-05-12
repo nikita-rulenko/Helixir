@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use super::ToolingManager;
-use super::helpers::safe_truncate;
+use crate::safe_truncate;
 use super::types::{SearchMemoryResult, ToolingError};
 use crate::utils::nullable_string;
 

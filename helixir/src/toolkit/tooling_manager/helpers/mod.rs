@@ -13,15 +13,12 @@
 //!   not yet wired into the active pipelines. Kept here so the API surface
 //!   stays type-checked even while unused.
 //!
-//! `safe_truncate` below is intentionally a local copy of `crate::safe_truncate`
-//! today — see issue #27 (duplicate) for the resolution plan.
+//! The canonical `safe_truncate` is `crate::safe_truncate` (defined in
+//! `helixir/src/utils.rs`, re-exported from `lib.rs`). Issue #27 (D3
+//! duplication) is closed by deleting the local copy that used to sit here.
 
 mod concepts;
 mod history;
 mod queries;
 mod reserved;
 mod users;
-
-pub(crate) fn safe_truncate(s: &str, max_chars: usize) -> String {
-    s.chars().take(max_chars).collect()
-}

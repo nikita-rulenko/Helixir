@@ -1,7 +1,7 @@
 use tracing::{debug, info};
 
 use super::ToolingManager;
-use super::helpers::safe_truncate;
+use crate::safe_truncate;
 use super::types::{
     ChainNode, ReasoningChainSearchResult, SearchMemoryResult, ToolingError, ToolingReasoningChain,
 };

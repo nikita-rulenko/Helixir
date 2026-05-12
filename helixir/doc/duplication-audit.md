@@ -1,6 +1,6 @@
 # Duplication audit
 
-> _Reflects code as of `dev` @ 554f476. Last verified: 2026-05-12._
+> _Reflects code as of `beautify` (post-dedup). Last verified: 2026-05-12._
 
 Single source of truth for **same-purpose code written more than once** in the
 Helixir crate. Every entry has a GitHub issue and a code citation. If you
@@ -13,20 +13,17 @@ This document is the audit summary. The detailed proposals live in the issues.
 
 ## 1. Findings (by severity)
 
-| ID | Kind | What | Severity | Issue |
-|---|---|---|---|---|
-| D1 | Function | `cosine_similarity` defined twice with **different semantics** (raw `[-1,1]` vs normalized `[0,1]`) | P0 | [#25](https://github.com/nikita-rulenko/Helixir/issues/25) |
-| D2 | Pipeline | `smart_traversal_v2/` and `onto_search/` are two parallel search pipelines (same-name phase functions, parallel `SearchResult`/`OntoSearchResult`) | P1 | [#26](https://github.com/nikita-rulenko/Helixir/issues/26) |
-| D3 | Function | `safe_truncate` defined twice (canonical in `utils.rs`, private copy in `tooling_manager/helpers.rs`) | P2 | [#27](https://github.com/nikita-rulenko/Helixir/issues/27) |
-| D4 | Naming | `ReasoningEngine` is **both** a `pub trait` (`integrator/reasoner.rs`) and an unrelated `pub struct` (`reasoning/engine.rs`) | P3 | [#28](https://github.com/nikita-rulenko/Helixir/issues/28) |
+| ID | Kind | What | Severity | Issue | Status |
+|---|---|---|---|---|---|
+| ~~D1~~ | Function | ~~`cosine_similarity` defined twice with **different semantics** (raw `[-1,1]` vs normalized `[0,1]`)~~ | P0 | [#25](https://github.com/nikita-rulenko/Helixir/issues/25) | **resolved on `beautify`**: live copy renamed to `cosine_score` in `smart_traversal_v2/scoring.rs` (semantic name reflects `[0,1]` range); dead twin in `integrator/similarity.rs` excluded from the build by disabling `pub mod integrator;` in `mind_toolbox/mod.rs`. |
+| ~~D2~~ | Pipeline | ~~`smart_traversal_v2/` and `onto_search/` are two parallel search pipelines~~ | P1 | [#26](https://github.com/nikita-rulenko/Helixir/issues/26) | **resolved on `beautify`**: `onto_search/` excluded from the build via `// pub mod onto_search;` XML-block in `search/mod.rs`. Live pipeline is now exclusively `smart_traversal_v2/`. Code kept on disk. |
+| ~~D3~~ | Function | ~~`safe_truncate` defined twice (canonical in `utils.rs`, private copy in `tooling_manager/helpers.rs`)~~ | P2 | [#27](https://github.com/nikita-rulenko/Helixir/issues/27) | **resolved on `beautify`**: private copy in `helpers/mod.rs` removed; all four call sites switched to `use crate::safe_truncate;`. |
+| ~~D4~~ | Naming | ~~`ReasoningEngine` is **both** a `pub trait` (`integrator/reasoner.rs`) and an unrelated `pub struct` (`reasoning/engine.rs`)~~ | P3 | [#28](https://github.com/nikita-rulenko/Helixir/issues/28) | **resolved on `beautify`**: trait disappears from the namespace together with `integrator/`. Struct `ReasoningEngine` in `reasoning/engine.rs` is now the unique definition. |
 
-There is a **fifth** category — wholly unused infrastructure in
-`core/services/{chunking,resolution,linking}/` (~1000 LOC, zero `::new(`
-call sites). Per maintainer instruction (2026-05-12) this is **not**
-tracked as a duplication issue because the duplication is between
-*declared but unused code* and *actually used code*. Treatment of dead
-infrastructure is deferred and will be decided separately. The relevant
-data points are in this file's §3 below.
+All four duplications are closed by the `beautify` branch. The remaining
+audit material below records the **dead infrastructure** that was excluded
+from the build but kept on disk, so a future contributor does not re-discover
+it.
 
 ---
 
@@ -46,26 +43,37 @@ realistic severities to keep the priority shelf meaningful — see
 
 ---
 
-## 3. Dead infrastructure (out of scope per maintainer)
+## 3. Dead infrastructure (excluded from the build, kept on disk)
 
-These are not "duplicates" in the function-level sense; they are
-**parallel subsystems that are declared but never instantiated**. Listed
-here only so a future contributor does not re-discover them and re-file.
+These modules are declared in source but **not** part of the live
+compilation unit. Each was disabled via an XML-block `// <unused
+reason="...">` around its `pub mod ...;` declaration in the parent
+module. Kept on disk to make a future revival cheap and to avoid
+re-discovering them in the next audit.
 
-| Module | LOC | `::new(` call sites outside the module |
-|---|---|---|
-| `core/services/chunking/` (`ChunkingService`, splitters, 6 events) | ~600 | 0 |
-| `core/services/resolution/` (`IDResolutionService`, `BatchIDResolver`) | ~360 | 0 |
-| `core/services/linking/` (`LinkBuilder`, link events) | ~280 | 0 |
+| Module | LOC | Disabled in | `::new(` call sites outside the module |
+|---|---|---|---|
+| `core/services/chunking/` (`ChunkingService`, splitters, 6 events) | ~600 | not yet | 0 |
+| `core/services/resolution/` (`IDResolutionService`, `BatchIDResolver`) | ~360 | not yet | 0 |
+| `core/services/linking/` (`LinkBuilder`, link events) | ~280 | not yet | 0 |
+| `toolkit/mind_toolbox/integrator/` (`MemoryIntegrator`, `SimilarMemoryFinder`, `EdgeCreator`, `RelationInferrer`, `trait ReasoningEngine`, `cosine_similarity`, `batch_cosine_similarity`) | ~520 | `mind_toolbox/mod.rs` (beautify) | 0 |
+| `toolkit/mind_toolbox/search/onto_search/` (`OntoSearchConfig`, `OntoSearchResult`, `vector_search_phase`, `graph_expansion_phase`, `rank_results`, `classify_query_concepts`, …) | ~430 | `search/mod.rs` (beautify) | 0 |
 
-The chunker that the live pipeline actually uses is
-`mind_toolbox/chunking::ChunkingManager` (343 LOC), wired into
-`ToolingManager` at `tooling_manager/mod.rs:35`. The `core/services/`
-chunker is event-based, designed around a `ChunkingStarted → ChunkCreated
-→ ChunkLinked → ChunkChained` sequence, and was never connected to the
-live flow.
+### Notes per subsystem
 
-When the maintainer is ready to either resurrect or remove this code, the
+- **`integrator/`** was the dead twin of `tooling_manager/add_pipeline/`.
+  Excluding it removed the silent semantics divergence in
+  `cosine_similarity` (D1) and the `ReasoningEngine` naming collision (D4).
+- **`search/onto_search/`** was the dead twin of `search/smart_traversal_v2/`.
+  Same-name phase functions (`vector_search_phase`, `graph_expansion_phase`)
+  and a parallel result type `OntoSearchResult`. Excluding it closes D2.
+- **`core/services/*`** is the historical event-driven implementation of
+  chunking/resolution/linking. The live chunker is
+  `mind_toolbox/chunking::ChunkingManager`, wired into `ToolingManager` at
+  `tooling_manager/mod.rs:35`. Treatment is still deferred — the maintainer
+  has not yet decided revive vs delete.
+
+When the maintainer is ready to either resurrect or remove dead code, the
 relevant precedent is `helixir/doc/design-rationale.md` §3.9 (raw-source
 preservation is the closest live cousin of the event-based chunker).
 

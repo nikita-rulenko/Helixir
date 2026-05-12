@@ -142,7 +142,7 @@ impl ServerHandler for HelixirMcpServer {
                         "llm_extraction": true,
                         "entity_linking": true,
                         "ontology_mapping": true,
-                        "onto_search": true,
+                        "onto_search": false,
                         "reasoning_chains": true,
                     },
                     "tools": [

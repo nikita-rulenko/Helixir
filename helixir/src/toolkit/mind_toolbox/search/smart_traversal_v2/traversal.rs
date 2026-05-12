@@ -1,6 +1,6 @@
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
-use super::scoring::cosine_similarity;
+use super::scoring::cosine_score;
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
 use chrono::{DateTime, Utc};
@@ -97,7 +97,7 @@ impl SmartTraversalV2 {
             Ok(embeddings) => {
                 let mut reranked = 0u32;
                 for (hit, emb) in vector_hits.iter_mut().zip(embeddings.iter()) {
-                    let real_score = cosine_similarity(query_embedding, emb);
+                    let real_score = cosine_score(query_embedding, emb);
                     if (real_score - hit.vector_score).abs() > 0.01 {
                         let temporal = hit.temporal_score;
                         hit.vector_score = real_score;

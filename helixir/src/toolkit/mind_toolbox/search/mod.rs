@@ -14,17 +14,29 @@
 //! - [`types`]      — `SearchError`, `SearchEngineConfig`, `UnifiedSearchResult`,
 //!   `ControversyInfo`.
 //!
-//! See `helixir/doc/duplication-audit.md` issue #26 for the standing dedup
-//! between this `search/` tree and `onto_search/`.
+//! Resolution of the historical duplication noted in
+//! `helixir/doc/duplication-audit.md` (D2 / issue #26): the `onto_search/`
+//! tree is the dead twin of `smart_traversal_v2/` — same-name phase
+//! functions, parallel result types, never wired into [`SearchEngine`].
+//! It is excluded from the live compilation unit below and kept on disk
+//! as a historical reference.
 
 pub mod bm25;
 pub mod cache;
 pub mod hybrid;
 pub mod models;
-pub mod onto_search;
 pub mod query_processor;
 pub mod smart_traversal_v2;
 pub mod vector;
+
+// <unused reason="`onto_search/` is a parallel, never-wired search pipeline (vector_search_phase,
+//                graph_expansion_phase, rank_results, classify_query_concepts, etc.) that duplicates
+//                the active `smart_traversal_v2/` tree below. No call site outside the module itself.
+//                Kept on disk for historical reference and to make a future revival cheap.
+//                Closes issue #26 (D2) by removing the duplicate from the live build.
+//                See helixir/doc/duplication-audit.md §3.">
+// pub mod onto_search;
+// </unused>
 
 mod dispatch;
 mod engine;
@@ -38,13 +50,8 @@ pub use models::{SearchMethod, SearchResult};
 pub use vector::{VectorSearch, VectorSearchError};
 
 pub use smart_traversal_v2::{
-    SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness,
-    cosine_similarity, edge_weights,
-};
-
-pub use onto_search::{
-    OntoSearchConfig, OntoSearchResult, calculate_temporal_freshness as onto_temporal_freshness,
-    is_within_temporal_window, parse_datetime_utc,
+    SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness, cosine_score,
+    edge_weights,
 };
 
 pub use query_processor::{EnhancedQuery, QueryIntent, QueryProcessor};
