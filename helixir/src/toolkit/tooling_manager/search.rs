@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Deserializer};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::utils::nullable_string;
+use super::ToolingManager;
 use super::helpers::safe_truncate;
 use super::types::{SearchMemoryResult, ToolingError};
-use super::ToolingManager;
+use crate::utils::nullable_string;
 
 impl ToolingManager {
     pub async fn search_memory(
@@ -21,7 +21,11 @@ impl ToolingManager {
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
         info!(
             "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, scope={}]",
-            safe_truncate(query, 50), mode, limit, temporal_days, scope
+            safe_truncate(query, 50),
+            mode,
+            limit,
+            temporal_days,
+            scope
         );
 
         let query_embedding = self
@@ -35,19 +39,37 @@ impl ToolingManager {
         let results = match scope {
             "collective" | "all" => {
                 self.search_engine
-                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, scope)
+                    .search(
+                        query,
+                        &query_embedding,
+                        user_id,
+                        effective_limit,
+                        mode,
+                        temporal_days,
+                        scope,
+                    )
                     .await?
             }
             _ => {
                 self.search_engine
-                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, "personal")
+                    .search(
+                        query,
+                        &query_embedding,
+                        user_id,
+                        effective_limit,
+                        mode,
+                        temporal_days,
+                        "personal",
+                    )
                     .await?
             }
         };
 
-        self.emit_search_executed(user_id, mode, results.len()).await;
+        self.emit_search_executed(user_id, mode, results.len())
+            .await;
 
-        info!("Found {} memories via SearchEngine [method={}, scope={}]",
+        info!(
+            "Found {} memories via SearchEngine [method={}, scope={}]",
             results.len(),
             results.first().map(|r| r.method.as_str()).unwrap_or("none"),
             scope
@@ -82,13 +104,21 @@ impl ToolingManager {
 
         if scope == "collective" || scope == "all" {
             search_results.sort_by(|a, b| {
-                let a_uc = a.metadata.get("user_count")
-                    .and_then(|v| v.as_u64()).unwrap_or(1);
-                let b_uc = b.metadata.get("user_count")
-                    .and_then(|v| v.as_u64()).unwrap_or(1);
+                let a_uc = a
+                    .metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
+                let b_uc = b
+                    .metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
                 let a_combined = a.score * (1.0 + (a_uc as f64 - 1.0) * 0.1);
                 let b_combined = b.score * (1.0 + (b_uc as f64 - 1.0) * 0.1);
-                b_combined.partial_cmp(&a_combined).unwrap_or(std::cmp::Ordering::Equal)
+                b_combined
+                    .partial_cmp(&a_combined)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
 
@@ -131,7 +161,11 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
-        info!("Found {} memories with tag '{}'", result.memories.len(), tag);
+        info!(
+            "Found {} memories with tag '{}'",
+            result.memories.len(),
+            tag
+        );
 
         Ok(result
             .memories
@@ -156,8 +190,12 @@ impl ToolingManager {
         mode: &str,
         limit: usize,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
-        info!("Concept search: '{}...' type={:?} tags={:?}",
-            safe_truncate(query, 30), concept_type, tags);
+        info!(
+            "Concept search: '{}...' type={:?} tags={:?}",
+            safe_truncate(query, 30),
+            concept_type,
+            tags
+        );
 
         let query_embedding = self
             .embedder
@@ -167,7 +205,15 @@ impl ToolingManager {
 
         let candidates = self
             .search_engine
-            .search(query, &query_embedding, user_id, limit * 3, mode, None, "personal")
+            .search(
+                query,
+                &query_embedding,
+                user_id,
+                limit * 3,
+                mode,
+                None,
+                "personal",
+            )
             .await?;
 
         let mut results = Vec::new();
@@ -190,7 +236,8 @@ impl ToolingManager {
                     name: String,
                 }
 
-                if let Ok(concepts) = self.db
+                if let Ok(concepts) = self
+                    .db
                     .execute_query::<ConceptsResult, _>(
                         "getMemoryConcepts",
                         &serde_json::json!({"memory_id": candidate.memory_id}),
@@ -199,16 +246,17 @@ impl ToolingManager {
                 {
                     let matches_type = match concept_type {
                         Some(ct) => {
-                            let has_db_link = concepts.instance_of.iter().any(|c|
-                                c.name.to_lowercase() == ct.to_lowercase() ||
-                                c.concept_id.to_lowercase().contains(&ct.to_lowercase())
-                            );
+                            let has_db_link = concepts.instance_of.iter().any(|c| {
+                                c.name.to_lowercase() == ct.to_lowercase()
+                                    || c.concept_id.to_lowercase().contains(&ct.to_lowercase())
+                            });
 
                             if has_db_link {
                                 true
                             } else {
                                 let memory_type = self.get_memory_type(&candidate.memory_id).await;
-                                let type_matches = memory_type.as_ref()
+                                let type_matches = memory_type
+                                    .as_ref()
                                     .map(|mt| mt.to_lowercase() == ct.to_lowercase())
                                     .unwrap_or(false);
 
@@ -221,10 +269,10 @@ impl ToolingManager {
                                             &candidate.content,
                                             memory_type.as_deref(),
                                         );
-                                        mapped.iter().any(|m|
-                                            m.concept.name.to_lowercase() == ct.to_lowercase() ||
-                                            m.concept.id.to_lowercase() == ct.to_lowercase()
-                                        )
+                                        mapped.iter().any(|m| {
+                                            m.concept.name.to_lowercase() == ct.to_lowercase()
+                                                || m.concept.id.to_lowercase() == ct.to_lowercase()
+                                        })
                                     } else {
                                         false
                                     }
@@ -237,9 +285,12 @@ impl ToolingManager {
                     let matches_tags = match tags {
                         Some(t) => {
                             let tag_list: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
-                            tag_list.iter().any(|tag|
-                                candidate.content.to_lowercase().contains(&tag.to_lowercase())
-                            )
+                            tag_list.iter().any(|tag| {
+                                candidate
+                                    .content
+                                    .to_lowercase()
+                                    .contains(&tag.to_lowercase())
+                            })
                         }
                         None => true,
                     };
@@ -263,7 +314,10 @@ impl ToolingManager {
         }
 
         if let Some(ct) = concept_type.filter(|_| results.is_empty()) {
-            debug!("Vector search yielded no concept matches for type='{}', falling back to getUserMemories", ct);
+            debug!(
+                "Vector search yielded no concept matches for type='{}', falling back to getUserMemories",
+                ct
+            );
 
             #[derive(serde::Deserialize)]
             struct FallbackMemoriesResult {
@@ -283,7 +337,8 @@ impl ToolingManager {
             }
 
             let fetch_limit = (limit * 5).max(50) as i64;
-            if let Ok(fallback) = self.db
+            if let Ok(fallback) = self
+                .db
                 .execute_query::<FallbackMemoriesResult, _>(
                     "getUserMemories",
                     &serde_json::json!({"user_id": user_id, "limit": fetch_limit}),
@@ -296,9 +351,9 @@ impl ToolingManager {
                         let matches_tags = match tags {
                             Some(t) => {
                                 let tag_list: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
-                                tag_list.iter().any(|tag|
+                                tag_list.iter().any(|tag| {
                                     mem.content.to_lowercase().contains(&tag.to_lowercase())
-                                )
+                                })
                             }
                             None => true,
                         };
@@ -319,7 +374,11 @@ impl ToolingManager {
                         }
                     }
                 }
-                debug!("DB fallback found {} results for type='{}'", results.len(), ct);
+                debug!(
+                    "DB fallback found {} results for type='{}'",
+                    results.len(),
+                    ct
+                );
             }
         }
 

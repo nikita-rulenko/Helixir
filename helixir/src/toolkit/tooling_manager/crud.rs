@@ -1,9 +1,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::utils::nullable_string;
-use super::types::ToolingError;
 use super::ToolingManager;
+use super::types::ToolingError;
+use crate::utils::nullable_string;
 
 impl ToolingManager {
     pub async fn update_memory(
@@ -33,14 +33,20 @@ impl ToolingManager {
             id: String,
         }
 
-        let mem_result: GetMemResult = self.db
+        let mem_result: GetMemResult = self
+            .db
             .execute_query("getMemory", &serde_json::json!({"memory_id": memory_id}))
             .await
             .map_err(|e| ToolingError::Database(format!("Failed to get memory: {}", e)))?;
 
         let internal_id = match mem_result.memory {
             Some(m) if !m.id.is_empty() => m.id,
-            _ => return Err(ToolingError::Database(format!("Memory {} not found", memory_id))),
+            _ => {
+                return Err(ToolingError::Database(format!(
+                    "Memory {} not found",
+                    memory_id
+                )));
+            }
         };
 
         #[derive(Serialize)]
@@ -60,12 +66,16 @@ impl ToolingManager {
             updated_at: now.clone(),
         };
 
-        let _result: serde_json::Value = self.db
+        let _result: serde_json::Value = self
+            .db
             .execute_query("updateMemoryById", &params)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
-        debug!("Memory {} (id={}) updated successfully", memory_id, internal_id);
+        debug!(
+            "Memory {} (id={}) updated successfully",
+            memory_id, internal_id
+        );
 
         #[derive(serde::Deserialize)]
         struct MemoryResult {
@@ -78,10 +88,14 @@ impl ToolingManager {
             id: String,
         }
 
-        if let Ok(result) = self.db.execute_query::<MemoryResult, _>(
-            "getMemory",
-            &serde_json::json!({"memory_id": memory_id}),
-        ).await {
+        if let Ok(result) = self
+            .db
+            .execute_query::<MemoryResult, _>(
+                "getMemory",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await
+        {
             if let Some(mem) = result.memory {
                 if !mem.id.is_empty() {
                     #[derive(serde::Deserialize)]
@@ -115,9 +129,12 @@ impl ToolingManager {
         }
 
         self.db
-            .execute_query::<(), _>("deleteMemory", &DeleteInput {
-                memory_id: memory_id.to_string(),
-            })
+            .execute_query::<(), _>(
+                "deleteMemory",
+                &DeleteInput {
+                    memory_id: memory_id.to_string(),
+                },
+            )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 

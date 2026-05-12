@@ -1,32 +1,17 @@
-
-
 pub mod models;
-pub mod scoring;
 pub mod phases;
+pub mod scoring;
 pub mod traversal;
 
-
-pub use models::{SearchResult, SearchConfig, TraversalStats};
 pub use models::edge_weights;
-
+pub use models::{SearchConfig, SearchResult, TraversalStats};
 
 pub use scoring::{
-    cosine_similarity,
-    calculate_temporal_freshness,
-    calculate_graph_score,
-    calculate_vector_combined_score,
-    calculate_vector_combined_score_weighted,
-    calculate_graph_combined_score,
-    calculate_graph_combined_score_weighted,
+    calculate_graph_combined_score, calculate_graph_combined_score_weighted, calculate_graph_score,
+    calculate_temporal_freshness, calculate_vector_combined_score,
+    calculate_vector_combined_score_weighted, cosine_similarity,
 };
 
-
-pub use phases::{
-    TraversalError,
-    vector_search_phase,
-    graph_expansion_phase,
-    rank_and_filter,
-};
-
+pub use phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 
 pub use traversal::SmartTraversalV2;

@@ -1,9 +1,6 @@
-
-
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
-
 
 pub struct EmbeddingCache {
     cache: RwLock<HashMap<String, CacheEntry>>,
@@ -36,7 +33,6 @@ impl CacheStats {
 }
 
 impl EmbeddingCache {
-    
     pub fn new(max_size: usize, ttl_secs: u64) -> Self {
         Self {
             cache: RwLock::new(HashMap::new()),
@@ -46,10 +42,9 @@ impl EmbeddingCache {
         }
     }
 
-    
     pub fn get(&self, text: &str) -> Option<Vec<f32>> {
         let cache = self.cache.read().unwrap();
-        
+
         if let Some(entry) = cache.get(text) {
             if entry.created_at.elapsed() < self.ttl {
                 let mut stats = self.stats.write().unwrap();
@@ -57,19 +52,16 @@ impl EmbeddingCache {
                 return Some(entry.embedding.clone());
             }
         }
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.misses += 1;
         None
     }
 
-    
     pub fn set(&self, text: &str, embedding: Vec<f32>) {
         let mut cache = self.cache.write().unwrap();
-        
-        
+
         if cache.len() >= self.max_size {
-            
             if let Some(oldest_key) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.created_at)
@@ -78,7 +70,7 @@ impl EmbeddingCache {
                 cache.remove(&oldest_key);
             }
         }
-        
+
         cache.insert(
             text.to_string(),
             CacheEntry {
@@ -86,23 +78,20 @@ impl EmbeddingCache {
                 created_at: Instant::now(),
             },
         );
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.size = cache.len();
     }
 
-    
     pub fn stats(&self) -> CacheStats {
         self.stats.read().unwrap().clone()
     }
 
-    
     pub fn clear(&self) {
         let mut cache = self.cache.write().unwrap();
         cache.clear();
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.size = 0;
     }
 }
-

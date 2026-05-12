@@ -1,5 +1,3 @@
-
-
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -11,7 +9,10 @@ pub enum HelixirError {
     Connection(String),
 
     #[error("Query error: {message}")]
-    Query { message: String, query: Option<String> },
+    Query {
+        message: String,
+        query: Option<String>,
+    },
 
     #[error("Validation error: {0}")]
     Validation(String),

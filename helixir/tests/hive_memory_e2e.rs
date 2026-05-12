@@ -39,7 +39,10 @@ async fn hive_cross_user_collective_link_e2e() {
     let user_b = format!("e2e_hive_{token}_b");
 
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
-    client.initialize().await.expect("initialize (health + ontology)");
+    client
+        .initialize()
+        .await
+        .expect("initialize (health + ontology)");
 
     let r_a = client
         .add(&message, &user_a, None, None)

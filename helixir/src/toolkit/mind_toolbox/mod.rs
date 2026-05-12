@@ -1,5 +1,3 @@
-
-
 pub mod chunking;
 pub mod entity;
 pub mod integrator;
@@ -9,8 +7,7 @@ pub mod ontology;
 pub mod reasoning;
 pub mod search;
 
-
 pub use chunking::ChunkingManager;
-pub use entity::{Entity, EntityManager, EntityType, EntityEdgeType, EntityError};
+pub use entity::{Entity, EntityEdgeType, EntityError, EntityManager, EntityType};
 pub use memory::{CrudError, Memory, MemoryCrud, MemoryManager};
 pub use ontology::{Concept, ConceptMapper, ConceptMatch, OntologyManager};

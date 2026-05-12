@@ -1,7 +1,5 @@
-
-
 pub mod engine;
 
-
-pub use engine::{ReasoningEngine, ReasoningType, ReasoningRelation, ReasoningChain, ReasoningError};
-
+pub use engine::{
+    ReasoningChain, ReasoningEngine, ReasoningError, ReasoningRelation, ReasoningType,
+};

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainNode {
     pub memory_id: String,
@@ -11,11 +10,10 @@ pub struct ChainNode {
     pub relation_type: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryChain {
     pub seed_memory_id: String,
-    pub chain_type: String, 
+    pub chain_type: String,
     pub nodes: Vec<ChainNode>,
     pub total_depth: u32,
 }
@@ -29,17 +27,16 @@ impl MemoryChain {
             total_depth: 0,
         }
     }
-    
+
     pub fn add_node(&mut self, node: ChainNode) {
         self.total_depth = self.total_depth.max(node.depth);
         self.nodes.push(node);
     }
-    
+
     pub fn get_all_memories(&self) -> &[ChainNode] {
         &self.nodes
     }
-    
-    
+
     pub fn get_reasoning_trail(&self) -> String {
         let mut trail = String::new();
         for node in &self.nodes {
@@ -49,24 +46,24 @@ impl MemoryChain {
             } else {
                 node.content.clone()
             };
-            trail.push_str(&format!("[{}] {} -> {}\n", node.depth, relation, content_preview));
+            trail.push_str(&format!(
+                "[{}] {} -> {}\n",
+                node.depth, relation, content_preview
+            ));
         }
         trail
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainSearchResult {
     pub query: String,
     pub chains: Vec<MemoryChain>,
-    
-    
+
     pub total_memories: usize,
     pub total_chains: usize,
     pub deepest_chain: u32,
-    
-    
+
     pub memories: Vec<serde_json::Value>,
 }
 
@@ -83,7 +80,7 @@ impl ChainSearchResult {
         result.calculate_stats();
         result
     }
-    
+
     pub fn empty(query: String) -> Self {
         Self {
             query,
@@ -94,13 +91,12 @@ impl ChainSearchResult {
             memories: Vec::new(),
         }
     }
-    
+
     fn calculate_stats(&mut self) {
         self.total_chains = self.chains.len();
         self.total_memories = self.chains.iter().map(|c| c.nodes.len()).sum();
         self.deepest_chain = self.chains.iter().map(|c| c.total_depth).max().unwrap_or(0);
-        
-        
+
         let mut seen = HashSet::new();
         for chain in &self.chains {
             for node in &chain.nodes {
@@ -116,12 +112,15 @@ impl ChainSearchResult {
             }
         }
     }
-    
-    
+
     pub fn get_reasoning_trails(&self) -> String {
         let mut all_trails = String::new();
         for (i, chain) in self.chains.iter().enumerate() {
-            all_trails.push_str(&format!("=== Chain {} (Type: {}) ===\n", i + 1, chain.chain_type));
+            all_trails.push_str(&format!(
+                "=== Chain {} (Type: {}) ===\n",
+                i + 1,
+                chain.chain_type
+            ));
             all_trails.push_str(&chain.get_reasoning_trail());
             if i < self.chains.len() - 1 {
                 all_trails.push('\n');

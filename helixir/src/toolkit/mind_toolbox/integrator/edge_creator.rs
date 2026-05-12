@@ -1,10 +1,10 @@
-use crate::db::HelixClient;
-use std::sync::Arc;
-use chrono::Utc;
 use super::models::{MemoryRelation, RelationType};
-use tracing::{debug, warn};
-use thiserror::Error;
+use crate::db::HelixClient;
+use chrono::Utc;
 use serde::Serialize;
+use std::sync::Arc;
+use thiserror::Error;
+use tracing::{debug, warn};
 
 #[derive(Error, Debug)]
 pub enum EdgeCreatorError {
@@ -96,7 +96,8 @@ impl EdgeCreator {
                                 to_id: rel.target_id.clone(),
                                 resolution: String::new(),
                                 resolved: 0,
-                                resolution_strategy: crate::safe_truncate(&rel.reasoning, 255).to_string(),
+                                resolution_strategy: crate::safe_truncate(&rel.reasoning, 255)
+                                    .to_string(),
                             },
                         )
                         .await

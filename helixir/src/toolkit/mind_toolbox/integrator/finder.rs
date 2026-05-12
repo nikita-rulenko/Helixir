@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use chrono::{DateTime, Utc};
 use crate::db::HelixClient;
-use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -53,10 +53,13 @@ impl SimilarMemoryFinder {
     ) -> Result<Vec<SimilarMemory>, FinderError> {
         let response: VectorSearchResponse = self
             .client
-            .execute_query("smartVectorSearchWithChunks", &serde_json::json!({
-                "query_vector": query_embedding,
-                "limit": self.max_similar * 2
-            }))
+            .execute_query(
+                "smartVectorSearchWithChunks",
+                &serde_json::json!({
+                    "query_vector": query_embedding,
+                    "limit": self.max_similar * 2
+                }),
+            )
             .await
             .map_err(|e| FinderError::Database(e.to_string()))?;
 
@@ -83,7 +86,8 @@ impl SimilarMemoryFinder {
 
             let score = 0.8f64;
             if score >= self.similarity_threshold {
-                let created_at = memory.created_at
+                let created_at = memory
+                    .created_at
                     .parse::<DateTime<Utc>>()
                     .unwrap_or_else(|_| Utc::now());
 

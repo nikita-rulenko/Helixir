@@ -1,10 +1,7 @@
-
-
-use tracing::debug;
-use crate::db::HelixClient;
 use super::super::config::OntoSearchConfig;
 use super::super::models::{ConceptMatch, OntoSearchResult, TagMatch};
-
+use crate::db::HelixClient;
+use tracing::debug;
 
 pub async fn load_memory_concepts(client: &HelixClient, memory_id: &str) -> Vec<String> {
     let params = serde_json::json!({"memory_id": memory_id});
@@ -31,7 +28,6 @@ pub async fn load_memory_concepts(client: &HelixClient, memory_id: &str) -> Vec<
     concepts
 }
 
-
 pub fn calculate_concept_overlap(
     query_concepts: &[ConceptMatch],
     memory_concepts: &[String],
@@ -50,19 +46,30 @@ pub fn calculate_concept_overlap(
         }
     }
 
-    if max_score > 0.0 { (total / max_score).min(1.0) } else { 0.0 }
+    if max_score > 0.0 {
+        (total / max_score).min(1.0)
+    } else {
+        0.0
+    }
 }
 
-
-pub fn calculate_tag_overlap(query_tags: &[String], content: &str, config: &OntoSearchConfig) -> f64 {
-    if query_tags.is_empty() { return 0.0; }
+pub fn calculate_tag_overlap(
+    query_tags: &[String],
+    content: &str,
+    config: &OntoSearchConfig,
+) -> f64 {
+    if query_tags.is_empty() {
+        return 0.0;
+    }
 
     let content_lower = content.to_lowercase();
-    let matches = query_tags.iter().filter(|t| content_lower.contains(t.as_str())).count();
+    let matches = query_tags
+        .iter()
+        .filter(|t| content_lower.contains(t.as_str()))
+        .count();
     let score = matches as f64 / query_tags.len() as f64;
     (score + config.boost_tag_match).min(1.0)
 }
-
 
 pub async fn score_by_concepts_and_tags(
     client: &HelixClient,
@@ -72,29 +79,32 @@ pub async fn score_by_concepts_and_tags(
     config: &OntoSearchConfig,
 ) {
     for result in results.iter_mut() {
-        
         let memory_concepts = load_memory_concepts(client, &result.memory_id).await;
         result.concept_score = calculate_concept_overlap(query_concepts, &memory_concepts, config);
 
-        
         for qc in query_concepts {
             if memory_concepts.contains(&qc.concept_id) {
                 result.matched_concepts.push(qc.clone());
             }
         }
 
-        
         result.tag_score = calculate_tag_overlap(query_tags, &result.content, config);
 
-        
         let content_lower = result.content.to_lowercase();
         for tag in query_tags {
             if content_lower.contains(tag) {
-                result.matched_tags.push(TagMatch { tag: tag.clone(), score: 1.0 });
+                result.matched_tags.push(TagMatch {
+                    tag: tag.clone(),
+                    score: 1.0,
+                });
             }
         }
 
-        debug!("Scored {}: concept={:.2}, tag={:.2}", crate::safe_truncate(&result.memory_id, 8), result.concept_score, result.tag_score);
+        debug!(
+            "Scored {}: concept={:.2}, tag={:.2}",
+            crate::safe_truncate(&result.memory_id, 8),
+            result.concept_score,
+            result.tag_score
+        );
     }
 }
-

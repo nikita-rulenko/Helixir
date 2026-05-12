@@ -1,13 +1,9 @@
-
-
-mod models;
-mod metrics;
 mod controller;
+mod metrics;
+mod models;
 
-pub use models::{
-    EventType, IssueStatus, IssueState, IssueTransition,
-    VelocityEvent, VelocityMetrics,
-};
+pub use controller::{ControllerStats, VelocityController};
 pub use metrics::{calculate_metrics, calculate_velocity_score};
-pub use controller::{VelocityController, ControllerStats};
-
+pub use models::{
+    EventType, IssueState, IssueStatus, IssueTransition, VelocityEvent, VelocityMetrics,
+};

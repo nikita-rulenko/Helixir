@@ -1,8 +1,6 @@
-
-
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -10,10 +8,9 @@ use tracing::info;
 use crate::core::config::HelixirConfig;
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
-use crate::llm::providers::base::LlmProvider;
 use crate::llm::factory::LlmProviderFactory;
+use crate::llm::providers::base::LlmProvider;
 use crate::toolkit::tooling_manager::ToolingManager;
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum HelixirClientError {
@@ -33,7 +30,6 @@ pub enum HelixirClientError {
     Operation(String),
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddMemoryResult {
     pub memories_added: usize,
@@ -44,7 +40,6 @@ pub struct AddMemoryResult {
     pub stats: HashMap<String, serde_json::Value>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub id: String,
@@ -54,7 +49,6 @@ pub struct SearchResult {
     pub created_at: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateResult {
     pub memory_id: String,
@@ -62,13 +56,11 @@ pub struct UpdateResult {
     pub new_content: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphResult {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningChainResult {
@@ -110,7 +102,6 @@ pub struct GraphEdge {
     pub weight: f32,
 }
 
-
 pub struct HelixirClient {
     config: HelixirConfig,
     db: Arc<HelixClient>,
@@ -121,20 +112,27 @@ pub struct HelixirClient {
 }
 
 impl HelixirClient {
-    
     pub fn new(config: HelixirConfig) -> Result<Self, HelixirClientError> {
-        
-        let db = Arc::new(HelixClient::new(&config.host, config.port)
-            .map_err(|e| HelixirClientError::Database(e.to_string()))?);
+        let db = Arc::new(
+            HelixClient::new(&config.host, config.port)
+                .map_err(|e| HelixirClientError::Database(e.to_string()))?,
+        );
 
-        
         let is_openai_compat = config.embedding_provider == "openai";
         let embedder = Arc::new(EmbeddingGenerator::new(
             config.embedding_provider.clone(),
-            if is_openai_compat { "http://localhost:11434".to_string() } else { config.embedding_url.clone() },
+            if is_openai_compat {
+                "http://localhost:11434".to_string()
+            } else {
+                config.embedding_url.clone()
+            },
             config.embedding_model.clone(),
             config.embedding_api_key.clone(),
-            if is_openai_compat { Some(config.embedding_url.clone()) } else { None },
+            if is_openai_compat {
+                Some(config.embedding_url.clone())
+            } else {
+                None
+            },
             config.timeout,
             1000,
             300,
@@ -143,16 +141,15 @@ impl HelixirClient {
             Some(config.embedding_fallback_model.clone()),
         ));
 
-        
         let llm_provider: Arc<dyn LlmProvider> = LlmProviderFactory::create(
             &config.llm_provider,
             &config.llm_model,
             config.llm_api_key.as_deref(),
             config.llm_base_url.as_deref(),
             f64::from(config.llm_temperature),
-        ).into();
+        )
+        .into();
 
-        
         let tooling_manager = Arc::new(ToolingManager::new(
             Arc::clone(&db),
             Arc::clone(&embedder),
@@ -172,31 +169,30 @@ impl HelixirClient {
         })
     }
 
-    
     pub fn from_env() -> Result<Self, HelixirClientError> {
         let config = HelixirConfig::from_env();
         Self::new(config)
     }
 
-    
     pub async fn initialize(&self) -> Result<(), HelixirClientError> {
         if self.is_initialized.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        
-        self.db.health_check().await
+        self.db
+            .health_check()
+            .await
             .map_err(|e| HelixirClientError::Database(e.to_string()))?;
 
-        
-        self.tooling_manager.initialize().await
+        self.tooling_manager
+            .initialize()
+            .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
         self.is_initialized.store(true, Ordering::Relaxed);
         Ok(())
     }
 
-    
     pub async fn add(
         &self,
         message: &str,
@@ -204,7 +200,8 @@ impl HelixirClient {
         agent_id: Option<&str>,
         metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
-        self.add_with_tags(message, user_id, agent_id, metadata, None).await
+        self.add_with_tags(message, user_id, agent_id, metadata, None)
+            .await
     }
 
     /// Add memory with optional context tags that are inherited by all extracted facts
@@ -218,7 +215,8 @@ impl HelixirClient {
     ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let result = self.tooling_manager
+        let result = self
+            .tooling_manager
             .add_memory(message, user_id, agent_id, metadata, context_tags)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
@@ -233,7 +231,6 @@ impl HelixirClient {
         })
     }
 
-    
     pub async fn search(
         &self,
         query: &str,
@@ -247,8 +244,17 @@ impl HelixirClient {
         self.ensure_initialized().await?;
 
         let mode = search_mode.unwrap_or(&self.config.default_search_mode);
-        let results = self.tooling_manager
-            .search_memory(query, user_id, limit, mode, temporal_days, graph_depth, scope.unwrap_or("personal"))
+        let results = self
+            .tooling_manager
+            .search_memory(
+                query,
+                user_id,
+                limit,
+                mode,
+                temporal_days,
+                graph_depth,
+                scope.unwrap_or("personal"),
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
@@ -264,7 +270,6 @@ impl HelixirClient {
             .collect())
     }
 
-    
     pub async fn update(
         &self,
         memory_id: &str,
@@ -273,7 +278,8 @@ impl HelixirClient {
     ) -> Result<UpdateResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let updated = self.tooling_manager
+        let updated = self
+            .tooling_manager
             .update_memory(memory_id, new_content, user_id)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
@@ -285,7 +291,6 @@ impl HelixirClient {
         })
     }
 
-    
     pub async fn delete(&self, memory_id: &str) -> Result<bool, HelixirClientError> {
         self.ensure_initialized().await?;
 
@@ -295,7 +300,6 @@ impl HelixirClient {
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
 
-    
     pub async fn get_graph(
         &self,
         user_id: &str,
@@ -304,29 +308,58 @@ impl HelixirClient {
     ) -> Result<GraphResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let (nodes, edges) = self.tooling_manager
+        let (nodes, edges) = self
+            .tooling_manager
             .get_memory_graph(user_id, memory_id, depth.unwrap_or(2))
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        
         Ok(GraphResult {
-            nodes: nodes.into_iter().map(|n| GraphNode {
-                id: n.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                content: n.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                node_type: n.get("type").and_then(|v| v.as_str()).unwrap_or("memory").to_string(),
-                metadata: HashMap::new(),
-            }).collect(),
-            edges: edges.into_iter().map(|e| GraphEdge {
-                source: e.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                target: e.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                edge_type: e.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                weight: e.get("weight").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-            }).collect(),
+            nodes: nodes
+                .into_iter()
+                .map(|n| GraphNode {
+                    id: n
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    content: n
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    node_type: n
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("memory")
+                        .to_string(),
+                    metadata: HashMap::new(),
+                })
+                .collect(),
+            edges: edges
+                .into_iter()
+                .map(|e| GraphEdge {
+                    source: e
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    target: e
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    edge_type: e
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    weight: e.get("weight").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                })
+                .collect(),
         })
     }
 
-    
     pub async fn search_by_concept(
         &self,
         query: &str,
@@ -338,22 +371,31 @@ impl HelixirClient {
     ) -> Result<Vec<SearchResult>, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let results = self.tooling_manager
-            .search_by_concept(query, user_id, concept_type, tags, mode.unwrap_or("contextual"), limit.unwrap_or(10))
+        let results = self
+            .tooling_manager
+            .search_by_concept(
+                query,
+                user_id,
+                concept_type,
+                tags,
+                mode.unwrap_or("contextual"),
+                limit.unwrap_or(10),
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        
-        Ok(results.into_iter().map(|r| SearchResult {
-            id: r.memory_id,
-            content: r.content,
-            score: r.score as f32,
-            metadata: r.metadata,
-            created_at: r.created_at,
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| SearchResult {
+                id: r.memory_id,
+                content: r.content,
+                score: r.score as f32,
+                metadata: r.metadata,
+                created_at: r.created_at,
+            })
+            .collect())
     }
 
-    
     pub async fn search_reasoning_chain(
         &self,
         query: &str,
@@ -364,29 +406,43 @@ impl HelixirClient {
     ) -> Result<ReasoningChainResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let result = self.tooling_manager
-            .search_reasoning_chain(query, user_id, chain_mode.unwrap_or("both"), max_depth.unwrap_or(5), limit.unwrap_or(5))
+        let result = self
+            .tooling_manager
+            .search_reasoning_chain(
+                query,
+                user_id,
+                chain_mode.unwrap_or("both"),
+                max_depth.unwrap_or(5),
+                limit.unwrap_or(5),
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        
-        let chains = result.chains.into_iter().map(|tc| ReasoningChain {
-            seed: SearchResult {
-                id: tc.seed.memory_id,
-                content: tc.seed.content,
-                score: tc.seed.score as f32,
-                metadata: tc.seed.metadata,
-                created_at: tc.seed.created_at,
-            },
-            nodes: tc.nodes.into_iter().map(|n| ChainNode {
-                memory_id: n.memory_id,
-                content: n.content,
-                relation: n.relation,
-                depth: n.depth,
-            }).collect(),
-            chain_type: tc.chain_type,
-            reasoning_trail: tc.reasoning_trail,
-        }).collect();
+        let chains = result
+            .chains
+            .into_iter()
+            .map(|tc| ReasoningChain {
+                seed: SearchResult {
+                    id: tc.seed.memory_id,
+                    content: tc.seed.content,
+                    score: tc.seed.score as f32,
+                    metadata: tc.seed.metadata,
+                    created_at: tc.seed.created_at,
+                },
+                nodes: tc
+                    .nodes
+                    .into_iter()
+                    .map(|n| ChainNode {
+                        memory_id: n.memory_id,
+                        content: n.content,
+                        relation: n.relation,
+                        depth: n.depth,
+                    })
+                    .collect(),
+                chain_type: tc.chain_type,
+                reasoning_trail: tc.reasoning_trail,
+            })
+            .collect();
 
         Ok(ReasoningChainResult {
             query: query.to_string(),
@@ -396,7 +452,6 @@ impl HelixirClient {
         })
     }
 
-    
     pub async fn close(&self) -> Result<(), HelixirClientError> {
         if !self.is_initialized.load(Ordering::Relaxed) {
             return Ok(());
@@ -406,7 +461,6 @@ impl HelixirClient {
         Ok(())
     }
 
-    
     async fn ensure_initialized(&self) -> Result<(), HelixirClientError> {
         if !self.is_initialized.load(Ordering::Relaxed) {
             self.initialize().await?;
@@ -414,27 +468,22 @@ impl HelixirClient {
         Ok(())
     }
 
-    
     pub fn config(&self) -> &HelixirConfig {
         &self.config
     }
 
-    
     pub fn db(&self) -> &HelixClient {
         &self.db
     }
 
-    
     pub fn embedder(&self) -> &EmbeddingGenerator {
         &self.embedder
     }
 
-    
     pub fn llm_provider(&self) -> &dyn LlmProvider {
         &*self.llm_provider
     }
 
-    
     pub fn tooling(&self) -> &ToolingManager {
         &self.tooling_manager
     }
@@ -461,8 +510,12 @@ mod tests {
 
     #[test]
     fn test_client_from_env() {
-        unsafe { std::env::set_var("HELIX_HOST", "localhost"); }
-        unsafe { std::env::set_var("HELIX_PORT", "6969"); }
+        unsafe {
+            std::env::set_var("HELIX_HOST", "localhost");
+        }
+        unsafe {
+            std::env::set_var("HELIX_PORT", "6969");
+        }
         let client = HelixirClient::from_env();
         assert!(client.is_ok());
     }
@@ -471,7 +524,7 @@ mod tests {
     fn test_config_access() {
         let config = HelixirConfig::default();
         let client = HelixirClient::new(config).unwrap();
-        
+
         assert_eq!(client.config().host, "localhost");
         assert_eq!(client.config().port, 6969);
     }

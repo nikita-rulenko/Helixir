@@ -1,7 +1,4 @@
-
-
 use super::models::SimilarMemory;
-
 
 pub const SYSTEM_PROMPT: &str = r#"You are a memory management expert. Analyze the new memory and similar existing memories to decide what operation to perform.
 
@@ -14,7 +11,6 @@ Your goal is to:
 
 Always respond with valid JSON."#;
 
-
 pub fn build_decision_prompt(
     new_memory: &str,
     similar_memories: &[SimilarMemory],
@@ -26,7 +22,10 @@ pub fn build_decision_prompt(
         .iter()
         .map(|m| {
             let owner_info = if m.is_cross_user {
-                format!("  Owner: {} (DIFFERENT USER)\n", m.user_id.as_deref().unwrap_or("unknown"))
+                format!(
+                    "  Owner: {} (DIFFERENT USER)\n",
+                    m.user_id.as_deref().unwrap_or("unknown")
+                )
             } else {
                 String::new()
             };
@@ -144,4 +143,3 @@ Decide what to do with the new memory. Choose ONE operation:
 - merged_content must NEVER contain contradictions ("X but Y", "X however Y" about different subjects){cross_user_reminder}"#
     )
 }
-

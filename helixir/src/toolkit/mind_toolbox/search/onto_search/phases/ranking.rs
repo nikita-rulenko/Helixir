@@ -1,9 +1,6 @@
-
-
-use std::collections::HashMap;
 use super::super::config::OntoSearchConfig;
 use super::super::models::OntoSearchResult;
-
+use std::collections::HashMap;
 
 pub fn calculate_combined_score(result: &OntoSearchResult, config: &OntoSearchConfig) -> f64 {
     result.vector_score * config.vector_weight
@@ -13,9 +10,10 @@ pub fn calculate_combined_score(result: &OntoSearchResult, config: &OntoSearchCo
         + result.temporal_score * config.temporal_weight
 }
 
-
-pub fn rank_results(results: Vec<OntoSearchResult>, config: &OntoSearchConfig) -> Vec<OntoSearchResult> {
-    
+pub fn rank_results(
+    results: Vec<OntoSearchResult>,
+    config: &OntoSearchConfig,
+) -> Vec<OntoSearchResult> {
     let mut unique: HashMap<String, OntoSearchResult> = HashMap::new();
 
     for mut result in results {
@@ -32,12 +30,15 @@ pub fn rank_results(results: Vec<OntoSearchResult>, config: &OntoSearchConfig) -
         }
     }
 
-    
     let mut ranked: Vec<OntoSearchResult> = unique
         .into_values()
         .filter(|r| r.final_score >= config.min_final_score)
         .collect();
 
-    ranked.sort_by(|a, b| b.final_score.partial_cmp(&a.final_score).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.sort_by(|a, b| {
+        b.final_score
+            .partial_cmp(&a.final_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     ranked
 }

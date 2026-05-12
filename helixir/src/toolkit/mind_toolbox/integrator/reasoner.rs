@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
 
-use super::models::{SimilarMemory, MemoryRelation, RelationType};
+use super::models::{MemoryRelation, RelationType, SimilarMemory};
 
 #[derive(Error, Debug)]
 pub enum ReasoningError {
@@ -56,7 +56,10 @@ impl RelationInferrer {
         let mut relations = Vec::new();
 
         for sim in similar {
-            match engine.infer_relation(new_content, &sim.content, sim.similarity_score).await {
+            match engine
+                .infer_relation(new_content, &sim.content, sim.similarity_score)
+                .await
+            {
                 Ok(inferred) => {
                     relations.push(MemoryRelation {
                         target_id: sim.memory_id.clone(),

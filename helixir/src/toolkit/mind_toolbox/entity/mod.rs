@@ -1,14 +1,11 @@
-
-
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use crate::db::HelixClient;
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -24,7 +21,7 @@ pub enum EntityType {
     Component,
     Resource,
     Process,
-    
+
     Custom(String),
 }
 
@@ -72,12 +69,10 @@ impl From<&str> for EntityType {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntityEdgeType {
-    
     ExtractedEntity,
-    
+
     Mentions,
 }
 
@@ -90,7 +85,6 @@ impl std::fmt::Display for EntityEdgeType {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub entity_id: String,
@@ -99,7 +93,6 @@ pub struct Entity {
     pub properties: HashMap<String, serde_json::Value>,
     pub aliases: Vec<String>,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct EntityDbResponse {
@@ -118,10 +111,9 @@ struct EntityDbResponse {
 impl From<EntityDbResponse> for Entity {
     fn from(db: EntityDbResponse) -> Self {
         let entity_type = EntityType::from(db.entity_type.as_str());
-        let properties: HashMap<String, serde_json::Value> = 
+        let properties: HashMap<String, serde_json::Value> =
             serde_json::from_str(&db.properties).unwrap_or_default();
-        let aliases: Vec<String> = 
-            serde_json::from_str(&db.aliases).unwrap_or_default();
+        let aliases: Vec<String> = serde_json::from_str(&db.aliases).unwrap_or_default();
         Entity {
             entity_id: db.entity_id,
             name: db.name,
@@ -133,7 +125,6 @@ impl From<EntityDbResponse> for Entity {
 }
 
 impl Entity {
-    
     pub fn new(name: String, entity_type: EntityType) -> Self {
         let entity_id = format!(
             "ent_{}",
@@ -153,7 +144,6 @@ impl Entity {
         }
     }
 
-    
     pub fn with_id(entity_id: String, name: String, entity_type: EntityType) -> Self {
         Self {
             entity_id,
@@ -165,14 +155,12 @@ impl Entity {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntity {
     pub name: String,
     pub entity_type: String,
     pub confidence: i32,
 }
-
 
 #[derive(Error, Debug)]
 pub enum EntityError {
@@ -188,18 +176,16 @@ pub enum EntityError {
     Validation(String),
 }
 
-
 pub struct EntityManager {
     client: Arc<HelixClient>,
-    
+
     entity_cache: RwLock<HashMap<String, Entity>>,
-    
+
     name_to_id: RwLock<HashMap<String, String>>,
     cache_size: usize,
 }
 
 impl EntityManager {
-    
     pub fn new(client: Arc<HelixClient>, cache_size: usize) -> Self {
         info!("EntityManager initialized (cache_size={})", cache_size);
         Self {
@@ -210,12 +196,10 @@ impl EntityManager {
         }
     }
 
-    
     fn add_to_cache(&self, entity: &Entity) {
         let mut cache = self.entity_cache.write();
         let mut name_map = self.name_to_id.write();
 
-        
         if cache.len() >= self.cache_size {
             if let Some(oldest_id) = cache.keys().next().cloned() {
                 if let Some(evicted) = cache.remove(&oldest_id) {
@@ -229,17 +213,17 @@ impl EntityManager {
         name_map.insert(entity.name.to_lowercase(), entity.entity_id.clone());
     }
 
-    
     pub async fn create_entity(
         &self,
         name: &str,
         entity_type: &str,
         properties: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<Entity, EntityError> {
-        
         let name = name.trim();
         if name.is_empty() {
-            return Err(EntityError::Validation("Entity name cannot be empty".into()));
+            return Err(EntityError::Validation(
+                "Entity name cannot be empty".into(),
+            ));
         }
 
         let entity_type = EntityType::from(entity_type);
@@ -249,12 +233,11 @@ impl EntityManager {
             entity.properties = props;
         }
 
-        
         #[derive(Deserialize)]
         struct CreateEntityResponse {
             entity: EntityDbResponse,
         }
-        
+
         match self
             .client
             .execute_query::<CreateEntityResponse, _>(
@@ -283,15 +266,12 @@ impl EntityManager {
             }
         }
 
-        
         self.add_to_cache(&entity);
 
         Ok(entity)
     }
 
-    
     pub async fn get_entity(&self, entity_id: &str) -> Result<Option<Entity>, EntityError> {
-        
         {
             let cache = self.entity_cache.read();
             if let Some(entity) = cache.get(entity_id) {
@@ -300,7 +280,6 @@ impl EntityManager {
             }
         }
 
-        
         debug!("Cache MISS: {}, querying HelixDB", entity_id);
 
         #[derive(Deserialize)]
@@ -310,7 +289,10 @@ impl EntityManager {
 
         match self
             .client
-            .execute_query::<EntityResult, _>("getEntity", &serde_json::json!({"entity_id": entity_id}))
+            .execute_query::<EntityResult, _>(
+                "getEntity",
+                &serde_json::json!({"entity_id": entity_id}),
+            )
             .await
         {
             Ok(result) => {
@@ -329,7 +311,6 @@ impl EntityManager {
         }
     }
 
-    
     pub async fn get_or_create_entity(
         &self,
         name: &str,
@@ -338,7 +319,6 @@ impl EntityManager {
     ) -> Result<Entity, EntityError> {
         let normalized_name = name.trim().to_lowercase();
 
-        
         {
             let name_map = self.name_to_id.read();
             if let Some(entity_id) = name_map.get(&normalized_name) {
@@ -350,7 +330,6 @@ impl EntityManager {
             }
         }
 
-        
         #[derive(Deserialize)]
         struct EntityByNameResult {
             entity: Option<EntityDbResponse>,
@@ -358,7 +337,10 @@ impl EntityManager {
 
         match self
             .client
-            .execute_query::<EntityByNameResult, _>("getEntityByName", &serde_json::json!({"name": name}))
+            .execute_query::<EntityByNameResult, _>(
+                "getEntityByName",
+                &serde_json::json!({"name": name}),
+            )
             .await
         {
             Ok(result) => {
@@ -374,12 +356,10 @@ impl EntityManager {
             }
         }
 
-        
         debug!("Creating new entity: {}", name);
         self.create_entity(name, entity_type, properties).await
     }
 
-    
     pub async fn link_to_memory(
         &self,
         entity_id: &str,
@@ -389,13 +369,12 @@ impl EntityManager {
         salience: i32,
         sentiment: &str,
     ) -> Result<(), EntityError> {
-        
         #[derive(Deserialize)]
         struct EdgeResponse {
             #[serde(default)]
             link: serde_json::Value,
         }
-        
+
         match edge_type {
             EntityEdgeType::ExtractedEntity => {
                 self.client
@@ -437,8 +416,10 @@ impl EntityManager {
         Ok(())
     }
 
-    
-    pub async fn get_entities_for_memory(&self, memory_id: &str) -> Result<Vec<Entity>, EntityError> {
+    pub async fn get_entities_for_memory(
+        &self,
+        memory_id: &str,
+    ) -> Result<Vec<Entity>, EntityError> {
         #[derive(Deserialize)]
         struct EntitiesResult {
             entities: Vec<Entity>,
@@ -453,7 +434,6 @@ impl EntityManager {
             .await
         {
             Ok(result) => {
-                
                 for entity in &result.entities {
                     self.add_to_cache(entity);
                 }
@@ -471,8 +451,11 @@ impl EntityManager {
         }
     }
 
-    
-    pub async fn search_entities(&self, query: &str, limit: usize) -> Result<Vec<Entity>, EntityError> {
+    pub async fn search_entities(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<Entity>, EntityError> {
         #[derive(Deserialize)]
         struct EntitiesResult {
             entities: Vec<Entity>,
@@ -499,7 +482,6 @@ impl EntityManager {
         }
     }
 
-    
     pub fn cache_stats(&self) -> (usize, usize) {
         let cache = self.entity_cache.read();
         let name_map = self.name_to_id.read();
@@ -517,6 +499,5 @@ impl std::fmt::Debug for EntityManager {
         )
     }
 }
-
 
 pub use EntityEdgeType as EdgeType;

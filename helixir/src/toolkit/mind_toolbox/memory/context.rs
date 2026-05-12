@@ -1,17 +1,14 @@
-
-
-use std::collections::HashMap;
-use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::db::HelixClient;
 use super::models::Memory;
-
+use crate::db::HelixClient;
 
 #[derive(Error, Debug)]
 pub enum ContextError {
@@ -23,7 +20,6 @@ pub enum ContextError {
     Database(String),
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextDef {
     pub context_id: String,
@@ -33,7 +29,6 @@ pub struct ContextDef {
 }
 
 impl ContextDef {
-    
     pub fn new(name: String, properties: Option<HashMap<String, serde_json::Value>>) -> Self {
         Self {
             context_id: format!("ctx_{}", &Uuid::new_v4().to_string().replace("-", "")[..12]),
@@ -44,19 +39,17 @@ impl ContextDef {
     }
 }
 
-
 pub struct ContextManager {
     client: Arc<HelixClient>,
-    
+
     context_cache: RwLock<HashMap<String, ContextDef>>,
-    
+
     active_contexts: RwLock<HashMap<String, Vec<String>>>,
     cache_size: usize,
     is_warmed_up: bool,
 }
 
 impl ContextManager {
-    
     pub fn new(client: Arc<HelixClient>, cache_size: usize) -> Self {
         info!("ContextManager initialized (cache_size={})", cache_size);
         Self {
@@ -68,29 +61,36 @@ impl ContextManager {
         }
     }
 
-    
     fn add_to_cache(&self, context: ContextDef) {
         let mut cache = self.context_cache.write();
-        
-        
+
         if cache.len() >= self.cache_size {
             if let Some(oldest_key) = cache.keys().next().cloned() {
                 cache.remove(&oldest_key);
-                debug!("Cache eviction: removed context {}", crate::safe_truncate(&oldest_key, 8));
+                debug!(
+                    "Cache eviction: removed context {}",
+                    crate::safe_truncate(&oldest_key, 8)
+                );
             }
         }
 
         cache.insert(context.context_id.clone(), context);
     }
 
-    
-    pub async fn warm_up_cache(&mut self, user_id: Option<&str>, limit: usize) -> Result<usize, ContextError> {
+    pub async fn warm_up_cache(
+        &mut self,
+        user_id: Option<&str>,
+        limit: usize,
+    ) -> Result<usize, ContextError> {
         if self.is_warmed_up {
             info!("Context cache already warmed up, skipping");
             return Ok(self.context_cache.read().len());
         }
 
-        info!("Warming up context cache (user={:?}, limit={})", user_id, limit);
+        info!(
+            "Warming up context cache (user={:?}, limit={})",
+            user_id, limit
+        );
 
         #[derive(Serialize)]
         struct WarmupParams {
@@ -104,7 +104,11 @@ impl ContextManager {
             user_id: user_id.map(String::from),
         };
 
-        match self.client.execute_query::<Vec<ContextDef>, _>("getRecentContexts", &params).await {
+        match self
+            .client
+            .execute_query::<Vec<ContextDef>, _>("getRecentContexts", &params)
+            .await
+        {
             Ok(contexts) => {
                 for context in contexts {
                     self.add_to_cache(context);
@@ -115,20 +119,24 @@ impl ContextManager {
                 Ok(count)
             }
             Err(e) => {
-                warn!("Context cache warm-up failed: {}, continuing with empty cache", e);
+                warn!(
+                    "Context cache warm-up failed: {}, continuing with empty cache",
+                    e
+                );
                 Ok(0)
             }
         }
     }
 
-    
     pub async fn create_context(
         &self,
         name: &str,
         properties: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<ContextDef, ContextError> {
         if name.trim().is_empty() {
-            return Err(ContextError::Validation("Context name cannot be empty".into()));
+            return Err(ContextError::Validation(
+                "Context name cannot be empty".into(),
+            ));
         }
 
         let context = ContextDef::new(name.to_string(), properties);
@@ -148,30 +156,37 @@ impl ContextManager {
             created_at: context.created_at.to_rfc3339(),
         };
 
-        match self.client.execute_query::<(), _>("addContext", &params).await {
+        match self
+            .client
+            .execute_query::<(), _>("addContext", &params)
+            .await
+        {
             Ok(_) => {
                 self.add_to_cache(context.clone());
-                info!("Created context: {} ({})", context.name, crate::safe_truncate(&context.context_id, 8));
+                info!(
+                    "Created context: {} ({})",
+                    context.name,
+                    crate::safe_truncate(&context.context_id, 8)
+                );
                 Ok(context)
             }
             Err(e) => {
-                
-                warn!("Failed to persist context to HelixDB: {}, adding to cache only", e);
+                warn!(
+                    "Failed to persist context to HelixDB: {}, adding to cache only",
+                    e
+                );
                 self.add_to_cache(context.clone());
                 Ok(context)
             }
         }
     }
 
-    
     pub async fn get_context(&self, context_id: &str) -> Result<Option<ContextDef>, ContextError> {
-        
         if let Some(context) = self.context_cache.read().get(context_id).cloned() {
             debug!("Cache HIT: {}", context_id);
             return Ok(Some(context));
         }
 
-        
         debug!("Cache MISS: {}, querying HelixDB", context_id);
 
         #[derive(Serialize)]
@@ -179,10 +194,16 @@ impl ContextManager {
             context_id: String,
         }
 
-        match self.client.execute_query::<Option<ContextDef>, _>(
-            "getContext",
-            &GetParams { context_id: context_id.to_string() },
-        ).await {
+        match self
+            .client
+            .execute_query::<Option<ContextDef>, _>(
+                "getContext",
+                &GetParams {
+                    context_id: context_id.to_string(),
+                },
+            )
+            .await
+        {
             Ok(Some(context)) => {
                 self.add_to_cache(context.clone());
                 debug!("Loaded from DB and cached: {}", context_id);
@@ -196,9 +217,7 @@ impl ContextManager {
         }
     }
 
-    
     pub async fn get_context_by_name(&self, name: &str) -> Option<ContextDef> {
-        
         {
             let cache = self.context_cache.read();
             for context in cache.values() {
@@ -208,16 +227,21 @@ impl ContextManager {
             }
         }
 
-        
         #[derive(Serialize)]
         struct GetByNameParams {
             name: String,
         }
 
-        match self.client.execute_query::<Option<ContextDef>, _>(
-            "getContextByName",
-            &GetByNameParams { name: name.to_string() },
-        ).await {
+        match self
+            .client
+            .execute_query::<Option<ContextDef>, _>(
+                "getContextByName",
+                &GetByNameParams {
+                    name: name.to_string(),
+                },
+            )
+            .await
+        {
             Ok(Some(context)) => {
                 self.add_to_cache(context.clone());
                 Some(context)
@@ -226,7 +250,6 @@ impl ContextManager {
         }
     }
 
-    
     pub async fn link_memory_to_context(
         &self,
         memory_id: &str,
@@ -247,16 +270,24 @@ impl ContextManager {
             priority: i32,
         }
 
-        match self.client.execute_query::<(), _>(
-            "linkMemoryToContext",
-            &LinkParams {
-                memory_id: memory_id.to_string(),
-                context_id: context_id.to_string(),
-                priority,
-            },
-        ).await {
+        match self
+            .client
+            .execute_query::<(), _>(
+                "linkMemoryToContext",
+                &LinkParams {
+                    memory_id: memory_id.to_string(),
+                    context_id: context_id.to_string(),
+                    priority,
+                },
+            )
+            .await
+        {
             Ok(_) => {
-                debug!("Linked memory {} to context {}", crate::safe_truncate(memory_id, 8), crate::safe_truncate(context_id, 8));
+                debug!(
+                    "Linked memory {} to context {}",
+                    crate::safe_truncate(memory_id, 8),
+                    crate::safe_truncate(context_id, 8)
+                );
                 Ok(true)
             }
             Err(e) => {
@@ -266,33 +297,30 @@ impl ContextManager {
         }
     }
 
-    
     pub fn activate_context(&self, user_id: &str, context_id: &str) -> bool {
         let mut active = self.active_contexts.write();
         let user_contexts = active.entry(user_id.to_string()).or_default();
-        
+
         if !user_contexts.contains(&context_id.to_string()) {
             user_contexts.push(context_id.to_string());
         }
-        
+
         info!("Activated context {} for user {}", context_id, user_id);
         true
     }
 
-    
     pub fn deactivate_context(&self, user_id: &str, context_id: &str) -> bool {
         let mut active = self.active_contexts.write();
-        
+
         if let Some(user_contexts) = active.get_mut(user_id) {
             user_contexts.retain(|c| c != context_id);
             info!("Deactivated context {} for user {}", context_id, user_id);
             return true;
         }
-        
+
         false
     }
 
-    
     pub fn get_active_contexts(&self, user_id: &str) -> Vec<String> {
         self.active_contexts
             .read()
@@ -301,7 +329,6 @@ impl ContextManager {
             .unwrap_or_default()
     }
 
-    
     pub fn filter_by_context(
         &self,
         memories: Vec<Memory>,
@@ -312,57 +339,54 @@ impl ContextManager {
             return memories;
         }
 
-        let context_names_lower: Vec<String> = context_names
-            .iter()
-            .map(|c| c.to_lowercase())
-            .collect();
+        let context_names_lower: Vec<String> =
+            context_names.iter().map(|c| c.to_lowercase()).collect();
 
         memories
             .into_iter()
             .filter(|memory| {
-                
                 let memory_contexts: Vec<String> = if memory.context_tags.is_empty() {
                     Vec::new()
-                } else if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
+                } else if let Ok(parsed) =
+                    serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags)
+                {
                     parsed.keys().map(|k| k.to_lowercase()).collect()
                 } else {
                     vec![memory.context_tags.to_lowercase()]
                 };
 
                 if match_all {
-                    
-                    context_names_lower.iter().all(|ctx| memory_contexts.contains(ctx))
+                    context_names_lower
+                        .iter()
+                        .all(|ctx| memory_contexts.contains(ctx))
                 } else {
-                    
-                    context_names_lower.iter().any(|ctx| memory_contexts.contains(ctx))
+                    context_names_lower
+                        .iter()
+                        .any(|ctx| memory_contexts.contains(ctx))
                 }
             })
             .collect()
     }
 
-    
-    pub fn calculate_context_relevance(
-        &self,
-        memory: &Memory,
-        active_contexts: &[String],
-    ) -> f64 {
+    pub fn calculate_context_relevance(&self, memory: &Memory, active_contexts: &[String]) -> f64 {
         if active_contexts.is_empty() {
-            return 1.0; 
+            return 1.0;
         }
 
         let memory_contexts: Vec<String> = if memory.context_tags.is_empty() {
             Vec::new()
-        } else if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags) {
+        } else if let Ok(parsed) =
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&memory.context_tags)
+        {
             parsed.keys().map(|k| k.to_lowercase()).collect()
         } else {
             vec![memory.context_tags.to_lowercase()]
         };
 
         if memory_contexts.is_empty() {
-            return 0.5; 
+            return 0.5;
         }
 
-        
         let matches = active_contexts
             .iter()
             .filter(|ctx| memory_contexts.contains(&ctx.to_lowercase()))
@@ -371,7 +395,6 @@ impl ContextManager {
         matches as f64 / active_contexts.len() as f64
     }
 
-    
     pub fn cached_count(&self) -> usize {
         self.context_cache.read().len()
     }
@@ -385,4 +408,3 @@ impl std::fmt::Debug for ContextManager {
             .finish()
     }
 }
-

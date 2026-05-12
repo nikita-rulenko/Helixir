@@ -80,4 +80,3 @@ impl FastThinkLimits {
         self
     }
 }
-

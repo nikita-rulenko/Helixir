@@ -1,17 +1,14 @@
-
-
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
 const DEFAULT_FALLBACK_URL: &str = "http://localhost:11434";
 const DEFAULT_FALLBACK_MODEL: &str = "nomic-embed-text";
-
 
 #[derive(Error, Debug)]
 pub enum EmbeddingError {
@@ -33,7 +30,6 @@ pub enum EmbeddingError {
     #[error("Both primary and fallback failed: primary={0}, fallback={1}")]
     BothFailed(String, String),
 }
-
 
 #[derive(Serialize)]
 struct OllamaEmbeddingRequest {
@@ -70,7 +66,6 @@ struct OpenAIEmbeddingData {
     index: usize,
 }
 
-
 struct CacheEntry {
     embedding: Vec<f32>,
     created_at: Instant,
@@ -104,7 +99,6 @@ impl EmbeddingCache {
     fn set(&self, text: &str, embedding: Vec<f32>) {
         let mut cache = self.cache.write().unwrap();
         if cache.len() >= self.max_size {
-            
             if let Some(oldest_key) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.created_at)
@@ -131,7 +125,6 @@ impl EmbeddingCache {
     }
 }
 
-
 pub struct EmbeddingGenerator {
     provider: String,
     ollama_url: String,
@@ -141,7 +134,6 @@ pub struct EmbeddingGenerator {
     client: Client,
     cache: EmbeddingCache,
 
-    
     fallback_enabled: bool,
     fallback_url: String,
     fallback_model: String,
@@ -150,7 +142,6 @@ pub struct EmbeddingGenerator {
 }
 
 impl EmbeddingGenerator {
-    
     pub fn new(
         provider: impl Into<String>,
         ollama_url: impl Into<String>,
@@ -194,13 +185,11 @@ impl EmbeddingGenerator {
         }
     }
 
-    
     pub async fn generate(&self, text: &str, use_cache: bool) -> Result<Vec<f32>, EmbeddingError> {
         if text.trim().is_empty() {
             return Err(EmbeddingError::EmptyText);
         }
 
-        
         if use_cache {
             if let Some(cached) = self.cache.get(text) {
                 debug!("Cache HIT for: {}...", crate::safe_truncate(text, 50));
@@ -208,7 +197,6 @@ impl EmbeddingGenerator {
             }
         }
 
-        
         let result = match self.provider.as_str() {
             "ollama" => self.generate_ollama(text).await,
             "openai" => self.generate_openai(text).await,
@@ -224,7 +212,10 @@ impl EmbeddingGenerator {
                 Ok(embedding)
             }
             Err(e) => {
-                debug!("Primary embedding provider unavailable, trying fallback: {}", e);
+                debug!(
+                    "Primary embedding provider unavailable, trying fallback: {}",
+                    e
+                );
                 if self.fallback_enabled && self.provider != "ollama" {
                     self.fallback_to_ollama(text, use_cache, &e).await
                 } else {
@@ -312,18 +303,12 @@ impl EmbeddingGenerator {
             .json(&request)
             .send()
             .await
-            .map_err(|e| {
-                EmbeddingError::BothFailed(original_error.to_string(), e.to_string())
-            })?
+            .map_err(|e| EmbeddingError::BothFailed(original_error.to_string(), e.to_string()))?
             .error_for_status()
-            .map_err(|e| {
-                EmbeddingError::BothFailed(original_error.to_string(), e.to_string())
-            })?
+            .map_err(|e| EmbeddingError::BothFailed(original_error.to_string(), e.to_string()))?
             .json::<OllamaEmbeddingResponse>()
             .await
-            .map_err(|e| {
-                EmbeddingError::BothFailed(original_error.to_string(), e.to_string())
-            })?;
+            .map_err(|e| EmbeddingError::BothFailed(original_error.to_string(), e.to_string()))?;
 
         let embedding = response.embedding;
 
@@ -343,7 +328,11 @@ impl EmbeddingGenerator {
         Ok(embedding)
     }
 
-    pub async fn generate_batch(&self, texts: &[&str], use_cache: bool) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+    pub async fn generate_batch(
+        &self,
+        texts: &[&str],
+        use_cache: bool,
+    ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         if texts.is_empty() {
             return Ok(vec![]);
         }
@@ -414,7 +403,10 @@ impl EmbeddingGenerator {
         Ok(results.into_iter().map(|r| r.unwrap()).collect())
     }
 
-    async fn generate_batch_openai(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+    async fn generate_batch_openai(
+        &self,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         let api_key = self
             .api_key
             .as_ref()
@@ -456,7 +448,10 @@ impl EmbeddingGenerator {
         Ok(sorted.into_iter().map(|d| d.embedding).collect())
     }
 
-    async fn generate_batch_ollama(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+    async fn generate_batch_ollama(
+        &self,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         use futures::future::join_all;
 
         let futures: Vec<_> = texts
@@ -467,7 +462,10 @@ impl EmbeddingGenerator {
         results.into_iter().collect()
     }
 
-    async fn generate_fallback_ollama_single(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+    async fn generate_fallback_ollama_single(
+        &self,
+        text: &str,
+    ) -> Result<Vec<f32>, EmbeddingError> {
         let request = OllamaEmbeddingRequest {
             model: self.fallback_model.clone(),
             prompt: text.to_string(),
@@ -496,7 +494,9 @@ impl EmbeddingGenerator {
 
         info!(
             "Using fallback Ollama ({}/{}) for batch of {} - primary unavailable",
-            self.fallback_url, self.fallback_model, texts.len()
+            self.fallback_url,
+            self.fallback_model,
+            texts.len()
         );
 
         let futures: Vec<_> = texts
@@ -513,7 +513,7 @@ impl EmbeddingGenerator {
                     return Err(EmbeddingError::BothFailed(
                         original_error.to_string(),
                         e.to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -530,39 +530,32 @@ impl EmbeddingGenerator {
         Ok(embeddings)
     }
 
-    
     pub fn is_using_fallback(&self) -> bool {
         self.using_fallback.load(Ordering::SeqCst)
     }
 
-    
     pub fn fallback_count(&self) -> usize {
         self.fallback_count.load(Ordering::SeqCst)
     }
 
-    
     pub fn cache_size(&self) -> usize {
         self.cache.len()
     }
 
-    
     pub fn clear_cache(&self) {
         self.cache.clear();
         info!("Embedding cache cleared");
     }
 
-    
     pub fn reset_fallback_state(&self) {
         self.using_fallback.store(false, Ordering::SeqCst);
         info!("Fallback state reset");
     }
 
-    
     pub fn model(&self) -> String {
         self.model.clone()
     }
 
-    
     pub fn provider(&self) -> String {
         self.provider.clone()
     }

@@ -1,7 +1,4 @@
-
-
 use chrono::{DateTime, Utc};
-
 
 pub fn cosine_similarity(vec1: &[f32], vec2: &[f32]) -> f64 {
     if vec1.is_empty() || vec2.is_empty() || vec1.len() != vec2.len() {
@@ -17,20 +14,18 @@ pub fn cosine_similarity(vec1: &[f32], vec2: &[f32]) -> f64 {
     }
 
     let similarity = f64::from(dot_product / (mag1 * mag2));
-    
+
     ((similarity + 1.0) / 2.0).clamp(0.0, 1.0)
 }
-
 
 pub fn calculate_temporal_freshness(created_at: &str, decay_days: f64) -> f64 {
     let created = match DateTime::parse_from_rfc3339(created_at) {
         Ok(dt) => dt.with_timezone(&Utc),
         Err(_) => {
-            
             if let Ok(dt) = created_at.replace('Z', "+00:00").parse::<DateTime<Utc>>() {
                 dt
             } else {
-                return 0.5; 
+                return 0.5;
             }
         }
     };
@@ -39,11 +34,9 @@ pub fn calculate_temporal_freshness(created_at: &str, decay_days: f64) -> f64 {
     let duration = now.signed_duration_since(created);
     let days_old = duration.num_seconds() as f64 / 86400.0;
 
-    
     let freshness = (-days_old / decay_days).exp();
     freshness.clamp(0.0, 1.0)
 }
-
 
 pub fn calculate_vector_combined_score(vector_score: f64, temporal_score: f64) -> f64 {
     calculate_vector_combined_score_weighted(vector_score, temporal_score, 0.7, 0.3)
@@ -58,13 +51,19 @@ pub fn calculate_vector_combined_score_weighted(
     (vector_score * vector_weight + temporal_score * temporal_weight).clamp(0.0, 1.0)
 }
 
-
 pub fn calculate_graph_combined_score(
     semantic_sim: f64,
     graph_score: f64,
     temporal_score: f64,
 ) -> f64 {
-    calculate_graph_combined_score_weighted(semantic_sim, graph_score, temporal_score, 0.3, 0.5, 0.2)
+    calculate_graph_combined_score_weighted(
+        semantic_sim,
+        graph_score,
+        temporal_score,
+        0.3,
+        0.5,
+        0.2,
+    )
 }
 
 pub fn calculate_graph_combined_score_weighted(
@@ -75,9 +74,9 @@ pub fn calculate_graph_combined_score_weighted(
     graph_weight: f64,
     temporal_weight: f64,
 ) -> f64 {
-    (semantic_sim * semantic_weight + graph_score * graph_weight + temporal_score * temporal_weight).clamp(0.0, 1.0)
+    (semantic_sim * semantic_weight + graph_score * graph_weight + temporal_score * temporal_weight)
+        .clamp(0.0, 1.0)
 }
-
 
 pub fn calculate_graph_score(edge_weight: f64, parent_score: f64) -> f64 {
     (edge_weight * parent_score).clamp(0.0, 1.0)
@@ -100,7 +99,7 @@ mod tests {
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![0.0, 1.0, 0.0];
         let sim = cosine_similarity(&vec1, &vec2);
-        assert!((sim - 0.5).abs() < 0.01); 
+        assert!((sim - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -108,7 +107,7 @@ mod tests {
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![-1.0, 0.0, 0.0];
         let sim = cosine_similarity(&vec1, &vec2);
-        assert!((sim - 0.0).abs() < 0.01); 
+        assert!((sim - 0.0).abs() < 0.01);
     }
 
     #[test]
@@ -120,10 +119,9 @@ mod tests {
 
     #[test]
     fn test_temporal_freshness_old() {
-        
         let old = (Utc::now() - chrono::Duration::days(90)).to_rfc3339();
         let freshness = calculate_temporal_freshness(&old, 30.0);
-        
+
         assert!(freshness < 0.1);
     }
 
@@ -133,7 +131,7 @@ mod tests {
         assert!((vector_combined - 0.83).abs() < 0.01);
 
         let graph_combined = calculate_graph_combined_score(0.5, 0.8, 0.9);
-        
+
         assert!((graph_combined - 0.73).abs() < 0.01);
     }
 
@@ -150,11 +148,13 @@ mod tests {
         assert!(scores[9] < 0.50, "Rank 9 should be below 0.50");
 
         let spread = scores[0] - scores[9];
-        assert!(spread > 0.4, "Score spread should be >0.4 for 10 results, got {spread}");
+        assert!(
+            spread > 0.4,
+            "Score spread should be >0.4 for 10 results, got {spread}"
+        );
 
         for w in scores.windows(2) {
             assert!(w[0] > w[1], "Scores must be strictly decreasing");
         }
     }
 }
-

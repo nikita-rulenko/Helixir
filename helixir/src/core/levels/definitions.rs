@@ -1,11 +1,8 @@
-
-
 use super::models::{HelixirLevel, LevelDefinition};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
 lazy_static! {
-    
     pub static ref LEVEL_0: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level0,
         "User Management",
@@ -14,8 +11,6 @@ lazy_static! {
     .with_nodes(&["User"])
     .with_queries(&["addUser", "getUser"])
     .with_notes("Foundation. Without User, no memory.");
-
-    
     pub static ref LEVEL_1: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level1,
         "Memory CRUD",
@@ -24,13 +19,15 @@ lazy_static! {
     .with_nodes(&["Memory", "Entity"])
     .with_edges(&["OWNS", "MENTIONS"])
     .with_queries(&[
-        "addMemory", "getMemory", "addEntity", "getEntity",
-        "getMemoriesByUser", "getEntitiesByMemory"
+        "addMemory",
+        "getMemory",
+        "addEntity",
+        "getEntity",
+        "getMemoriesByUser",
+        "getEntitiesByMemory"
     ])
     .with_dependencies(&[HelixirLevel::Level0])
     .with_notes("Framework foundation. Memory linked to User via OWNS.");
-
-    
     pub static ref LEVEL_2: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level2,
         "Context & Search",
@@ -39,31 +36,36 @@ lazy_static! {
     .with_nodes(&["Context"])
     .with_edges(&["IN_CONTEXT"])
     .with_queries(&[
-        "addContext", "getContext", "getMemoriesByContext",
-        "searchMemories", "searchMemoriesByKeyword"
+        "addContext",
+        "getContext",
+        "getMemoriesByContext",
+        "searchMemories",
+        "searchMemoriesByKeyword"
     ])
     .with_dependencies(&[HelixirLevel::Level0, HelixirLevel::Level1])
     .with_notes("Contexts for memory grouping. Search without vectors.");
-
-    
     pub static ref LEVEL_3: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level3,
         "Temporal & Update",
         "Temporal queries and UPDATE operations"
     )
     .with_queries(&[
-        "updateMemory", "getRecentMemories",
-        "searchRecentMemories", "getMemoriesByDateRange"
+        "updateMemory",
+        "getRecentMemories",
+        "searchRecentMemories",
+        "getMemoriesByDateRange"
     ])
-    .with_dependencies(&[HelixirLevel::Level0, HelixirLevel::Level1, HelixirLevel::Level2])
+    .with_dependencies(&[
+        HelixirLevel::Level0,
+        HelixirLevel::Level1,
+        HelixirLevel::Level2
+    ])
     .with_notes(
         "ISSUE: UPDATE in HelixQL requires two-query pattern:\n\
          1) WHERE to get internal ID\n\
          2) UPDATE with internal ID\n\
          Parameters in WHERE must be constants!"
     );
-
-    
     pub static ref LEVEL_4: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level4,
         "Relations & Reasoning",
@@ -71,25 +73,26 @@ lazy_static! {
     )
     .with_nodes(&["ReasoningRelation"])
     .with_edges(&[
-        "IMPLIES",      
-        "BECAUSE",      
-        "CONTRADICTS",  
-        "SUPERSEDES",   
-        "DERIVED_FROM", 
-        "SUPPORTS",     
-        "REFUTES"       
+        "IMPLIES",
+        "BECAUSE",
+        "CONTRADICTS",
+        "SUPERSEDES",
+        "DERIVED_FROM",
+        "SUPPORTS",
+        "REFUTES"
     ])
     .with_queries(&[
-        "addMemoryRelation", "getMemoryRelations",
-        "getReasoningChain", "detectConflicts", "getRelatedMemories"
+        "addMemoryRelation",
+        "getMemoryRelations",
+        "getReasoningChain",
+        "detectConflicts",
+        "getRelatedMemories"
     ])
     .with_dependencies(&[HelixirLevel::Level1])
     .with_notes(
         "FRAMEWORK CORE! This is reasoning - understanding WHY.\n\
          Relations are built between Memory nodes."
     );
-
-    
     pub static ref LEVEL_5: LevelDefinition = LevelDefinition::new(
         HelixirLevel::Level5,
         "Vectors & Embeddings",
@@ -97,8 +100,10 @@ lazy_static! {
     )
     .with_extends(&["Memory"])
     .with_queries(&[
-        "addMemoryWithVector", "searchVectorMemories",
-        "searchMemoriesByText", "searchHybrid"
+        "addMemoryWithVector",
+        "searchVectorMemories",
+        "searchMemoriesByText",
+        "searchHybrid"
     ])
     .with_dependencies(&[HelixirLevel::Level1])
     .with_notes(
@@ -106,8 +111,6 @@ lazy_static! {
          SOLUTION: Client-side embeddings via LLM client.\n\
          Schema extends Memory, adding vector and embedding_model fields."
     );
-
-    
     pub static ref LEVELS: HashMap<HelixirLevel, &'static LevelDefinition> = {
         let mut map = HashMap::new();
         map.insert(HelixirLevel::Level0, &*LEVEL_0);
@@ -120,11 +123,9 @@ lazy_static! {
     };
 }
 
-
 pub fn get_level_definition(level: HelixirLevel) -> &'static LevelDefinition {
     LEVELS.get(&level).expect("All levels should be defined")
 }
-
 
 pub fn get_all_levels() -> Vec<&'static LevelDefinition> {
     (0..=5)
@@ -132,4 +133,3 @@ pub fn get_all_levels() -> Vec<&'static LevelDefinition> {
         .filter_map(|l| LEVELS.get(&l).copied())
         .collect()
 }
-

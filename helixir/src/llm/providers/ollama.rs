@@ -1,5 +1,3 @@
-
-
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -39,7 +37,6 @@ struct OllamaResponse {
     total_duration: u64,
 }
 
-
 pub struct OllamaProvider {
     base_url: String,
     model: String,
@@ -48,15 +45,13 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-    
-    pub fn new(
-        base_url: impl Into<String>,
-        model: impl Into<String>,
-        temperature: f64,
-    ) -> Self {
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>, temperature: f64) -> Self {
         let base_url = base_url.into();
         let model = model.into();
-        info!("Ollama provider initialized (model={}, url={})", model, base_url);
+        info!(
+            "Ollama provider initialized (model={}, url={})",
+            model, base_url
+        );
         Self {
             base_url,
             model,
@@ -68,7 +63,6 @@ impl OllamaProvider {
         }
     }
 
-    
     pub fn localhost(model: impl Into<String>, temperature: f64) -> Self {
         Self::new("http://localhost:11434", model, temperature)
     }

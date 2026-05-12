@@ -1,53 +1,41 @@
-
-
-pub mod models;
-pub mod cache;
-pub mod vector;
 pub mod bm25;
+pub mod cache;
 pub mod hybrid;
-pub mod smart_traversal_v2;
+pub mod models;
 pub mod onto_search;
 pub mod query_processor;
+pub mod smart_traversal_v2;
+pub mod vector;
 
-pub use models::{SearchResult, SearchMethod};
-pub use cache::{SearchCache, CacheStats};
-pub use vector::{VectorSearch, VectorSearchError};
 pub use bm25::Bm25Search;
+pub use cache::{CacheStats, SearchCache};
 pub use hybrid::{HybridSearch, HybridSearchError};
-
+pub use models::{SearchMethod, SearchResult};
+pub use vector::{VectorSearch, VectorSearchError};
 
 pub use smart_traversal_v2::{
-    SmartTraversalV2,
-    SearchConfig as SmartSearchConfig,
-    cosine_similarity,
-    calculate_temporal_freshness,
-    edge_weights,
+    SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness,
+    cosine_similarity, edge_weights,
 };
-
 
 pub use onto_search::{
-    OntoSearchConfig,
-    OntoSearchResult,
-    parse_datetime_utc,
-    is_within_temporal_window,
-    calculate_temporal_freshness as onto_temporal_freshness,
+    OntoSearchConfig, OntoSearchResult, calculate_temporal_freshness as onto_temporal_freshness,
+    is_within_temporal_window, parse_datetime_utc,
 };
 
-
-pub use query_processor::{QueryProcessor, QueryIntent, EnhancedQuery};
+pub use query_processor::{EnhancedQuery, QueryIntent, QueryProcessor};
 
 use crate::core::config::SearchThresholds;
+use crate::core::search_modes::SearchMode;
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
-use crate::core::search_modes::SearchMode;
+use chrono::{DateTime, Duration, Utc};
+use moka::future::Cache as MokaCache;
+use sha2::{Digest, Sha256};
 use smart_traversal_v2::models::SearchConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc, Duration};
 use tracing::{debug, info};
-use moka::future::Cache as MokaCache;
-use sha2::{Sha256, Digest};
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum SearchError {
@@ -81,7 +69,6 @@ impl Default for SearchEngineConfig {
         }
     }
 }
-
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ControversyInfo {
@@ -122,14 +109,23 @@ fn embedding_cache_key(embedding: &[f32]) -> String {
 
 impl SearchEngine {
     pub fn new(
-        client: Arc<HelixClient>, 
+        client: Arc<HelixClient>,
         embedder: Arc<EmbeddingGenerator>,
         config: SearchEngineConfig,
     ) -> Self {
-        let vector = Arc::new(VectorSearch::new(Arc::clone(&client), config.cache_size, config.cache_ttl));
+        let vector = Arc::new(VectorSearch::new(
+            Arc::clone(&client),
+            config.cache_size,
+            config.cache_ttl,
+        ));
         let hybrid = HybridSearch::new(vector.clone(), config.vector_weight, config.bm25_weight);
         let smart_traversal = if config.enable_smart_traversal {
-            Some(SmartTraversalV2::new(Arc::clone(&client), Arc::clone(&embedder), config.cache_size, config.cache_ttl))
+            Some(SmartTraversalV2::new(
+                Arc::clone(&client),
+                Arc::clone(&embedder),
+                config.cache_size,
+                config.cache_ttl,
+            ))
         } else {
             None
         };
@@ -137,10 +133,16 @@ impl SearchEngine {
             .max_capacity(1000)
             .time_to_live(std::time::Duration::from_secs(60))
             .build();
-        Self { client, vector, hybrid, smart_traversal, config, cross_user_cache }
+        Self {
+            client,
+            vector,
+            hybrid,
+            smart_traversal,
+            config,
+            cross_user_cache,
+        }
     }
 
-    
     pub async fn search(
         &self,
         query: &str,
@@ -151,14 +153,12 @@ impl SearchEngine {
         temporal_days: Option<f64>,
         scope: &str,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
-        
         let query_preview: String = query.chars().take(30).collect();
-        
-        
+
         let search_mode = SearchMode::parse_mode(mode);
         let mode_defaults = search_mode.get_defaults();
         let effective_temporal_days = temporal_days.or(mode_defaults.temporal_days);
-        
+
         let temporal_cutoff: Option<DateTime<Utc>> = effective_temporal_days.map(|days| {
             let millis = (days * 24.0 * 60.0 * 60.0 * 1000.0) as i64;
             Utc::now() - Duration::milliseconds(millis)
@@ -168,9 +168,9 @@ impl SearchEngine {
             "collective" | "all" => None,
             _ => Some(user_id),
         };
-        
+
         info!(
-            "SearchEngine.search: query='{}...', user={}, mode={}, limit={}, scope={}, temporal_days={:?}", 
+            "SearchEngine.search: query='{}...', user={}, mode={}, limit={}, scope={}, temporal_days={:?}",
             query_preview, user_id, mode, limit, scope, effective_temporal_days
         );
 
@@ -184,10 +184,9 @@ impl SearchEngine {
 
         let results = match mode.to_lowercase().as_str() {
             "recent" | "contextual" => {
-                
                 if let Some(ref traversal) = self.smart_traversal {
                     debug!(
-                        "Using SmartTraversalV2 for mode={}, temporal_cutoff={:?}, scope={}", 
+                        "Using SmartTraversalV2 for mode={}, temporal_cutoff={:?}, scope={}",
                         mode, temporal_cutoff, scope
                     );
                     let config = self.make_search_config(
@@ -197,10 +196,16 @@ impl SearchEngine {
                         mode_defaults.min_combined_score,
                     );
                     let traversal_results = traversal
-                        .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
+                        .search(
+                            query,
+                            query_embedding,
+                            effective_user_id,
+                            config,
+                            temporal_cutoff,
+                        )
                         .await
                         .unwrap_or_default();
-                    
+
                     traversal_results
                         .into_iter()
                         .map(|r| UnifiedSearchResult {
@@ -215,15 +220,14 @@ impl SearchEngine {
                         })
                         .collect()
                 } else {
-                    
-                    self.vector_search_unified(query, effective_user_id, limit).await?
+                    self.vector_search_unified(query, effective_user_id, limit)
+                        .await?
                 }
             }
             "deep" => {
-                
                 if let Some(ref traversal) = self.smart_traversal {
                     debug!(
-                        "Using SmartTraversalV2 for deep search, temporal_cutoff={:?}, scope={}", 
+                        "Using SmartTraversalV2 for deep search, temporal_cutoff={:?}, scope={}",
                         temporal_cutoff, scope
                     );
                     let config = self.make_search_config(
@@ -233,10 +237,16 @@ impl SearchEngine {
                         mode_defaults.min_combined_score,
                     );
                     let traversal_results = traversal
-                        .search(query, query_embedding, effective_user_id, config, temporal_cutoff)
+                        .search(
+                            query,
+                            query_embedding,
+                            effective_user_id,
+                            config,
+                            temporal_cutoff,
+                        )
                         .await
                         .unwrap_or_default();
-                    
+
                     traversal_results
                         .into_iter()
                         .take(limit)
@@ -252,13 +262,16 @@ impl SearchEngine {
                         })
                         .collect()
                 } else {
-                    self.vector_search_unified(query, effective_user_id, limit).await?
+                    self.vector_search_unified(query, effective_user_id, limit)
+                        .await?
                 }
             }
             "full" => {
-                
                 if let Some(ref traversal) = self.smart_traversal {
-                    debug!("Using SmartTraversalV2 for full mode (no temporal filter), scope={}", scope);
+                    debug!(
+                        "Using SmartTraversalV2 for full mode (no temporal filter), scope={}",
+                        scope
+                    );
                     let config = self.make_search_config(
                         limit * 2,
                         4,
@@ -269,7 +282,7 @@ impl SearchEngine {
                         .search(query, query_embedding, effective_user_id, config, None)
                         .await
                         .unwrap_or_default();
-                    
+
                     traversal_results
                         .into_iter()
                         .take(limit)
@@ -290,25 +303,33 @@ impl SearchEngine {
                 }
             }
             _ => {
-                
                 debug!("Unknown mode '{}', falling back to vector search", mode);
-                self.vector_search_unified(query, effective_user_id, limit).await?
+                self.vector_search_unified(query, effective_user_id, limit)
+                    .await?
             }
         };
 
         let mut final_results = results;
 
         if (scope == "collective" || scope == "all") && !final_results.is_empty() {
-            let enrichment_futures: Vec<_> = final_results.iter().map(|r| {
-                let mem_id = r.memory_id.clone();
-                let uid = user_id.to_string();
-                let client = Arc::clone(&self.client);
-                async move {
-                    let user_count = Self::fetch_memory_user_count_static(&client, &mem_id).await.ok();
-                    let controversy = Self::fetch_controversy_static(&client, &mem_id, &uid).await.ok().flatten();
-                    (mem_id, user_count, controversy)
-                }
-            }).collect();
+            let enrichment_futures: Vec<_> = final_results
+                .iter()
+                .map(|r| {
+                    let mem_id = r.memory_id.clone();
+                    let uid = user_id.to_string();
+                    let client = Arc::clone(&self.client);
+                    async move {
+                        let user_count = Self::fetch_memory_user_count_static(&client, &mem_id)
+                            .await
+                            .ok();
+                        let controversy = Self::fetch_controversy_static(&client, &mem_id, &uid)
+                            .await
+                            .ok()
+                            .flatten();
+                        (mem_id, user_count, controversy)
+                    }
+                })
+                .collect();
 
             let enrichments = futures::future::join_all(enrichment_futures).await;
             for (mem_id, user_count, controversy) in enrichments {
@@ -321,10 +342,16 @@ impl SearchEngine {
 
         if effective_user_id.is_none() {
             let cache_key = embedding_cache_key(query_embedding);
-            self.cross_user_cache.insert(cache_key, final_results.clone()).await;
+            self.cross_user_cache
+                .insert(cache_key, final_results.clone())
+                .await;
         }
 
-        info!("SearchEngine.search complete: {} results (scope={})", final_results.len(), scope);
+        info!(
+            "SearchEngine.search complete: {} results (scope={})",
+            final_results.len(),
+            scope
+        );
         Ok(final_results)
     }
 
@@ -336,7 +363,10 @@ impl SearchEngine {
         limit: usize,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
         let query_preview: String = query.chars().take(30).collect();
-        info!("SearchEngine.search_for_dedup: query='{}...', user={}, limit={}", query_preview, user_id, limit);
+        info!(
+            "SearchEngine.search_for_dedup: query='{}...', user={}, limit={}",
+            query_preview, user_id, limit
+        );
 
         if let Some(ref traversal) = self.smart_traversal {
             let config = self.make_search_config(
@@ -369,7 +399,10 @@ impl SearchEngine {
         }
     }
 
-    async fn fetch_memory_user_count_static(client: &HelixClient, memory_id: &str) -> Result<u32, SearchError> {
+    async fn fetch_memory_user_count_static(
+        client: &HelixClient,
+        memory_id: &str,
+    ) -> Result<u32, SearchError> {
         #[derive(serde::Deserialize)]
         struct UsersResult {
             #[serde(default)]
@@ -377,7 +410,10 @@ impl SearchEngine {
         }
 
         let result: UsersResult = client
-            .execute_query("getMemoryUsers", &serde_json::json!({"memory_id": memory_id}))
+            .execute_query(
+                "getMemoryUsers",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
             .await
             .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
 
@@ -408,11 +444,16 @@ impl SearchEngine {
         }
 
         let result: ContradictionsResult = client
-            .execute_query("getMemoryContradictions", &serde_json::json!({"memory_id": memory_id}))
+            .execute_query(
+                "getMemoryContradictions",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
             .await
             .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
 
-        let all_contradictions: Vec<&ContradictedMemory> = result.contradicts_out.iter()
+        let all_contradictions: Vec<&ContradictedMemory> = result
+            .contradicts_out
+            .iter()
             .chain(result.contradicts_in.iter())
             .filter(|m| !m.memory_id.is_empty() && m.user_id != current_user_id)
             .collect();
@@ -429,7 +470,6 @@ impl SearchEngine {
         }
     }
 
-    
     fn make_search_config(
         &self,
         vector_top_k: usize,
@@ -463,10 +503,8 @@ impl SearchEngine {
         user_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
-        let vector_results = self.vector
-            .search(query, user_id, limit, 0.0, true)
-            .await?;
-        
+        let vector_results = self.vector.search(query, user_id, limit, 0.0, true).await?;
+
         Ok(vector_results
             .into_iter()
             .map(|r| UnifiedSearchResult {
@@ -482,7 +520,6 @@ impl SearchEngine {
             .collect())
     }
 
-    
     pub async fn vector_search(
         &self,
         query: &str,
@@ -493,12 +530,15 @@ impl SearchEngine {
         self.vector.search(query, user_id, limit, 0.0, true).await
     }
 
-    
-    pub fn bm25_search(&self, query: &str, documents: &[(String, String)], limit: usize) -> Vec<SearchResult> {
+    pub fn bm25_search(
+        &self,
+        query: &str,
+        documents: &[(String, String)],
+        limit: usize,
+    ) -> Vec<SearchResult> {
         Bm25Search::search(query, documents, limit, 0.0)
     }
 
-    
     pub async fn hybrid_search(
         &self,
         query: &str,
@@ -509,13 +549,9 @@ impl SearchEngine {
         self.hybrid.search(query, user_id, documents, limit).await
     }
 
-    
     pub fn cache_stats(&self) -> CacheStats {
         CacheStats::default()
     }
 
-    
-    pub fn clear_cache(&self) {
-        
-    }
+    pub fn clear_cache(&self) {}
 }

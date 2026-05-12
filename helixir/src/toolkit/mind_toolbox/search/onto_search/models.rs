@@ -1,7 +1,4 @@
-
-
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConceptMatch {
@@ -10,13 +7,11 @@ pub struct ConceptMatch {
     pub match_type: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagMatch {
     pub tag: String,
     pub score: f64,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphContext {
@@ -24,7 +19,6 @@ pub struct GraphContext {
     pub edge_types: Vec<String>,
     pub edge_weights: Vec<f64>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OntoSearchResult {
@@ -68,4 +62,3 @@ impl Default for OntoSearchResult {
         }
     }
 }
-

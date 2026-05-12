@@ -1,10 +1,7 @@
-
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-
 
 #[derive(Error, Debug)]
 pub enum LlmProviderError {
@@ -20,7 +17,6 @@ pub enum LlmProviderError {
     #[error("Internal error: {0}")]
     Internal(String),
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmMetadata {
@@ -42,10 +38,8 @@ pub struct LlmMetadata {
     pub original_error: Option<String>,
 }
 
-
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    
     async fn generate(
         &self,
         system_prompt: &str,
@@ -53,13 +47,10 @@ pub trait LlmProvider: Send + Sync {
         response_format: Option<&str>,
     ) -> Result<(String, LlmMetadata), LlmProviderError>;
 
-    
     fn provider_name(&self) -> &str;
 
-    
     fn model_name(&self) -> &str;
 }
-
 
 #[async_trait]
 impl LlmProvider for Arc<dyn LlmProvider> {
@@ -69,7 +60,9 @@ impl LlmProvider for Arc<dyn LlmProvider> {
         user_prompt: &str,
         response_format: Option<&str>,
     ) -> Result<(String, LlmMetadata), LlmProviderError> {
-        (**self).generate(system_prompt, user_prompt, response_format).await
+        (**self)
+            .generate(system_prompt, user_prompt, response_format)
+            .await
     }
 
     fn provider_name(&self) -> &str {

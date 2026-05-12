@@ -29,7 +29,13 @@ impl ToolingManager {
             .await
             .ok()
             .and_then(|r| r.memory)
-            .and_then(|m| if m.memory_type.is_empty() { None } else { Some(m.memory_type) })
+            .and_then(|m| {
+                if m.memory_type.is_empty() {
+                    None
+                } else {
+                    Some(m.memory_type)
+                }
+            })
     }
 
     pub(crate) async fn ensure_user_exists(&self, user_id: &str) {
@@ -39,17 +45,16 @@ impl ToolingManager {
             user: Option<serde_json::Value>,
         }
 
-        let exists = self.db
-            .execute_query::<UserResponse, _>(
-                "getUser",
-                &serde_json::json!({"user_id": user_id}),
-            )
+        let exists = self
+            .db
+            .execute_query::<UserResponse, _>("getUser", &serde_json::json!({"user_id": user_id}))
             .await
             .map(|r| r.user.is_some())
             .unwrap_or(false);
 
         if !exists {
-            let _ = self.db
+            let _ = self
+                .db
                 .execute_query::<serde_json::Value, _>(
                     "addUser",
                     &serde_json::json!({"user_id": user_id, "name": user_id}),
@@ -105,20 +110,27 @@ impl ToolingManager {
         let now = chrono::Utc::now().to_rfc3339();
 
         self.db
-            .execute_query::<serde_json::Value, _>("updateMemory", &UpdateInput {
-                memory_id: memory_id.to_string(),
-                content: new_content.to_string(),
-                certainty: self.config.default_certainty as i64,
-                importance: self.config.default_importance as i64,
-                updated_at: now,
-            })
+            .execute_query::<serde_json::Value, _>(
+                "updateMemory",
+                &UpdateInput {
+                    memory_id: memory_id.to_string(),
+                    content: new_content.to_string(),
+                    certainty: self.config.default_certainty as i64,
+                    importance: self.config.default_importance as i64,
+                    updated_at: now,
+                },
+            )
             .await
             .map_err(|e| super::ToolingError::Database(e.to_string()))?;
 
-        if let Err(e) = self.db
-            .execute_query::<serde_json::Value, _>("deleteMemoryEmbedding", &serde_json::json!({
-                "memory_id": memory_id
-            }))
+        if let Err(e) = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "deleteMemoryEmbedding",
+                &serde_json::json!({
+                    "memory_id": memory_id
+                }),
+            )
             .await
         {
             debug!("No old embedding to delete for {}: {}", memory_id, e);
@@ -126,10 +138,21 @@ impl ToolingManager {
 
         let internal_id = {
             #[derive(serde::Deserialize)]
-            struct MemResp { memory: MemNode }
+            struct MemResp {
+                memory: MemNode,
+            }
             #[derive(serde::Deserialize)]
-            struct MemNode { id: String }
-            match self.db.execute_query::<MemResp, _>("getMemory", &serde_json::json!({"memory_id": memory_id})).await {
+            struct MemNode {
+                id: String,
+            }
+            match self
+                .db
+                .execute_query::<MemResp, _>(
+                    "getMemory",
+                    &serde_json::json!({"memory_id": memory_id}),
+                )
+                .await
+            {
                 Ok(r) => r.memory.id,
                 Err(_) => memory_id.to_string(),
             }
@@ -143,13 +166,17 @@ impl ToolingManager {
             created_at: String,
         }
         let now2 = chrono::Utc::now().to_rfc3339();
-        if let Err(e) = self.db
-            .execute_query::<serde_json::Value, _>("addMemoryEmbedding", &EmbedInput {
-                memory_id: internal_id,
-                vector_data: vector.iter().map(|&x| x as f64).collect(),
-                embedding_model: self.embedder.model().to_string(),
-                created_at: now2,
-            })
+        if let Err(e) = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "addMemoryEmbedding",
+                &EmbedInput {
+                    memory_id: internal_id,
+                    vector_data: vector.iter().map(|&x| x as f64).collect(),
+                    embedding_model: self.embedder.model().to_string(),
+                    created_at: now2,
+                },
+            )
             .await
         {
             warn!("Failed to update embedding for {}: {}", memory_id, e);
@@ -169,15 +196,22 @@ impl ToolingManager {
             context: String,
         }
 
-        if let Err(e) = self.db
-            .execute_query::<serde_json::Value, _>("linkUserToMemory", &LinkInput {
-                user_id: user_id.to_string(),
-                memory_id: memory_id.to_string(),
-                context: "cross_user_link".to_string(),
-            })
+        if let Err(e) = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "linkUserToMemory",
+                &LinkInput {
+                    user_id: user_id.to_string(),
+                    memory_id: memory_id.to_string(),
+                    context: "cross_user_link".to_string(),
+                },
+            )
             .await
         {
-            warn!("Failed to cross-link user {} to memory {}: {}", user_id, memory_id, e);
+            warn!(
+                "Failed to cross-link user {} to memory {}: {}",
+                user_id, memory_id, e
+            );
             return;
         }
 
@@ -186,8 +220,12 @@ impl ToolingManager {
             #[serde(default)]
             users: Vec<serde_json::Value>,
         }
-        let user_count = match self.db
-            .execute_query::<UsersResult, _>("getMemoryUsers", &serde_json::json!({"memory_id": memory_id}))
+        let user_count = match self
+            .db
+            .execute_query::<UsersResult, _>(
+                "getMemoryUsers",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
             .await
         {
             Ok(r) => r.users.len().max(1) as i64,
@@ -200,15 +238,22 @@ impl ToolingManager {
             user_count: i64,
             updated_at: String,
         }
-        let _ = self.db
-            .execute_query::<serde_json::Value, _>("updateMemoryUserCount", &UpdateCountInput {
-                memory_id: memory_id.to_string(),
-                user_count,
-                updated_at: chrono::Utc::now().to_rfc3339(),
-            })
+        let _ = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "updateMemoryUserCount",
+                &UpdateCountInput {
+                    memory_id: memory_id.to_string(),
+                    user_count,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            )
             .await;
 
-        debug!("Cross-linked user {} to memory {} (user_count={})", user_id, memory_id, user_count);
+        debug!(
+            "Cross-linked user {} to memory {} (user_count={})",
+            user_id, memory_id, user_count
+        );
     }
 
     pub(crate) async fn link_memory_to_session(
@@ -247,7 +292,10 @@ impl ToolingManager {
             .execute_query::<serde_json::Value, _>("linkAgentToMemory", &params)
             .await
             .map_err(|e| super::ToolingError::Database(e.to_string()))?;
-        debug!("Linked agent {} to memory {} (method={})", agent_id, memory_id, method);
+        debug!(
+            "Linked agent {} to memory {} (method={})",
+            agent_id, memory_id, method
+        );
         Ok(())
     }
 
@@ -274,7 +322,10 @@ impl ToolingManager {
             .execute_query::<serde_json::Value, _>("addMemoryHistoryEvent", &params)
             .await
             .map_err(|e| super::ToolingError::Database(e.to_string()))?;
-        debug!("History event for memory {}: {} by {}", memory_id, action, actor);
+        debug!(
+            "History event for memory {}: {} by {}",
+            memory_id, action, actor
+        );
         Ok(())
     }
 
@@ -336,7 +387,10 @@ impl ToolingManager {
             .execute_query::<serde_json::Value, _>("addMemoryValidIn", &params)
             .await
             .map_err(|e| super::ToolingError::Database(e.to_string()))?;
-        debug!("Memory {} valid in context {} (priority={})", memory_id, context_id, priority);
+        debug!(
+            "Memory {} valid in context {} (priority={})",
+            memory_id, context_id, priority
+        );
         Ok(())
     }
 
@@ -374,7 +428,10 @@ impl ToolingManager {
             .execute_query::<serde_json::Value, _>("addConceptRelation", &params)
             .await
             .map_err(|e| super::ToolingError::Database(e.to_string()))?;
-        debug!("Concept relation: {} -[{}]-> {}", from_id, relation_type, to_id);
+        debug!(
+            "Concept relation: {} -[{}]-> {}",
+            from_id, relation_type, to_id
+        );
         Ok(())
     }
 
@@ -394,14 +451,18 @@ impl ToolingManager {
             resolution_strategy: String,
         }
 
-        if let Err(e) = self.db
-            .execute_query::<serde_json::Value, _>("addMemoryContradiction", &ContradictInput {
-                from_id: new_memory_id.to_string(),
-                to_id: existing_memory_id.to_string(),
-                resolution: reasoning.to_string(),
-                resolved: 0,
-                resolution_strategy: format!("cross_user_{}", conflict_type),
-            })
+        if let Err(e) = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "addMemoryContradiction",
+                &ContradictInput {
+                    from_id: new_memory_id.to_string(),
+                    to_id: existing_memory_id.to_string(),
+                    resolution: reasoning.to_string(),
+                    resolved: 0,
+                    resolution_strategy: format!("cross_user_{}", conflict_type),
+                },
+            )
             .await
         {
             warn!(

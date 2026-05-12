@@ -1,9 +1,9 @@
 use serde::{Deserialize, Deserializer};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::utils::nullable_string;
-use super::types::ToolingError;
 use super::ToolingManager;
+use super::types::ToolingError;
+use crate::utils::nullable_string;
 
 impl ToolingManager {
     pub async fn get_memory_graph(
@@ -12,7 +12,10 @@ impl ToolingManager {
         memory_id: Option<&str>,
         depth: usize,
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), ToolingError> {
-        info!("Getting memory graph for user={}, memory={:?}, depth={}", user_id, memory_id, depth);
+        info!(
+            "Getting memory graph for user={}, memory={:?}, depth={}",
+            user_id, memory_id, depth
+        );
 
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
@@ -34,10 +37,14 @@ impl ToolingManager {
                 content: String,
             }
 
-            match self.db.execute_query::<UserMemoriesResult, _>(
-                "getUserMemories",
-                &serde_json::json!({"user_id": user_id, "limit": 10i64}),
-            ).await {
+            match self
+                .db
+                .execute_query::<UserMemoriesResult, _>(
+                    "getUserMemories",
+                    &serde_json::json!({"user_id": user_id, "limit": 10i64}),
+                )
+                .await
+            {
                 Ok(result) => result.memories.into_iter().map(|m| m.memory_id).collect(),
                 Err(_) => Vec::new(),
             }
@@ -74,10 +81,14 @@ impl ToolingManager {
                     memory_type: String,
                 }
 
-                if let Ok(result) = self.db.execute_query::<MemoryResult, _>(
-                    "getMemory",
-                    &serde_json::json!({"memory_id": mid}),
-                ).await {
+                if let Ok(result) = self
+                    .db
+                    .execute_query::<MemoryResult, _>(
+                        "getMemory",
+                        &serde_json::json!({"memory_id": mid}),
+                    )
+                    .await
+                {
                     if let Some(mem) = result.memory {
                         nodes.push(serde_json::json!({
                             "id": mem.memory_id,
@@ -114,10 +125,14 @@ impl ToolingManager {
                     content: String,
                 }
 
-                if let Ok(conns) = self.db.execute_query::<ConnectionsResult, _>(
-                    "getMemoryLogicalConnections",
-                    &serde_json::json!({"memory_id": mid}),
-                ).await {
+                if let Ok(conns) = self
+                    .db
+                    .execute_query::<ConnectionsResult, _>(
+                        "getMemoryLogicalConnections",
+                        &serde_json::json!({"memory_id": mid}),
+                    )
+                    .await
+                {
                     let edge_groups: &[(&Vec<ConnectedMemory>, &str, bool)] = &[
                         (&conns.implies_out, "IMPLIES", true),
                         (&conns.implies_in, "IMPLIES", false),

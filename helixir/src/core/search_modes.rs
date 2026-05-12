@@ -1,30 +1,25 @@
-
-
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SearchMode {
-    
     #[default]
     Recent,
-    
+
     Contextual,
-    
+
     Deep,
-    
+
     Full,
 }
 
 impl SearchMode {
-    
     #[must_use]
     pub fn get_defaults(&self) -> SearchModeDefaults {
         match self {
             Self::Recent => SearchModeDefaults {
                 max_results: 10,
                 graph_depth: 1,
-                temporal_days: Some(0.167), 
+                temporal_days: Some(0.167),
                 vector_weight: 0.7,
                 bm25_weight: 0.3,
                 include_relations: true,
@@ -63,12 +58,12 @@ impl SearchMode {
             Self::Full => SearchModeDefaults {
                 max_results: 100,
                 graph_depth: 4,
-                temporal_days: None, 
+                temporal_days: None,
                 vector_weight: 0.5,
                 bm25_weight: 0.5,
                 include_relations: true,
                 cost_estimate: 10.0,
-                use_smart_traversal: false, 
+                use_smart_traversal: false,
                 vector_top_k: 0,
                 min_vector_score: 0.0,
                 min_combined_score: 0.0,
@@ -76,7 +71,6 @@ impl SearchMode {
         }
     }
 
-    
     #[must_use]
     pub fn description(&self) -> &'static str {
         match self {
@@ -87,7 +81,6 @@ impl SearchMode {
         }
     }
 
-    
     #[must_use]
     pub fn parse_mode(s: &str) -> Self {
         match s.to_lowercase().as_str() {
@@ -95,7 +88,7 @@ impl SearchMode {
             "contextual" => Self::Contextual,
             "deep" => Self::Deep,
             "full" => Self::Full,
-            _ => Self::Recent, 
+            _ => Self::Recent,
         }
     }
 }
@@ -112,52 +105,47 @@ impl From<String> for SearchMode {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchModeDefaults {
-    
     pub max_results: usize,
-    
+
     pub graph_depth: usize,
-    
+
     pub temporal_days: Option<f64>,
-    
+
     pub vector_weight: f64,
-    
+
     pub bm25_weight: f64,
-    
+
     pub include_relations: bool,
-    
+
     pub cost_estimate: f64,
-    
+
     pub use_smart_traversal: bool,
-    
+
     pub vector_top_k: usize,
-    
+
     pub min_vector_score: f64,
-    
+
     pub min_combined_score: f64,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenCostEstimate {
-    
     pub base_cost: f64,
-    
+
     pub result_cost: f64,
-    
+
     pub total_cost: usize,
-    
+
     pub cost_tier: String,
-    
+
     pub num_results: usize,
-    
+
     pub graph_depth: usize,
-    
+
     pub mode: String,
 }
-
 
 #[must_use]
 pub fn estimate_token_cost(
@@ -170,7 +158,6 @@ pub fn estimate_token_cost(
     let results = num_results.unwrap_or(defaults.max_results);
     let depth = graph_depth.unwrap_or(defaults.graph_depth);
 
-    
     const BASE_COST_PER_MEMORY: f64 = 200.0;
     const RELATION_COST: f64 = 50.0;
 

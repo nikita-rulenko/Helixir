@@ -1,15 +1,12 @@
-
-
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
-use tracing::{debug, info, warn};
-use super::models::{SearchResult, SearchConfig, edge_weights};
-use super::scoring::{calculate_temporal_freshness, calculate_graph_score};
+use super::models::{SearchConfig, SearchResult, edge_weights};
+use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::db::HelixClient;
 use crate::utils::nullable_string;
-
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TraversalError {
@@ -18,7 +15,6 @@ pub enum TraversalError {
     #[error("Invalid query: {0}")]
     InvalidQuery(String),
 }
-
 
 #[derive(Debug, Deserialize, Default)]
 struct VectorSearchResponse {
@@ -42,7 +38,6 @@ struct VectorMemory {
     user_id: String,
 }
 
-
 #[derive(Debug, Deserialize, Default)]
 struct GraphConnectionsResponse {
     #[serde(default)]
@@ -63,7 +58,6 @@ struct GraphConnectionsResponse {
     relation_in: Vec<ConnectedMemory>,
 }
 
-
 #[derive(Debug, Deserialize)]
 struct ConnectedMemory {
     #[serde(default, deserialize_with = "nullable_string")]
@@ -76,7 +70,6 @@ struct ConnectedMemory {
     memory_type: String,
 }
 
-
 pub async fn vector_search_phase(
     client: Arc<HelixClient>,
     query_embedding: &[f32],
@@ -88,8 +81,11 @@ pub async fn vector_search_phase(
     let min_score = config.min_vector_score;
     info!("Starting Phase 1: Vector search with top_k={}", top_k);
 
-    
-    let fetch_limit = if user_id.is_some() { top_k as i64 * 3 } else { top_k as i64 };
+    let fetch_limit = if user_id.is_some() {
+        top_k as i64 * 3
+    } else {
+        top_k as i64
+    };
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
     let params = serde_json::json!({
         "query_vector": query_vector,
@@ -140,8 +136,9 @@ pub async fn vector_search_phase(
         let vector_score = RANK_BASE * RANK_DECAY.powi(accepted_rank as i32);
         accepted_rank += 1;
 
-        let temporal_score = calculate_temporal_freshness(&memory.created_at, config.temporal_decay_days);
-        
+        let temporal_score =
+            calculate_temporal_freshness(&memory.created_at, config.temporal_decay_days);
+
         let mut result = SearchResult::from_vector_weighted(
             &memory.memory_id,
             &memory.content,
@@ -154,10 +151,16 @@ pub async fn vector_search_phase(
 
         let mut meta = HashMap::new();
         if !memory.user_id.is_empty() {
-            meta.insert("user_id".to_string(), serde_json::Value::String(memory.user_id.clone()));
+            meta.insert(
+                "user_id".to_string(),
+                serde_json::Value::String(memory.user_id.clone()),
+            );
         }
         if !memory.memory_type.is_empty() {
-            meta.insert("memory_type".to_string(), serde_json::Value::String(memory.memory_type.clone()));
+            meta.insert(
+                "memory_type".to_string(),
+                serde_json::Value::String(memory.memory_type.clone()),
+            );
         }
         if !meta.is_empty() {
             result.metadata = Some(meta);
@@ -168,7 +171,6 @@ pub async fn vector_search_phase(
         }
     }
 
-    
     results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
 
     if !results.is_empty() {
@@ -176,7 +178,10 @@ pub async fn vector_search_phase(
         let bottom = results.last().unwrap().combined_score;
         info!(
             "Phase 1 completed: {} results, score range {:.4}..{:.4} (spread {:.4})",
-            results.len(), top, bottom, top - bottom
+            results.len(),
+            top,
+            bottom,
+            top - bottom
         );
     } else {
         info!("Phase 1 completed: 0 results");
@@ -184,14 +189,16 @@ pub async fn vector_search_phase(
     Ok(results)
 }
 
-
 pub async fn graph_expansion_phase(
     client: Arc<HelixClient>,
     vector_hits: &[SearchResult],
     query_embedding: &[f32],
     config: &SearchConfig,
 ) -> Result<Vec<SearchResult>, TraversalError> {
-    info!("Starting Phase 2: Graph expansion from {} vector hits", vector_hits.len());
+    info!(
+        "Starting Phase 2: Graph expansion from {} vector hits",
+        vector_hits.len()
+    );
 
     let mut all_results = Vec::new();
     let mut expansion_tasks = Vec::new();
@@ -213,7 +220,7 @@ pub async fn graph_expansion_phase(
         let task = tokio::spawn(async move {
             let mut visited = HashSet::new();
             visited.insert(hit.memory_id.clone());
-            
+
             expand_from_node(
                 client,
                 &hit.memory_id,
@@ -223,13 +230,13 @@ pub async fn graph_expansion_phase(
                 &mut visited,
                 hit.combined_score,
                 weights,
-            ).await
+            )
+            .await
         });
 
         expansion_tasks.push(task);
     }
 
-    
     for task in expansion_tasks {
         match task.await {
             Ok(Ok(results)) => all_results.extend(results),
@@ -241,7 +248,6 @@ pub async fn graph_expansion_phase(
     info!("Phase 2 completed: {} expanded results", all_results.len());
     Ok(all_results)
 }
-
 
 async fn expand_from_node(
     client: Arc<HelixClient>,
@@ -267,7 +273,6 @@ async fn expand_from_node(
     let mut results = Vec::new();
     let mut neighbors = Vec::new();
 
-    
     process_edge_collection(
         &response.implies_out,
         "IMPLIES",
@@ -312,7 +317,6 @@ async fn expand_from_node(
         graph_weights,
     );
 
-    
     process_edge_collection(
         &response.implies_in,
         "IMPLIES_IN",
@@ -357,9 +361,7 @@ async fn expand_from_node(
         graph_weights,
     );
 
-    
     if current_depth < max_depth {
-        
         neighbors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (neighbor_id, neighbor_score) in neighbors.into_iter().take(3) {
             if !visited.contains(&neighbor_id) {
@@ -373,7 +375,8 @@ async fn expand_from_node(
                     visited,
                     neighbor_score,
                     graph_weights,
-                )).await?;
+                ))
+                .await?;
                 results.extend(expanded);
             }
         }
@@ -381,7 +384,6 @@ async fn expand_from_node(
 
     Ok(results)
 }
-
 
 fn process_edge_collection(
     memories: &[ConnectedMemory],
@@ -402,9 +404,9 @@ fn process_edge_collection(
 
         let temporal_score = calculate_temporal_freshness(&mem.created_at, decay_days);
         let graph_score = calculate_graph_score(edge_weight, parent_score);
-        
+
         let semantic_sim = 0.5;
-        
+
         let result = SearchResult::from_graph_weighted(
             &mem.memory_id,
             &mem.content,
@@ -423,16 +425,15 @@ fn process_edge_collection(
     }
 }
 
+pub fn rank_and_filter(results: Vec<SearchResult>, min_combined_score: f64) -> Vec<SearchResult> {
+    info!(
+        "Starting Phase 3: Ranking and filtering {} results",
+        results.len()
+    );
 
-pub fn rank_and_filter(
-    results: Vec<SearchResult>,
-    min_combined_score: f64,
-) -> Vec<SearchResult> {
-    info!("Starting Phase 3: Ranking and filtering {} results", results.len());
+    let mut best_scores: std::collections::HashMap<String, SearchResult> =
+        std::collections::HashMap::new();
 
-    
-    let mut best_scores: std::collections::HashMap<String, SearchResult> = std::collections::HashMap::new();
-    
     for result in results {
         match best_scores.get(&result.memory_id) {
             Some(existing) => {
@@ -446,15 +447,16 @@ pub fn rank_and_filter(
         }
     }
 
-    
     let mut filtered_results: Vec<SearchResult> = best_scores
         .into_values()
         .filter(|r| r.combined_score >= min_combined_score)
         .collect();
 
-    
     filtered_results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
 
-    info!("Phase 3 completed: {} final results", filtered_results.len());
+    info!(
+        "Phase 3 completed: {} final results",
+        filtered_results.len()
+    );
     filtered_results
 }

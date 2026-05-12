@@ -1,15 +1,13 @@
 use rmcp::{
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     handler::server::{
-        router::tool::ToolRouter,
-        router::prompt::PromptRouter,
-        wrapper::Parameters,
+        router::prompt::PromptRouter, router::tool::ToolRouter, wrapper::Parameters,
     },
     model::*,
-    tool, tool_handler, tool_router,
     prompt, prompt_handler, prompt_router,
-    transport::stdio,
     service::RequestContext,
-    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
+    tool, tool_handler, tool_router,
+    transport::stdio,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -18,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::core::helixir_client::{HelixirClient, HelixirClientError};
-use crate::toolkit::fast_think::{FastThinkManager, FastThinkLimits, FastThinkError, ThoughtType};
+use crate::toolkit::fast_think::{FastThinkError, FastThinkLimits, FastThinkManager, ThoughtType};
 
 use super::params::*;
 use super::prompts;
@@ -38,7 +36,7 @@ impl HelixirMcpServer {
             client_arc.clone(),
             FastThinkLimits::mcp(),
         ));
-        
+
         Self {
             client: client_arc,
             fast_think,
@@ -69,29 +67,38 @@ impl HelixirMcpServer {
 
 #[tool_router]
 impl HelixirMcpServer {
-    #[tool(description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats.processing_time_ms}")]
+    #[tool(
+        description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats.processing_time_ms}"
+    )]
     async fn add_memory(
         &self,
         Parameters(params): Parameters<AddMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("🧠 Adding memory for user={}", params.user_id);
 
-        let result = self.client
-            .add(&params.message, &params.user_id, params.agent_id.as_deref(), None)
+        let result = self
+            .client
+            .add(
+                &params.message,
+                &params.user_id,
+                params.agent_id.as_deref(),
+                None,
+            )
             .await
             .map_err(Self::convert_error)?;
 
         info!(
             "✅ Added {} memories ({} chunks)",
-            result.memories_added,
-            result.chunks_created
+            result.memories_added, result.chunks_created
         );
 
         let json = Self::result_to_json(&result)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Smart memory search with automatic strategy selection. Modes: 'recent' (4h, fast), 'contextual' (30d, balanced), 'deep' (90d), 'full' (all). Scope: 'personal' (this user only), 'collective' (all users, ranked by consensus), 'all' (combined with controversy annotations). Returns: [{memory_id, content, score, metadata}]")]
+    #[tool(
+        description = "Smart memory search with automatic strategy selection. Modes: 'recent' (4h, fast), 'contextual' (30d, balanced), 'deep' (90d), 'full' (all). Scope: 'personal' (this user only), 'collective' (all users, ranked by consensus), 'all' (combined with controversy annotations). Returns: [{memory_id, content, score, metadata}]"
+    )]
     async fn search_memory(
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
@@ -106,7 +113,8 @@ impl HelixirMcpServer {
             query_preview, mode, limit, scope
         );
 
-        let results = self.client
+        let results = self
+            .client
             .search(
                 &params.query,
                 &params.user_id,
@@ -125,13 +133,18 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "List all memories for a user without semantic search. Use for exhaustive queries, full-scan, counting, or when you need to see everything in the memory store. Returns: [{memory_id, content, memory_type, created_at, importance, certainty}]")]
+    #[tool(
+        description = "List all memories for a user without semantic search. Use for exhaustive queries, full-scan, counting, or when you need to see everything in the memory store. Returns: [{memory_id, content, memory_type, created_at, importance, certainty}]"
+    )]
     async fn list_memories(
         &self,
         Parameters(params): Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
         let limit = params.limit.unwrap_or(100) as i64;
-        info!("📋 Listing memories for user={}, limit={}", params.user_id, limit);
+        info!(
+            "📋 Listing memories for user={}, limit={}",
+            params.user_id, limit
+        );
 
         #[derive(serde::Deserialize)]
         struct MemoriesResponse {
@@ -139,7 +152,9 @@ impl HelixirMcpServer {
             memories: Vec<serde_json::Value>,
         }
 
-        let result: MemoriesResponse = self.client.db()
+        let result: MemoriesResponse = self
+            .client
+            .db()
             .execute_query(
                 "getUserMemories",
                 &serde_json::json!({
@@ -167,7 +182,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Update memory content (regenerates embedding & relations). Returns: {updated: bool, memory_id}")]
+    #[tool(
+        description = "Update memory content (regenerates embedding & relations). Returns: {updated: bool, memory_id}"
+    )]
     async fn update_memory(
         &self,
         Parameters(params): Parameters<UpdateMemoryParams>,
@@ -175,7 +192,8 @@ impl HelixirMcpServer {
         let id_preview: String = params.memory_id.chars().take(12).collect();
         info!("✏️ Updating memory: {}...", id_preview);
 
-        let result = self.client
+        let result = self
+            .client
             .update(&params.memory_id, &params.new_content, &params.user_id)
             .await
             .map_err(Self::convert_error)?;
@@ -197,8 +215,13 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         info!("📊 Getting memory graph for user={}", params.user_id);
 
-        let result = self.client
-            .get_graph(&params.user_id, params.memory_id.as_deref(), params.depth.map(|d| d as usize))
+        let result = self
+            .client
+            .get_graph(
+                &params.user_id,
+                params.memory_id.as_deref(),
+                params.depth.map(|d| d as usize),
+            )
             .await
             .map_err(Self::convert_error)?;
 
@@ -206,7 +229,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search memories by ontology concepts. Concept types: 'skill', 'preference', 'goal', 'fact', 'opinion', 'experience', 'achievement', 'action'. Returns: [{memory_id, content, concept_score}]")]
+    #[tool(
+        description = "Search memories by ontology concepts. Concept types: 'skill', 'preference', 'goal', 'fact', 'opinion', 'experience', 'achievement', 'action'. Returns: [{memory_id, content, concept_score}]"
+    )]
     async fn search_by_concept(
         &self,
         Parameters(params): Parameters<SearchByConceptParams>,
@@ -217,7 +242,8 @@ impl HelixirMcpServer {
             query_preview, params.concept_type
         );
 
-        let results = self.client
+        let results = self
+            .client
             .search_by_concept(
                 &params.query,
                 &params.user_id,
@@ -235,7 +261,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search with logical reasoning chains (IMPLIES/BECAUSE/CONTRADICTS). Chain modes: 'causal' (why?), 'forward' (effects), 'both', 'deep'. Returns: {chains: [...], deepest_chain}")]
+    #[tool(
+        description = "Search with logical reasoning chains (IMPLIES/BECAUSE/CONTRADICTS). Chain modes: 'causal' (why?), 'forward' (effects), 'both', 'deep'. Returns: {chains: [...], deepest_chain}"
+    )]
     async fn search_reasoning_chain(
         &self,
         Parameters(params): Parameters<SearchReasoningChainParams>,
@@ -248,7 +276,8 @@ impl HelixirMcpServer {
             query_preview, chain_mode
         );
 
-        let result = self.client
+        let result = self
+            .client
             .search_reasoning_chain(
                 &params.query,
                 &params.user_id,
@@ -265,14 +294,17 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Start a FastThink session for reasoning. Creates an isolated working memory graph. Returns: {session_id, root_thought_idx}")]
+    #[tool(
+        description = "Start a FastThink session for reasoning. Creates an isolated working memory graph. Returns: {session_id, root_thought_idx}"
+    )]
     async fn think_start(
         &self,
         Parameters(params): Parameters<StartThinkingParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("🧠 Starting thinking session: {}", params.session_id);
 
-        let result = self.fast_think
+        let result = self
+            .fast_think
             .start_thinking(&params.session_id, &params.initial_thought)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -284,7 +316,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Add a thought to an active FastThink session. Returns: {thought_idx, thought_count, depth}")]
+    #[tool(
+        description = "Add a thought to an active FastThink session. Returns: {thought_idx, thought_count, depth}"
+    )]
     async fn think_add(
         &self,
         Parameters(params): Parameters<AddThoughtParams>,
@@ -296,7 +330,9 @@ impl HelixirMcpServer {
             _ => ThoughtType::Reasoning,
         };
 
-        let parent = params.parent_idx.map(|idx| petgraph::stable_graph::NodeIndex::new(idx as usize));
+        let parent = params
+            .parent_idx
+            .map(|idx| petgraph::stable_graph::NodeIndex::new(idx as usize));
 
         let result = self.fast_think.add_thought(
             &params.session_id,
@@ -308,7 +344,8 @@ impl HelixirMcpServer {
 
         match result {
             Ok(node) => {
-                let status = self.fast_think
+                let status = self
+                    .fast_think
                     .get_session_status(&params.session_id)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -321,7 +358,8 @@ impl HelixirMcpServer {
             }
             Err(FastThinkError::Timeout) => {
                 warn!("⏰ FastThink timeout - committing partial results");
-                let commit_result = self.fast_think
+                let commit_result = self
+                    .fast_think
                     .commit_partial(&params.session_id, "claude", "timeout")
                     .await;
 
@@ -335,14 +373,19 @@ impl HelixirMcpServer {
                         }))?;
                         Ok(CallToolResult::success(vec![Content::text(json)]))
                     }
-                    Err(e) => Err(McpError::internal_error(format!("Timeout and commit failed: {}", e), None))
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Timeout and commit failed: {}", e),
+                        None,
+                    )),
                 }
             }
-            Err(e) => Err(McpError::internal_error(e.to_string(), None))
+            Err(e) => Err(McpError::internal_error(e.to_string(), None)),
         }
     }
 
-    #[tool(description = "Recall facts from main memory into FastThink session. READ-ONLY access to main memory. Returns: {recalled_count, thought_indices}")]
+    #[tool(
+        description = "Recall facts from main memory into FastThink session. READ-ONLY access to main memory. Returns: {recalled_count, thought_indices}"
+    )]
     async fn think_recall(
         &self,
         Parameters(params): Parameters<ThinkRecallParams>,
@@ -352,7 +395,8 @@ impl HelixirMcpServer {
         let parent = petgraph::stable_graph::NodeIndex::new(params.parent_idx as usize);
         let user_id = params.user_id.as_deref().unwrap_or("default");
 
-        let results = self.fast_think
+        let results = self
+            .fast_think
             .recall(&params.session_id, &params.query, parent, user_id)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -368,7 +412,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Mark a conclusion in FastThink session. Required before commit. Returns: {conclusion_idx, status}")]
+    #[tool(
+        description = "Mark a conclusion in FastThink session. Required before commit. Returns: {conclusion_idx, status}"
+    )]
     async fn think_conclude(
         &self,
         Parameters(params): Parameters<ThinkConcludeParams>,
@@ -382,7 +428,8 @@ impl HelixirMcpServer {
             .map(|&idx| petgraph::stable_graph::NodeIndex::new(idx as usize))
             .collect();
 
-        let result = self.fast_think
+        let result = self
+            .fast_think
             .conclude(&params.session_id, &params.conclusion, &supporting)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -393,14 +440,17 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Commit FastThink session to main memory. Writes conclusion with supporting evidence. Returns: {memory_id, thoughts_processed, elapsed_ms}")]
+    #[tool(
+        description = "Commit FastThink session to main memory. Writes conclusion with supporting evidence. Returns: {memory_id, thoughts_processed, elapsed_ms}"
+    )]
     async fn think_commit(
         &self,
         Parameters(params): Parameters<ThinkCommitParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("📝 Committing thinking session: {}", params.session_id);
 
-        let result = self.fast_think
+        let result = self
+            .fast_think
             .commit(&params.session_id, &params.user_id)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -420,14 +470,17 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Discard FastThink session without saving. Clears working memory. Returns: {discarded_thoughts, elapsed_ms}")]
+    #[tool(
+        description = "Discard FastThink session without saving. Clears working memory. Returns: {discarded_thoughts, elapsed_ms}"
+    )]
     async fn think_discard(
         &self,
         Parameters(params): Parameters<ThinkDiscardParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("🗑️ Discarding thinking session: {}", params.session_id);
 
-        let result = self.fast_think
+        let result = self
+            .fast_think
             .discard(&params.session_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -438,12 +491,15 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Get status of a FastThink session. Returns: {status, thought_count, depth, has_conclusion, elapsed_ms}")]
+    #[tool(
+        description = "Get status of a FastThink session. Returns: {status, thought_count, depth, has_conclusion, elapsed_ms}"
+    )]
     async fn think_status(
         &self,
         Parameters(params): Parameters<ThinkStatusParams>,
     ) -> Result<CallToolResult, McpError> {
-        let status = self.fast_think
+        let status = self
+            .fast_think
             .get_session_status(&params.session_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -460,7 +516,9 @@ impl HelixirMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Find incomplete thoughts from previous sessions that timed out. Use at session start to continue unfinished research. Returns: [{memory_id, content, created_at}]")]
+    #[tool(
+        description = "Find incomplete thoughts from previous sessions that timed out. Use at session start to continue unfinished research. Returns: [{memory_id, content, created_at}]"
+    )]
     async fn search_incomplete_thoughts(
         &self,
         Parameters(params): Parameters<SearchIncompleteThoughtsParams>,
@@ -469,7 +527,9 @@ impl HelixirMcpServer {
 
         let limit = params.limit.unwrap_or(5) as usize;
 
-        let results = self.client.tooling()
+        let results = self
+            .client
+            .tooling()
             .search_by_tag("incomplete_thought", limit)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -506,15 +566,15 @@ impl HelixirMcpServer {
         &self,
         Parameters(args): Parameters<MemorySummaryArgs>,
     ) -> Result<GetPromptResult, McpError> {
-        let topic_filter = args.topic
+        let topic_filter = args
+            .topic
             .map(|t| format!(" about {}", t))
             .unwrap_or_default();
 
-        let messages = vec![
-            PromptMessage::new_text(
-                PromptMessageRole::User,
-                format!(
-                    "Analyze memories for user_id={}{}.
+        let messages = vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            format!(
+                "Analyze memories for user_id={}{}.
 
 Use search_memory tool to find relevant memories.
 Provide a summary with:
@@ -522,11 +582,9 @@ Provide a summary with:
 2. Important facts and preferences  
 3. Connections between memories
 4. Timeline of events",
-                    args.user_id,
-                    topic_filter
-                ),
+                args.user_id, topic_filter
             ),
-        ];
+        )];
 
         Ok(GetPromptResult {
             description: Some(format!("Memory summary for {}", args.user_id)),
@@ -541,9 +599,10 @@ Provide a summary with:
     async fn tool_selection_guide(&self) -> Result<GetPromptResult, McpError> {
         let guide = prompts::get_cognitive_protocol();
 
-        let messages = vec![
-            PromptMessage::new_text(PromptMessageRole::Assistant, guide.to_string()),
-        ];
+        let messages = vec![PromptMessage::new_text(
+            PromptMessageRole::Assistant,
+            guide.to_string(),
+        )];
 
         Ok(GetPromptResult {
             description: Some("Tool selection guide for Helixir memory operations".to_string()),
@@ -579,10 +638,8 @@ impl ServerHandler for HelixirMcpServer {
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
             resources: vec![
-                RawResource::new("config://helixir", "helixir-config".to_string())
-                    .no_annotation(),
-                RawResource::new("status://helixdb", "helixdb-status".to_string())
-                    .no_annotation(),
+                RawResource::new("config://helixir", "helixir-config".to_string()).no_annotation(),
+                RawResource::new("status://helixdb", "helixdb-status".to_string()).no_annotation(),
             ],
             next_cursor: None,
         })
@@ -596,7 +653,7 @@ impl ServerHandler for HelixirMcpServer {
         match uri.as_str() {
             "config://helixir" => {
                 let config = self.client.config();
-                
+
                 let content = serde_json::to_string_pretty(&json!({
                     "version": env!("CARGO_PKG_VERSION"),
                     "helixdb": {
@@ -634,7 +691,8 @@ impl ServerHandler for HelixirMcpServer {
                         "think_status",
                         "search_incomplete_thoughts",
                     ],
-                })).unwrap_or_default();
+                }))
+                .unwrap_or_default();
 
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(content, uri)],
@@ -642,13 +700,14 @@ impl ServerHandler for HelixirMcpServer {
             }
             "status://helixdb" => {
                 let config = self.client.config();
-                
+
                 let content = serde_json::to_string_pretty(&json!({
                     "status": "connected",
                     "host": config.host,
                     "port": config.port,
                     "instance": config.instance,
-                })).unwrap_or_default();
+                }))
+                .unwrap_or_default();
 
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(content, uri)],

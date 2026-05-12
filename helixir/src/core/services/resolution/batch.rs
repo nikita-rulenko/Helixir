@@ -1,30 +1,24 @@
-
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use uuid::Uuid;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use super::error::{BatchResolutionError, BatchResult, ResolutionError};
 use crate::db::HelixClient;
 
-
 pub struct BatchIDResolver {
-    
     client: Arc<HelixClient>,
-    
+
     semaphore: Arc<Semaphore>,
-    
+
     retry_attempts: u32,
-    
+
     retry_delay: Duration,
 }
 
 impl BatchIDResolver {
-    
-    
     pub fn new(client: Arc<HelixClient>, max_parallel: usize, retry_attempts: u32) -> Self {
         info!(
             "BatchIDResolver initialized: max_parallel={}, retries={}",
@@ -39,7 +33,6 @@ impl BatchIDResolver {
         }
     }
 
-    
     pub async fn resolve_batch(
         &self,
         memory_ids: &[String],
@@ -51,7 +44,6 @@ impl BatchIDResolver {
             fail_fast
         );
 
-        
         let unique_ids: Vec<String> = memory_ids
             .iter()
             .cloned()
@@ -67,7 +59,6 @@ impl BatchIDResolver {
             );
         }
 
-        
         let mut handles = Vec::with_capacity(unique_ids.len());
 
         for memory_id in unique_ids.iter() {
@@ -83,7 +74,6 @@ impl BatchIDResolver {
             }));
         }
 
-        
         let mut resolved = HashMap::new();
         let mut failed = Vec::new();
 
@@ -104,7 +94,6 @@ impl BatchIDResolver {
                     failed.push((memory_id.clone(), e.to_string()));
                 }
                 Err(e) => {
-                    
                     if fail_fast {
                         return Err(BatchResolutionError::SingleFailure {
                             memory_id: memory_id.clone(),
@@ -126,7 +115,6 @@ impl BatchIDResolver {
         Ok(BatchResult { resolved, failed })
     }
 
-    
     async fn resolve_with_retry(
         client: &HelixClient,
         memory_id: &str,
@@ -139,7 +127,11 @@ impl BatchIDResolver {
             match Self::query_db(client, memory_id).await {
                 Ok(uuid) => {
                     if attempt > 0 {
-                        debug!("Retry succeeded for {} on attempt {}", memory_id, attempt + 1);
+                        debug!(
+                            "Retry succeeded for {} on attempt {}",
+                            memory_id,
+                            attempt + 1
+                        );
                     }
                     return Ok(uuid);
                 }
@@ -147,29 +139,19 @@ impl BatchIDResolver {
                     last_error = Some(e);
 
                     if attempt < max_attempts - 1 {
-                        
                         let delay = base_delay * (2_u32.pow(attempt));
-                        debug!(
-                            "Retry {} for {} after {:?}",
-                            attempt + 1,
-                            memory_id,
-                            delay
-                        );
+                        debug!("Retry {} for {} after {:?}", attempt + 1, memory_id, delay);
                         tokio::time::sleep(delay).await;
                     }
                 }
             }
         }
 
-        warn!(
-            "All {} retries exhausted for {}",
-            max_attempts, memory_id
-        );
+        warn!("All {} retries exhausted for {}", max_attempts, memory_id);
 
         Err(last_error.unwrap_or(ResolutionError::Database("Unknown error".to_string())))
     }
 
-    
     async fn query_db(client: &HelixClient, memory_id: &str) -> Result<Uuid, ResolutionError> {
         #[derive(serde::Serialize)]
         struct Input<'a> {

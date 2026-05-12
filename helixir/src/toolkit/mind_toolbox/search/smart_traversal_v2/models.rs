@@ -1,8 +1,5 @@
-
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
 
 pub mod edge_weights {
     pub const BECAUSE: f64 = 1.0;
@@ -13,7 +10,6 @@ pub mod edge_weights {
     pub const CONTRADICTS: f64 = 0.4;
     pub const DEFAULT: f64 = 0.5;
 
-    
     pub fn get_weight(edge_type: &str) -> f64 {
         match edge_type.to_uppercase().as_str() {
             "BECAUSE" => BECAUSE,
@@ -27,38 +23,35 @@ pub mod edge_weights {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
-    
     pub memory_id: String,
-    
+
     pub content: String,
-    
+
     pub vector_score: f64,
-    
+
     pub graph_score: f64,
-    
+
     pub temporal_score: f64,
-    
+
     pub combined_score: f64,
-    
+
     pub depth: u32,
-    
+
     pub source: String,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge_path: Option<Vec<String>>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
 }
 
 impl SearchResult {
-    
     pub fn from_vector(
         memory_id: impl Into<String>,
         content: impl Into<String>,
@@ -77,7 +70,10 @@ impl SearchResult {
         temporal_weight: f64,
     ) -> Self {
         let combined = super::scoring::calculate_vector_combined_score_weighted(
-            vector_score, temporal_score, vector_weight, temporal_weight,
+            vector_score,
+            temporal_score,
+            vector_weight,
+            temporal_weight,
         );
         Self {
             memory_id: memory_id.into(),
@@ -94,7 +90,6 @@ impl SearchResult {
         }
     }
 
-    
     pub fn from_graph(
         memory_id: impl Into<String>,
         content: impl Into<String>,
@@ -105,8 +100,16 @@ impl SearchResult {
         edge_path: Vec<String>,
     ) -> Self {
         Self::from_graph_weighted(
-            memory_id, content, semantic_sim, graph_score, temporal_score,
-            depth, edge_path, 0.3, 0.5, 0.2,
+            memory_id,
+            content,
+            semantic_sim,
+            graph_score,
+            temporal_score,
+            depth,
+            edge_path,
+            0.3,
+            0.5,
+            0.2,
         )
     }
 
@@ -123,8 +126,12 @@ impl SearchResult {
         temporal_weight: f64,
     ) -> Self {
         let combined = super::scoring::calculate_graph_combined_score_weighted(
-            semantic_sim, graph_score, temporal_score,
-            semantic_weight, graph_weight, temporal_weight,
+            semantic_sim,
+            graph_score,
+            temporal_score,
+            semantic_weight,
+            graph_weight,
+            temporal_weight,
         );
         Self {
             memory_id: memory_id.into(),
@@ -141,25 +148,22 @@ impl SearchResult {
         }
     }
 
-    
     pub fn with_metadata(mut self, metadata: HashMap<String, serde_json::Value>) -> Self {
         self.metadata = Some(metadata);
         self
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
-    
     pub vector_top_k: usize,
-    
+
     pub graph_depth: u32,
-    
+
     pub min_vector_score: f64,
-    
+
     pub min_combined_score: f64,
-    
+
     pub edge_types: Option<Vec<String>>,
 
     pub vector_weight: f64,
@@ -192,7 +196,6 @@ impl Default for SearchConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TraversalStats {
     pub cache_size: usize,
@@ -204,4 +207,3 @@ pub struct TraversalStats {
     pub phase3_duration_ms: f64,
     pub total_duration_ms: f64,
 }
-

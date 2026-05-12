@@ -43,7 +43,11 @@ impl MemoryIntegrator {
         reasoning_engine: Option<Arc<dyn ReasoningEngine>>,
     ) -> Self {
         Self {
-            finder: SimilarMemoryFinder::new(client.clone(), config.similarity_threshold, config.max_similar),
+            finder: SimilarMemoryFinder::new(
+                client.clone(),
+                config.similarity_threshold,
+                config.max_similar,
+            ),
             reasoner: RelationInferrer::new(reasoning_engine, config.enable_reasoning),
             edge_creator: EdgeCreator::new(client),
             config,
@@ -90,7 +94,9 @@ impl MemoryIntegrator {
 
         info!(
             "Integration complete for {}: {} similar, {} relations created",
-            memory_id, similar_memories.len(), created_count
+            memory_id,
+            similar_memories.len(),
+            created_count
         );
 
         Ok(IntegrationResult {

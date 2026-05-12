@@ -1,5 +1,3 @@
-
-
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -10,21 +8,18 @@ use tracing::{debug, error, info, warn};
 use crate::db::HelixClient;
 use crate::llm::providers::base::LlmProvider;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReasoningType {
-    
     Implies,
-    
+
     Because,
-    
+
     Contradicts,
-    
+
     Supports,
 }
 
 impl ReasoningType {
-    
     #[must_use]
     pub fn edge_name(&self) -> &'static str {
         match self {
@@ -36,40 +31,35 @@ impl ReasoningType {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningRelation {
-    
     pub relation_id: String,
-    
+
     pub from_memory_id: String,
-    
+
     pub to_memory_id: String,
-    
+
     pub to_memory_content: String,
-    
+
     pub relation_type: ReasoningType,
-    
+
     pub strength: i32,
-    
+
     pub reasoning_id: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningChain {
-    
     pub seed_memory_id: String,
-    
+
     pub relations: Vec<ReasoningRelation>,
-    
+
     pub chain_type: String,
-    
+
     pub depth: usize,
-    
+
     pub reasoning_trail: String,
 }
-
 
 pub struct ReasoningEngine {
     client: Arc<HelixClient>,
@@ -80,7 +70,6 @@ pub struct ReasoningEngine {
 }
 
 impl ReasoningEngine {
-    
     #[must_use]
     pub fn new(
         client: Arc<HelixClient>,
@@ -110,14 +99,13 @@ impl ReasoningEngine {
         }
     }
 
-    
     pub async fn warm_up_cache(
         &self,
         memory_id: Option<&str>,
         limit: usize,
     ) -> Result<usize, ReasoningError> {
         use std::sync::atomic::Ordering;
-        
+
         if self.is_warmed_up.load(Ordering::Relaxed) {
             info!("Reasoning cache already warmed up, skipping");
             return Ok(self.relation_cache.lock().len());
@@ -157,7 +145,6 @@ impl ReasoningEngine {
         }
     }
 
-    
     pub async fn add_relation(
         &self,
         from_id: &str,
@@ -171,10 +158,16 @@ impl ReasoningEngine {
         if self.edge_exists(from_id, to_id, relation_type).await {
             debug!(
                 "Skipping duplicate {} edge: {} -> {}",
-                relation_type.edge_name(), crate::safe_truncate(from_id, 12), crate::safe_truncate(to_id, 12)
+                relation_type.edge_name(),
+                crate::safe_truncate(from_id, 12),
+                crate::safe_truncate(to_id, 12)
             );
             return Ok(ReasoningRelation {
-                relation_id: format!("rel_{}_{}", crate::safe_truncate(from_id, 8), crate::safe_truncate(to_id, 8)),
+                relation_id: format!(
+                    "rel_{}_{}",
+                    crate::safe_truncate(from_id, 8),
+                    crate::safe_truncate(to_id, 8)
+                ),
                 from_memory_id: from_id.to_string(),
                 to_memory_id: to_id.to_string(),
                 to_memory_content: String::new(),
@@ -185,7 +178,11 @@ impl ReasoningEngine {
         }
 
         let relation = ReasoningRelation {
-            relation_id: format!("rel_{}_{}", crate::safe_truncate(from_id, 8), crate::safe_truncate(to_id, 8)),
+            relation_id: format!(
+                "rel_{}_{}",
+                crate::safe_truncate(from_id, 8),
+                crate::safe_truncate(to_id, 8)
+            ),
             from_memory_id: from_id.to_string(),
             to_memory_id: to_id.to_string(),
             to_memory_content: String::new(),
@@ -199,7 +196,7 @@ impl ReasoningEngine {
             #[serde(default)]
             edge: serde_json::Value,
         }
-        
+
         let persist_result = match relation_type {
             ReasoningType::Implies => {
                 self.client
@@ -242,7 +239,6 @@ impl ReasoningEngine {
                     .await
             }
             ReasoningType::Supports => {
-                
                 let now = chrono::Utc::now().to_rfc3339();
                 self.client
                     .execute_query::<EdgeResponse, _>(
@@ -262,10 +258,9 @@ impl ReasoningEngine {
                     .await
             }
         };
-        
+
         persist_result.map_err(|e| ReasoningError::Database(e.to_string()))?;
 
-        
         self.relation_cache
             .lock()
             .put(relation.relation_id.clone(), relation.clone());
@@ -281,7 +276,6 @@ impl ReasoningEngine {
         Ok(relation)
     }
 
-    
     pub async fn get_chain(
         &self,
         memory_id: &str,
@@ -307,7 +301,7 @@ impl ReasoningEngine {
             #[serde(default)]
             relation_in: Vec<MemoryNode>,
         }
-        
+
         #[derive(Deserialize, Clone)]
         struct MemoryNode {
             memory_id: String,
@@ -340,7 +334,9 @@ impl ReasoningEngine {
                 Err(e) => {
                     warn!(
                         "getMemoryLogicalConnections failed for {}: {} (depth={})",
-                        crate::safe_truncate(&current_id, 16), e, current_depth
+                        crate::safe_truncate(&current_id, 16),
+                        e,
+                        current_depth
                     );
                     continue;
                 }
@@ -349,28 +345,56 @@ impl ReasoningEngine {
             let candidates: Vec<(MemoryNode, ReasoningType, bool)> = match chain_type {
                 "causal" => {
                     let mut c = Vec::new();
-                    for n in &result.because_in { c.push((n.clone(), ReasoningType::Because, true)); }
-                    for n in &result.because_out { c.push((n.clone(), ReasoningType::Because, false)); }
-                    for n in &result.implies_in { c.push((n.clone(), ReasoningType::Implies, true)); }
+                    for n in &result.because_in {
+                        c.push((n.clone(), ReasoningType::Because, true));
+                    }
+                    for n in &result.because_out {
+                        c.push((n.clone(), ReasoningType::Because, false));
+                    }
+                    for n in &result.implies_in {
+                        c.push((n.clone(), ReasoningType::Implies, true));
+                    }
                     c
                 }
                 "forward" => {
                     let mut c = Vec::new();
-                    for n in &result.implies_out { c.push((n.clone(), ReasoningType::Implies, false)); }
-                    for n in &result.implies_in { c.push((n.clone(), ReasoningType::Implies, true)); }
-                    for n in &result.because_out { c.push((n.clone(), ReasoningType::Because, false)); }
+                    for n in &result.implies_out {
+                        c.push((n.clone(), ReasoningType::Implies, false));
+                    }
+                    for n in &result.implies_in {
+                        c.push((n.clone(), ReasoningType::Implies, true));
+                    }
+                    for n in &result.because_out {
+                        c.push((n.clone(), ReasoningType::Because, false));
+                    }
                     c
                 }
                 _ => {
                     let mut all = Vec::new();
-                    for n in &result.implies_out { all.push((n.clone(), ReasoningType::Implies, false)); }
-                    for n in &result.implies_in { all.push((n.clone(), ReasoningType::Implies, true)); }
-                    for n in &result.because_out { all.push((n.clone(), ReasoningType::Because, false)); }
-                    for n in &result.because_in { all.push((n.clone(), ReasoningType::Because, true)); }
-                    for n in &result.contradicts_out { all.push((n.clone(), ReasoningType::Contradicts, false)); }
-                    for n in &result.contradicts_in { all.push((n.clone(), ReasoningType::Contradicts, true)); }
-                    for n in &result.relation_out { all.push((n.clone(), ReasoningType::Supports, false)); }
-                    for n in &result.relation_in { all.push((n.clone(), ReasoningType::Supports, true)); }
+                    for n in &result.implies_out {
+                        all.push((n.clone(), ReasoningType::Implies, false));
+                    }
+                    for n in &result.implies_in {
+                        all.push((n.clone(), ReasoningType::Implies, true));
+                    }
+                    for n in &result.because_out {
+                        all.push((n.clone(), ReasoningType::Because, false));
+                    }
+                    for n in &result.because_in {
+                        all.push((n.clone(), ReasoningType::Because, true));
+                    }
+                    for n in &result.contradicts_out {
+                        all.push((n.clone(), ReasoningType::Contradicts, false));
+                    }
+                    for n in &result.contradicts_in {
+                        all.push((n.clone(), ReasoningType::Contradicts, true));
+                    }
+                    for n in &result.relation_out {
+                        all.push((n.clone(), ReasoningType::Supports, false));
+                    }
+                    for n in &result.relation_in {
+                        all.push((n.clone(), ReasoningType::Supports, true));
+                    }
                     all
                 }
             };
@@ -393,7 +417,11 @@ impl ReasoningEngine {
                     };
 
                     relations.push(ReasoningRelation {
-                        relation_id: format!("rel_{}_{}", crate::safe_truncate(&from_id, 8), crate::safe_truncate(&to_id, 8)),
+                        relation_id: format!(
+                            "rel_{}_{}",
+                            crate::safe_truncate(&from_id, 8),
+                            crate::safe_truncate(&to_id, 8)
+                        ),
                         from_memory_id: from_id,
                         to_memory_id: to_id,
                         to_memory_content: node.content.clone(),
@@ -412,14 +440,28 @@ impl ReasoningEngine {
                         "Given current memory and {} connected memories, which ONE is most logically relevant?\n\nCurrent: {}\n\nOptions:\n{}\n\nRespond with just the number (1-{}).",
                         unvisited.len(),
                         &current_id[..current_id.len().min(50)],
-                        unvisited.iter().enumerate()
-                            .map(|(i, (n, t, _))| format!("{}. [{}] {}", i + 1, t.edge_name(), n.content.chars().take(100).collect::<String>()))
+                        unvisited
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (n, t, _))| format!(
+                                "{}. [{}] {}",
+                                i + 1,
+                                t.edge_name(),
+                                n.content.chars().take(100).collect::<String>()
+                            ))
                             .collect::<Vec<_>>()
                             .join("\n"),
                         unvisited.len()
                     );
-                    
-                    match llm.generate("You are a reasoning assistant. Pick the most relevant connection.", &prompt, None).await {
+
+                    match llm
+                        .generate(
+                            "You are a reasoning assistant. Pick the most relevant connection.",
+                            &prompt,
+                            None,
+                        )
+                        .await
+                    {
                         Ok((response, _)) => {
                             let choice: usize = response.trim().parse().unwrap_or(1);
                             unvisited.into_iter().nth(choice.saturating_sub(1))
@@ -441,7 +483,11 @@ impl ReasoningEngine {
                     };
 
                     relations.push(ReasoningRelation {
-                        relation_id: format!("rel_{}_{}", crate::safe_truncate(&from_id, 8), crate::safe_truncate(&to_id, 8)),
+                        relation_id: format!(
+                            "rel_{}_{}",
+                            crate::safe_truncate(&from_id, 8),
+                            crate::safe_truncate(&to_id, 8)
+                        ),
                         from_memory_id: from_id,
                         to_memory_id: to_id,
                         to_memory_content: node.content.clone(),
@@ -460,7 +506,10 @@ impl ReasoningEngine {
 
         debug!(
             "Chain traversal for {}: type={}, relations={}, visited={}",
-            crate::safe_truncate(memory_id, 12), chain_type, relations.len(), visited.len()
+            crate::safe_truncate(memory_id, 12),
+            chain_type,
+            relations.len(),
+            visited.len()
         );
 
         Ok(ReasoningChain {
@@ -472,7 +521,6 @@ impl ReasoningEngine {
         })
     }
 
-    
     pub async fn infer_relations(
         &self,
         new_memory_id: &str,
@@ -519,22 +567,28 @@ Rules:
         );
 
         let parse_relations = |response: &str| -> Vec<ReasoningRelation> {
-            let parsed = serde_json::from_str::<Vec<serde_json::Value>>(response)
-                .or_else(|_| {
-                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(response) {
-                        if let Some(arr) = obj.get("relations").or_else(|| obj.get("results")).or_else(|| obj.get("data")) {
-                            if let Some(arr) = arr.as_array() {
-                                return Ok(arr.clone());
-                            }
+            let parsed = serde_json::from_str::<Vec<serde_json::Value>>(response).or_else(|_| {
+                if let Ok(obj) = serde_json::from_str::<serde_json::Value>(response) {
+                    if let Some(arr) = obj
+                        .get("relations")
+                        .or_else(|| obj.get("results"))
+                        .or_else(|| obj.get("data"))
+                    {
+                        if let Some(arr) = arr.as_array() {
+                            return Ok(arr.clone());
                         }
                     }
-                    if let Some(start) = response.find('[') {
-                        if let Some(end) = response.rfind(']') {
-                            return serde_json::from_str(&response[start..=end]);
-                        }
+                }
+                if let Some(start) = response.find('[') {
+                    if let Some(end) = response.rfind(']') {
+                        return serde_json::from_str(&response[start..=end]);
                     }
-                    Err(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, "no array")))
-                });
+                }
+                Err(serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "no array",
+                )))
+            });
 
             match parsed {
                 Ok(inferred) => inferred
@@ -566,7 +620,10 @@ Rules:
             }
         };
 
-        match llm.generate(system_prompt, &user_prompt, Some("json_object")).await {
+        match llm
+            .generate(system_prompt, &user_prompt, Some("json_object"))
+            .await
+        {
             Ok((response, _metadata)) => {
                 info!(
                     "infer_relations LLM response ({}b): {}",
@@ -575,7 +632,11 @@ Rules:
                 );
                 let relations = parse_relations(&response);
                 if !relations.is_empty() {
-                    info!("LLM inferred {} relations for {}", relations.len(), crate::safe_truncate(new_memory_id, 12));
+                    info!(
+                        "LLM inferred {} relations for {}",
+                        relations.len(),
+                        crate::safe_truncate(new_memory_id, 12)
+                    );
                     return Ok(relations);
                 }
 
@@ -584,7 +645,10 @@ Rules:
                     "{}\n\nIMPORTANT: Output ONLY a valid JSON array. No markdown, no explanation. Example: [{{\"existing_index\":0,\"type\":\"SUPPORTS\",\"strength\":75}}]",
                     user_prompt
                 );
-                match llm.generate(system_prompt, &retry_prompt, Some("json_object")).await {
+                match llm
+                    .generate(system_prompt, &retry_prompt, Some("json_object"))
+                    .await
+                {
                     Ok((retry_response, _)) => {
                         let retry_relations = parse_relations(&retry_response);
                         debug!("LLM inferred {} relations (retry)", retry_relations.len());
@@ -672,7 +736,6 @@ Rules:
         trail
     }
 
-    
     #[must_use]
     pub fn get_cache_stats(&self) -> CacheStats {
         use std::sync::atomic::Ordering;
@@ -684,29 +747,23 @@ Rules:
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct CacheStats {
-    
     pub size: usize,
-    
+
     pub capacity: usize,
-    
+
     pub is_warmed_up: bool,
 }
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum ReasoningError {
-    
     #[error("Database error: {0}")]
     Database(String),
 
-    
     #[error("Invalid relation: {0}")]
     Invalid(String),
 
-    
     #[error("LLM error: {0}")]
     LlmError(String),
 }

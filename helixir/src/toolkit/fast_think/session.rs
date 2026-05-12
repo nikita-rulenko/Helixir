@@ -1,11 +1,11 @@
-use petgraph::stable_graph::{StableDiGraph, NodeIndex, EdgeIndex};
-use petgraph::visit::EdgeRef;
 use petgraph::Direction;
+use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableDiGraph};
+use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use super::models::*;
 use super::limits::FastThinkLimits;
+use super::models::*;
 
 pub struct ThinkingSession {
     pub id: String,
@@ -114,7 +114,7 @@ impl ThinkingSession {
         limits: &FastThinkLimits,
     ) -> Result<NodeIndex, FastThinkError> {
         let parent = supporting_thoughts.first().copied();
-        
+
         let node = self.add_thought(
             content,
             ThoughtType::Conclusion,
@@ -162,12 +162,12 @@ impl ThinkingSession {
 
         if let Some(entity) = self.entities.get_mut(&normalized_name) {
             entity.add_mention(thought_idx);
-            
+
             self.thought_to_entities
                 .entry(thought_idx)
                 .or_default()
                 .push(normalized_name.clone());
-            
+
             return Ok(entity.id.clone());
         }
 
@@ -203,12 +203,12 @@ impl ThinkingSession {
 
         if let Some(concept) = self.concepts.get_mut(&normalized_name) {
             concept.link_thought(thought_idx);
-            
+
             self.thought_to_concepts
                 .entry(thought_idx)
                 .or_default()
                 .push(normalized_name.clone());
-            
+
             return Ok(concept.id.clone());
         }
 
@@ -323,7 +323,10 @@ impl ThinkingSession {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.status, SessionStatus::Thinking | SessionStatus::NeedsRecall)
+        matches!(
+            self.status,
+            SessionStatus::Thinking | SessionStatus::NeedsRecall
+        )
     }
 
     pub fn root(&self) -> Option<NodeIndex> {
@@ -332,7 +335,7 @@ impl ThinkingSession {
 
     pub fn build_conclusion_content(&self) -> String {
         let conclusions = self.get_conclusions();
-        
+
         if conclusions.is_empty() {
             return String::new();
         }
@@ -376,4 +379,3 @@ impl ThinkingSession {
             .collect()
     }
 }
-

@@ -1,8 +1,5 @@
-
-
-mod events;
 mod builder;
+mod events;
 
-pub use events::{LinkCreatedEvent, LinkingCompleteEvent};
 pub use builder::{LinkBuilder, LinkBuilderEvent, LinkBuilderStats};
-
+pub use events::{LinkCreatedEvent, LinkingCompleteEvent};

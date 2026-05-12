@@ -1,5 +1,3 @@
-
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,16 +6,13 @@ use tracing::{debug, error};
 
 use super::base::Event;
 
-
 pub type EventHandler = Arc<dyn Fn(Event) + Send + Sync>;
-
 
 pub struct EventBus {
     handlers: Arc<RwLock<HashMap<String, Vec<EventHandler>>>>,
 }
 
 impl EventBus {
-    
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -25,7 +20,6 @@ impl EventBus {
         }
     }
 
-    
     pub async fn register(&self, event_type: &str, handler: EventHandler) {
         let mut handlers = self.handlers.write().await;
         handlers
@@ -35,7 +29,6 @@ impl EventBus {
         debug!("Registered handler for event type: {}", event_type);
     }
 
-    
     pub async fn emit(&self, event: Event) {
         let handlers = self.handlers.read().await;
 
@@ -81,7 +74,6 @@ mod tests {
         let event = Event::new("test.event", json!({"test": true}));
         bus.emit(event).await;
 
-        
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);

@@ -1,21 +1,19 @@
-
-
+pub mod classifier;
+pub mod hierarchy;
+pub mod loader;
 pub mod mapper;
 pub mod models;
-pub mod loader;
-pub mod hierarchy;
-pub mod classifier;
 
-pub use mapper::{TextConcept, ConceptMapper, ConceptMatch};
-pub use models::Concept;
-pub use models::{ConceptType, ConceptRelation, RelationType, OntologyStats};
-pub use loader::{OntologyLoader, LoaderError};
-pub use hierarchy::{HierarchyTraverser, HierarchyError};
 pub use classifier::ConceptClassifier;
+pub use hierarchy::{HierarchyError, HierarchyTraverser};
+pub use loader::{LoaderError, OntologyLoader};
+pub use mapper::{ConceptMapper, ConceptMatch, TextConcept};
+pub use models::Concept;
+pub use models::{ConceptRelation, ConceptType, OntologyStats, RelationType};
 
 use crate::db::HelixClient;
-use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tracing::info;
 
@@ -71,10 +69,18 @@ impl OntologyManager {
     }
 
     pub fn add_concept(&mut self, concept: Concept) -> Result<(), OntologyError> {
-        if self.concepts_cache.read().unwrap().contains_key(&concept.concept_id) {
+        if self
+            .concepts_cache
+            .read()
+            .unwrap()
+            .contains_key(&concept.concept_id)
+        {
             return Err(OntologyError::AlreadyExists(concept.concept_id));
         }
-        self.concepts_cache.write().unwrap().insert(concept.concept_id.clone(), concept);
+        self.concepts_cache
+            .write()
+            .unwrap()
+            .insert(concept.concept_id.clone(), concept);
         Ok(())
     }
 
@@ -99,7 +105,11 @@ impl OntologyManager {
         self.classifier.classify(text, min_confidence)
     }
 
-    pub fn map_memory_to_concepts(&self, content: &str, memory_type: Option<&str>) -> Vec<ConceptMatch> {
+    pub fn map_memory_to_concepts(
+        &self,
+        content: &str,
+        memory_type: Option<&str>,
+    ) -> Vec<ConceptMatch> {
         let mut matches = if self.is_loaded {
             self.mapper.map_to_concepts(content, 30)
         } else {

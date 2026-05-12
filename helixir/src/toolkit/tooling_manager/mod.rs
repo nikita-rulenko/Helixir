@@ -16,10 +16,10 @@ use tracing::{info, warn};
 use crate::core::config::HelixirConfig;
 use crate::core::events::EventBus;
 use crate::db::HelixClient;
+use crate::llm::EmbeddingGenerator;
 use crate::llm::decision::LLMDecisionEngine;
 use crate::llm::extractor::LlmExtractor;
 use crate::llm::providers::base::LlmProvider;
-use crate::llm::EmbeddingGenerator;
 use crate::toolkit::mind_toolbox::chunking::ChunkingManager;
 use crate::toolkit::mind_toolbox::entity::EntityManager;
 use crate::toolkit::mind_toolbox::ontology::OntologyManager;
@@ -58,17 +58,11 @@ impl ToolingManager {
             thresholds.similarity_threshold,
             thresholds.exact_duplicate_score,
         );
-        let chunking_manager = ChunkingManager::new(
-            Arc::clone(&db),
-            Some(Arc::clone(&embedder)),
-        );
+        let chunking_manager = ChunkingManager::new(Arc::clone(&db), Some(Arc::clone(&embedder)));
         let entity_manager = EntityManager::new(Arc::clone(&db), 1000);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));
-        let reasoning_engine = ReasoningEngine::new(
-            Arc::clone(&db),
-            Some(Arc::clone(&llm_provider)),
-            500,
-        );
+        let reasoning_engine =
+            ReasoningEngine::new(Arc::clone(&db), Some(Arc::clone(&llm_provider)), 500);
         let search_engine = SearchEngine::new(
             Arc::clone(&db),
             Arc::clone(&embedder),

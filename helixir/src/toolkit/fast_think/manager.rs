@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::RwLock;
 use petgraph::stable_graph::NodeIndex;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::core::HelixirClient;
+use super::limits::FastThinkLimits;
 use super::models::*;
 use super::session::ThinkingSession;
-use super::limits::FastThinkLimits;
+use crate::core::HelixirClient;
 
 pub struct FastThinkManager {
     sessions: RwLock<HashMap<String, ThinkingSession>>,
@@ -28,7 +28,11 @@ impl FastThinkManager {
         Self::new(main_memory, FastThinkLimits::default())
     }
 
-    pub fn start_thinking(&self, session_id: &str, initial_thought: &str) -> Result<NodeIndex, FastThinkError> {
+    pub fn start_thinking(
+        &self,
+        session_id: &str,
+        initial_thought: &str,
+    ) -> Result<NodeIndex, FastThinkError> {
         let mut sessions = self.sessions.write();
 
         if sessions.contains_key(session_id) {
@@ -63,7 +67,9 @@ impl FastThinkManager {
         edge_type: Option<ThoughtEdge>,
     ) -> Result<NodeIndex, FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         let node = session.add_thought(content, thought_type, parent, edge_type, &self.limits)?;
 
@@ -86,7 +92,9 @@ impl FastThinkManager {
     ) -> Result<Vec<NodeIndex>, FastThinkError> {
         {
             let mut sessions = self.sessions.write();
-            let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?;
             session.status = SessionStatus::NeedsRecall;
         }
 
@@ -115,14 +123,13 @@ impl FastThinkManager {
 
         {
             let mut sessions = self.sessions.write();
-            let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?;
 
             for memory in memories {
                 if session.thought_count() >= self.limits.max_thoughts {
-                    warn!(
-                        session_id = session_id,
-                        "Hit thought limit during recall"
-                    );
+                    warn!(session_id = session_id, "Hit thought limit during recall");
                     break;
                 }
 
@@ -150,7 +157,9 @@ impl FastThinkManager {
         supporting_thoughts: &[NodeIndex],
     ) -> Result<NodeIndex, FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         let node = session.add_conclusion(conclusion, supporting_thoughts, &self.limits)?;
 
@@ -163,10 +172,16 @@ impl FastThinkManager {
         Ok(node)
     }
 
-    pub async fn commit(&self, session_id: &str, user_id: &str) -> Result<CommitResult, FastThinkError> {
+    pub async fn commit(
+        &self,
+        session_id: &str,
+        user_id: &str,
+    ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
-            sessions.remove(session_id).ok_or(FastThinkError::SessionNotFound)?
+            sessions
+                .remove(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
         };
 
         if session.get_conclusions().is_empty() {
@@ -216,7 +231,9 @@ impl FastThinkManager {
 
     pub fn discard(&self, session_id: &str) -> Result<DiscardResult, FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.remove(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .remove(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         info!(
             session_id = session_id,
@@ -231,10 +248,17 @@ impl FastThinkManager {
         })
     }
 
-    pub async fn commit_partial(&self, session_id: &str, user_id: &str, reason: &str) -> Result<CommitResult, FastThinkError> {
+    pub async fn commit_partial(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        reason: &str,
+    ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
-            sessions.remove(session_id).ok_or(FastThinkError::SessionNotFound)?
+            sessions
+                .remove(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
         };
 
         let thoughts: Vec<String> = session
@@ -257,7 +281,13 @@ impl FastThinkManager {
         // Use add_with_tags to mark as incomplete_thought - tag is inherited by all extracted facts
         let result = self
             .main_memory
-            .add_with_tags(&partial_content, user_id, None, None, Some("incomplete_thought"))
+            .add_with_tags(
+                &partial_content,
+                user_id,
+                None,
+                None,
+                Some("incomplete_thought"),
+            )
             .await
             .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
 
@@ -290,7 +320,9 @@ impl FastThinkManager {
         entity_type: ScratchEntityType,
     ) -> Result<String, FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         session.extract_entity(thought_idx, name, entity_type, &self.limits)
     }
@@ -303,7 +335,9 @@ impl FastThinkManager {
         parent_concept: Option<&str>,
     ) -> Result<String, FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         session.map_to_concept(thought_idx, concept_name, parent_concept, &self.limits)
     }
@@ -316,7 +350,9 @@ impl FastThinkManager {
         edge_type: ThoughtEdge,
     ) -> Result<(), FastThinkError> {
         let mut sessions = self.sessions.write();
-        let session = sessions.get_mut(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         session.link_thoughts(from, to, edge_type)?;
         Ok(())
@@ -324,7 +360,9 @@ impl FastThinkManager {
 
     pub fn get_session_status(&self, session_id: &str) -> Result<SessionInfo, FastThinkError> {
         let sessions = self.sessions.read();
-        let session = sessions.get(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         Ok(SessionInfo {
             id: session.id.clone(),
@@ -344,7 +382,9 @@ impl FastThinkManager {
         thought_idx: NodeIndex,
     ) -> Result<Vec<ThoughtInfo>, FastThinkError> {
         let sessions = self.sessions.read();
-        let session = sessions.get(session_id).ok_or(FastThinkError::SessionNotFound)?;
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
 
         let chain = session.get_chain_to_root(thought_idx);
 
@@ -422,4 +462,3 @@ pub struct ThoughtInfo {
     pub certainty: f32,
     pub depth: usize,
 }
-

@@ -1,13 +1,10 @@
-
-
-use std::sync::Arc;
-use std::collections::HashSet;
-use tracing::{info, warn, error};
+use super::config::MemoryChainConfig;
+use super::result::{ChainNode, ChainSearchResult, MemoryChain};
 use crate::db::HelixClient;
 use crate::llm::embeddings::EmbeddingGenerator;
-use super::result::{ChainSearchResult, MemoryChain, ChainNode};
-use super::config::MemoryChainConfig;
-
+use std::collections::HashSet;
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 pub struct MemoryChainStrategy {
     client: Arc<HelixClient>,
@@ -16,7 +13,6 @@ pub struct MemoryChainStrategy {
 }
 
 impl MemoryChainStrategy {
-    
     pub fn new(
         client: Arc<HelixClient>,
         embedder: Arc<EmbeddingGenerator>,
@@ -30,7 +26,6 @@ impl MemoryChainStrategy {
         }
     }
 
-    
     pub async fn search(
         &self,
         query: &str,
@@ -43,7 +38,6 @@ impl MemoryChainStrategy {
 
         let config = config.unwrap_or_else(|| self.config.clone());
 
-        
         let seeds = match self.vector_search(query, limit).await {
             Ok(s) => s,
             Err(e) => {
@@ -59,7 +53,6 @@ impl MemoryChainStrategy {
 
         info!("Found {} seed memories", seeds.len());
 
-        
         let mut chains = Vec::new();
         for seed in &seeds {
             if let Some(chain) = self.build_chain_from_seed(seed, &config).await {
@@ -67,7 +60,6 @@ impl MemoryChainStrategy {
             }
         }
 
-        
         chains.sort_by(|a, b| {
             let a_score = (a.nodes.len(), a.total_depth);
             let b_score = (b.nodes.len(), b.total_depth);
@@ -84,9 +76,15 @@ impl MemoryChainStrategy {
         result
     }
 
-    
-    async fn vector_search(&self, query: &str, limit: usize) -> Result<Vec<serde_json::Value>, String> {
-        let embedding = self.embedder.generate(query, true).await
+    async fn vector_search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let embedding = self
+            .embedder
+            .generate(query, true)
+            .await
             .map_err(|e| format!("Embedding failed: {}", e))?;
 
         #[derive(serde::Deserialize)]
@@ -101,12 +99,12 @@ impl MemoryChainStrategy {
             "limit": limit,
         });
 
-        let result: VectorResult = self.client
+        let result: VectorResult = self
+            .client
             .execute_query("smartVectorSearchWithChunks", &params)
             .await
             .map_err(|e| format!("Query failed: {}", e))?;
 
-        
         let mut seen = HashSet::new();
         let mut memories = Vec::new();
 
@@ -121,7 +119,6 @@ impl MemoryChainStrategy {
         Ok(memories)
     }
 
-    
     async fn build_chain_from_seed(
         &self,
         seed: &serde_json::Value,
@@ -132,20 +129,22 @@ impl MemoryChainStrategy {
 
         let mut chain = MemoryChain::new(seed_id.to_string(), "mixed".to_string());
 
-        
         chain.add_node(ChainNode {
             memory_id: seed_id.to_string(),
             content: seed_content,
-            memory_type: seed.get("memory_type").and_then(|v| v.as_str()).map(String::from),
+            memory_type: seed
+                .get("memory_type")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             depth: 0,
             relation_type: None,
         });
 
-        
         let mut visited = HashSet::new();
         visited.insert(seed_id.to_string());
 
-        self.expand_chain(&mut chain, seed_id, 1, config, &mut visited).await;
+        self.expand_chain(&mut chain, seed_id, 1, config, &mut visited)
+            .await;
 
         if chain.nodes.len() > 1 {
             Some(chain)
@@ -154,7 +153,6 @@ impl MemoryChainStrategy {
         }
     }
 
-    
     async fn expand_chain(
         &self,
         chain: &mut MemoryChain,
@@ -185,7 +183,8 @@ impl MemoryChainStrategy {
             contradicts_in: Vec<serde_json::Value>,
         }
 
-        let connections: Connections = self.client
+        let connections: Connections = self
+            .client
             .execute_query("getMemoryLogicalConnections", &params)
             .await
             .unwrap_or_default();
@@ -194,7 +193,12 @@ impl MemoryChainStrategy {
 
         if config.relation_types.contains(&"IMPLIES".to_string()) {
             neighbors.extend(connections.implies_out.into_iter().map(|m| (m, "IMPLIES")));
-            neighbors.extend(connections.implies_in.into_iter().map(|m| (m, "IMPLIED_BY")));
+            neighbors.extend(
+                connections
+                    .implies_in
+                    .into_iter()
+                    .map(|m| (m, "IMPLIED_BY")),
+            );
         }
 
         if config.relation_types.contains(&"BECAUSE".to_string()) {
@@ -202,20 +206,39 @@ impl MemoryChainStrategy {
             neighbors.extend(connections.because_in.into_iter().map(|m| (m, "CAUSED_BY")));
         }
 
-        if config.include_contradictions && config.relation_types.contains(&"CONTRADICTS".to_string()) {
-            neighbors.extend(connections.contradicts_out.into_iter().map(|m| (m, "CONTRADICTS")));
-            neighbors.extend(connections.contradicts_in.into_iter().map(|m| (m, "CONTRADICTED_BY")));
+        if config.include_contradictions
+            && config.relation_types.contains(&"CONTRADICTS".to_string())
+        {
+            neighbors.extend(
+                connections
+                    .contradicts_out
+                    .into_iter()
+                    .map(|m| (m, "CONTRADICTS")),
+            );
+            neighbors.extend(
+                connections
+                    .contradicts_in
+                    .into_iter()
+                    .map(|m| (m, "CONTRADICTED_BY")),
+            );
         }
 
         for (mem, relation) in neighbors {
             if let Some(mem_id) = mem.get("memory_id").and_then(|v| v.as_str()) {
                 if visited.insert(mem_id.to_string()) {
-                    let content = mem.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let content = mem
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
                     chain.add_node(ChainNode {
                         memory_id: mem_id.to_string(),
                         content,
-                        memory_type: mem.get("memory_type").and_then(|v| v.as_str()).map(String::from),
+                        memory_type: mem
+                            .get("memory_type")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                         depth,
                         relation_type: Some(relation.to_string()),
                     });
@@ -228,18 +251,48 @@ impl MemoryChainStrategy {
         }
     }
 
-    
-    pub async fn search_causal(&self, query: &str, user_id: Option<&str>, limit: usize) -> ChainSearchResult {
-        self.search(query, user_id, limit, Some(MemoryChainConfig::causal_only())).await
+    pub async fn search_causal(
+        &self,
+        query: &str,
+        user_id: Option<&str>,
+        limit: usize,
+    ) -> ChainSearchResult {
+        self.search(
+            query,
+            user_id,
+            limit,
+            Some(MemoryChainConfig::causal_only()),
+        )
+        .await
     }
 
-    
-    pub async fn search_implications(&self, query: &str, user_id: Option<&str>, limit: usize) -> ChainSearchResult {
-        self.search(query, user_id, limit, Some(MemoryChainConfig::implications_only())).await
+    pub async fn search_implications(
+        &self,
+        query: &str,
+        user_id: Option<&str>,
+        limit: usize,
+    ) -> ChainSearchResult {
+        self.search(
+            query,
+            user_id,
+            limit,
+            Some(MemoryChainConfig::implications_only()),
+        )
+        .await
     }
 
-    
-    pub async fn search_deep(&self, query: &str, user_id: Option<&str>, limit: usize) -> ChainSearchResult {
-        self.search(query, user_id, limit, Some(MemoryChainConfig::deep_context())).await
+    pub async fn search_deep(
+        &self,
+        query: &str,
+        user_id: Option<&str>,
+        limit: usize,
+    ) -> ChainSearchResult {
+        self.search(
+            query,
+            user_id,
+            limit,
+            Some(MemoryChainConfig::deep_context()),
+        )
+        .await
     }
 }

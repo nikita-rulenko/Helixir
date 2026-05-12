@@ -1,8 +1,10 @@
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use super::helpers::safe_truncate;
-use super::types::{SearchMemoryResult, ReasoningChainSearchResult, ToolingReasoningChain, ChainNode, ToolingError};
 use super::ToolingManager;
+use super::helpers::safe_truncate;
+use super::types::{
+    ChainNode, ReasoningChainSearchResult, SearchMemoryResult, ToolingError, ToolingReasoningChain,
+};
 
 impl ToolingManager {
     pub async fn search_reasoning_chain(
@@ -13,8 +15,13 @@ impl ToolingManager {
         max_depth: usize,
         limit: usize,
     ) -> Result<ReasoningChainSearchResult, ToolingError> {
-        info!("Reasoning chain search: '{}...' mode={} depth={} limit={}",
-            safe_truncate(query, 30), chain_mode, max_depth, limit);
+        info!(
+            "Reasoning chain search: '{}...' mode={} depth={} limit={}",
+            safe_truncate(query, 30),
+            chain_mode,
+            max_depth,
+            limit
+        );
 
         let query_embedding = self
             .embedder
@@ -24,7 +31,15 @@ impl ToolingManager {
 
         let seed_results = self
             .search_engine
-            .search(query, &query_embedding, user_id, limit, "contextual", None, "personal")
+            .search(
+                query,
+                &query_embedding,
+                user_id,
+                limit,
+                "contextual",
+                None,
+                "personal",
+            )
             .await?;
 
         if seed_results.is_empty() {
@@ -41,7 +56,11 @@ impl ToolingManager {
         let mut total_memories = 0;
 
         for seed in &seed_results {
-            match self.reasoning_engine.get_chain(&seed.memory_id, chain_mode, max_depth).await {
+            match self
+                .reasoning_engine
+                .get_chain(&seed.memory_id, chain_mode, max_depth)
+                .await
+            {
                 Ok(chain) => {
                     if !chain.relations.is_empty() {
                         let chain_depth = chain.depth;
@@ -57,12 +76,16 @@ impl ToolingManager {
                                 metadata: seed.metadata.clone(),
                                 created_at: seed.created_at.clone(),
                             },
-                            nodes: chain.relations.iter().map(|r| ChainNode {
-                                memory_id: r.to_memory_id.clone(),
-                                content: r.to_memory_content.clone(),
-                                relation: r.relation_type.edge_name().to_string(),
-                                depth: 0,
-                            }).collect(),
+                            nodes: chain
+                                .relations
+                                .iter()
+                                .map(|r| ChainNode {
+                                    memory_id: r.to_memory_id.clone(),
+                                    content: r.to_memory_content.clone(),
+                                    relation: r.relation_type.edge_name().to_string(),
+                                    depth: 0,
+                                })
+                                .collect(),
                             chain_type: chain.chain_type.clone(),
                             reasoning_trail: chain.reasoning_trail.clone(),
                         });
@@ -74,8 +97,12 @@ impl ToolingManager {
             }
         }
 
-        info!("Found {} chains, max_depth={}, total_memories={}",
-            all_chains.len(), max_chain_depth, total_memories);
+        info!(
+            "Found {} chains, max_depth={}, total_memories={}",
+            all_chains.len(),
+            max_chain_depth,
+            total_memories
+        );
 
         Ok(ReasoningChainSearchResult {
             chains: all_chains,

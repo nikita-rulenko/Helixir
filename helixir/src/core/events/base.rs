@@ -1,16 +1,12 @@
-
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventMetadata {
-    
     pub correlation_id: Option<Uuid>,
-    
+
     pub metadata: Value,
 }
 
@@ -23,23 +19,20 @@ impl Default for EventMetadata {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
-    
     pub event_id: Uuid,
-    
+
     pub event_type: String,
-    
+
     pub timestamp: DateTime<Utc>,
-    
+
     pub metadata: EventMetadata,
-    
+
     pub payload: Value,
 }
 
 impl Event {
-    
     #[must_use]
     pub fn new(event_type: impl Into<String>, payload: Value) -> Self {
         Self {
@@ -51,7 +44,6 @@ impl Event {
         }
     }
 
-    
     #[must_use]
     pub fn with_correlation(mut self, correlation_id: Uuid) -> Self {
         self.metadata.correlation_id = Some(correlation_id);
