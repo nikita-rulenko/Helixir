@@ -39,13 +39,59 @@ pub struct ReasoningRelation {
 
     pub to_memory_id: String,
 
+    /// Content of `to_memory_id`. INVARIANT: when populated, this MUST match
+    /// the content of the memory pointed to by `to_memory_id` — both incoming
+    /// and outgoing edges discovered during `get_chain` traversal. See #17.
     pub to_memory_content: String,
+
+    /// Content of `from_memory_id`. Defaults to empty string when unknown
+    /// (e.g. on a freshly persisted relation that never went through `get_chain`).
+    /// See #17.
+    #[serde(default)]
+    pub from_memory_content: String,
 
     pub relation_type: ReasoningType,
 
     pub strength: i32,
 
     pub reasoning_id: Option<String>,
+}
+
+/// Pure projection helper: given a current node and the freshly discovered
+/// neighbour, produce a `ReasoningRelation` whose `(from_memory_id, to_memory_id)`
+/// physically reflects the edge direction in storage AND whose
+/// `(*_memory_id, *_memory_content)` pairs stay aligned. This is the
+/// canonical fix for #17.
+#[must_use]
+pub(super) fn project_relation(
+    current_id: &str,
+    current_content: &str,
+    neighbor_id: &str,
+    neighbor_content: &str,
+    relation_type: ReasoningType,
+    is_incoming: bool,
+    strength: i32,
+) -> ReasoningRelation {
+    let (from_id, from_content, to_id, to_content) = if is_incoming {
+        (neighbor_id, neighbor_content, current_id, current_content)
+    } else {
+        (current_id, current_content, neighbor_id, neighbor_content)
+    };
+
+    ReasoningRelation {
+        relation_id: format!(
+            "rel_{}_{}",
+            crate::safe_truncate(from_id, 8),
+            crate::safe_truncate(to_id, 8)
+        ),
+        from_memory_id: from_id.to_string(),
+        to_memory_id: to_id.to_string(),
+        to_memory_content: to_content.to_string(),
+        from_memory_content: from_content.to_string(),
+        relation_type,
+        strength,
+        reasoning_id: None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +201,22 @@ impl ReasoningEngine {
     ) -> Result<ReasoningRelation, ReasoningError> {
         let strength = strength.clamp(0, 100);
 
+        // Reject self-referential reasoning edges. A memory cannot logically
+        // IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS itself; persisting such
+        // an edge corrupts later chain traversal. See issue #16.
+        if from_id == to_id {
+            warn!(
+                "Rejecting self-referential {} edge for memory {}",
+                relation_type.edge_name(),
+                crate::safe_truncate(from_id, 12)
+            );
+            return Err(ReasoningError::Invalid(format!(
+                "self-referential {} edge on {}",
+                relation_type.edge_name(),
+                from_id
+            )));
+        }
+
         if self.edge_exists(from_id, to_id, relation_type).await {
             debug!(
                 "Skipping duplicate {} edge: {} -> {}",
@@ -171,6 +233,7 @@ impl ReasoningEngine {
                 from_memory_id: from_id.to_string(),
                 to_memory_id: to_id.to_string(),
                 to_memory_content: String::new(),
+                from_memory_content: String::new(),
                 relation_type,
                 strength,
                 reasoning_id: reasoning_id.map(String::from),
@@ -186,6 +249,7 @@ impl ReasoningEngine {
             from_memory_id: from_id.to_string(),
             to_memory_id: to_id.to_string(),
             to_memory_content: String::new(),
+            from_memory_content: String::new(),
             relation_type,
             strength,
             reasoning_id: reasoning_id.map(String::from),
@@ -280,6 +344,7 @@ impl ReasoningEngine {
     pub async fn get_chain(
         &self,
         memory_id: &str,
+        seed_content: &str,
         chain_type: &str,
         max_depth: usize,
     ) -> Result<ReasoningChain, ReasoningError> {
@@ -315,9 +380,13 @@ impl ReasoningEngine {
 
         let mut relations = Vec::new();
         let mut visited = std::collections::HashSet::new();
-        let mut frontier: Vec<(String, usize)> = vec![(memory_id.to_string(), 0)];
+        // Frontier carries `(memory_id, content, depth)` so projection helpers
+        // can pair `to_memory_id` with the matching `to_memory_content` regardless
+        // of edge direction. See #17.
+        let mut frontier: Vec<(String, String, usize)> =
+            vec![(memory_id.to_string(), seed_content.to_string(), 0)];
 
-        while let Some((current_id, current_depth)) = frontier.pop() {
+        while let Some((current_id, current_content, current_depth)) = frontier.pop() {
             if current_depth >= effective_max_depth || visited.contains(&current_id) {
                 continue;
             }
@@ -411,27 +480,21 @@ impl ReasoningEngine {
 
             if is_deep {
                 for (node, relation_type, is_incoming) in &unvisited {
-                    let (from_id, to_id) = if *is_incoming {
-                        (node.memory_id.clone(), current_id.clone())
-                    } else {
-                        (current_id.clone(), node.memory_id.clone())
-                    };
+                    relations.push(project_relation(
+                        &current_id,
+                        &current_content,
+                        &node.memory_id,
+                        &node.content,
+                        *relation_type,
+                        *is_incoming,
+                        80,
+                    ));
 
-                    relations.push(ReasoningRelation {
-                        relation_id: format!(
-                            "rel_{}_{}",
-                            crate::safe_truncate(&from_id, 8),
-                            crate::safe_truncate(&to_id, 8)
-                        ),
-                        from_memory_id: from_id,
-                        to_memory_id: to_id,
-                        to_memory_content: node.content.clone(),
-                        relation_type: *relation_type,
-                        strength: 80,
-                        reasoning_id: None,
-                    });
-
-                    frontier.push((node.memory_id.clone(), current_depth + 1));
+                    frontier.push((
+                        node.memory_id.clone(),
+                        node.content.clone(),
+                        current_depth + 1,
+                    ));
                 }
             } else {
                 let best = if unvisited.len() == 1 {
@@ -477,27 +540,21 @@ impl ReasoningEngine {
                 };
 
                 if let Some((node, relation_type, is_incoming)) = best {
-                    let (from_id, to_id) = if is_incoming {
-                        (node.memory_id.clone(), current_id.clone())
-                    } else {
-                        (current_id.clone(), node.memory_id.clone())
-                    };
-
-                    relations.push(ReasoningRelation {
-                        relation_id: format!(
-                            "rel_{}_{}",
-                            crate::safe_truncate(&from_id, 8),
-                            crate::safe_truncate(&to_id, 8)
-                        ),
-                        from_memory_id: from_id,
-                        to_memory_id: to_id,
-                        to_memory_content: node.content.clone(),
+                    relations.push(project_relation(
+                        &current_id,
+                        &current_content,
+                        &node.memory_id,
+                        &node.content,
                         relation_type,
-                        strength: 80,
-                        reasoning_id: None,
-                    });
+                        is_incoming,
+                        80,
+                    ));
 
-                    frontier.push((node.memory_id.clone(), current_depth + 1));
+                    frontier.push((
+                        node.memory_id.clone(),
+                        node.content.clone(),
+                        current_depth + 1,
+                    ));
                 }
             }
         }
@@ -606,6 +663,7 @@ Rules:
                             from_memory_id: new_memory_id.to_string(),
                             to_memory_id: target_id.clone(),
                             to_memory_content: target_content.clone(),
+                            from_memory_content: new_memory_content.to_string(),
                             relation_type: match r.get("type")?.as_str()? {
                                 "IMPLIES" => ReasoningType::Implies,
                                 "BECAUSE" => ReasoningType::Because,
@@ -788,6 +846,7 @@ mod tests {
             from_memory_id: "mem_1".to_string(),
             to_memory_id: "mem_2".to_string(),
             to_memory_content: "test content".to_string(),
+            from_memory_content: String::new(),
             relation_type: ReasoningType::Implies,
             strength: 80,
             reasoning_id: None,
@@ -798,6 +857,67 @@ mod tests {
     }
 
     #[test]
+    fn project_relation_outgoing_pairs_id_with_content() {
+        // Outgoing edge (current → neighbor): #17 invariant.
+        let rel = project_relation(
+            "mem_current",
+            "current content",
+            "mem_neighbor",
+            "neighbor content",
+            ReasoningType::Implies,
+            false,
+            80,
+        );
+
+        assert_eq!(rel.from_memory_id, "mem_current");
+        assert_eq!(rel.from_memory_content, "current content");
+        assert_eq!(rel.to_memory_id, "mem_neighbor");
+        assert_eq!(rel.to_memory_content, "neighbor content");
+    }
+
+    #[test]
+    fn project_relation_incoming_pairs_id_with_content() {
+        // Incoming edge (neighbor → current): #17 specifically targeted this case
+        // where `to_memory_content` used to leak the neighbour's content.
+        let rel = project_relation(
+            "mem_current",
+            "current content",
+            "mem_neighbor",
+            "neighbor content",
+            ReasoningType::Because,
+            true,
+            80,
+        );
+
+        assert_eq!(rel.from_memory_id, "mem_neighbor");
+        assert_eq!(rel.from_memory_content, "neighbor content");
+        assert_eq!(rel.to_memory_id, "mem_current");
+        assert_eq!(rel.to_memory_content, "current content");
+    }
+
+    #[tokio::test]
+    async fn add_relation_rejects_self_loop() {
+        use std::sync::Arc;
+        let client = Arc::new(crate::db::HelixClient::new("127.0.0.1", 1).unwrap());
+        let engine = ReasoningEngine::new(client, None, 16);
+
+        // Guard rejects self-loops before any DB roundtrip; see issue #16.
+        for rt in [
+            ReasoningType::Implies,
+            ReasoningType::Because,
+            ReasoningType::Contradicts,
+            ReasoningType::Supports,
+        ] {
+            let result = engine.add_relation("mem_x", "mem_x", rt, 80, None).await;
+            assert!(
+                matches!(result, Err(ReasoningError::Invalid(_))),
+                "self-loop must be rejected for {:?}",
+                rt
+            );
+        }
+    }
+
+    #[test]
     fn test_build_reasoning_trail() {
         let relations = vec![
             ReasoningRelation {
@@ -805,6 +925,7 @@ mod tests {
                 from_memory_id: "mem_aaaa".to_string(),
                 to_memory_id: "mem_bbbb".to_string(),
                 to_memory_content: "test content".to_string(),
+                from_memory_content: String::new(),
                 relation_type: ReasoningType::Implies,
                 strength: 90,
                 reasoning_id: None,
@@ -814,6 +935,7 @@ mod tests {
                 from_memory_id: "mem_bbbb".to_string(),
                 to_memory_id: "mem_cccc".to_string(),
                 to_memory_content: "test content".to_string(),
+                from_memory_content: String::new(),
                 relation_type: ReasoningType::Because,
                 strength: 85,
                 reasoning_id: None,

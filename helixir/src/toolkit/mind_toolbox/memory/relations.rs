@@ -112,6 +112,18 @@ impl MemoryRelationManager {
         strength: i32,
         metadata: Option<&str>,
     ) -> Result<(), RelationError> {
+        if source_id == target_id {
+            warn!(
+                "Skipping self-referential {} relation for memory {}",
+                relation_type,
+                &source_id[..8.min(source_id.len())]
+            );
+            return Err(RelationError::InvalidLinkType(format!(
+                "self-referential {} edge",
+                relation_type
+            )));
+        }
+
         let metadata = metadata.unwrap_or("{}");
         self.client.execute_query("addMemoryRelation", HashMap::from([
             ("source_id", source_id),

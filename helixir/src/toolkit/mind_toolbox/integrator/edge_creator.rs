@@ -35,6 +35,17 @@ impl EdgeCreator {
         let mut created = 0;
 
         for rel in relations {
+            // Skip self-loops up front (LLM occasionally returns the same
+            // index as the new memory). See issue #16.
+            if source_id == rel.target_id {
+                warn!(
+                    "Skipping self-referential {:?} edge for memory {}",
+                    rel.relation_type,
+                    crate::safe_truncate(source_id, 12)
+                );
+                continue;
+            }
+
             let result: Result<(), _> = match rel.relation_type {
                 RelationType::Implies => {
                     #[derive(Serialize)]

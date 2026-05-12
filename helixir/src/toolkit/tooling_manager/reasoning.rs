@@ -58,7 +58,7 @@ impl ToolingManager {
         for seed in &seed_results {
             match self
                 .reasoning_engine
-                .get_chain(&seed.memory_id, chain_mode, max_depth)
+                .get_chain(&seed.memory_id, &seed.content, chain_mode, max_depth)
                 .await
             {
                 Ok(chain) => {
