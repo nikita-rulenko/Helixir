@@ -12,7 +12,7 @@ use rmcp::{
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::core::helixir_client::{HelixirClient, HelixirClientError};
@@ -62,6 +62,47 @@ impl HelixirMcpServer {
     fn result_to_json<T: Serialize>(result: T) -> Result<String, McpError> {
         serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+}
+
+/// Returns true when HelixDB's error message indicates that a user-scoped
+/// traversal failed because the User node has no outgoing edges (or doesn't
+/// exist yet). Callers should treat this as "empty result", not as a hard
+/// failure. See issue #19.
+///
+/// HelixDB raises (with `code: GRAPH_ERROR`) the literal string
+/// `"Graph error: No value found"` when `N<User>::FIRST` returns nothing or
+/// when a subsequent traversal step has no items to walk. Be specific:
+/// match on the `"no value found"` token so that unrelated `GRAPH_ERROR`
+/// signals (syntax errors, missing indexes, etc.) still surface as hard
+/// failures.
+fn is_empty_user_graph_error(msg: &str) -> bool {
+    msg.to_lowercase().contains("no value found")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_empty_user_graph_error;
+
+    #[test]
+    fn empty_user_graph_error_matches_helixdb_payload() {
+        let msg = r#"Query failed: Got Error from server: {"error":"Graph error: No value found","code":"GRAPH_ERROR"}"#;
+        assert!(is_empty_user_graph_error(msg));
+    }
+
+    #[test]
+    fn empty_user_graph_error_is_case_insensitive() {
+        assert!(is_empty_user_graph_error(
+            "Graph error: NO VALUE FOUND somewhere"
+        ));
+    }
+
+    #[test]
+    fn empty_user_graph_error_does_not_match_unrelated_graph_errors() {
+        // Other GRAPH_ERROR causes (schema mismatch, missing index) must NOT
+        // be silently swallowed.
+        let msg = r#"{"error":"Graph error: type mismatch on field","code":"GRAPH_ERROR"}"#;
+        assert!(!is_empty_user_graph_error(msg));
     }
 }
 
@@ -152,7 +193,13 @@ impl HelixirMcpServer {
             memories: Vec<serde_json::Value>,
         }
 
-        let result: MemoriesResponse = self
+        // HelixDB raises `Graph error: No value found` (also serialised with the
+        // code `GRAPH_ERROR`) when the user has zero outgoing `HAS_MEMORY` edges
+        // — i.e. either the user node is brand new or it doesn't exist yet.
+        // Both states are semantically equivalent to "no memories", so we map
+        // them to an empty Vec instead of bubbling an MCP error to the caller.
+        // See issue #19.
+        let result: MemoriesResponse = match self
             .client
             .db()
             .execute_query(
@@ -163,7 +210,23 @@ impl HelixirMcpServer {
                 }),
             )
             .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                if is_empty_user_graph_error(&msg) {
+                    debug!(
+                        "list_memories: user '{}' has no memories yet (HelixDB returned '{}')",
+                        params.user_id, msg
+                    );
+                    MemoriesResponse {
+                        memories: Vec::new(),
+                    }
+                } else {
+                    return Err(McpError::internal_error(msg, None));
+                }
+            }
+        };
 
         let mut memories = result.memories;
 
