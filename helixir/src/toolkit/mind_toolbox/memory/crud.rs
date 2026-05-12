@@ -140,27 +140,6 @@ impl MemoryCrud {
 
         debug!("Memory created: {} (internal: {})", memory_id, internal_id);
 
-        // Patch `valid_from` to the real RFC3339 timestamp; the schema-level
-        // `DEFAULT "{{timestamp}}"` is stored as a literal token. Best-effort
-        // — older HelixDB deployments without the new query will warn and we
-        // continue. See issue #20.
-        if let Err(e) = self
-            .client
-            .execute_query::<serde_json::Value, _>(
-                "setMemoryValidFrom",
-                &serde_json::json!({
-                    "memory_id": memory_id,
-                    "valid_from": now,
-                }),
-            )
-            .await
-        {
-            warn!(
-                "setMemoryValidFrom not applied for {} ({}); re-deploy schema/queries.hx to enable timestamp interpolation",
-                memory_id, e
-            );
-        }
-
         if let Some(ref embedder) = self.embedder {
             match embedder.generate(&content, true).await {
                 Ok(vector) => {
