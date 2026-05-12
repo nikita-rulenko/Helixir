@@ -1,6 +1,7 @@
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
-use super::scoring::cosine_score;
+use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
+use crate::core::RetrievalProfile;
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
 use chrono::{DateTime, Utc};
@@ -11,13 +12,18 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+#[derive(Clone)]
+struct CacheEntry {
+    results: Vec<SearchResult>,
+    inserted_at: Instant,
+}
+
 pub struct SmartTraversalV2 {
     client: Arc<HelixClient>,
     embedder: Arc<EmbeddingGenerator>,
-    cache: RwLock<LruCache<String, Vec<SearchResult>>>,
-    // Held for the upcoming TTL-aware cache; the current cache is LRU-only.
-    #[allow(dead_code)]
+    cache: RwLock<LruCache<String, CacheEntry>>,
     cache_ttl: Duration,
+    profile: RetrievalProfile,
     stats: RwLock<TraversalStats>,
 }
 
@@ -28,6 +34,22 @@ impl SmartTraversalV2 {
         cache_size: usize,
         cache_ttl_secs: u64,
     ) -> Self {
+        Self::with_profile(
+            client,
+            embedder,
+            cache_size,
+            cache_ttl_secs,
+            RetrievalProfile::from_env(),
+        )
+    }
+
+    pub fn with_profile(
+        client: Arc<HelixClient>,
+        embedder: Arc<EmbeddingGenerator>,
+        cache_size: usize,
+        cache_ttl_secs: u64,
+        profile: RetrievalProfile,
+    ) -> Self {
         Self {
             client,
             embedder,
@@ -35,6 +57,7 @@ impl SmartTraversalV2 {
                 std::num::NonZeroUsize::new(cache_size).unwrap(),
             )),
             cache_ttl: Duration::from_secs(cache_ttl_secs),
+            profile,
             stats: RwLock::new(TraversalStats::default()),
         }
     }
@@ -47,22 +70,38 @@ impl SmartTraversalV2 {
         config: SearchConfig,
         temporal_cutoff: Option<DateTime<Utc>>,
     ) -> Result<Vec<SearchResult>, TraversalError> {
-        let cache_key = Self::make_cache_key(query_embedding, user_id, &config);
+        let cache_key = self.make_cache_key(query_embedding, user_id, &config, temporal_cutoff);
 
         {
             let mut cache = self.cache.write().await;
-            if let Some(cached_results) = cache.get(&cache_key) {
-                let mut stats = self.stats.write().await;
-                stats.cache_hits += 1;
-                stats.cache_hit_rate =
-                    stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64;
-                debug!("Cache hit for query: {}", query);
-                return Ok(cached_results.clone());
+            if let Some(entry) = cache.get(&cache_key) {
+                let ttl_ok = !self.profile.cache_correctness_fixes()
+                    || entry.inserted_at.elapsed() < self.cache_ttl;
+                if ttl_ok {
+                    let cached_results = entry.results.clone();
+                    let mut stats = self.stats.write().await;
+                    stats.cache_hits += 1;
+                    stats.cache_hit_rate = stats.cache_hits as f64
+                        / (stats.cache_hits + stats.cache_misses) as f64;
+                    debug!("Cache hit for query: {}", query);
+                    return Ok(cached_results);
+                } else {
+                    debug!(
+                        "Cache entry expired (ttl={}s) for query: {}",
+                        self.cache_ttl.as_secs(),
+                        query
+                    );
+                    cache.pop(&cache_key);
+                }
             }
         }
 
         let start_time = Instant::now();
-        info!("Starting smart traversal search for query: {}", query);
+        info!(
+            "Starting smart traversal search for query: {} (profile={})",
+            query,
+            self.profile.tag()
+        );
 
         {
             let mut stats = self.stats.write().await;
@@ -78,6 +117,7 @@ impl SmartTraversalV2 {
             user_id,
             &config,
             temporal_cutoff,
+            self.profile,
         )
         .await?;
         let phase1_duration = phase1_start.elapsed();
@@ -129,7 +169,7 @@ impl SmartTraversalV2 {
         }
 
         let phase2_start = Instant::now();
-        let graph_results = graph_expansion_phase(
+        let mut graph_results = graph_expansion_phase(
             Arc::clone(&self.client),
             &vector_hits,
             query_embedding,
@@ -137,6 +177,11 @@ impl SmartTraversalV2 {
         )
         .await?;
         let phase2_duration = phase2_start.elapsed();
+
+        if self.profile.real_cosine_for_graph_nodes() && !graph_results.is_empty() {
+            self.rerank_graph_results(query_embedding, &mut graph_results, &config)
+                .await;
+        }
 
         let mut all_results = vector_hits;
         all_results.extend(graph_results);
@@ -158,7 +203,13 @@ impl SmartTraversalV2 {
 
         {
             let mut cache = self.cache.write().await;
-            cache.put(cache_key, final_results.clone());
+            cache.put(
+                cache_key,
+                CacheEntry {
+                    results: final_results.clone(),
+                    inserted_at: Instant::now(),
+                },
+            );
         }
 
         info!(
@@ -174,10 +225,50 @@ impl SmartTraversalV2 {
         TraversalStats::default()
     }
 
+    async fn rerank_graph_results(
+        &self,
+        query_embedding: &[f32],
+        graph_results: &mut [SearchResult],
+        config: &SearchConfig,
+    ) {
+        let rerank_start = Instant::now();
+        let texts: Vec<&str> = graph_results.iter().map(|r| r.content.as_str()).collect();
+
+        match self.embedder.generate_batch(&texts, true).await {
+            Ok(embeddings) => {
+                for (result, emb) in graph_results.iter_mut().zip(embeddings.iter()) {
+                    let real_sim = cosine_score(query_embedding, emb);
+                    result.vector_score = real_sim;
+                    result.combined_score = calculate_graph_combined_score_weighted(
+                        real_sim,
+                        result.graph_score,
+                        result.temporal_score,
+                        config.graph_semantic_weight,
+                        config.graph_graph_weight,
+                        config.graph_temporal_weight,
+                    );
+                }
+                info!(
+                    "Re-ranked {} graph-expanded results with real cosine in {}ms (algo_opt P0.2)",
+                    graph_results.len(),
+                    rerank_start.elapsed().as_millis()
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Graph-result re-rank failed, keeping rank-decay scores: {}",
+                    e
+                );
+            }
+        }
+    }
+
     fn make_cache_key(
+        &self,
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: &SearchConfig,
+        temporal_cutoff: Option<DateTime<Utc>>,
     ) -> String {
         let mut hasher = Sha256::new();
 
@@ -197,6 +288,15 @@ impl SmartTraversalV2 {
         if let Some(edge_types) = &config.edge_types {
             for edge_type in edge_types {
                 hasher.update(edge_type.as_bytes());
+            }
+        }
+
+        if self.profile.cache_correctness_fixes() {
+            hasher.update(self.profile.tag().as_bytes());
+            if let Some(cutoff) = temporal_cutoff {
+                hasher.update(cutoff.timestamp_millis().to_le_bytes());
+            } else {
+                hasher.update(b"no-cutoff");
             }
         }
 

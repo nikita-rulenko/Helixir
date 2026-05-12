@@ -1,5 +1,6 @@
 use super::models::{SearchConfig, SearchResult, edge_weights};
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
+use crate::core::RetrievalProfile;
 use crate::db::HelixClient;
 use crate::utils::nullable_string;
 use chrono::{DateTime, Utc};
@@ -78,6 +79,7 @@ pub async fn vector_search_phase(
     user_id: Option<&str>,
     config: &SearchConfig,
     temporal_cutoff: Option<DateTime<Utc>>,
+    profile: RetrievalProfile,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     let top_k = config.vector_top_k;
     let min_score = config.min_vector_score;
@@ -89,15 +91,33 @@ pub async fn vector_search_phase(
         top_k as i64
     };
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
-    let params = serde_json::json!({
-        "query_vector": query_vector,
-        "limit": fetch_limit
-    });
 
-    let response: VectorSearchResponse = client
-        .execute_query("smartVectorSearchWithChunks", &params)
-        .await
-        .map_err(|e| TraversalError::Database(e.to_string()))?;
+    let hql_cutoff_active = profile.temporal_cutoff_in_hql() && temporal_cutoff.is_some();
+    let response: VectorSearchResponse = if hql_cutoff_active {
+        let cutoff = temporal_cutoff.unwrap();
+        let params = serde_json::json!({
+            "query_vector": query_vector,
+            "limit": fetch_limit,
+            "cutoff_date": cutoff.to_rfc3339()
+        });
+        debug!(
+            "Phase 1 (algo_opt P0.1): pushing cutoff_date={} into HQL ::WHERE",
+            cutoff.to_rfc3339()
+        );
+        client
+            .execute_query("smartVectorSearchWithChunksCutoff", &params)
+            .await
+            .map_err(|e| TraversalError::Database(e.to_string()))?
+    } else {
+        let params = serde_json::json!({
+            "query_vector": query_vector,
+            "limit": fetch_limit
+        });
+        client
+            .execute_query("smartVectorSearchWithChunks", &params)
+            .await
+            .map_err(|e| TraversalError::Database(e.to_string()))?
+    };
 
     let mut results = Vec::new();
     let mut seen_ids = HashSet::new();
@@ -127,10 +147,12 @@ pub async fn vector_search_phase(
         }
         seen_ids.insert(memory.memory_id.clone());
 
-        if let Some(cutoff) = &temporal_cutoff {
-            if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
-                if created_at.with_timezone(&Utc) < *cutoff {
-                    continue;
+        if !hql_cutoff_active {
+            if let Some(cutoff) = &temporal_cutoff {
+                if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
+                    if created_at.with_timezone(&Utc) < *cutoff {
+                        continue;
+                    }
                 }
             }
         }

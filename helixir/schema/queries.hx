@@ -164,6 +164,10 @@ QUERY smartVectorSearchWithChunks(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   memories <- embeddings::In<HAS_EMBEDDING>
   RETURN memories
+QUERY smartVectorSearchWithChunksCutoff(query_vector: [F64], limit: I64, cutoff_date: Date) =>
+  embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)::WHERE(_::{created_at}::GTE(cutoff_date))
+  memories <- embeddings::In<HAS_EMBEDDING>
+  RETURN memories
 QUERY searchSimilarEntities(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<EntityEmbedding>(query_vector, limit)
   RETURN embeddings
