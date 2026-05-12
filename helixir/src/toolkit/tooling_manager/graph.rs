@@ -100,7 +100,7 @@ impl ToolingManager {
 
                 #[derive(serde::Deserialize, Default)]
                 #[allow(dead_code)] // *_in/_out symmetrical pairs are filled from HelixDB; only
-                                    // a subset is iterated below depending on edge direction.
+                // a subset is iterated below depending on edge direction.
                 struct ConnectionsResult {
                     #[serde(default)]
                     implies_out: Vec<ConnectedMemory>,

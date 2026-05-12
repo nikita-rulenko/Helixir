@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::db::HelixClient;
 use crate::llm::providers::base::LlmProvider;
