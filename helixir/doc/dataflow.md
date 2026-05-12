@@ -48,7 +48,7 @@ welded together.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 2 — Apply decision                                            │
- │    handle_memory_operation (add_pipeline.rs:329, 13 args — debt #9)  │
+ │    handle_memory_operation (add_pipeline.rs:329, 13 args; see #9)    │
  │                                                                      │
  │      ADD            → store Memory + HAS_EMBEDDING                   │
  │      UPDATE         → mutate target Memory, write HAS_HISTORY        │
@@ -270,13 +270,13 @@ recovers them.
 
 ## 4. EventBus (side-channel)
 
-`EventBus` (`src/core/events/bus.rs`) exists and is wired into `ToolingManager`
-but has **no registered subscribers at startup**. Emit-points exist (e.g.
-`tooling.emitters` in `add_pipeline`), they enqueue events into the bus, and
-the events are silently dropped because no handler is registered.
+`EventBus` (`src/core/events/bus.rs`) is wired into `ToolingManager` but has
+no registered subscribers at startup. Emit-points exist (e.g. `tooling.emitters`
+in `add_pipeline`), they enqueue events into the bus, and the events are
+dropped because no handler is registered.
 
-If/when telemetry is added, it hooks here. Until then this is dead code in
-the hot path:
+If/when telemetry is added, it hooks here. Until then, emitted events have no
+observable effect:
 
 ```
 ┌────────────────────┐       ┌──────────────┐       ┌────────────────┐
@@ -291,9 +291,9 @@ the hot path:
 - **Hot/cold path separation.** Embedding cache hit vs miss, HelixDB retry
   loop iterations, and decision-engine LLM call cost are not annotated.
 - **Concurrency boundaries.** Several `tokio::spawn` calls inside
-  `add_pipeline.rs` run unobservably; failures only show up in logs.
-- **Backpressure.** There is none; concurrent `add_memory` calls all hit the
+  `add_pipeline.rs` run as fire-and-forget tasks; failures are visible only
+  in logs.
+- **Backpressure.** None today; concurrent `add_memory` calls all hit the
   embedding API + LLM without queueing or rate-limiting.
 
-Each of these is a candidate for the next iteration of this document, after
-the architectural cleanup (issue #9) reduces the surface area to track.
+Candidates for the next iteration of this document. Tracked alongside #9.

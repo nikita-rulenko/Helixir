@@ -80,9 +80,9 @@ should require deliberation.
 │                                                                          │
 │   misc_toolbox/, analytics/                                              │
 │                                                                          │
-│   NOTE: src/core/services/{chunking,linking,resolution} is a parallel    │
-│   second home for chunking and link-building. The duplication is a       │
-│   half-finished refactor — see issue #9.                                 │
+│   NOTE: src/core/services/{chunking,linking,resolution} contains a      │
+│   parallel implementation of chunking and link-building alongside        │
+│   mind_toolbox/. Consolidation tracked in issue #9.                      │
 └──────────────────────────────┬───────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼───────────────────────────────────────────┐
@@ -124,19 +124,19 @@ bug to file — not a feature to copy.
   (`HelixirError`, `HelixClientError`, `HelixirClientError`, `ToolingError`,
   `SearchError`, `OntologyError`, `FastThinkError`, `DecisionError`,
   `ExtractionError`). The MCP layer flattens them into `McpError` via
-  `HelixirMcpServer::convert_error`. This works but the error vocabulary is
-  not unified — converting losses (e.g. `Tooling -> internal_error` regardless
-  of cause) live at `src/mcp/server.rs:50-62`.
+  `HelixirMcpServer::convert_error` at `src/mcp/server.rs:50-62`. The
+  conversion is lossy: most variants collapse to `internal_error` regardless
+  of cause. Whether to unify the error vocabulary is an open design question.
 
 - **Async runtime.** Tokio (`#[tokio::main]`). Most managers are `Send + Sync`
-  and held in `Arc<…>`. Two state mutations escape this discipline:
+  and held in `Arc<…>`. Two state mutations use synchronous primitives:
   - `OntologyManager` is `parking_lot::RwLock` (sync lock inside async code).
   - `is_initialized` and `is_connected` are `AtomicBool` with `Ordering::Relaxed`.
 
 - **Configuration flow.** Env vars → `HelixirConfig::from_env` → `HelixirClient`
-  constructor → passed to every manager. About half of the config fields are
-  not read from env at all (see issue #10); they remain at their struct-literal
-  defaults forever.
+  constructor → passed to every manager. Some `HelixirConfig` fields are not
+  read from env (tracked in issue #10) and remain at their struct-literal
+  defaults at runtime.
 
 - **Events.** `EventBus` is an async fan-out; handlers run via `tokio::spawn`
   so emit is fire-and-forget. There are currently no registered handlers at
@@ -152,9 +152,9 @@ bug to file — not a feature to copy.
   Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
   None are configurable from env or `HelixirConfig`.
 
-- **Shared memory across users (deduplicated knowledge graph).** This is the
-  single most important invariant for anyone reading API responses. A fact is
+- **Shared memory across users (deduplicated knowledge graph).** A fact is
   stored exactly once as a `Memory` node, regardless of how many users know it.
+  This is a load-bearing invariant for anyone reading API responses.
 
   Each user that knows the fact is connected to the same node by a
   `User -[HasMemory]-> Memory` edge. The node's `user_count` field tracks how
@@ -186,24 +186,27 @@ bug to file — not a feature to copy.
   This is not a privacy leak — see the closed-as-`not planned` discussion on
   issue #21.
 
-## 5. Boundaries the tests should defend (but mostly don't)
+## 5. Layer boundaries
 
-- L4 ↔ L3: every MCP tool maps to exactly one `HelixirClient` method. There is
-  no integration test asserting this contract; if a tool grows logic the MCP
-  layer becomes business-aware silently.
-- L3 ↔ L2: `HelixirClient` is the only thing allowed to import `ToolingManager`.
-  This is unenforced; nothing prevents new MCP tools from reaching into
-  toolkit internals directly.
+These boundaries describe how the layers are organized in the source tree.
+None are enforced by the compiler today; `test-design.md` notes which of them
+have test coverage.
+
+- L4 ↔ L3: every MCP tool maps to exactly one `HelixirClient` method. No
+  integration test asserts this contract.
+- L3 ↔ L2: `HelixirClient` is the only struct that wires the layer below.
+  Unenforced — nothing prevents new MCP tools from importing toolkit modules
+  directly.
 - L2 ↔ L1: `ToolingManager` owns all `LlmProvider` / `HelixClient` references.
-  Sub-managers receive `Arc<…>`s in their constructors and must not pull from
-  process-global state. Currently respected.
+  Sub-managers receive `Arc<…>`s in their constructors and do not pull from
+  process-global state at the time of writing.
 
-See `test-design.md` for the explicit plan to start defending these.
+## 6. Open architectural items
 
-## 6. Known architectural debt (links to live issues, not embedded)
+The live architectural backlog is on GitHub:
 
-Run `gh issue list -R nikita-rulenko/Helixir --label architecture --state open`
-to see the current architectural backlog. The principal items at the time of
-writing concern the chunking duplication, the `smart_traversal_v2` naming
-artifact, and the size of `add_pipeline.rs`. See `<version>/notes.md` for the
-state at each tagged release.
+```bash
+gh issue list -R nikita-rulenko/Helixir --label architecture --state open
+```
+
+For per-release context, see `<version>/notes.md`.

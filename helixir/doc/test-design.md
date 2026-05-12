@@ -127,17 +127,19 @@ drift without paying the cost of full mocks.
 
 ### Tier 3 — gate
 
-E2E tests stay opt-in (`#[ignore]` + Make target). What we **need** before
-v0.4 is a CI workflow on push/PR that runs:
+E2E tests stay opt-in (`#[ignore]` + Make target). A CI workflow on push/PR
+runs the following (added in `dev` while closing #5; verify it is on `main`
+before relying on it):
 
 ```
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets               # non-strict; warnings allowed for now
 cargo test --lib
+cargo build --locked                     # MSRV job pinned in CI
 ```
 
-Tracked in issue #5. Without this, all the tier-2 tests above can regress
-silently on the next merge.
+If `clippy` is later promoted to `-D warnings`, the tier-2 tests above stop
+being regression bait.
 
 ### Tier 4 — refuse
 

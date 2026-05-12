@@ -182,37 +182,37 @@ them is a data-integrity bug.
 7. **Hive Memory:** `Memory.user_count` is monotone non-decreasing for any
    given `memory_id`.
 
-## 6. Known data-model debt
+## 6. Schema patterns to recognize
 
-These are the recurring schema smells. They are tracked as live issues; this
-file lists the patterns so contributors can recognize them without grep.
+These are recurring shapes in `schema.hx` that affect how Rust code reads and
+writes the data. Tracked variants of these patterns may have open issues —
+listed here so contributors recognize them without re-deriving from grep.
 
 - **Booleans encoded as `I64`.** `immutable`, `verified`, `is_deleted`,
   `active`, `resolved`, `bidirectional`, `exclusive`. HelixDB has no `Bool`
   type; convention is `0 = false, 1 = true`.
 - **Identity fields with `DEFAULT ""`.** `Memory.user_id`, `Memory.deleted_at`,
   `Memory.deleted_by`. An insert without `user_id` is legal at the schema
-  level and silently produces an orphan.
+  level and produces a node with empty `user_id`.
 - **JSON-in-string.** `Memory.metadata`, `Entity.properties`, `Entity.aliases`,
   `Concept.properties` are `String` columns holding serialized JSON. No
   schema validation; every read pays a JSON parse.
-- **Time-type drift.** `Memory.created_at` is `String DEFAULT "{{timestamp}}"`,
-  but `MemoryEmbedding.created_at` is `Date`. Cross-node date queries are
-  fragile.
-- **Denormalized parent links.** `Concept.parent_id: String` duplicates the
-  `IS_A` edge; two sources of truth for parenthood.
-- **`smart_traversal_v2` artifact.** Naming implies a v1 elsewhere; v1 was
-  removed without renaming.
+- **Time-type variation.** `Memory.created_at` is `String DEFAULT
+  "{{timestamp}}"`, while `MemoryEmbedding.created_at` is `Date`.
+- **Denormalized parent links.** `Concept.parent_id: String` exists alongside
+  the `IS_A` edge.
+- **`smart_traversal_v2` module name.** The `_v2` suffix is a naming artifact
+  from an earlier `smart_traversal` that was removed; the current module is
+  the only implementation.
 
 ## 7. Migration approach (for future schema changes)
 
-There is no migration framework today. The current playbook is:
+There is no automated migration framework today. The current playbook is:
 
 1. Edit `schema.hx` and `queries.hx`.
 2. Run `helixir-deploy --host … --port … --schema-dir helixir/schema`.
-3. HelixDB will accept the new schema but **does not migrate existing data**;
+3. HelixDB accepts the new schema but does not migrate existing data;
    adding a non-nullable field to a populated node is therefore not safe.
 
-This is acceptable while the project has no production deployment. Before that
-changes, a real migration layer needs to be added — likely a per-tag set of
-HQL scripts plus an upgrade tool.
+If a migration framework is needed in the future, the likely shape is a
+per-tag set of HQL scripts plus an upgrade tool. No such tool exists today.
