@@ -203,4 +203,20 @@ mod tests {
         let config = HelixirConfig::default();
         assert!(config.llm_base_url.is_none());
     }
+
+    #[test]
+    fn test_from_env_reads_embedding_url() {
+        // Set a recognizable URL different from the ollama default so the
+        // assertion catches a regression where embedding_url is shadowed.
+        unsafe {
+            std::env::set_var("HELIX_EMBEDDING_URL", "https://openrouter.ai/api/v1");
+        }
+
+        let config = HelixirConfig::from_env();
+        assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
+
+        unsafe {
+            std::env::remove_var("HELIX_EMBEDDING_URL");
+        }
+    }
 }

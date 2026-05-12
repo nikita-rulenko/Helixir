@@ -118,28 +118,18 @@ impl HelixirClient {
                 .map_err(|e| HelixirClientError::Database(e.to_string()))?,
         );
 
-        let is_openai_compat = config.embedding_provider == "openai";
-        let embedder = Arc::new(EmbeddingGenerator::new(
-            config.embedding_provider.clone(),
-            if is_openai_compat {
-                "http://localhost:11434".to_string()
-            } else {
-                config.embedding_url.clone()
-            },
-            config.embedding_model.clone(),
-            config.embedding_api_key.clone(),
-            if is_openai_compat {
-                Some(config.embedding_url.clone())
-            } else {
-                None
-            },
-            config.timeout,
-            1000,
-            300,
-            config.embedding_fallback_enabled,
-            Some(config.embedding_fallback_url.clone()),
-            Some(config.embedding_fallback_model.clone()),
-        ));
+        let embedder = Arc::new(EmbeddingGenerator::new(crate::llm::EmbeddingConfig {
+            provider: config.embedding_provider.clone(),
+            base_url: config.embedding_url.clone(),
+            model: config.embedding_model.clone(),
+            api_key: config.embedding_api_key.clone(),
+            timeout_secs: config.timeout,
+            cache_size: 1000,
+            cache_ttl: 300,
+            fallback_enabled: config.embedding_fallback_enabled,
+            fallback_url: config.embedding_fallback_url.clone(),
+            fallback_model: config.embedding_fallback_model.clone(),
+        }));
 
         let llm_provider: Arc<dyn LlmProvider> = LlmProviderFactory::create(
             &config.llm_provider,

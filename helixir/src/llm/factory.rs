@@ -1,10 +1,8 @@
-use super::embeddings::EmbeddingGenerator;
 use super::providers::base::LlmProvider;
 use super::providers::cerebras::CerebrasProvider;
 use super::providers::fallback::LlmProviderWithFallback;
 use super::providers::ollama::OllamaProvider;
-use crate::core::config::HelixirConfig;
-use crate::{DEFAULT_CACHE_SIZE, DEFAULT_CACHE_TTL, DEFAULT_OLLAMA_URL};
+use crate::DEFAULT_OLLAMA_URL;
 
 pub struct LlmProviderFactory;
 
@@ -50,35 +48,11 @@ impl LlmProviderFactory {
     }
 }
 
-pub struct EmbeddingProviderFactory;
-
-impl EmbeddingProviderFactory {
-    #[must_use]
-    pub fn from_config(config: &HelixirConfig) -> EmbeddingGenerator {
-        let is_openai_compat = config.embedding_provider == "openai";
-        EmbeddingGenerator::new(
-            config.embedding_provider.clone(),
-            if is_openai_compat {
-                "http://localhost:11434".to_string()
-            } else {
-                config.embedding_url.clone()
-            },
-            config.embedding_model.clone(),
-            config.embedding_api_key.clone(),
-            if is_openai_compat {
-                Some(config.embedding_url.clone())
-            } else {
-                None
-            },
-            config.timeout,
-            DEFAULT_CACHE_SIZE,
-            DEFAULT_CACHE_TTL,
-            config.embedding_fallback_enabled,
-            Some(config.embedding_fallback_url.clone()),
-            Some(config.embedding_fallback_model.clone()),
-        )
-    }
-}
+// Embedding provider construction lives in `HelixirClient::new` using the
+// typed `EmbeddingConfig` struct from `crate::llm::embeddings`. A dedicated
+// factory here previously duplicated that wiring (with the same
+// `is_openai_compat` workaround) but was never called — removed to keep
+// embedding-pipeline configuration in exactly one place (issue #7).
 
 #[cfg(test)]
 mod tests {

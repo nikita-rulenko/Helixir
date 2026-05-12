@@ -125,12 +125,36 @@ impl EmbeddingCache {
     }
 }
 
+/// Configuration for [`EmbeddingGenerator`].
+///
+/// Replaces the previous 11-positional-argument constructor. Both the
+/// primary and the fallback provider are described here in named fields
+/// so the meaning of each URL is unambiguous at call sites.
+///
+/// `base_url` is the endpoint of the **primary** provider (the one named
+/// in `provider`). For `ollama` it is the Ollama host (e.g.
+/// `http://localhost:11434`); for `openai`-compatible providers it is the
+/// API root (e.g. `https://openrouter.ai/api/v1` or `https://api.openai.com/v1`).
+/// An empty string means "use the provider's built-in default".
+#[derive(Debug, Clone)]
+pub struct EmbeddingConfig {
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub timeout_secs: u64,
+    pub cache_size: usize,
+    pub cache_ttl: u64,
+    pub fallback_enabled: bool,
+    pub fallback_url: String,
+    pub fallback_model: String,
+}
+
 pub struct EmbeddingGenerator {
     provider: String,
-    ollama_url: String,
+    base_url: String,
     model: String,
     api_key: Option<String>,
-    base_url: Option<String>,
     client: Client,
     cache: EmbeddingCache,
 
@@ -142,46 +166,56 @@ pub struct EmbeddingGenerator {
 }
 
 impl EmbeddingGenerator {
-    pub fn new(
-        provider: impl Into<String>,
-        ollama_url: impl Into<String>,
-        model: impl Into<String>,
-        api_key: Option<String>,
-        base_url: Option<String>,
-        timeout_secs: u64,
-        cache_size: usize,
-        cache_ttl: u64,
-        fallback_enabled: bool,
-        fallback_url: Option<String>,
-        fallback_model: Option<String>,
-    ) -> Self {
-        let provider = provider.into().to_lowercase();
-        let model = model.into();
-        let ollama_url = ollama_url.into();
-        let fallback_url = fallback_url.unwrap_or_else(|| DEFAULT_FALLBACK_URL.to_string());
-        let fallback_model = fallback_model.unwrap_or_else(|| DEFAULT_FALLBACK_MODEL.to_string());
+    pub fn new(config: EmbeddingConfig) -> Self {
+        let provider = config.provider.to_lowercase();
+        let model = config.model;
+        let base_url = config.base_url.trim_end_matches('/').to_string();
+        let fallback_url = if config.fallback_url.is_empty() {
+            DEFAULT_FALLBACK_URL.to_string()
+        } else {
+            config.fallback_url
+        };
+        let fallback_model = if config.fallback_model.is_empty() {
+            DEFAULT_FALLBACK_MODEL.to_string()
+        } else {
+            config.fallback_model
+        };
 
         info!(
-            "EmbeddingGenerator initialized: provider={}, model={}, cache={}",
-            provider, model, cache_size
+            "EmbeddingGenerator initialized: provider={}, model={}, base_url={}, cache={}",
+            provider, model, base_url, config.cache_size
         );
 
         Self {
             provider,
-            ollama_url,
-            model,
-            api_key,
             base_url,
+            model,
+            api_key: config.api_key,
             client: Client::builder()
-                .timeout(Duration::from_secs(timeout_secs))
+                .timeout(Duration::from_secs(config.timeout_secs))
                 .build()
                 .expect("Failed to create HTTP client"),
-            cache: EmbeddingCache::new(cache_size, cache_ttl),
-            fallback_enabled,
+            cache: EmbeddingCache::new(config.cache_size, config.cache_ttl),
+            fallback_enabled: config.fallback_enabled,
             fallback_url,
             fallback_model,
             using_fallback: AtomicBool::new(false),
             fallback_count: AtomicUsize::new(0),
+        }
+    }
+
+    /// Endpoint the primary provider posts to. Falls back to a provider-specific
+    /// default only if `base_url` was passed empty. Returns an owned `String`
+    /// so call sites can `format!()` it directly; allocation is negligible
+    /// next to an HTTP round-trip.
+    fn primary_url(&self, ollama_default: &str, openai_default: &str) -> String {
+        if !self.base_url.is_empty() {
+            return self.base_url.clone();
+        }
+        match self.provider.as_str() {
+            "ollama" => ollama_default.to_string(),
+            "openai" => openai_default.to_string(),
+            _ => String::new(),
         }
     }
 
@@ -226,6 +260,7 @@ impl EmbeddingGenerator {
     }
 
     async fn generate_ollama(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        let base = self.primary_url(DEFAULT_FALLBACK_URL, "");
         let request = OllamaEmbeddingRequest {
             model: self.model.clone(),
             prompt: text.to_string(),
@@ -233,7 +268,7 @@ impl EmbeddingGenerator {
 
         let response = self
             .client
-            .post(format!("{}/api/embeddings", self.ollama_url))
+            .post(format!("{base}/api/embeddings"))
             .json(&request)
             .send()
             .await?
@@ -251,11 +286,7 @@ impl EmbeddingGenerator {
             .as_ref()
             .ok_or_else(|| EmbeddingError::InvalidResponse("API key required".to_string()))?;
 
-        let api_url = self
-            .base_url
-            .as_ref()
-            .map(|u| u.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let api_url = self.primary_url("", "https://api.openai.com/v1");
 
         let request = OpenAIEmbeddingRequest {
             model: self.model.clone(),
@@ -264,8 +295,8 @@ impl EmbeddingGenerator {
 
         let response = self
             .client
-            .post(format!("{}/embeddings", api_url))
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(format!("{api_url}/embeddings"))
+            .header("Authorization", format!("Bearer {api_key}"))
             .json(&request)
             .send()
             .await?
@@ -412,11 +443,7 @@ impl EmbeddingGenerator {
             .as_ref()
             .ok_or_else(|| EmbeddingError::InvalidResponse("API key required".to_string()))?;
 
-        let api_url = self
-            .base_url
-            .as_ref()
-            .map(|u| u.trim_end_matches('/').to_string())
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let api_url = self.primary_url("", "https://api.openai.com/v1");
 
         let request = OpenAIBatchEmbeddingRequest {
             model: self.model.clone(),
@@ -425,8 +452,8 @@ impl EmbeddingGenerator {
 
         let response = self
             .client
-            .post(format!("{}/embeddings", api_url))
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(format!("{api_url}/embeddings"))
+            .header("Authorization", format!("Bearer {api_key}"))
             .json(&request)
             .send()
             .await?
@@ -558,5 +585,87 @@ impl EmbeddingGenerator {
 
     pub fn provider(&self) -> String {
         self.provider.clone()
+    }
+
+    /// Endpoint actually used for primary requests. Exposed for tests + diagnostics.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ollama_cfg() -> EmbeddingConfig {
+        EmbeddingConfig {
+            provider: "ollama".into(),
+            base_url: "http://localhost:11434".into(),
+            model: "nomic-embed-text".into(),
+            api_key: None,
+            timeout_secs: 5,
+            cache_size: 16,
+            cache_ttl: 60,
+            fallback_enabled: false,
+            fallback_url: String::new(),
+            fallback_model: String::new(),
+        }
+    }
+
+    fn openai_cfg() -> EmbeddingConfig {
+        EmbeddingConfig {
+            provider: "openai".into(),
+            base_url: "https://openrouter.ai/api/v1".into(),
+            model: "nomic-embed-text-v1.5".into(),
+            api_key: Some("test-key".into()),
+            timeout_secs: 5,
+            cache_size: 16,
+            cache_ttl: 60,
+            fallback_enabled: true,
+            fallback_url: "http://localhost:11434".into(),
+            fallback_model: "nomic-embed-text".into(),
+        }
+    }
+
+    #[test]
+    fn config_routes_ollama_url_to_base_url() {
+        let generator = EmbeddingGenerator::new(ollama_cfg());
+        assert_eq!(generator.provider(), "ollama");
+        assert_eq!(generator.model(), "nomic-embed-text");
+        assert_eq!(generator.base_url(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn config_routes_openai_compat_url_to_base_url() {
+        let generator = EmbeddingGenerator::new(openai_cfg());
+        assert_eq!(generator.provider(), "openai");
+        assert_eq!(generator.base_url(), "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn trailing_slash_is_normalized() {
+        let mut cfg = openai_cfg();
+        cfg.base_url = "https://openrouter.ai/api/v1/".into();
+        let generator = EmbeddingGenerator::new(cfg);
+        assert_eq!(generator.base_url(), "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn empty_base_url_falls_back_to_provider_default() {
+        let mut cfg = openai_cfg();
+        cfg.base_url = String::new();
+        let generator = EmbeddingGenerator::new(cfg);
+        assert_eq!(
+            generator.primary_url("", "https://api.openai.com/v1"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn provider_name_is_lowercased() {
+        let mut cfg = ollama_cfg();
+        cfg.provider = "OLLAMA".into();
+        let generator = EmbeddingGenerator::new(cfg);
+        assert_eq!(generator.provider(), "ollama");
     }
 }
