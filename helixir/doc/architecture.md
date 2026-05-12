@@ -210,3 +210,120 @@ gh issue list -R nikita-rulenko/Helixir --label architecture --state open
 ```
 
 For per-release context, see `<version>/notes.md`.
+
+## 7. Capability surface (what the system provides today)
+
+This section enumerates the user-facing capabilities shipped through the
+release history. It is the answer to "what does Helixir actually do?" without
+having to grep release notes. Source: `gh release view <tag>` for every tag
+plus the root `README.md`.
+
+### 7.1 Memory model
+
+- **Atomic-fact memory.** Every `add_memory` call runs an LLM extractor that
+  produces a list of atomic memories from a single user message; the raw
+  message itself is stored separately as a `source="raw_input"` Memory when
+  the input is long and extraction yielded more than one fact (v0.3.0).
+- **8-type ontology.** Memories are classified as one of
+  `fact / preference / skill / goal / opinion / experience / achievement /
+  action` (v0.2.0). The full hierarchy is the `Thing → {Attribute, Event,
+  Entity, Relation, State}` tree in `data-model.md §4`.
+- **Decision matrix per write.** The `LLMDecisionEngine` picks one of
+  `ADD / UPDATE / SUPERSEDE / CONTRADICT / LINK_EXISTING / CROSS_CONTRADICT
+  / NOOP / DELETE` per atomic fact, against the personal-then-collective
+  candidate set (v0.2.0 baseline; v0.2.1 wired `LINK_EXISTING` /
+  `CROSS_CONTRADICT`; v0.3.1 added coherence guard so `UPDATE` with
+  incoherent merged content downgrades to `ADD`).
+- **Coherence guard.** `is_coherent_memory` + `split_incoherent_memory`
+  detect contradictory clauses across distinct subjects within one candidate
+  memory and split at contradiction markers before embedding (v0.3.1).
+- **Reasoning edges.** Memory→Memory edges
+  `IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS` are inferred during the enrich
+  phase of `add_memory` for every operation except `NOOP` / `DELETE`
+  (v0.3.1-fix).
+- **Audit trail.** Every `UPDATE` / `SUPERSEDE` / `DELETE` writes a
+  `HAS_HISTORY` edge to a `HistoryEvent` node.
+
+### 7.2 Retrieval
+
+- **`search_memory`** — vector ANN + BM25 + smart-traversal graph expansion,
+  combined by `score = vector_weight * cosine + temporal_weight *
+  freshness + graph_weight * proximity`. Real cosine is computed by
+  re-embedding the candidate set on the client (v0.3.0). Earlier scoring
+  evolved from a hardcoded 0.8 (pre-v0.2.3) → rank-based exp decay
+  `0.95 * 0.92^rank` (v0.2.3) → true cosine (v0.3.0).
+- **Modes.** `recent` (~4 h) · `contextual` (~30 d, default) · `deep`
+  (~90 d) · `full` (unbounded). Defined in `src/core/search_modes.rs`.
+- **Scopes.** `personal` (caller's `HasMemory` edges) · `collective` /
+  `all` (fan out across all `HasMemory` edges with consensus ranking +
+  controversy annotation).
+- **`search_by_concept`** — ontology-filtered retrieval gated by
+  `INSTANCE_OF Concept(type=<one of 8>)`.
+- **`search_reasoning_chain`** — BFS over both directions of the four
+  reasoning edges; chain modes `forward / causal / both / deep`. Coverage
+  was raised from 40 % to ~95 % when traversal grew from 3 to 8 edge
+  directions (v0.3.1).
+- **`list_memories`** — full-scan tool for exhaustive queries, no scoring
+  (v0.3.0).
+- **`get_memory_graph`** — return a graph view (nodes + edges) around a
+  memory or for a user.
+- **`search_incomplete_thoughts`** — locate FastThink sessions that
+  auto-committed on timeout (tagged `context_tags=incomplete_thought`).
+
+### 7.3 FastThink (ephemeral working memory)
+
+In-process reasoning scratchpad on `petgraph::stable_graph` — no persistence
+until commit. Introduced as the v0.1.1 (`Think_fast`) tag. Tools:
+`think_start / think_add / think_recall / think_conclude / think_commit /
+think_discard / think_status`. `think_recall` pulls memories from the long-term
+store into the live session graph (read-only). On wall-clock or thought-count
+timeout the manager runs `commit_partial` and tags the resulting Memory with
+`context_tags=incomplete_thought` so it can be recovered later.
+
+Default limits live in `FastThinkLimits::mcp`: 90 s wall clock, 150 thoughts.
+
+### 7.4 Hive Memory (cross-user shared knowledge)
+
+Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
+
+- One `Memory` node per fact, regardless of how many users know it.
+- Each knower is linked to that node by a `User -[HasMemory]-> Memory`
+  edge. The node's `user_count` field tracks the linkage count.
+- `add_memory` runs a two-phase pipeline:
+  - Phase 1 — personal dedup; embedding-similarity match within the
+    caller's memories.
+  - Phase 2 — collective check (background as of v0.2.2); if the same
+    fact already exists for another user, the decision engine emits
+    `LINK_EXISTING` and the new user's `HAS_MEMORY` edge points at the
+    shared Memory rather than producing a duplicate node.
+- Cross-user contradictions are wired through `CROSS_CONTRADICT`, which
+  stores the new opinion alongside the existing one and links them with a
+  `CONTRADICTS` edge.
+
+### 7.5 Performance & async
+
+- `add_memory` median latency reduced 34.7 s → 12.0 s (v0.2.2) by moving
+  the Phase 2 collective LLM decision to `tokio::spawn` and introducing
+  `search_for_dedup` (no `user_count` / controversy enrichment).
+- Embedding generation is batched on the write path (one HTTP call → N
+  vectors). Embedding results are cached by SHA-256(query) via `moka`
+  (LRU 1000, TTL 300 s).
+- Three caches live in the read path (embeddings, `SearchEngine` LRU,
+  `ReasoningEngine` warm-up). All sizes hardcoded at construction.
+
+### 7.6 Reserved capability surface (schema present, no Rust producer)
+
+These are surfaces the schema is ready for but no caller wires today.
+They function as the roadmap-by-construction:
+
+| Surface | Schema artifacts | Implication |
+|---|---|---|
+| Documentation ingestion | `DocPage`, `DocChunk`, `CodeExample`, `ErrorCode` nodes; `PAGE_TO_CHUNK`, `CHUNK_TO_EMBEDDING`, `CHUNK_MENTIONS_CONCEPT`, `CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT` edges | Documents/codebases as first-class memory citizens. |
+| Constraint scoping | `Constraint` node; `APPLIES_IN` edge | Per-context rules (work/personal/project). |
+| Session tracking | `Session` node; `IN_SESSION`, `CREATED_IN` edges | Conversation-scope reasoning. |
+| Dynamic ontology | `IS_A`, `CONCEPT_RELATED_TO` edges | Ontology that extends as the agent learns. |
+| Hierarchical entities | `PART_OF` edge | Entity composition (`engine` PART_OF `car`). |
+
+These are intentional schema surface decisions made in earlier releases
+(v0.2.0 for most) and are **not** dead code in the schema sense — the HQL
+queries that materialize them already exist. They are awaiting Rust callers.
