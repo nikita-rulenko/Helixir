@@ -321,9 +321,20 @@ They function as the roadmap-by-construction:
 | Documentation ingestion | `DocPage`, `DocChunk`, `CodeExample`, `ErrorCode` nodes; `PAGE_TO_CHUNK`, `CHUNK_TO_EMBEDDING`, `CHUNK_MENTIONS_CONCEPT`, `CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT` edges | Documents/codebases as first-class memory citizens. |
 | Constraint scoping | `Constraint` node; `APPLIES_IN` edge | Per-context rules (work/personal/project). |
 | Session tracking | `Session` node; `IN_SESSION`, `CREATED_IN` edges | Conversation-scope reasoning. |
-| Dynamic ontology | `IS_A`, `CONCEPT_RELATED_TO` edges | Ontology that extends as the agent learns. |
+| Internal concept-graph edges | `IS_A`, `CONCEPT_RELATED_TO` edges | Normalized representation of the **fixed** ontology hierarchy and explicit horizontal links between concepts. See note below. |
 | Hierarchical entities | `PART_OF` edge | Entity composition (`engine` PART_OF `car`). |
 
+**Note on the ontology surface.** The 8 user-facing ontology types
+(`fact / preference / skill / goal / opinion / experience / achievement /
+action`) are intentionally **static**. They are not extended at runtime from
+user data — that is a deliberate design choice (see
+`design-rationale.md §3`). The reserved `IS_A` and `CONCEPT_RELATED_TO`
+edges are internal concept-graph machinery: `IS_A` is the normalized form of
+the parent link currently denormalized into `Concept.parent_id`, and
+`CONCEPT_RELATED_TO` is reserved for explicitly authored horizontal links
+between the existing concepts. Neither is intended as a hook for
+agent-driven ontology learning.
+
 These are intentional schema surface decisions made in earlier releases
-(v0.2.0 for most) and are **not** dead code in the schema sense — the HQL
+(v0.2.0 for most) and are not dead code in the schema sense — the HQL
 queries that materialize them already exist. They are awaiting Rust callers.

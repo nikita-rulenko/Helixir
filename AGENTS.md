@@ -81,6 +81,78 @@ there that supersedes any guess from training data.
 
 ---
 
+## 1bis. What Helixir is (and is not) — read before classifying anything as a bug
+
+This section exists because the most expensive failure modes in this repo
+come from applying general-purpose engineering intuitions to a system that
+deliberately violates them. Read it before §2 every session.
+
+The authoritative version of this material lives in
+`helixir/doc/design-rationale.md`. The compressed version, with anti-pattern
+warnings, follows.
+
+### 1bis.1 What Helixir is
+
+- **A typed knowledge graph for an agent's epistemology** — not a vector
+  store, not a chat log, not a per-user memory silo.
+- **Atomic facts**, not blobs. Every `add_memory` call extracts atomic
+  facts; raw input is preserved separately when it is long enough to lose
+  detail in atomization.
+- **A decision matrix on every write**: one of `ADD / UPDATE / SUPERSEDE /
+  CONTRADICT / LINK_EXISTING / CROSS_CONTRADICT / NOOP / DELETE`. Append-only
+  is not the default and is not desired.
+- **A shared graph across users**. A fact is stored once, linked to each
+  knower by a `HasMemory` edge, with `user_count` tracking the linkage.
+  `scope = personal | collective | all` is the access control surface.
+- **Two-tier memory**: persistent graph in HelixDB plus an ephemeral
+  in-process FastThink scratchpad (`petgraph`) that never reaches the
+  graph unless the agent calls `think_commit`.
+- **Reified justifications**: `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS`
+  are first-class edges, not text in metadata.
+
+### 1bis.2 What Helixir is not
+
+- Not user-isolated. Memory is shared at the graph level. If `list_memories`
+  returns a record whose `user_id` field belongs to user A while the caller
+  is user B, that is the `HasMemory` linkage at work — not a privacy bug.
+- Not RAG. Vector search is one of three signals (vector + BM25 + smart
+  traversal), and the write path actively curates what is stored.
+- Not extensible at runtime on the ontology side. The 8 types
+  (`fact / preference / skill / goal / opinion / experience / achievement /
+  action`) are **static by design** — the goal is intent-shaped retrieval,
+  not a self-growing taxonomy. Reserved `IS_A` / `CONCEPT_RELATED_TO` edges
+  are internal concept-graph machinery, not agent-driven extension hooks.
+- Not a chat history. It does not log conversations; it extracts facts
+  from them.
+
+### 1bis.3 Load-bearing invariants (do not "fix" these)
+
+Cross-reference `helixir/doc/design-rationale.md §3` before challenging any
+of these.
+
+| Invariant | Where it lives | If you mistake it for a bug |
+|---|---|---|
+| Shared `Memory` across users; one node per fact, `HasMemory` per knower; `user_count >= 1` | `add_pipeline.rs` Phase 2 + `link_user_to_memory_bg` | You will try to add `user_id` filter to retrieval and break Hive dedup. |
+| 8 ontology types are fixed in code and schema | `OntologyManager`, `data-model.md §4` | You will propose "dynamic ontology" and dilute the type space. |
+| `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class edges, not metadata | `ReasoningEngine`, `mind_toolbox/reasoning/` | You will collapse them into a single `metadata.reason` string and lose traversal. |
+| Decision matrix replaces append-only | `LLMDecisionEngine`, `add_pipeline.rs` | You will propose unconditional `ADD` and grow the corpus forever. |
+| FastThink does not touch HelixDB until `think_commit` | `fast_think/manager.rs` | You will persist thoughts eagerly and pollute long-term memory. |
+| Real cosine is computed by re-embedding on the client (HelixDB does not expose it) | `smart_traversal_v2/scoring.rs` | You will treat re-embedding as wasteful and remove it. |
+| Long inputs persist a `source="raw_input"` Memory alongside atomized facts | `add_pipeline.rs::store_raw_source` | You will treat the duplicate as redundancy and remove it. |
+| All decision/enrichment cost is on the writer; reader stays fast | two-phase add pipeline | You will move enrichment to read time and slow searches by an order of magnitude. |
+
+### 1bis.4 Capability surface (one paragraph)
+
+Tools today: `add_memory`, `search_memory` (modes `recent / contextual /
+deep / full`; scopes `personal / collective / all`), `search_by_concept`
+(8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`),
+`list_memories`, `get_memory_graph`, `update_memory`, `search_incomplete_thoughts`,
+plus seven FastThink tools (`think_start/add/recall/conclude/commit/discard/status`).
+Full enumeration in `helixir/doc/architecture.md §7` and
+`helixir/doc/design-rationale.md §4`.
+
+---
+
 ## 2. Session boot sequence (do this first, every session)
 
 After reading this file, **before** touching the user's task, run the following
@@ -90,16 +162,20 @@ is intentionally free of links to specific issues, PRs, or releases — those ch
 the rules do not.
 
 1. **Read the relevant engineering doc.** Open `helixir/doc/README.md` for the
-   index, then read at least one of:
-   - `architecture.md` — if the task touches module boundaries or wiring.
+   index. Always read `design-rationale.md §1-3` (what Helixir is, what it
+   is not, and the load-bearing decisions); the cost is a few minutes and
+   the cost of skipping it is "I just filed a P1 against an intentional
+   invariant". Then read at least one of:
+   - `architecture.md` — if the task touches module boundaries, wiring, or
+     the capability surface (`§7`).
    - `data-model.md` — if it touches `schema.hx`, `queries.hx`, or persistence.
    - `dataflow.md` — if it changes `add_memory`, `search_memory`, or FastThink.
    - `userflow.md` — if it adds/changes an MCP tool, prompt, or resource.
    - `test-design.md` — if it adds tests or touches the test surface.
    - `helixir/doc/<latest-version>/` — for the most recent release's context.
 
-   Skipping this step is the most common cause of duplicate work and of
-   "this contradicts the docs" surprises in review.
+   Skipping the rationale + the relevant doc is the most common cause of
+   duplicate work and of "this contradicts the docs" surprises in review.
 
 2. **Recall.** Query Helixir MCP memory:
    ```
@@ -382,3 +458,104 @@ The agent must push back (politely) if asked to do any of the following:
 - Add `#![allow(...)]` to silence warnings instead of fixing them.
 
 If in doubt: stop, surface the question, wait for guidance.
+
+---
+
+## 11. Helixir-specific tripwires (read before filing issues)
+
+These are the failure modes that recur when general-purpose engineering
+intuition meets a Helixir-specific contract. Each tripwire has the same
+shape: **what looked wrong** → **what is actually happening** → **what to do**.
+
+The bookkeeping for these is in `helixir/doc/design-rationale.md §3`; this
+section is the "before you file" checklist.
+
+### 11.1 "Tool X returns memories that belong to other users"
+
+- Looks like a privacy leak / missing `user_id` filter.
+- Actually is the shared-memory graph at work. A `Memory` is stored once
+  and linked to each knower via `HasMemory`; `Memory.user_id` is the
+  original author, not an access tag. `user_count >= 2` means multiple
+  users know this fact.
+- **Do**: cross-check `architecture.md §4 "Shared memory across users"` and
+  `design-rationale.md §3.4`. If the caller wants strict isolation, that is
+  a `scope=personal` question, not a code defect.
+- **Do not** add a `user_id` predicate to retrieval — you will break Hive
+  dedup. Issue #21 (closed `not planned`) is the canonical precedent.
+
+### 11.2 "Field X is stored as a literal placeholder / dead string"
+
+- Looks like a broken interpolation that needs a patch.
+- May be a **dead-write field** — declared in schema, persisted, deserialized,
+  but never read by any pipeline. Cosmetic API artifact, not a functional
+  bug.
+- **Do**: grep the codebase for **reads** of the field, not just writes.
+  If nothing reads it for filtering, ranking, or invariants, the right
+  fix is a design question ("what should this field mean?"), not a
+  post-write patch.
+- **Do not** silently add a query that backfills the field — you are
+  patching a symptom without a contract. Issue #20 is the canonical
+  precedent (reverted in `dev`).
+
+### 11.3 "Output shape of API X looks confusing / self-referential"
+
+- Looks like a UX bug worth filing.
+- May be physical edge direction surfacing through a name that suggests
+  BFS-neighbour semantics. The data is internally consistent; the consumer
+  contract may not have been defined.
+- **Do**: read the code that emits the field (`tooling_manager/` →
+  whichever projector). If both directions of an edge produce
+  internally-consistent output, the question is "what should this field
+  mean to a consumer?" — answered by an example consumer, not by a fix.
+- **Do not** open a P1/P2 issue from a single API observation. Open it as
+  P3 with explicit "no external consumer complaint, surfaced by smoke",
+  or — better — find the consumer first. Issue #23 is the canonical
+  precedent.
+
+### 11.4 "Counter X reports a value lower than I expect"
+
+- Looks like a stale cached counter.
+- May be a live derivation from the underlying data structure (e.g.
+  `petgraph::Graph::node_count()`), which means the discrepancy is in
+  your repro, not the code.
+- **Do**: read the getter. If it computes from the source on every call,
+  hypothesize an experiment that distinguishes "your repro is wrong" from
+  "the underlying structure is wrong" before filing.
+- **Do not** file from one observation. Issue #24 is the canonical
+  precedent (closed `not planned`).
+
+### 11.5 "The decision engine returned ADD for something I expected UPDATE for"
+
+- Looks like a bug in the decision matrix.
+- May be score below `similarity_threshold` (0.70) so Phase 1 did not see
+  the candidate as similar; or the coherence guard downgraded `UPDATE` to
+  `ADD` to avoid merging contradictory clauses.
+- **Do**: read `LLMDecisionEngine::decide` + the prompt
+  (`src/llm/decision/prompt.rs`); check the actual similarity score
+  emitted in logs. The pipeline is deterministic given the same inputs;
+  if the decision was unexpected, the inputs were not what you assumed.
+
+### 11.6 "Reasoning chain BFS skipped a memory that I can see is connected"
+
+- Looks like a traversal correctness bug.
+- May be: edge direction not yet supported by `get_chain`, depth limit hit,
+  or a `chain_mode` other than `deep`/`both` filtering the direction.
+- **Do**: cross-check `mind_toolbox/reasoning/engine.rs::get_chain`. It
+  walks 8 directions today; if a direction is missed, it is a real bug
+  (issue #16/#17/#18 are the canonical precedents — file in the same
+  style).
+
+### 11.7 General rule
+
+Before filing **any** issue larger than P3:
+
+1. Read the producing code path. Do not file from response observation alone.
+2. Find the matching `design-rationale.md §3` entry. If your hypothesis
+   contradicts it, name the entry in your issue body and argue why the
+   trade-off no longer applies.
+3. If you cannot find a consumer who is harmed by the behaviour, drop the
+   priority to P3 and tag the issue with "no external complaint, surfaced
+   by agent's own audit".
+
+These three steps would have prevented issues #20, #21, #23, and #24 in
+this repo. They cost ~10 minutes per issue.

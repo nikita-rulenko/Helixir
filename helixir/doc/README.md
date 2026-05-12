@@ -9,11 +9,13 @@ who need to reason about the system, the data, the flows, and the tests.
 ```
 doc/
 ├── README.md             this index
-├── architecture.md       sysdesign: layers, components, ownership
+├── architecture.md       sysdesign: layers, components, ownership, capability surface
 ├── data-model.md         datadesign: nodes, edges, ontology, invariants
-├── dataflow.md           how data moves: add_memory pipeline + search pipeline
+├── dataflow.md           how data moves: add_memory + search + FastThink pipelines
 ├── userflow.md           MCP tools and typical agent sessions
 ├── test-design.md        what is tested, what is not, what to add next
+├── design-rationale.md   what Helixir is, evolution by release, and WHY
+│                         the load-bearing decisions are the way they are
 └── <version>/            per-version snapshot (release notes, state)
     └── notes.md
     └── state-snapshot.md
@@ -37,12 +39,16 @@ doc/
 
 ## Reading order for newcomers
 
-1. `architecture.md` — get the mental model of the layers.
-2. `data-model.md` — understand what is persisted and why.
-3. `dataflow.md` — follow one `add_memory` and one `search_memory` end to end.
-4. `userflow.md` — see how an agent actually uses the system.
-5. `test-design.md` — learn which assertions guard which parts.
-6. The latest `<version>/notes.md` for the diff from the previous release.
+1. **`design-rationale.md`** — start here. What Helixir is, what it is not,
+   and why the load-bearing decisions are the way they are. Without this
+   the rest reads like generic graph-DB plumbing.
+2. `architecture.md` — get the mental model of the layers and the
+   capability surface (`§7`).
+3. `data-model.md` — understand what is persisted and why.
+4. `dataflow.md` — follow one `add_memory` and one `search_memory` end to end.
+5. `userflow.md` — see how an agent actually uses the system.
+6. `test-design.md` — learn which assertions guard which parts.
+7. The latest `<version>/notes.md` for the diff from the previous release.
 
 ## Where to file changes
 
@@ -53,6 +59,7 @@ doc/
 | New pipeline phase or order change | `dataflow.md` |
 | New MCP tool, prompt, or resource | `userflow.md` |
 | New test (or deliberate gap) | `test-design.md` |
+| Load-bearing design decision (or a documented reversal) | `design-rationale.md` |
 | Anything tied to one release | `<version>/notes.md` |
 
 If a finding does not fit any of the above, prefer extending an existing file
