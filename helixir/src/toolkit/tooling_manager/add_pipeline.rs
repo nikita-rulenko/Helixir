@@ -1027,6 +1027,12 @@ impl ToolingManager {
         let internal_id = response.memory.id;
         debug!("Memory created: {} (internal: {})", memory_id, internal_id);
 
+        // Patch `valid_from` with the real timestamp — the schema-level
+        // `DEFAULT "{{timestamp}}"` is stored as a literal and never resolves
+        // by itself. Best-effort: if the deployed HelixDB doesn't know
+        // `setMemoryValidFrom` yet, we warn and move on. See issue #20.
+        set_memory_valid_from_best_effort(&self.db, &memory_id, &now).await;
+
         #[derive(Serialize)]
         struct AddEmbeddingInput {
             memory_id: String,
@@ -1187,6 +1193,9 @@ impl ToolingManager {
             .execute_query("addMemory", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
+
+        // See issue #20 — same best-effort `valid_from` patch as the LLM path.
+        set_memory_valid_from_best_effort(&self.db, &memory_id, &now).await;
 
         #[derive(Serialize)]
         struct EmbedInput {
@@ -1420,6 +1429,36 @@ impl ToolingManager {
 
         debug!("Linked memory {} to context '{}'", memory_id, context_name);
         Ok(())
+    }
+}
+
+/// Best-effort patch for `Memory.valid_from`. The HelixDB schema declares
+/// `valid_from: String DEFAULT "{{timestamp}}"`, but HelixDB does NOT
+/// interpolate that placeholder — it stores the literal token. We work
+/// around that by issuing a `setMemoryValidFrom` update right after
+/// `addMemory`. The call is best-effort: an older HelixDB deployment may
+/// not yet have the new query and will fail with a "query not found"
+/// error; we log a warning and move on so we don't break the add
+/// pipeline. See issue #20.
+async fn set_memory_valid_from_best_effort(
+    db: &crate::db::HelixClient,
+    memory_id: &str,
+    valid_from: &str,
+) {
+    if let Err(e) = db
+        .execute_query::<serde_json::Value, _>(
+            "setMemoryValidFrom",
+            &serde_json::json!({
+                "memory_id": memory_id,
+                "valid_from": valid_from,
+            }),
+        )
+        .await
+    {
+        warn!(
+            "setMemoryValidFrom not applied for {} ({}); re-deploy schema/queries.hx to enable timestamp interpolation",
+            memory_id, e
+        );
     }
 }
 
