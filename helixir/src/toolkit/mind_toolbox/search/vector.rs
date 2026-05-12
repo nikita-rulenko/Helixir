@@ -1,10 +1,10 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
 use crate::utils::nullable_string;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::cache::SearchCache;
 use super::models::{SearchMethod, SearchResult};

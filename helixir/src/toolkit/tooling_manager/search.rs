@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer};
 use tracing::{debug, info};
 
 use super::ToolingManager;
@@ -133,6 +132,7 @@ impl ToolingManager {
         info!("Searching by tag: {} [limit={}]", tag, limit);
 
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)] // `context_tags` reflected from HelixDB; surfaced through diagnostics.
         struct TaggedMemory {
             #[serde(default, deserialize_with = "nullable_string")]
             memory_id: String,
@@ -221,6 +221,7 @@ impl ToolingManager {
         if !candidates.is_empty() {
             for candidate in &candidates {
                 #[derive(serde::Deserialize)]
+                #[allow(dead_code)] // `belongs_to` paired with `instance_of`; the latter is iterated below.
                 struct ConceptsResult {
                     #[serde(default)]
                     instance_of: Vec<ConceptNode>,

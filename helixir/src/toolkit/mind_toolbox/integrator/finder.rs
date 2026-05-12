@@ -3,10 +3,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::models::SimilarMemory;
-use super::similarity::cosine_similarity;
 
 #[derive(Error, Debug)]
 pub enum FinderError {

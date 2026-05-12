@@ -1,5 +1,5 @@
-use super::definitions::{LEVELS, get_level_definition};
-use super::models::{AccumulatedSchema, HelixirLevel, LevelDefinition};
+use super::definitions::get_level_definition;
+use super::models::{AccumulatedSchema, HelixirLevel};
 
 pub fn validate_level_dependencies(target_level: HelixirLevel) -> Vec<HelixirLevel> {
     let definition = get_level_definition(target_level);

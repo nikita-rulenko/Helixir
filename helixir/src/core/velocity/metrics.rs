@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 
 use super::models::{EventType, IssueState, IssueStatus, VelocityEvent, VelocityMetrics};
 

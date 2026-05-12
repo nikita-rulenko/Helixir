@@ -27,6 +27,7 @@ struct OllamaOptions {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Telemetry fields kept for future cost/latency tracing.
 struct OllamaResponse {
     message: OllamaMessage,
     #[serde(default)]

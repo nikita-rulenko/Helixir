@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -348,6 +347,9 @@ impl ToolingManager {
         vec![mem.clone()]
     }
 
+    // Reserved for the upcoming personal-only deduplication path (no Hive
+    // fan-out). Currently `embed_and_search_global` is used end-to-end.
+    #[allow(dead_code)]
     async fn embed_and_search_personal(
         &self,
         text: &str,

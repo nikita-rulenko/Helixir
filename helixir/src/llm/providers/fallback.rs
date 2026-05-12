@@ -56,7 +56,7 @@ impl LlmProviderWithFallback {
 
     async fn get_fallback_provider(&self) -> OllamaProvider {
         let guard = self.fallback_provider.read().await;
-        if let Some(ref provider) = *guard {
+        if guard.is_some() {
             return OllamaProvider::new(
                 self.fallback_url.clone(),
                 self.fallback_model.clone(),

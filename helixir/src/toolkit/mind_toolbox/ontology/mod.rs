@@ -30,6 +30,9 @@ pub enum OntologyError {
 }
 
 pub struct OntologyManager {
+    // Held to allow lazy re-bootstrapping of concept rows on cache miss.
+    // Not used in the current synchronous path.
+    #[allow(dead_code)]
     client: Arc<HelixClient>,
     loader: OntologyLoader,
     hierarchy: HierarchyTraverser,

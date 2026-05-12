@@ -3,7 +3,7 @@ use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::db::HelixClient;
 use crate::utils::nullable_string;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -17,6 +17,7 @@ pub enum TraversalError {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)] // `chunks` mirrors the HelixDB response shape; kept for parity / future use.
 struct VectorSearchResponse {
     #[serde(default)]
     memories: Vec<VectorMemory>,
@@ -59,6 +60,7 @@ struct GraphConnectionsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // `memory_type` reflected from HelixDB; reserved for upcoming filters.
 struct ConnectedMemory {
     #[serde(default, deserialize_with = "nullable_string")]
     memory_id: String,

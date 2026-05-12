@@ -71,6 +71,7 @@ impl ToolingManager {
         confidence: i32,
     ) -> Result<(), super::ToolingError> {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)] // HelixDB link ack envelope.
         struct LinkResponse {
             #[serde(default)]
             link: serde_json::Value,
@@ -186,6 +187,10 @@ impl ToolingManager {
         Ok(())
     }
 
+    // Reserved for Hive cross-user linking; not invoked yet — guarded behind
+    // the (currently disabled) `cross_user_dedup` path. Will land with the
+    // Hive-feature ticket; remove `#[allow]` then.
+    #[allow(dead_code)]
     pub(crate) async fn link_user_to_existing_memory(&self, user_id: &str, memory_id: &str) {
         self.ensure_user_exists(user_id).await;
 
@@ -216,6 +221,7 @@ impl ToolingManager {
         }
 
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)] // HelixDB response envelope.
         struct UsersResult {
             #[serde(default)]
             users: Vec<serde_json::Value>,
@@ -256,6 +262,12 @@ impl ToolingManager {
         );
     }
 
+    // The link_* helpers below are reserved for the session/agent/history
+    // surfaces that have helix queries defined but no Rust-side caller yet
+    // (they are wired through the MCP tools currently in design). Removing
+    // any of them is a public-API regression — keep `#[allow]` until the
+    // calling sites land.
+    #[allow(dead_code)]
     pub(crate) async fn link_memory_to_session(
         &self,
         memory_id: &str,
@@ -275,6 +287,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn link_agent_to_memory(
         &self,
         agent_id: &str,
@@ -329,6 +342,12 @@ impl ToolingManager {
         Ok(())
     }
 
+    // The `add_entity_*` / `add_concept_*` / `add_memory_valid_in_context` /
+    // `add_cross_user_contradiction` helpers wrap helix queries that are
+    // ready on the DB side but are not yet invoked from the add/search
+    // pipelines. The schema is shared with HelixDB, so deleting the wrappers
+    // would force a future re-introduction with a different signature.
+    #[allow(dead_code)]
     pub(crate) async fn add_entity_relation(
         &self,
         from_entity_id: &str,
@@ -354,6 +373,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_entity_part_of(
         &self,
         part_id: &str,
@@ -371,6 +391,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_memory_valid_in_context(
         &self,
         memory_id: &str,
@@ -394,6 +415,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_concept_is_a(
         &self,
         child_id: &str,
@@ -413,6 +435,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_concept_relation(
         &self,
         from_id: &str,
@@ -435,6 +458,7 @@ impl ToolingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn add_cross_user_contradiction(
         &self,
         new_memory_id: &str,

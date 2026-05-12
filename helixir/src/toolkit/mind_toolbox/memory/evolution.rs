@@ -47,7 +47,7 @@ impl MemoryEvolution {
         &self,
         old_memory_id: &str,
         new_memory_id: &str,
-        reason: Option<&str>,
+        _reason: Option<&str>,
         _changed_by: Option<&str>,
     ) -> Result<EvolutionResult, EvolutionError> {
         info!(

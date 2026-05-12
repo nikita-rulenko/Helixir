@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Serialize;
 use tracing::{debug, info};
 
 use super::ToolingManager;
@@ -99,6 +99,7 @@ impl ToolingManager {
             if let Some(mem) = result.memory {
                 if !mem.id.is_empty() {
                     #[derive(serde::Deserialize)]
+                    #[allow(dead_code)] // HelixDB ack envelope; `embedding` mirrored for schema-error visibility.
                     struct EmbeddingResult {
                         #[serde(default)]
                         embedding: serde_json::Value,

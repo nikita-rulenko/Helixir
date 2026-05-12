@@ -192,6 +192,7 @@ impl ReasoningEngine {
         };
 
         #[derive(Deserialize)]
+        #[allow(dead_code)] // HelixDB edge-creation ack envelope.
         struct EdgeResponse {
             #[serde(default)]
             edge: serde_json::Value,

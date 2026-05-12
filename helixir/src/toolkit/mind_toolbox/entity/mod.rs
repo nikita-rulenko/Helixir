@@ -234,6 +234,7 @@ impl EntityManager {
         }
 
         #[derive(Deserialize)]
+        #[allow(dead_code)] // HelixDB response envelope; `entity` is parsed for validation.
         struct CreateEntityResponse {
             entity: EntityDbResponse,
         }
@@ -370,6 +371,7 @@ impl EntityManager {
         sentiment: &str,
     ) -> Result<(), EntityError> {
         #[derive(Deserialize)]
+        #[allow(dead_code)] // HelixDB edge-creation ack; deserialized to surface schema errors.
         struct EdgeResponse {
             #[serde(default)]
             link: serde_json::Value,

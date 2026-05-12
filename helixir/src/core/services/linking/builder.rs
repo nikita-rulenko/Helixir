@@ -14,6 +14,9 @@ struct TrackedChunk {
     chunk_id: String,
     chunk_internal_id: Option<Uuid>,
     position: usize,
+    // Plumbed in but not yet emitted on linking events. Will be consumed once
+    // the EventBus carries chunking correlation IDs end-to-end.
+    #[allow(dead_code)]
     correlation_id: Option<String>,
 }
 

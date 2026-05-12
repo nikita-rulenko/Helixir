@@ -135,6 +135,9 @@ impl ContentSplitter for SentenceSplitter {
 
 pub struct SemanticSplitter {
     chunk_size: usize,
+    // Threshold is captured on construction so the future semantic implementation
+    // (embedding-aware split) can read it without breaking the constructor signature.
+    #[allow(dead_code)]
     similarity_threshold: f64,
 }
 

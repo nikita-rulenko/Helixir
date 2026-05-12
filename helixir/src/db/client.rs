@@ -3,7 +3,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 const MAX_RETRIES: u32 = 3;
 

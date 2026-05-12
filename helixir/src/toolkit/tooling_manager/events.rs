@@ -71,6 +71,9 @@ impl super::ToolingManager {
         self.event_bus.emit(event).await;
     }
 
+    // Reserved for the explicit LLM-decision telemetry surface; current emitter
+    // wires through `emit_memory_operation` directly.
+    #[allow(dead_code)]
     pub(crate) async fn emit_llm_decision(&self, operation: &str, confidence: u32, user_id: &str) {
         let event = Event::new(
             "llm.decision.made",

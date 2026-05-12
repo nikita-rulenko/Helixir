@@ -2,7 +2,7 @@ use super::models::Concept;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum HierarchyError {

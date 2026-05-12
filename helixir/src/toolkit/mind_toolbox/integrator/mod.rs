@@ -8,7 +8,7 @@ use crate::db::HelixClient;
 use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 
 use self::{
     edge_creator::{EdgeCreator, EdgeCreatorError},
@@ -33,6 +33,9 @@ pub struct MemoryIntegrator {
     finder: SimilarMemoryFinder,
     reasoner: RelationInferrer,
     edge_creator: EdgeCreator,
+    // Held for later runtime tuning (similarity/decay thresholds). Read once
+    // at construction by the subcomponents above.
+    #[allow(dead_code)]
     config: IntegrationConfig,
 }
 

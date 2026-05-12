@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::models::{MemoryRelation, RelationType, SimilarMemory};
 

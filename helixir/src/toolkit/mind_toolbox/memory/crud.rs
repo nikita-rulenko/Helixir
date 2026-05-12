@@ -1,5 +1,5 @@
 use crate::db::HelixClient;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
@@ -48,6 +48,7 @@ struct AddMemoryOutput {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // `memory_id` deserialized for diagnostics on schema mismatch.
 struct MemoryNode {
     id: String,
     memory_id: String,
@@ -242,7 +243,7 @@ impl MemoryCrud {
 
     pub async fn get_memory_by_internal_id(
         &self,
-        internal_id: &str,
+        _internal_id: &str,
     ) -> Result<Option<Memory>, CrudError> {
         warn!("get_memory_by_internal_id not implemented - requires HelixDB query by internal ID");
         Ok(None)

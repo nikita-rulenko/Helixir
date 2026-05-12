@@ -5,7 +5,7 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 const DEFAULT_FALLBACK_URL: &str = "http://localhost:11434";
 const DEFAULT_FALLBACK_MODEL: &str = "nomic-embed-text";

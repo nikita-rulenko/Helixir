@@ -15,6 +15,8 @@ pub struct SmartTraversalV2 {
     client: Arc<HelixClient>,
     embedder: Arc<EmbeddingGenerator>,
     cache: RwLock<LruCache<String, Vec<SearchResult>>>,
+    // Held for the upcoming TTL-aware cache; the current cache is LRU-only.
+    #[allow(dead_code)]
     cache_ttl: Duration,
     stats: RwLock<TraversalStats>,
 }

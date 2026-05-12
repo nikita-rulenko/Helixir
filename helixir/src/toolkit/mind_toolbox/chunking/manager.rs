@@ -117,17 +117,22 @@ impl ChunkingManager {
         self.splitter.chunks(text).map(|s| s.to_string()).collect()
     }
 
+    // NOTE: most positional args below are kept for forward-compat with the
+    // chunk-aware insertion API in `add_pipeline` — once chunking is wired
+    // through helix queries with full metadata propagation, they will be
+    // consumed. Tracked in issue #6 follow-ups.
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_memory_with_chunking(
         &self,
         memory_id: &str,
         content: &str,
-        user_id: &str,
-        memory_type: &str,
-        certainty: i64,
-        importance: i64,
-        source: &str,
-        context_tags: &str,
-        metadata: &str,
+        _user_id: &str,
+        _memory_type: &str,
+        _certainty: i64,
+        _importance: i64,
+        _source: &str,
+        _context_tags: &str,
+        _metadata: &str,
     ) -> Result<ChunkingResult, ChunkingError> {
         let char_count = content.chars().count();
 

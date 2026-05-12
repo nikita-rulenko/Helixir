@@ -1,5 +1,4 @@
-use serde::{Deserialize, Deserializer};
-use tracing::{debug, info};
+use tracing::info;
 
 use super::ToolingManager;
 use super::types::ToolingError;
@@ -30,6 +29,7 @@ impl ToolingManager {
                 memories: Vec<MemoryNode>,
             }
             #[derive(serde::Deserialize)]
+            #[allow(dead_code)] // `content` reflected from HelixDB for schema-mismatch diagnostics.
             struct MemoryNode {
                 #[serde(default, deserialize_with = "nullable_string")]
                 memory_id: String,
@@ -99,6 +99,8 @@ impl ToolingManager {
                 }
 
                 #[derive(serde::Deserialize, Default)]
+                #[allow(dead_code)] // *_in/_out symmetrical pairs are filled from HelixDB; only
+                                    // a subset is iterated below depending on edge direction.
                 struct ConnectionsResult {
                     #[serde(default)]
                     implies_out: Vec<ConnectedMemory>,
@@ -118,6 +120,7 @@ impl ToolingManager {
                     relation_in: Vec<ConnectedMemory>,
                 }
                 #[derive(serde::Deserialize)]
+                #[allow(dead_code)] // `content` reflected for diagnostics on schema drift.
                 struct ConnectedMemory {
                     #[serde(default, deserialize_with = "nullable_string")]
                     memory_id: String,

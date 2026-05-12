@@ -86,6 +86,9 @@ lazy_static! {
 }
 
 pub struct ConceptClassifier {
+    // Shared concept index; the classifier currently routes via keyword patterns
+    // but the field is plumbed through for the upcoming embedding-based path.
+    #[allow(dead_code)]
     concepts: Arc<RwLock<HashMap<String, Concept>>>,
     keyword_patterns: HashMap<String, Vec<String>>,
 }

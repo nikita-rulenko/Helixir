@@ -520,10 +520,13 @@ impl SearchEngine {
             .collect())
     }
 
+    // `query_embedding` is accepted but unused: the underlying vector layer
+    // re-embeds `query` itself via its own cache. The parameter is preserved
+    // for the upcoming external-embedding fast-path (see issue #6 follow-up).
     pub async fn vector_search(
         &self,
         query: &str,
-        query_embedding: &[f32],
+        _query_embedding: &[f32],
         user_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, VectorSearchError> {
