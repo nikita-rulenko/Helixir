@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Reduce link/codegen pressure on CI runners.
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        working-directory: helixir
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixir
+          key: clippy
+      # NOTE: This intentionally does NOT pass `-- -D warnings` yet because
+      # lib.rs still carries blanket `#![allow(...)]` lints (issue #6) and a
+      # backlog of `clippy::too_many_arguments` warnings. Re-enable strict
+      # mode once #6 is closed and the warning count is at zero.
+      - name: cargo clippy
+        working-directory: helixir
+        env:
+          RUSTFLAGS: ""
+        run: cargo clippy --all-targets --no-deps
+
+  test:
+    name: unit tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixir
+          key: test-${{ matrix.os }}
+      - name: cargo build
+        working-directory: helixir
+        run: cargo build --all-targets --locked || cargo build --all-targets
+      - name: cargo test --lib
+        working-directory: helixir
+        run: cargo test --lib --locked || cargo test --lib
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # edition = 2024 in Cargo.toml requires Rust 1.85+.
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixir
+          key: msrv
+      - name: cargo check
+        working-directory: helixir
+        run: cargo check --all-targets
