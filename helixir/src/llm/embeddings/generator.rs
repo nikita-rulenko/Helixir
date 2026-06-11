@@ -48,6 +48,19 @@ impl EmbeddingGenerator {
             provider, model, base_url, config.cache_size
         );
 
+        // algo-opt R2: opt-in persistent embedding cache. text → embedding is
+        // pure per model, so persisted entries survive restarts and kill the
+        // cold-start re-embed burst.
+        let cache = match std::env::var("HELIXIR_EMBED_CACHE_PATH") {
+            Ok(path) if !path.trim().is_empty() => EmbeddingCache::with_persistence(
+                config.cache_size,
+                config.cache_ttl,
+                std::path::Path::new(path.trim()),
+                &model,
+            ),
+            _ => EmbeddingCache::new(config.cache_size, config.cache_ttl),
+        };
+
         Self {
             provider,
             base_url,
@@ -57,7 +70,7 @@ impl EmbeddingGenerator {
                 .timeout(Duration::from_secs(config.timeout_secs))
                 .build()
                 .expect("Failed to create HTTP client"),
-            cache: EmbeddingCache::new(config.cache_size, config.cache_ttl),
+            cache,
             fallback_enabled: config.fallback_enabled,
             fallback_url,
             fallback_model,

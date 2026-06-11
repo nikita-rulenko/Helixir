@@ -1,3 +1,4 @@
+pub mod batch_expansion;
 pub mod models;
 pub mod phases;
 pub mod rrf;

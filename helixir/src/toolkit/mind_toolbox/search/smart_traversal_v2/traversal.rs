@@ -1,3 +1,4 @@
+use super::batch_expansion::graph_expansion_phase_batched;
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
@@ -176,13 +177,17 @@ impl SmartTraversalV2 {
         }
 
         let phase2_start = Instant::now();
-        let mut graph_results = graph_expansion_phase(
-            Arc::clone(&self.client),
-            &vector_hits,
-            query_embedding,
-            &config,
-        )
-        .await?;
+        let mut graph_results = if self.profile.batched_graph_expansion() {
+            graph_expansion_phase_batched(Arc::clone(&self.client), &vector_hits, &config).await?
+        } else {
+            graph_expansion_phase(
+                Arc::clone(&self.client),
+                &vector_hits,
+                query_embedding,
+                &config,
+            )
+            .await?
+        };
         let phase2_duration = phase2_start.elapsed();
 
         if self.profile.real_cosine_for_graph_nodes() && !graph_results.is_empty() {

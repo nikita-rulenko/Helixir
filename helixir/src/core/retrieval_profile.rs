@@ -82,6 +82,23 @@ impl RetrievalProfile {
     pub fn cache_includes_query_text(self) -> bool {
         matches!(self, Self::AlgoOpt)
     }
+
+    /// P1.3 — levelwise batched graph expansion: one `getConnectionsLevelBatch`
+    /// HQL call per BFS level instead of one `getMemoryLogicalConnections` call
+    /// per visited node. Opt out with `HELIXIR_DISABLE_BATCH_EXPANSION=1` if the
+    /// query is not deployed on the instance.
+    pub fn batched_graph_expansion(self) -> bool {
+        if !matches!(self, Self::AlgoOpt) {
+            return false;
+        }
+        if std::env::var("HELIXIR_DISABLE_BATCH_EXPANSION")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +114,7 @@ mod tests {
         assert!(!profile.cache_correctness_fixes());
         assert!(!profile.native_hybrid_bm25());
         assert!(!profile.cache_includes_query_text());
+        assert!(!profile.batched_graph_expansion());
     }
 
     #[test]
@@ -107,6 +125,7 @@ mod tests {
         assert!(profile.cache_correctness_fixes());
         assert!(profile.native_hybrid_bm25());
         assert!(profile.cache_includes_query_text());
+        assert!(profile.batched_graph_expansion());
         assert_eq!(profile.tag(), "algo_opt");
     }
 }
