@@ -94,3 +94,7 @@ path = "src/bin/helixir_mcp.rs"
 name = "helixir-deploy"
 path = "src/bin/helixir_deploy.rs"
 
+[[bin]]
+name = "helixir-bench"
+path = "src/bin/helixir_bench.rs"
+

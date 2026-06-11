@@ -70,7 +70,13 @@ impl SmartTraversalV2 {
         config: SearchConfig,
         temporal_cutoff: Option<DateTime<Utc>>,
     ) -> Result<Vec<SearchResult>, TraversalError> {
-        let cache_key = self.make_cache_key(query_embedding, user_id, &config, temporal_cutoff);
+        let cache_key = self.make_cache_key(
+            query,
+            query_embedding,
+            user_id,
+            &config,
+            temporal_cutoff,
+        );
 
         {
             let mut cache = self.cache.write().await;
@@ -113,6 +119,7 @@ impl SmartTraversalV2 {
         let phase1_start = Instant::now();
         let mut vector_hits = vector_search_phase(
             Arc::clone(&self.client),
+            query,
             query_embedding,
             user_id,
             &config,
@@ -265,12 +272,17 @@ impl SmartTraversalV2 {
 
     fn make_cache_key(
         &self,
+        query: &str,
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: &SearchConfig,
         temporal_cutoff: Option<DateTime<Utc>>,
     ) -> String {
         let mut hasher = Sha256::new();
+
+        if self.profile.cache_includes_query_text() {
+            hasher.update(query.as_bytes());
+        }
 
         for value in query_embedding {
             hasher.update(value.to_le_bytes());

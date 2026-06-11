@@ -4,5 +4,7 @@ target/
 /ansible/
 /tests/
 /scripts/
+.helix-archives/
 .DS_Store
 Cargo.lock
+__pycache__/

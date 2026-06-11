@@ -1,5 +1,6 @@
 pub mod models;
 pub mod phases;
+pub mod rrf;
 pub mod scoring;
 pub mod traversal;
 

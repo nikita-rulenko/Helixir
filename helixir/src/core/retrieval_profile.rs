@@ -8,7 +8,7 @@
 //! Recognised values (case-insensitive):
 //! - `legacy` (default) — preserves current behaviour bit-for-bit.
 //! - `algo_opt` / `algo-opt` / `opt` — enables the bundle of fixes from
-//!   §6 P0 of the research doc.
+//!   the research doc (P0 + native BM25 hybrid when HelixDB has bm25 enabled).
 
 use tracing::info;
 
@@ -61,6 +61,27 @@ impl RetrievalProfile {
     pub fn cache_correctness_fixes(self) -> bool {
         matches!(self, Self::AlgoOpt)
     }
+
+    /// Native HelixDB BM25 + dense vector merged via RRF in Phase 1 (Phase B).
+    /// Opt out with `HELIXIR_DISABLE_NATIVE_BM25=1` on an `algo_opt` instance without
+    /// BM25 enabled in Helix (graceful fallback to vector-only).
+    pub fn native_hybrid_bm25(self) -> bool {
+        if !matches!(self, Self::AlgoOpt) {
+            return false;
+        }
+        if std::env::var("HELIXIR_DISABLE_NATIVE_BM25")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Cache key must vary with query text when lexical retrieval participates.
+    pub fn cache_includes_query_text(self) -> bool {
+        matches!(self, Self::AlgoOpt)
+    }
 }
 
 #[cfg(test)]
@@ -74,14 +95,18 @@ mod tests {
         assert!(!profile.real_cosine_for_graph_nodes());
         assert!(!profile.temporal_cutoff_in_hql());
         assert!(!profile.cache_correctness_fixes());
+        assert!(!profile.native_hybrid_bm25());
+        assert!(!profile.cache_includes_query_text());
     }
 
     #[test]
-    fn algo_opt_enables_all_p0_fixes() {
+    fn algo_opt_enables_bundle() {
         let profile = RetrievalProfile::AlgoOpt;
         assert!(profile.real_cosine_for_graph_nodes());
         assert!(profile.temporal_cutoff_in_hql());
         assert!(profile.cache_correctness_fixes());
+        assert!(profile.native_hybrid_bm25());
+        assert!(profile.cache_includes_query_text());
         assert_eq!(profile.tag(), "algo_opt");
     }
 }

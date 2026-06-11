@@ -1,0 +1,16 @@
+[project]
+name = "helixir"
+queries = "helixir/schema"
+container_runtime = "docker"
+
+[local.dev]
+port = 6969
+build_mode = "release"
+mcp = false
+bm25 = true
+
+[local.dev.vector_config]
+m = 16
+ef_construction = 128
+ef_search = 512
+db_max_size_gb = 20
