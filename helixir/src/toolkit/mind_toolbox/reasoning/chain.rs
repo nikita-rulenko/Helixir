@@ -1,14 +1,29 @@
-//! BFS reasoning-chain traversal: [`ReasoningEngine::get_chain`].
+//! Reasoning-chain traversal: [`ReasoningEngine::get_chain`].
 //!
 //! Walks the 8 logical directions (IMPLIES in/out, BECAUSE in/out, CONTRADICTS
-//! in/out, MEMORY_RELATION in/out) up to `max_depth`, with optional LLM-guided
-//! "best next hop" selection for the non-`deep` modes.
+//! in/out, MEMORY_RELATION in/out) up to `max_depth`.
+//!
+//! Two regimes, chosen by the caller via `guidance`:
+//! - `None` (legacy) — frontier pops LIFO (historic DFS behaviour) and the
+//!   non-`deep` modes pick the next hop with one LLM call per step;
+//! - `Some` (algo_opt R3) — true breadth-first order, and the next hop is the
+//!   candidate whose content embedding is closest to the query embedding.
+//!   Embeddings come from the (persistent) cache, so this path makes **zero**
+//!   LLM calls and usually zero embedding HTTP calls.
 
 use serde::Deserialize;
 use tracing::{debug, warn};
 
 use super::engine::ReasoningEngine;
 use super::types::{ReasoningChain, ReasoningError, ReasoningType, project_relation};
+use crate::llm::EmbeddingGenerator;
+use crate::toolkit::mind_toolbox::search::smart_traversal_v2::cosine_score;
+
+/// Query context for embedding-guided traversal (algo_opt R3).
+pub struct ChainGuidance<'a> {
+    pub query_embedding: &'a [f32],
+    pub embedder: &'a EmbeddingGenerator,
+}
 
 impl ReasoningEngine {
     pub async fn get_chain(
@@ -17,6 +32,7 @@ impl ReasoningEngine {
         seed_content: &str,
         chain_type: &str,
         max_depth: usize,
+        guidance: Option<ChainGuidance<'_>>,
     ) -> Result<ReasoningChain, ReasoningError> {
         #[derive(Deserialize)]
         struct ConnectionsResult {
@@ -53,10 +69,15 @@ impl ReasoningEngine {
         // Frontier carries `(memory_id, content, depth)` so projection helpers
         // can pair `to_memory_id` with the matching `to_memory_content` regardless
         // of edge direction. See #17.
-        let mut frontier: Vec<(String, String, usize)> =
-            vec![(memory_id.to_string(), seed_content.to_string(), 0)];
+        let mut frontier: std::collections::VecDeque<(String, String, usize)> =
+            std::collections::VecDeque::from([(memory_id.to_string(), seed_content.to_string(), 0)]);
 
-        while let Some((current_id, current_content, current_depth)) = frontier.pop() {
+        // Guided mode walks breadth-first; legacy keeps the historic LIFO pop.
+        while let Some((current_id, current_content, current_depth)) = if guidance.is_some() {
+            frontier.pop_front()
+        } else {
+            frontier.pop_back()
+        } {
             if current_depth >= effective_max_depth || visited.contains(&current_id) {
                 continue;
             }
@@ -160,7 +181,7 @@ impl ReasoningEngine {
                         80,
                     ));
 
-                    frontier.push((
+                    frontier.push_back((
                         node.memory_id.clone(),
                         node.content.clone(),
                         current_depth + 1,
@@ -169,6 +190,30 @@ impl ReasoningEngine {
             } else {
                 let best = if unvisited.len() == 1 {
                     unvisited.into_iter().next()
+                } else if let Some(g) = &guidance {
+                    // R3: pick the hop whose content is semantically closest to
+                    // the query. Cache-hot embeddings make this LLM- and
+                    // (typically) HTTP-free.
+                    let texts: Vec<&str> =
+                        unvisited.iter().map(|(n, _, _)| n.content.as_str()).collect();
+                    match g.embedder.generate_batch(&texts, true).await {
+                        Ok(embeddings) => {
+                            let best_idx = embeddings
+                                .iter()
+                                .enumerate()
+                                .map(|(i, e)| (i, cosine_score(g.query_embedding, e)))
+                                .max_by(|a, b| {
+                                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            unvisited.into_iter().nth(best_idx)
+                        }
+                        Err(e) => {
+                            warn!("Embedding chain selection failed: {}", e);
+                            unvisited.into_iter().next()
+                        }
+                    }
                 } else if let Some(llm) = &self.llm_provider {
                     let prompt = format!(
                         "Given current memory and {} connected memories, which ONE is most logically relevant?\n\nCurrent: {}\n\nOptions:\n{}\n\nRespond with just the number (1-{}).",
@@ -220,7 +265,7 @@ impl ReasoningEngine {
                         80,
                     ));
 
-                    frontier.push((
+                    frontier.push_back((
                         node.memory_id.clone(),
                         node.content.clone(),
                         current_depth + 1,

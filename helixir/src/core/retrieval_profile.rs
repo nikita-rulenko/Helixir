@@ -36,6 +36,13 @@ impl RetrievalProfile {
         profile
     }
 
+    /// Process-wide cached profile. `from_env` logs on every call — use this
+    /// accessor on per-request paths.
+    pub fn cached() -> Self {
+        static CACHE: std::sync::OnceLock<RetrievalProfile> = std::sync::OnceLock::new();
+        *CACHE.get_or_init(Self::from_env)
+    }
+
     pub fn tag(self) -> &'static str {
         match self {
             Self::Legacy => "legacy",
@@ -80,6 +87,13 @@ impl RetrievalProfile {
 
     /// Cache key must vary with query text when lexical retrieval participates.
     pub fn cache_includes_query_text(self) -> bool {
+        matches!(self, Self::AlgoOpt)
+    }
+
+    /// R3 — reasoning chains walk breadth-first (`VecDeque`) and pick the next
+    /// hop by cosine similarity to the query instead of one LLM call per hop.
+    /// Removes the last LLM dependency from the read path.
+    pub fn embedding_guided_chains(self) -> bool {
         matches!(self, Self::AlgoOpt)
     }
 

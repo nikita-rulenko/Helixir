@@ -236,12 +236,13 @@ pub async fn vector_search_phase(
         }
         seen_ids.insert(memory.memory_id.clone());
 
-        if !hql_cutoff_active {
-            if let Some(cutoff) = &temporal_cutoff {
-                if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
-                    if created_at.with_timezone(&Utc) < *cutoff {
-                        continue;
-                    }
+        // Defence in depth (P0.1): the HQL cutoff covers only the vector
+        // query — BM25 rows arrive unfiltered, so the Rust filter must stay
+        // active even when hql_cutoff_active.
+        if let Some(cutoff) = &temporal_cutoff {
+            if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
+                if created_at.with_timezone(&Utc) < *cutoff {
+                    continue;
                 }
             }
         }

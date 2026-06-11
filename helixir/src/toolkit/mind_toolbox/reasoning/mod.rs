@@ -20,6 +20,7 @@ mod engine;
 mod infer;
 mod types;
 
+pub use chain::ChainGuidance;
 pub use engine::ReasoningEngine;
 pub use types::{
     CacheStats, ReasoningChain, ReasoningError, ReasoningRelation, ReasoningType,

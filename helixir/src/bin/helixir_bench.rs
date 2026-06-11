@@ -150,6 +150,7 @@ async fn main() -> Result<()> {
     let mut skip_add = false;
     let mut skip_search = false;
     let mut vary_query = false;
+    let mut chain_probe = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -203,6 +204,7 @@ async fn main() -> Result<()> {
             "--skip-add" => skip_add = true,
             "--skip-search" => skip_search = true,
             "--vary-query" => vary_query = true,
+            "--chain-probe" => chain_probe = true,
             other => {
                 anyhow::bail!("unknown arg: {other}");
             }
@@ -220,6 +222,35 @@ async fn main() -> Result<()> {
 
     let client = HelixirClient::new(config).context("HelixirClient::new")?;
     client.initialize().await.context("initialize")?;
+
+    if chain_probe {
+        let t0 = Instant::now();
+        let result = client
+            .search_reasoning_chain(&query, &user_id, Some("both"), Some(5), Some(5))
+            .await
+            .context("search_reasoning_chain")?;
+        eprintln!(
+            "chain probe: {} chains, total_memories={}, deepest={}, took {}ms",
+            result.chains.len(),
+            result.total_memories,
+            result.deepest_chain,
+            t0.elapsed().as_millis()
+        );
+        for chain in &result.chains {
+            eprintln!(
+                "  seed {} -> {} nodes: {}",
+                chain.seed.id,
+                chain.nodes.len(),
+                chain
+                    .nodes
+                    .iter()
+                    .map(|n| format!("[{}] {}", n.relation, &n.memory_id))
+                    .collect::<Vec<_>>()
+                    .join(" ; ")
+            );
+        }
+        return Ok(());
+    }
 
     let mut cases = serde_json::Map::new();
 
