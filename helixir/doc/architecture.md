@@ -252,6 +252,27 @@ plus the root `README.md`.
   re-embedding the candidate set on the client (v0.3.0). Earlier scoring
   evolved from a hardcoded 0.8 (pre-v0.2.3) → rank-based exp decay
   `0.95 * 0.92^rank` (v0.2.3) → true cosine (v0.3.0).
+- **`algo_opt` retrieval profile** (`HELIXIR_RETRIEVAL_PROFILE=algo_opt`,
+  branch `local-reasoning`; default `legacy` is bit-for-bit historic
+  behaviour). Changes under the flag:
+  - Phase 1 fuses dense ANN with **native HelixDB `SearchBM25`** via RRF
+    (k=60), query `searchMemoriesByBm25`; temporal cutoff is pushed into
+    HQL (`smartVectorSearchWithChunksCutoff`) and re-checked in Rust as
+    defence in depth (BM25 rows are not HQL-filtered).
+  - Phase 2 graph expansion is **levelwise-batched**: one
+    `getConnectionsLevelBatch` HQL call per BFS level
+    (`smart_traversal_v2/batch_expansion.rs`) instead of one
+    `getMemoryLogicalConnections` call per visited node. Semantics mirror
+    the legacy DFS (every unvisited neighbour scored; top-3 per parent
+    expand), with a single search-wide visited set.
+  - The embedding cache persists to disk (`HELIXIR_EMBED_CACHE_PATH`,
+    JSONL, model-scoped, entries never expire) with optional corpus
+    warmup at startup (`HELIXIR_EMBED_CACHE_WARMUP=1|blocking`), so
+    re-rank phases run with zero embedding HTTP calls once warm.
+  - Reasoning chains (`get_chain` with `ChainGuidance`) walk true BFS and
+    pick the next hop by **cosine similarity to the query** — the read
+    path makes zero LLM calls. Chain seeds widen `contextual → full`
+    when the contextual window is empty (mature corpora).
 - **Modes.** `recent` (~4 h) · `contextual` (~30 d, default) · `deep`
   (~90 d) · `full` (unbounded). Defined in `src/core/search_modes.rs`.
 - **Scopes.** `personal` (caller's `HasMemory` edges) · `collective` /
