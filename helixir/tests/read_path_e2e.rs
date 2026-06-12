@@ -31,10 +31,7 @@ fn golden_set() -> Vec<(&'static str, Vec<&'static str>)> {
             vec!["mem_6d0c00cbb797", "mem_02e89bafeed2", "raw_02b063cbbd7a"],
         ),
         // Exact identifier — the BM25 half of the hybrid earns its keep here.
-        (
-            "TestIntegrationProductSearch",
-            vec!["mem_02e89bafeed2"],
-        ),
+        ("TestIntegrationProductSearch", vec!["mem_02e89bafeed2"]),
         (
             "repository interfaces",
             vec!["mem_14f614cee843", "mem_c100418279dc", "mem_74c82048e8a9"],
@@ -47,10 +44,7 @@ fn golden_set() -> Vec<(&'static str, Vec<&'static str>)> {
             "Clean Architecture test isolation",
             vec!["raw_97ec3e9ac5f9", "mem_4d3b50638e96"],
         ),
-        (
-            "test coverage repository sqlite",
-            vec!["mem_c100418279dc"],
-        ),
+        ("test coverage repository sqlite", vec!["mem_c100418279dc"]),
         (
             "interfaces.go ProductRepository methods",
             vec!["mem_14f614cee843", "mem_491ed67a50f4", "mem_c100418279dc"],
@@ -105,7 +99,15 @@ async fn read_path_e2e() {
     for (i, (query, expected)) in golden.iter().enumerate() {
         let t0 = Instant::now();
         let results = client
-            .search(query, USER, Some(5), Some("full"), None, None, Some("personal"))
+            .search(
+                query,
+                USER,
+                Some(5),
+                Some("full"),
+                None,
+                None,
+                Some("personal"),
+            )
             .await
             .unwrap_or_else(|e| panic!("search '{query}' failed: {e}"));
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -141,7 +143,15 @@ async fn read_path_e2e() {
     for (query, _) in &golden {
         let t0 = Instant::now();
         let _ = client
-            .search(query, USER, Some(5), Some("full"), None, None, Some("personal"))
+            .search(
+                query,
+                USER,
+                Some(5),
+                Some("full"),
+                None,
+                None,
+                Some("personal"),
+            )
             .await
             .expect("warm search");
         warm_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
@@ -159,7 +169,15 @@ async fn read_path_e2e() {
         .await
         .expect("full search");
     let recent = client
-        .search(q, USER, Some(5), Some("recent"), None, None, Some("personal"))
+        .search(
+            q,
+            USER,
+            Some(5),
+            Some("recent"),
+            None,
+            None,
+            Some("personal"),
+        )
         .await
         .expect("recent search");
     assert!(!full.is_empty(), "corpus must be reachable in full mode");
@@ -276,7 +294,10 @@ async fn read_path_e2e() {
         .iter()
         .filter(|r| r.metadata.get("origin").and_then(|v| v.as_str()) == Some("graph"))
         .collect();
-    assert!(seed_count > 0, "results must mark direct hits as origin=seed");
+    assert!(
+        seed_count > 0,
+        "results must mark direct hits as origin=seed"
+    );
     assert!(
         !graph_pulled.is_empty(),
         "deep search around the repository-interfaces cluster must pull at \
@@ -328,7 +349,14 @@ async fn read_path_e2e() {
     // ---------- 6. search_by_concept ----------
     let t0 = Instant::now();
     let concepts = client
-        .search_by_concept("flaky test decision", USER, Some("action"), None, None, Some(5))
+        .search_by_concept(
+            "flaky test decision",
+            USER,
+            Some("action"),
+            None,
+            None,
+            Some(5),
+        )
         .await
         .expect("search_by_concept");
     let concept_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -380,7 +408,11 @@ async fn read_path_e2e() {
         graph.edges.len(),
         graph_ms
     );
-    println!("search_concept : {} results, {:.1}ms", concepts.len(), concept_ms);
+    println!(
+        "search_concept : {} results, {:.1}ms",
+        concepts.len(),
+        concept_ms
+    );
     println!("temporal-window cache isolation: OK (recent-mode query returned empty)");
 
     // Quality bars: loose enough to survive corpus drift, tight enough to

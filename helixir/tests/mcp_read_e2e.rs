@@ -71,7 +71,10 @@ impl McpClient {
         loop {
             line.clear();
             let n = self.stdout.read_line(&mut line).expect("read response");
-            assert!(n > 0, "helixir-mcp closed stdout while waiting for {method}");
+            assert!(
+                n > 0,
+                "helixir-mcp closed stdout while waiting for {method}"
+            );
             let Ok(value) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
@@ -195,11 +198,9 @@ fn mcp_read_e2e() {
         cold_ms.push(ms);
 
         let results = payload.as_array().cloned().unwrap_or_default();
-        let rank = results.iter().position(|r| {
-            r["id"]
-                .as_str()
-                .is_some_and(|id| expected.contains(&id))
-        });
+        let rank = results
+            .iter()
+            .position(|r| r["id"].as_str().is_some_and(|id| expected.contains(&id)));
         match rank {
             Some(r) => {
                 hits_at_5 += 1;
