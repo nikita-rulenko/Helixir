@@ -69,7 +69,11 @@ E::HAS_MEMORY {
   To: Memory,
   Properties: {
     context: String,
-    access_count: I64
+    access_count: I64,
+    stance: String,
+    certainty: I64,
+    linked_at: String,
+    last_confirmed: String
   }
 }
 E::INSTANCE_OF {

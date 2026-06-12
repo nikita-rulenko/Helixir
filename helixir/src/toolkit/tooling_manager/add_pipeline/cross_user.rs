@@ -112,6 +112,16 @@ impl ToolingManager {
                             &cross_decision.reasoning,
                         )
                         .await;
+                        // Cognitive layer: the user now has a RELATION to the
+                        // other user's fact — they dispute it.
+                        link_user_to_memory_with_stance_bg(
+                            &db,
+                            &user_id_owned,
+                            contra_id,
+                            "disputes",
+                            cross_decision.confidence as i64,
+                        )
+                        .await;
                     }
                 }
                 MemoryOperation::Noop => {
@@ -134,6 +144,19 @@ impl ToolingManager {
 }
 
 async fn link_user_to_memory_bg(db: &crate::db::HelixClient, user_id: &str, memory_id: &str) {
+    link_user_to_memory_with_stance_bg(db, user_id, memory_id, "confirms", 80).await
+}
+
+/// Cognitive layer (#33): the HAS_MEMORY edge carries the user's RELATION to
+/// the shared fact, written from the Phase-2 verdict that is already being
+/// computed — no extra LLM calls.
+async fn link_user_to_memory_with_stance_bg(
+    db: &crate::db::HelixClient,
+    user_id: &str,
+    memory_id: &str,
+    stance: &str,
+    certainty: i64,
+) {
     #[derive(Serialize)]
     struct EnsureUser {
         user_id: String,
@@ -160,14 +183,20 @@ async fn link_user_to_memory_bg(db: &crate::db::HelixClient, user_id: &str, memo
         user_id: String,
         memory_id: String,
         context: String,
+        stance: String,
+        certainty: i64,
+        linked_at: String,
     }
     if let Err(e) = db
         .execute_query::<serde_json::Value, _>(
-            "linkUserToMemory",
+            "linkUserToMemoryWithStance",
             &LinkInput {
                 user_id: user_id.to_string(),
                 memory_id: memory_id.to_string(),
                 context: "cross_user_link".to_string(),
+                stance: stance.to_string(),
+                certainty,
+                linked_at: chrono::Utc::now().to_rfc3339(),
             },
         )
         .await

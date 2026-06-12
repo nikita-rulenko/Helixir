@@ -10,6 +10,46 @@ use super::engine::SearchEngine;
 use super::types::{ControversyInfo, SearchError};
 
 impl SearchEngine {
+    /// Cognitive layer (#33): distribution of stances toward a shared memory
+    /// ("3 confirm, 1 disputes"). One query returns both the knowers and the
+    /// attributed HAS_MEMORY edges.
+    pub(super) async fn fetch_memory_stances_static(
+        client: &HelixClient,
+        memory_id: &str,
+    ) -> Result<std::collections::HashMap<String, u32>, SearchError> {
+        #[derive(serde::Deserialize)]
+        struct StanceEdge {
+            #[serde(default)]
+            stance: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct StancesResult {
+            #[serde(default)]
+            stance_edges: Vec<StanceEdge>,
+        }
+
+        let result: StancesResult = client
+            .execute_query(
+                "getMemoryStances",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await
+            .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
+
+        let mut distribution: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        for edge in result.stance_edges {
+            // Edges created before the cognitive layer carry no stance —
+            // count them as legacy "knows".
+            let stance = edge
+                .stance
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "knows".to_string());
+            *distribution.entry(stance).or_insert(0) += 1;
+        }
+        Ok(distribution)
+    }
+
     pub(super) async fn fetch_memory_user_count_static(
         client: &HelixClient,
         memory_id: &str,

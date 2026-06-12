@@ -120,16 +120,23 @@ impl ToolingManager {
             user_id: String,
             memory_id: String,
             context: String,
+            stance: String,
+            certainty: i64,
+            linked_at: String,
         }
 
         if let Err(e) = self
             .db
             .execute_query::<serde_json::Value, _>(
-                "linkUserToMemory",
+                "linkUserToMemoryWithStance",
                 &LinkUserInput {
                     user_id: user_id.to_string(),
                     memory_id: memory_id.clone(),
                     context: "created".to_string(),
+                    // Cognitive layer: the creator asserts the fact.
+                    stance: "asserts".to_string(),
+                    certainty: memory.certainty as i64,
+                    linked_at: chrono::Utc::now().to_rfc3339(),
                 },
             )
             .await
@@ -274,11 +281,14 @@ impl ToolingManager {
         let _ = self
             .db
             .execute_query::<serde_json::Value, _>(
-                "linkUserToMemory",
+                "linkUserToMemoryWithStance",
                 &serde_json::json!({
                     "user_id": user_id,
                     "memory_id": memory_id,
                     "context": "raw_source",
+                    "stance": "asserts",
+                    "certainty": 70,
+                    "linked_at": chrono::Utc::now().to_rfc3339(),
                 }),
             )
             .await;

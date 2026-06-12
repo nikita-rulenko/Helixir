@@ -196,16 +196,26 @@ impl SearchEngine {
                             .await
                             .ok()
                             .flatten();
-                        (mem_id, user_count, controversy)
+                        // Cognitive layer (#33): who relates to this fact and how.
+                        let stances = Self::fetch_memory_stances_static(&client, &mem_id)
+                            .await
+                            .ok()
+                            .filter(|d| !d.is_empty());
+                        (mem_id, user_count, controversy, stances)
                     }
                 })
                 .collect();
 
             let enrichments = futures::future::join_all(enrichment_futures).await;
-            for (mem_id, user_count, controversy) in enrichments {
+            for (mem_id, user_count, controversy, stances) in enrichments {
                 if let Some(r) = final_results.iter_mut().find(|r| r.memory_id == mem_id) {
                     r.user_count = user_count;
                     r.controversy = controversy;
+                    if let Some(distribution) = stances {
+                        if let Ok(value) = serde_json::to_value(&distribution) {
+                            r.metadata.insert("stances".to_string(), value);
+                        }
+                    }
                 }
             }
         }

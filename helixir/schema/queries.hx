@@ -782,3 +782,13 @@ QUERY getConnectionsLevelBatch(memory_ids: [String]) =>
   relation_in_e <- memories::InE<MEMORY_RELATION>
   relation_in_n <- memories::In<MEMORY_RELATION>
   RETURN memories, implies_out_e, implies_out_n, implies_in_e, implies_in_n, because_out_e, because_out_n, because_in_e, because_in_n, contradicts_out_e, contradicts_out_n, contradicts_in_e, contradicts_in_n, relation_out_e, relation_out_n, relation_in_e, relation_in_n
+QUERY linkUserToMemoryWithStance(user_id: String, memory_id: String, context: String, stance: String, certainty: I64, linked_at: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  link <- AddE<HAS_MEMORY>({ context: context, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
+  RETURN link
+QUERY getMemoryStances(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  stance_edges <- memory::InE<HAS_MEMORY>
+  knowers <- memory::In<HAS_MEMORY>
+  RETURN stance_edges, knowers
