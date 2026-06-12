@@ -2,9 +2,12 @@
 
 ## v0.3.x → v0.4.0 (the `algo_opt` read path)
 
-Everything new in v0.4.0 is gated by `HELIXIR_RETRIEVAL_PROFILE=algo_opt`.
-Without the variable nothing changes for you — the default `legacy` profile
-preserves v0.3.x behaviour bit-for-bit. To get the new read path (hybrid
+**As of v0.4.0 the `algo_opt` profile is the DEFAULT.** Set
+`HELIXIR_RETRIEVAL_PROFILE=legacy` to keep v0.3.x behaviour bit-for-bit.
+Because the new default expects the new HQL queries on your instance,
+existing installations should follow the steps below before (or right
+after) updating the binary — until then, searches fall back to slower
+legacy paths with a loud startup warning. To get the new read path (hybrid
 BM25 search, batched graph traversal, PPR ranking, provenance, LLM-free
 chains, `connect_memories`), follow the steps below **in order**.
 

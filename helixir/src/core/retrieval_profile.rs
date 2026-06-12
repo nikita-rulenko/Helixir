@@ -6,16 +6,15 @@
 //! `HELIXIR_RETRIEVAL_PROFILE` environment variable.
 //!
 //! Recognised values (case-insensitive):
-//! - `legacy` (default) — preserves current behaviour bit-for-bit.
-//! - `algo_opt` / `algo-opt` / `opt` — enables the bundle of fixes from
-//!   the research doc (P0 + native BM25 hybrid when HelixDB has bm25 enabled).
+//! - `algo_opt` (default since v0.4.0) — the optimized read/write bundle.
+//! - `legacy` — preserves v0.3.x behaviour bit-for-bit.
 
 use tracing::info;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RetrievalProfile {
-    #[default]
     Legacy,
+    #[default]
     AlgoOpt,
 }
 
@@ -24,9 +23,12 @@ impl RetrievalProfile {
         let raw = std::env::var("HELIXIR_RETRIEVAL_PROFILE").ok();
         let normalized = raw.as_deref().map(str::trim).map(str::to_ascii_lowercase);
 
+        // v0.4.0: algo_opt is the default (decision by the project owner,
+        // 2026-06-12). `legacy` remains available explicitly and preserves
+        // v0.3.x behaviour bit-for-bit.
         let profile = match normalized.as_deref() {
-            Some("algo_opt") | Some("algo-opt") | Some("opt") => Self::AlgoOpt,
-            _ => Self::Legacy,
+            Some("legacy") => Self::Legacy,
+            _ => Self::AlgoOpt,
         };
 
         info!(profile = ?profile, "Retrieval profile selected");
@@ -143,9 +145,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_to_legacy() {
+    fn defaults_to_algo_opt() {
         let profile = RetrievalProfile::default();
-        assert_eq!(profile, RetrievalProfile::Legacy);
+        assert_eq!(profile, RetrievalProfile::AlgoOpt);
+    }
+
+    #[test]
+    fn legacy_disables_bundle() {
+        let profile = RetrievalProfile::Legacy;
         assert!(!profile.real_cosine_for_graph_nodes());
         assert!(!profile.temporal_cutoff_in_hql());
         assert!(!profile.cache_correctness_fixes());
