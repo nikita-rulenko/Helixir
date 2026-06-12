@@ -115,6 +115,10 @@ Decide what to do with the new memory. Choose ONE operation:
 
 5. **SUPERSEDE** - Replace old memory with evolved version
    - Use when: Preference/opinion changed over time
+   - Use when: Both memories answer the SAME mutable question (current
+     state, status, version, plan, "next step") and the new one reports a
+     LATER state — even if worded very differently. "Stage X is next" vs
+     "stage X is complete" is SUPERSEDE, never ADD.
    - Set `supersedes_memory_id` to old memory ID
 
 6. **CONTRADICT** - Mark logical conflict between memories
@@ -174,7 +178,7 @@ pub fn build_batch_decision_prompt(
 
 Operations: ADD (new info) | UPDATE (extends an existing memory; provide merged_content about ONE topic, no contradictions) | NOOP (duplicate) | SUPERSEDE (replaces an outdated version; set supersedes_memory_id) | CONTRADICT (conflicts but both may be valid; set contradicts_memory_id) | DELETE (old one is plainly wrong; set target_memory_id).
 
-Rules: be conservative with DELETE; SUPERSEDE for temporal evolution, UPDATE for added detail; NOOP for duplicates; never merge unrelated topics.
+Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND whenever both memories answer the same mutable question (state/status/plan) with the new one reporting a later state — even if worded differently; UPDATE for added detail; NOOP for duplicates; never merge unrelated topics.
 
 **User ID:** {user_id}
 
