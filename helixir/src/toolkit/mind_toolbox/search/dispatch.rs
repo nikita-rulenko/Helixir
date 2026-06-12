@@ -21,6 +21,7 @@ impl SearchEngine {
         limit: usize,
         mode: &str,
         temporal_days: Option<f64>,
+        graph_depth: Option<u32>,
         scope: &str,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
         let query_preview: String = query.chars().take(30).collect();
@@ -61,7 +62,11 @@ impl SearchEngine {
                     );
                     let config = self.make_search_config(
                         limit,
-                        if mode == "recent" { 1 } else { 2 },
+                        // #8: explicit graph_depth overrides the mode default
+                        // (capped at 4 — the full-mode maximum).
+                        graph_depth
+                            .map(|d| d.clamp(1, 4))
+                            .unwrap_or(if mode == "recent" { 1 } else { 2 }),
                         mode_defaults.min_vector_score,
                         mode_defaults.min_combined_score,
                     );
@@ -102,7 +107,7 @@ impl SearchEngine {
                     );
                     let config = self.make_search_config(
                         limit * 2,
-                        3,
+                        graph_depth.map(|d| d.clamp(1, 4)).unwrap_or(3),
                         self.config.search_thresholds.min_vector_score,
                         mode_defaults.min_combined_score,
                     );
@@ -144,7 +149,7 @@ impl SearchEngine {
                     );
                     let config = self.make_search_config(
                         limit * 2,
-                        4,
+                        graph_depth.map(|d| d.clamp(1, 4)).unwrap_or(4),
                         self.config.search_thresholds.min_vector_score,
                         self.config.search_thresholds.min_combined_score,
                     );

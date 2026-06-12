@@ -78,6 +78,7 @@ impl ToolingManager {
                     5,
                     "contextual",
                     None,
+                    None,
                     "personal",
                 )
                 .await

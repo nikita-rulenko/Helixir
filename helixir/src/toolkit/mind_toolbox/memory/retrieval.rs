@@ -323,6 +323,7 @@ impl RetrievalManager {
                 limit,
                 mode,
                 None,
+                None,
                 "personal",
             )
             .await?;

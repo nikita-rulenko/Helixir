@@ -38,6 +38,7 @@ impl ToolingManager {
                 limit,
                 "contextual",
                 None,
+                None,
                 "personal",
             )
             .await?;
@@ -56,6 +57,7 @@ impl ToolingManager {
                     user_id,
                     limit,
                     "full",
+                    None,
                     None,
                     "personal",
                 )
@@ -184,7 +186,9 @@ impl ToolingManager {
                 .map_err(|e| ToolingError::Embedding(e.to_string()))?;
             let seeds: Vec<(String, String)> = self
                 .search_engine
-                .search(query, &embedding, user_id, 3, "full", None, "personal")
+                .search(
+                    query, &embedding, user_id, 3, "full", None, None, "personal",
+                )
                 .await?
                 .into_iter()
                 .map(|r| (r.memory_id, r.content))

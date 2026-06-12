@@ -15,7 +15,7 @@ impl ToolingManager {
         limit: Option<usize>,
         mode: &str,
         temporal_days: Option<f64>,
-        _graph_depth: Option<usize>,
+        graph_depth: Option<usize>,
         scope: &str,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
         info!(
@@ -33,6 +33,7 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
+        let graph_depth = graph_depth.map(|d| d as u32);
         let effective_limit = limit.unwrap_or(10);
 
         let results = match scope {
@@ -45,6 +46,7 @@ impl ToolingManager {
                         effective_limit,
                         mode,
                         temporal_days,
+                        graph_depth,
                         scope,
                     )
                     .await?
@@ -58,6 +60,7 @@ impl ToolingManager {
                         effective_limit,
                         mode,
                         temporal_days,
+                        graph_depth,
                         "personal",
                     )
                     .await?
@@ -211,6 +214,7 @@ impl ToolingManager {
                 user_id,
                 limit * 3,
                 mode,
+                None,
                 None,
                 "personal",
             )

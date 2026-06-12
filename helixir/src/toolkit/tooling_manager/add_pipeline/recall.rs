@@ -23,7 +23,16 @@ impl ToolingManager {
 
         let similar_results = self
             .search_engine
-            .search(text, &vector, user_id, 5, "contextual", None, "personal")
+            .search(
+                text,
+                &vector,
+                user_id,
+                5,
+                "contextual",
+                None,
+                None,
+                "personal",
+            )
             .await
             .unwrap_or_default();
 
