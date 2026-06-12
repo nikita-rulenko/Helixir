@@ -138,4 +138,47 @@ impl ToolingManager {
             deepest_chain: max_chain_depth,
         })
     }
+
+    /// Elder-brain #14: "how is A related to B?" — bidirectional path
+    /// discovery between two anchor queries over the typed reasoning graph.
+    pub async fn connect_memories(
+        &self,
+        query_a: &str,
+        query_b: &str,
+        user_id: &str,
+        max_depth: usize,
+    ) -> Result<Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath>, ToolingError>
+    {
+        info!(
+            "connect_memories: '{}' <-> '{}' (depth {})",
+            safe_truncate(query_a, 30),
+            safe_truncate(query_b, 30),
+            max_depth
+        );
+
+        let mut seed_sets = Vec::with_capacity(2);
+        for query in [query_a, query_b] {
+            let embedding = self
+                .embedder
+                .generate(query, true)
+                .await
+                .map_err(|e| ToolingError::Embedding(e.to_string()))?;
+            let seeds: Vec<(String, String)> = self
+                .search_engine
+                .search(query, &embedding, user_id, 3, "full", None, "personal")
+                .await?
+                .into_iter()
+                .map(|r| (r.memory_id, r.content))
+                .collect();
+            seed_sets.push(seeds);
+        }
+        let seeds_b = seed_sets.pop().unwrap_or_default();
+        let seeds_a = seed_sets.pop().unwrap_or_default();
+
+        crate::toolkit::mind_toolbox::search::smart_traversal_v2::connect::connect(
+            &self.db, &seeds_a, &seeds_b, max_depth,
+        )
+        .await
+        .map_err(|e| ToolingError::Database(e.to_string()))
+    }
 }

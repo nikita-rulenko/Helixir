@@ -290,6 +290,29 @@ async fn read_path_e2e() {
         );
     }
 
+    // ---------- 4e. connect_memories: path between two anchors ----------
+    let t0 = Instant::now();
+    let connection = client
+        .connect_memories(
+            "repository interfaces clean architecture",
+            "product validation test negative price",
+            USER,
+            Some(4),
+        )
+        .await
+        .expect("connect_memories");
+    let connect_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    assert!(
+        connection.found,
+        "the repository-interfaces and product-validation clusters are linked \
+         (IMPLIES edge) — a path must exist"
+    );
+    assert_eq!(
+        connection.nodes.len(),
+        connection.edges.len() + 1,
+        "path shape: N nodes need N-1 edges"
+    );
+
     // ---------- 5. get_memory_graph ----------
     let t0 = Instant::now();
     let graph = client
@@ -340,6 +363,10 @@ async fn read_path_e2e() {
         "provenance     : {} seeds + {} graph-pulled (edge+parent attached)",
         seed_count,
         graph_pulled.len()
+    );
+    println!(
+        "connect A<->B  : found={} hops={} conf={:.3}, {:.1}ms",
+        connection.found, connection.hops, connection.confidence, connect_ms
     );
     println!(
         "reasoning_chain: {} chains, deepest {}, {:.1}ms (LLM key is dead — zero LLM calls)",

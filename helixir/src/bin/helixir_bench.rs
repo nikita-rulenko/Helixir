@@ -152,6 +152,8 @@ async fn main() -> Result<()> {
     let mut vary_query = false;
     let mut chain_probe = false;
     let mut add_probe = false;
+    let mut connect_probe = false;
+    let mut query_b = String::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -207,6 +209,8 @@ async fn main() -> Result<()> {
             "--vary-query" => vary_query = true,
             "--chain-probe" => chain_probe = true,
             "--add-probe" => add_probe = true,
+            "--connect-probe" => connect_probe = true,
+            "--query-b" => query_b = args.next().context("--query-b needs value")?,
             other => {
                 anyhow::bail!("unknown arg: {other}");
             }
@@ -224,6 +228,29 @@ async fn main() -> Result<()> {
 
     let client = HelixirClient::new(config).context("HelixirClient::new")?;
     client.initialize().await.context("initialize")?;
+
+    if connect_probe {
+        let t0 = Instant::now();
+        let result = client
+            .connect_memories(&query, &query_b, &user_id, Some(4))
+            .await
+            .context("connect_memories")?;
+        eprintln!(
+            "connect probe: found={} hops={} confidence={:.3} took {}ms",
+            result.found,
+            result.hops,
+            result.confidence,
+            t0.elapsed().as_millis()
+        );
+        for (i, n) in result.nodes.iter().enumerate() {
+            if i > 0 {
+                let e = &result.edges[i - 1];
+                eprintln!("    --[{} w={:.2}]-->", e.edge_type, e.weight);
+            }
+            eprintln!("  [{}] {}", n.memory_id, n.content.chars().take(90).collect::<String>());
+        }
+        return Ok(());
+    }
 
     if add_probe {
         let t0 = Instant::now();

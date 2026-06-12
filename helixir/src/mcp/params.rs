@@ -174,3 +174,15 @@ pub struct ListMemoriesParams {
     )]
     pub memory_type: Option<String>,
 }
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ConnectMemoriesParams {
+    #[schemars(description = "First anchor: query describing concept A")]
+    pub query_a: String,
+    #[schemars(description = "Second anchor: query describing concept B")]
+    pub query_b: String,
+    #[schemars(description = "User identifier")]
+    pub user_id: String,
+    #[schemars(description = "Maximum total hops between anchors (default: 4)")]
+    pub max_depth: Option<i32>,
+}

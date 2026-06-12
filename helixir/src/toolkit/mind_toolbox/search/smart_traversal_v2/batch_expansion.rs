@@ -36,17 +36,17 @@ pub struct ExpansionOutput {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct BatchNode {
-    id: String,
-    memory_id: String,
+pub(crate) struct BatchNode {
+    pub(crate) id: String,
+    pub(crate) memory_id: String,
     #[serde(default)]
-    content: String,
+    pub(crate) content: String,
     #[serde(default)]
-    created_at: String,
+    pub(crate) created_at: String,
     #[serde(default)]
-    user_id: String,
+    pub(crate) user_id: String,
     #[serde(default)]
-    memory_type: String,
+    pub(crate) memory_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +155,66 @@ fn families(
             true,
         ),
     ]
+}
+
+/// One direction-resolved edge of a fetched level: `parent` anchors the
+/// frontier, `child` is the node on the other end.
+pub(crate) struct LevelEdge {
+    pub(crate) parent_uuid: String,
+    pub(crate) child_uuid: String,
+    pub(crate) edge_type: &'static str,
+    pub(crate) weight: f64,
+}
+
+pub(crate) struct LevelFetch {
+    pub(crate) nodes_by_uuid: HashMap<String, BatchNode>,
+    pub(crate) edges: Vec<LevelEdge>,
+}
+
+/// Fetches the whole frontier's neighbourhood in one HQL call and resolves
+/// edge directions (shared by graph expansion and connect_memories).
+pub(crate) async fn fetch_level(
+    client: &HelixClient,
+    memory_ids: &[&str],
+) -> Result<LevelFetch, TraversalError> {
+    let params = serde_json::json!({ "memory_ids": memory_ids });
+    let response: LevelBatchResponse = client
+        .execute_query("getConnectionsLevelBatch", &params)
+        .await
+        .map_err(|e| TraversalError::Database(e.to_string()))?;
+
+    let mut nodes_by_uuid: HashMap<String, BatchNode> = HashMap::new();
+    for m in &response.memories {
+        nodes_by_uuid.insert(m.id.clone(), m.clone());
+    }
+    let fams = families(&response);
+    for (_, nodes, _, _, _) in &fams {
+        for n in *nodes {
+            nodes_by_uuid.insert(n.id.clone(), n.clone());
+        }
+    }
+
+    let mut edges = Vec::new();
+    for (fam_edges, _, edge_type, weight, incoming) in &fams {
+        for e in *fam_edges {
+            let (parent_uuid, child_uuid) = if *incoming {
+                (e.to_node.clone(), e.from_node.clone())
+            } else {
+                (e.from_node.clone(), e.to_node.clone())
+            };
+            edges.push(LevelEdge {
+                parent_uuid,
+                child_uuid,
+                edge_type,
+                weight: *weight,
+            });
+        }
+    }
+
+    Ok(LevelFetch {
+        nodes_by_uuid,
+        edges,
+    })
 }
 
 pub async fn graph_expansion_phase_batched(

@@ -84,3 +84,26 @@ pub struct GraphEdge {
     pub edge_type: String,
     pub weight: f32,
 }
+
+/// Result of `connect_memories` — the path between two anchors, if found.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectMemoriesResult {
+    pub found: bool,
+    pub hops: usize,
+    /// Product of edge weights along the path (rough chain trust).
+    pub confidence: f64,
+    pub nodes: Vec<ConnectionNode>,
+    pub edges: Vec<ConnectionEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionNode {
+    pub memory_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionEdge {
+    pub edge_type: String,
+    pub weight: f64,
+}
