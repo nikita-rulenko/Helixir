@@ -219,6 +219,13 @@ impl SmartTraversalV2 {
                         "ppr".to_string(),
                         serde_json::Value::from((ppr * 1000.0).round() / 1000.0),
                     );
+                    // Raw cosine survives next to the blended score: the
+                    // write-path duplicate gate needs the pure semantic
+                    // signal, not the rank blend (#32 W2).
+                    meta.insert(
+                        "cosine".to_string(),
+                        serde_json::Value::from((result.vector_score * 1000.0).round() / 1000.0),
+                    );
                 }
                 rescored += 1;
             }

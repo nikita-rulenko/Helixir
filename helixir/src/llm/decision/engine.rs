@@ -148,6 +148,52 @@ impl LLMDecisionEngine {
             );
         }
 
+        // W2 exact-match gate (#32): byte-identical content (agent retries,
+        // double-fires) is a guaranteed-safe NOOP — no model of any kind.
+        if let Some(same) = similar_memories
+            .iter()
+            .find(|m| m.content.trim() == new_memory.trim())
+        {
+            info!(
+                "Exact-match gate: content identical to {} — NOOP (no LLM call)",
+                same.id
+            );
+            return MemoryDecision {
+                operation: MemoryOperation::Noop,
+                target_memory_id: Some(same.id.clone()),
+                confidence: 100,
+                reasoning: "exact-match gate: byte-identical content".to_string(),
+                ..Default::default()
+            };
+        }
+
+        // W2 cosine gate (#32): a near-verbatim duplicate needs no LLM
+        // judgement — NOOP against the matching memory. Together with the
+        // low-similarity ADD gates above, the LLM is consulted only in the
+        // gray zone between "obviously new" and "obviously known".
+        if let Some(top) = highly_similar.iter().max_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            if top.score >= self.exact_duplicate_score {
+                info!(
+                    "Cosine gate: {:.3} >= {} — NOOP duplicate of {} (no LLM call)",
+                    top.score, self.exact_duplicate_score, top.id
+                );
+                return MemoryDecision {
+                    operation: MemoryOperation::Noop,
+                    target_memory_id: Some(top.id.clone()),
+                    confidence: 98,
+                    reasoning: format!(
+                        "cosine gate: {:.3} >= {} (exact duplicate)",
+                        top.score, self.exact_duplicate_score
+                    ),
+                    ..Default::default()
+                };
+            }
+        }
+
         let prompt = build_decision_prompt(new_memory, &highly_similar, user_id);
 
         debug!(
@@ -248,6 +294,81 @@ impl LLMDecisionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Proves a code path makes no LLM call: panics if consulted.
+    struct PanicProvider;
+
+    #[async_trait::async_trait]
+    impl crate::llm::providers::base::LlmProvider for PanicProvider {
+        async fn generate(
+            &self,
+            _system_prompt: &str,
+            _user_prompt: &str,
+            _response_format: Option<&str>,
+        ) -> Result<
+            (String, crate::llm::providers::base::LlmMetadata),
+            crate::llm::providers::base::LlmProviderError,
+        > {
+            panic!("LLM must not be consulted on a gated decision");
+        }
+
+        fn provider_name(&self) -> &str {
+            "panic"
+        }
+
+        fn model_name(&self) -> &str {
+            "panic"
+        }
+    }
+
+    fn gated_engine() -> LLMDecisionEngine {
+        LLMDecisionEngine::with_thresholds(
+            std::sync::Arc::new(PanicProvider)
+                as std::sync::Arc<dyn crate::llm::providers::base::LlmProvider>,
+            0.70,
+            0.98,
+        )
+    }
+
+    fn similar(id: &str, score: f64) -> SimilarMemory {
+        SimilarMemory {
+            id: id.to_string(),
+            content: "same fact".to_string(),
+            score,
+            created_at: None,
+            user_id: None,
+            is_cross_user: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn cosine_gates_skip_llm() {
+        let engine = gated_engine();
+
+        // Upper gate: near-verbatim duplicate -> NOOP, no LLM.
+        let d = engine
+            .decide("the same fact", &[similar("mem_dup", 0.99)], "u")
+            .await;
+        assert_eq!(d.operation, MemoryOperation::Noop);
+        assert_eq!(d.target_memory_id.as_deref(), Some("mem_dup"));
+
+        // Lower gate: nothing above the similarity threshold -> ADD, no LLM.
+        let d = engine
+            .decide("a novel fact", &[similar("mem_far", 0.42)], "u")
+            .await;
+        assert_eq!(d.operation, MemoryOperation::Add);
+
+        // No candidates at all -> ADD, no LLM.
+        let d = engine.decide("first fact ever", &[], "u").await;
+        assert_eq!(d.operation, MemoryOperation::Add);
+
+        // Exact string match -> NOOP regardless of the (blended) score.
+        let d = engine
+            .decide("same fact", &[similar("mem_same", 0.80)], "u")
+            .await;
+        assert_eq!(d.operation, MemoryOperation::Noop);
+        assert_eq!(d.target_memory_id.as_deref(), Some("mem_same"));
+    }
 
     #[test]
     fn test_memory_decision_builders() {

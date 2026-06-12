@@ -94,7 +94,16 @@ impl ToolingManager {
                 .map(|r| SimilarMemory {
                     id: r.memory_id.clone(),
                     content: r.content.clone(),
-                    score: r.score as f64,
+                    // The duplicate gate needs the pure semantic signal:
+                    // under algo_opt results carry raw cosine in metadata
+                    // (the blended rank score never reaches the 0.98 bar,
+                    // even for verbatim duplicates). Legacy results lack
+                    // the key and keep the historic blended score.
+                    score: r
+                        .metadata
+                        .get("cosine")
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(r.score as f64),
                     created_at: None,
                     user_id: None,
                     is_cross_user: false,
