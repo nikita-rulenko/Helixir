@@ -190,8 +190,7 @@ mod tests {
     #[test]
     fn empty_inputs_are_safe() {
         assert!(personalized_pagerank(&[], &HashMap::new()).is_empty());
-        let scores =
-            personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]));
+        let scores = personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]));
         assert!((scores["only"] - 1.0).abs() < 1e-9);
     }
 }

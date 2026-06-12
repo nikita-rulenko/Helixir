@@ -10,8 +10,8 @@ use crate::llm::decision::SimilarMemory;
 use crate::llm::extractor::ExtractedMemory;
 
 use super::super::ToolingManager;
-use crate::safe_truncate;
 use super::super::types::{AddMemoryResult, ToolingError};
+use crate::safe_truncate;
 
 impl ToolingManager {
     pub async fn add_memory(

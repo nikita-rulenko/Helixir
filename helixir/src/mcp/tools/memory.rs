@@ -288,10 +288,7 @@ impl HelixirMcpServer {
             .await
             .map_err(Self::convert_error)?;
 
-        info!(
-            "✅ Connection: found={} hops={}",
-            result.found, result.hops
-        );
+        info!("✅ Connection: found={} hops={}", result.found, result.hops);
 
         let json = Self::result_to_json(&result)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))

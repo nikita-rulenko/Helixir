@@ -130,7 +130,11 @@ impl EmbeddingGenerator {
     }
 
     #[cfg(test)]
-    pub(super) fn primary_url_for_test(&self, ollama_default: &str, openai_default: &str) -> String {
+    pub(super) fn primary_url_for_test(
+        &self,
+        ollama_default: &str,
+        openai_default: &str,
+    ) -> String {
         self.primary_url(ollama_default, openai_default)
     }
 }

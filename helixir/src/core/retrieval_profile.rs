@@ -22,10 +22,7 @@ pub enum RetrievalProfile {
 impl RetrievalProfile {
     pub fn from_env() -> Self {
         let raw = std::env::var("HELIXIR_RETRIEVAL_PROFILE").ok();
-        let normalized = raw
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase);
+        let normalized = raw.as_deref().map(str::trim).map(str::to_ascii_lowercase);
 
         let profile = match normalized.as_deref() {
             Some("algo_opt") | Some("algo-opt") | Some("opt") => Self::AlgoOpt,

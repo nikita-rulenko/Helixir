@@ -94,9 +94,7 @@ struct LevelBatchResponse {
 }
 
 /// `(edges, neighbour nodes, edge label, weight, incoming?)` per family.
-fn families(
-    r: &LevelBatchResponse,
-) -> [(&[BatchEdge], &[BatchNode], &'static str, f64, bool); 8] {
+fn families(r: &LevelBatchResponse) -> [(&[BatchEdge], &[BatchNode], &'static str, f64, bool); 8] {
     [
         (
             &r.implies_out_e,
@@ -234,10 +232,7 @@ pub async fn graph_expansion_phase_batched(
     // (they don't create new results, but mass must flow through them).
     let mut ego_edges: Vec<PprEdge> = Vec::new();
     let mut seen_edges: HashSet<(String, String, &'static str)> = HashSet::new();
-    let mut visited: HashSet<String> = vector_hits
-        .iter()
-        .map(|h| h.memory_id.clone())
-        .collect();
+    let mut visited: HashSet<String> = vector_hits.iter().map(|h| h.memory_id.clone()).collect();
     // memory_id -> score the children inherit (combined for seeds, graph for deeper).
     let mut frontier: HashMap<String, f64> = vector_hits
         .iter()
@@ -366,10 +361,11 @@ pub async fn graph_expansion_phase_batched(
                 result.metadata = Some(meta);
                 results.push(result);
 
-                children_by_parent
-                    .entry(parent_uuid)
-                    .or_default()
-                    .push((child, graph_score, edge_type));
+                children_by_parent.entry(parent_uuid).or_default().push((
+                    child,
+                    graph_score,
+                    edge_type,
+                ));
             }
         }
 

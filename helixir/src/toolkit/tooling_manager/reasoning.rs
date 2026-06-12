@@ -1,10 +1,10 @@
 use tracing::{debug, info};
 
 use super::ToolingManager;
-use crate::safe_truncate;
 use super::types::{
     ChainNode, ReasoningChainSearchResult, SearchMemoryResult, ToolingError, ToolingReasoningChain,
 };
+use crate::safe_truncate;
 
 impl ToolingManager {
     pub async fn search_reasoning_chain(
@@ -86,7 +86,13 @@ impl ToolingManager {
             });
             match self
                 .reasoning_engine
-                .get_chain(&seed.memory_id, &seed.content, chain_mode, max_depth, guidance)
+                .get_chain(
+                    &seed.memory_id,
+                    &seed.content,
+                    chain_mode,
+                    max_depth,
+                    guidance,
+                )
                 .await
             {
                 Ok(chain) => {
@@ -147,8 +153,10 @@ impl ToolingManager {
         query_b: &str,
         user_id: &str,
         max_depth: usize,
-    ) -> Result<Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath>, ToolingError>
-    {
+    ) -> Result<
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath>,
+        ToolingError,
+    > {
         info!(
             "connect_memories: '{}' <-> '{}' (depth {})",
             safe_truncate(query_a, 30),

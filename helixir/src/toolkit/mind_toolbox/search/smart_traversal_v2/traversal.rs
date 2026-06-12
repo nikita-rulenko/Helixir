@@ -1,7 +1,7 @@
 use super::batch_expansion::graph_expansion_phase_batched;
-use super::ppr::personalized_pagerank;
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
+use super::ppr::personalized_pagerank;
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
 use crate::core::RetrievalProfile;
 use crate::db::HelixClient;
@@ -72,13 +72,8 @@ impl SmartTraversalV2 {
         config: SearchConfig,
         temporal_cutoff: Option<DateTime<Utc>>,
     ) -> Result<Vec<SearchResult>, TraversalError> {
-        let cache_key = self.make_cache_key(
-            query,
-            query_embedding,
-            user_id,
-            &config,
-            temporal_cutoff,
-        );
+        let cache_key =
+            self.make_cache_key(query, query_embedding, user_id, &config, temporal_cutoff);
 
         {
             let mut cache = self.cache.write().await;
@@ -89,8 +84,8 @@ impl SmartTraversalV2 {
                     let cached_results = entry.results.clone();
                     let mut stats = self.stats.write().await;
                     stats.cache_hits += 1;
-                    stats.cache_hit_rate = stats.cache_hits as f64
-                        / (stats.cache_hits + stats.cache_misses) as f64;
+                    stats.cache_hit_rate =
+                        stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64;
                     debug!("Cache hit for query: {}", query);
                     return Ok(cached_results);
                 } else {

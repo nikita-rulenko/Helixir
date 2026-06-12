@@ -70,7 +70,11 @@ impl ReasoningEngine {
         // can pair `to_memory_id` with the matching `to_memory_content` regardless
         // of edge direction. See #17.
         let mut frontier: std::collections::VecDeque<(String, String, usize)> =
-            std::collections::VecDeque::from([(memory_id.to_string(), seed_content.to_string(), 0)]);
+            std::collections::VecDeque::from([(
+                memory_id.to_string(),
+                seed_content.to_string(),
+                0,
+            )]);
 
         // Guided mode walks breadth-first; legacy keeps the historic LIFO pop.
         while let Some((current_id, current_content, current_depth)) = if guidance.is_some() {
@@ -194,8 +198,10 @@ impl ReasoningEngine {
                     // R3: pick the hop whose content is semantically closest to
                     // the query. Cache-hot embeddings make this LLM- and
                     // (typically) HTTP-free.
-                    let texts: Vec<&str> =
-                        unvisited.iter().map(|(n, _, _)| n.content.as_str()).collect();
+                    let texts: Vec<&str> = unvisited
+                        .iter()
+                        .map(|(n, _, _)| n.content.as_str())
+                        .collect();
                     match g.embedder.generate_batch(&texts, true).await {
                         Ok(embeddings) => {
                             let best_idx = embeddings

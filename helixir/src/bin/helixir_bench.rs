@@ -63,7 +63,11 @@ fn summarize(samples: &[f64]) -> CaseStats {
     let sum: f64 = s.iter().sum();
     CaseStats {
         n: s.len(),
-        mean_ms: if s.is_empty() { 0.0 } else { (sum / s.len() as f64) * 1000.0 },
+        mean_ms: if s.is_empty() {
+            0.0
+        } else {
+            (sum / s.len() as f64) * 1000.0
+        },
         p50_ms: percentile(&s, 50.0) * 1000.0,
         p95_ms: percentile(&s, 95.0) * 1000.0,
     }
@@ -112,7 +116,12 @@ async fn bench_search(client: &HelixirClient, p: SearchBenchParams<'_>) -> Resul
     Ok(summarize(&buf))
 }
 
-async fn bench_add(client: &HelixirClient, user_id: &str, warmup: u32, iterations: u32) -> Result<CaseStats> {
+async fn bench_add(
+    client: &HelixirClient,
+    user_id: &str,
+    warmup: u32,
+    iterations: u32,
+) -> Result<CaseStats> {
     let mut buf = Vec::with_capacity(iterations as usize);
     let total = warmup + iterations;
     for i in 0..total {
@@ -247,7 +256,11 @@ async fn main() -> Result<()> {
                 let e = &result.edges[i - 1];
                 eprintln!("    --[{} w={:.2}]-->", e.edge_type, e.weight);
             }
-            eprintln!("  [{}] {}", n.memory_id, n.content.chars().take(90).collect::<String>());
+            eprintln!(
+                "  [{}] {}",
+                n.memory_id,
+                n.content.chars().take(90).collect::<String>()
+            );
         }
         return Ok(());
     }
@@ -267,7 +280,11 @@ async fn main() -> Result<()> {
         for c in &result.needs_clarification {
             eprintln!(
                 "  CLARIFY [{}] {} (conf={}) existing={:?}\n    Q: {}",
-                c.conflict_type, c.decision_taken, c.confidence, c.existing_memory_id, c.suggested_question
+                c.conflict_type,
+                c.decision_taken,
+                c.confidence,
+                c.existing_memory_id,
+                c.suggested_question
             );
         }
         return Ok(());
@@ -327,7 +344,10 @@ async fn main() -> Result<()> {
 
     if !skip_add {
         let stats = bench_add(&client, &user_id, warmup, iterations).await?;
-        cases.insert("add_memory_pipeline".to_string(), serde_json::to_value(&stats)?);
+        cases.insert(
+            "add_memory_pipeline".to_string(),
+            serde_json::to_value(&stats)?,
+        );
     }
 
     let report = BenchReport {

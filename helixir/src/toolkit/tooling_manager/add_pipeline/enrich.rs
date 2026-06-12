@@ -14,8 +14,8 @@ use crate::toolkit::mind_toolbox::entity::EntityEdgeType;
 use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
 
 use super::super::ToolingManager;
-use crate::safe_truncate;
 use super::super::types::ToolingError;
+use crate::safe_truncate;
 
 impl ToolingManager {
     pub(super) async fn enrich_memory_relations(

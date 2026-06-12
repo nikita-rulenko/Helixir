@@ -61,9 +61,9 @@ pub fn suggested_question(conflict_type: &str, new_content: &str, existing: &str
             "Зафиксированное «{old_short}» предлагается заменить на «{new_short}». \
              Это смена решения/предпочтения, другой контекст, или ошибка?"
         ),
-        "low_confidence_rewrite" => format!(
-            "Не уверен, стоит ли заменить «{old_short}» на «{new_short}». Заменить?"
-        ),
+        "low_confidence_rewrite" => {
+            format!("Не уверен, стоит ли заменить «{old_short}» на «{new_short}». Заменить?")
+        }
         "auto_delete" => format!(
             "Предлагается удалить память «{old_short}». Память ничего не удаляет \
              автоматически — подтверди удаление."
@@ -115,7 +115,10 @@ mod tests {
             Some("protected_type_rewrite")
         );
         // Plain adds and noops are silent.
-        assert_eq!(escalation_reason(&decision(MemoryOperation::Add, 10), "fact"), None);
+        assert_eq!(
+            escalation_reason(&decision(MemoryOperation::Add, 10), "fact"),
+            None
+        );
         assert_eq!(
             escalation_reason(&decision(MemoryOperation::Noop, 10), "preference"),
             None

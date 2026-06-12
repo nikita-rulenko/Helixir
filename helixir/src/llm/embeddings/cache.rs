@@ -133,15 +133,15 @@ impl EmbeddingCache {
                 let cache = self.cache.read().unwrap();
                 cache.get(text).is_some_and(|e| e.persistent)
             };
-            if !already_persisted
-                && let Ok(line) = serde_json::to_string(&DiskLine {
+            if !already_persisted {
+                let line = serde_json::to_string(&DiskLine {
                     m: model.clone(),
                     t: text.to_string(),
                     e: embedding.clone(),
-                })
-                && let Ok(mut f) = file.lock()
-            {
-                let _ = writeln!(f, "{line}");
+                });
+                if let (Ok(line), Ok(mut f)) = (line, file.lock()) {
+                    let _ = writeln!(f, "{line}");
+                }
             }
         }
 

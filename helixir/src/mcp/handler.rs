@@ -3,12 +3,8 @@
 //! resources together for `rmcp`.
 
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler,
-    handler::server::wrapper::Parameters,
-    model::*,
-    prompt, prompt_handler, prompt_router,
-    service::RequestContext,
-    tool_handler,
+    ErrorData as McpError, RoleServer, ServerHandler, handler::server::wrapper::Parameters,
+    model::*, prompt, prompt_handler, prompt_router, service::RequestContext, tool_handler,
 };
 use serde_json::json;
 
@@ -20,8 +16,8 @@ impl HelixirMcpServer {
     /// Wrapper exposing the macro-generated `prompt_router()` across modules.
     /// Mirrors [`HelixirMcpServer::build_tool_router`] — `#[prompt_router]` emits
     /// a private associated function.
-    pub(super) fn build_prompt_router()
-    -> rmcp::handler::server::router::prompt::PromptRouter<Self> {
+    pub(super) fn build_prompt_router() -> rmcp::handler::server::router::prompt::PromptRouter<Self>
+    {
         Self::prompt_router()
     }
 }
