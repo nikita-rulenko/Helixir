@@ -112,6 +112,88 @@ impl LLMDecisionEngine {
         true
     }
 
+    /// W2 deterministic gates (#32). Returns `Some(decision)` when no model
+    /// of any kind is needed; `None` means the gray zone — consult the LLM
+    /// with the returned candidates via `decide`/`decide_batch`.
+    pub(crate) fn gate(
+        &self,
+        new_memory: &str,
+        similar_memories: &[SimilarMemory],
+    ) -> Result<MemoryDecision, Vec<SimilarMemory>> {
+        if similar_memories.is_empty() {
+            debug!("No similar memories, quick ADD");
+            return Ok(MemoryDecision::add(
+                100,
+                "No similar memories found, adding as new.",
+            ));
+        }
+
+        // Exact-match: byte-identical content (agent retries, double-fires)
+        // is a guaranteed-safe NOOP.
+        if let Some(same) = similar_memories
+            .iter()
+            .find(|m| m.content.trim() == new_memory.trim())
+        {
+            info!(
+                "Exact-match gate: content identical to {} — NOOP (no LLM call)",
+                same.id
+            );
+            return Ok(MemoryDecision {
+                operation: MemoryOperation::Noop,
+                target_memory_id: Some(same.id.clone()),
+                confidence: 100,
+                reasoning: "exact-match gate: byte-identical content".to_string(),
+                ..Default::default()
+            });
+        }
+
+        let highly_similar: Vec<_> = similar_memories
+            .iter()
+            .filter(|m| m.score >= self.similarity_threshold)
+            .cloned()
+            .collect();
+
+        if highly_similar.is_empty() {
+            debug!("No memories above threshold {}", self.similarity_threshold);
+            return Ok(MemoryDecision::add(
+                95,
+                format!(
+                    "No memories above {} similarity threshold, adding as new.",
+                    self.similarity_threshold
+                ),
+            ));
+        }
+
+        // Cosine gate: a near-verbatim duplicate needs no LLM judgement.
+        // Everything between similarity_threshold and exact_duplicate_score
+        // is the gray zone — numbers and negations barely move embeddings,
+        // so it belongs to the LLM.
+        if let Some(top) = highly_similar.iter().max_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            if top.score >= self.exact_duplicate_score {
+                info!(
+                    "Cosine gate: {:.3} >= {} — NOOP duplicate of {} (no LLM call)",
+                    top.score, self.exact_duplicate_score, top.id
+                );
+                return Ok(MemoryDecision {
+                    operation: MemoryOperation::Noop,
+                    target_memory_id: Some(top.id.clone()),
+                    confidence: 98,
+                    reasoning: format!(
+                        "cosine gate: {:.3} >= {} (exact duplicate)",
+                        top.score, self.exact_duplicate_score
+                    ),
+                    ..Default::default()
+                });
+            }
+        }
+
+        Err(highly_similar)
+    }
+
     pub async fn decide(
         &self,
         new_memory: &str,
@@ -126,73 +208,10 @@ impl LLMDecisionEngine {
             similar_memories.len()
         );
 
-        if similar_memories.is_empty() {
-            debug!("No similar memories, quick ADD");
-            return MemoryDecision::add(100, "No similar memories found, adding as new.");
-        }
-
-        let highly_similar: Vec<_> = similar_memories
-            .iter()
-            .filter(|m| m.score >= self.similarity_threshold)
-            .cloned()
-            .collect();
-
-        if highly_similar.is_empty() {
-            debug!("No memories above threshold {}", self.similarity_threshold);
-            return MemoryDecision::add(
-                95,
-                format!(
-                    "No memories above {} similarity threshold, adding as new.",
-                    self.similarity_threshold
-                ),
-            );
-        }
-
-        // W2 exact-match gate (#32): byte-identical content (agent retries,
-        // double-fires) is a guaranteed-safe NOOP — no model of any kind.
-        if let Some(same) = similar_memories
-            .iter()
-            .find(|m| m.content.trim() == new_memory.trim())
-        {
-            info!(
-                "Exact-match gate: content identical to {} — NOOP (no LLM call)",
-                same.id
-            );
-            return MemoryDecision {
-                operation: MemoryOperation::Noop,
-                target_memory_id: Some(same.id.clone()),
-                confidence: 100,
-                reasoning: "exact-match gate: byte-identical content".to_string(),
-                ..Default::default()
-            };
-        }
-
-        // W2 cosine gate (#32): a near-verbatim duplicate needs no LLM
-        // judgement — NOOP against the matching memory. Together with the
-        // low-similarity ADD gates above, the LLM is consulted only in the
-        // gray zone between "obviously new" and "obviously known".
-        if let Some(top) = highly_similar.iter().max_by(|a, b| {
-            a.score
-                .partial_cmp(&b.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }) {
-            if top.score >= self.exact_duplicate_score {
-                info!(
-                    "Cosine gate: {:.3} >= {} — NOOP duplicate of {} (no LLM call)",
-                    top.score, self.exact_duplicate_score, top.id
-                );
-                return MemoryDecision {
-                    operation: MemoryOperation::Noop,
-                    target_memory_id: Some(top.id.clone()),
-                    confidence: 98,
-                    reasoning: format!(
-                        "cosine gate: {:.3} >= {} (exact duplicate)",
-                        top.score, self.exact_duplicate_score
-                    ),
-                    ..Default::default()
-                };
-            }
-        }
+        let highly_similar = match self.gate(new_memory, similar_memories) {
+            Ok(decision) => return decision,
+            Err(gray) => gray,
+        };
 
         let prompt = build_decision_prompt(new_memory, &highly_similar, user_id);
 
@@ -282,6 +301,94 @@ impl LLMDecisionEngine {
                 MemoryDecision::add(50, format!("LLM call failed ({}), defaulting to ADD.", e))
             }
         }
+    }
+
+    /// W1 (#32): one LLM call decides every gray-zone item of a batch.
+    /// Gated items (exact/cosine/threshold) never reach the model. On batch
+    /// parse failure the gray items fall back to per-item `decide`.
+    pub async fn decide_batch(
+        &self,
+        items: &[(String, Vec<SimilarMemory>)],
+        user_id: &str,
+    ) -> Vec<MemoryDecision> {
+        let mut decisions: Vec<Option<MemoryDecision>> = vec![None; items.len()];
+        let mut gray: Vec<(usize, &str, Vec<SimilarMemory>)> = Vec::new();
+
+        for (i, (new_memory, similar)) in items.iter().enumerate() {
+            self.total_decisions.fetch_add(1, Ordering::Relaxed);
+            match self.gate(new_memory, similar) {
+                Ok(decision) => decisions[i] = Some(decision),
+                Err(highly_similar) => gray.push((i, new_memory.as_str(), highly_similar)),
+            }
+        }
+
+        if !gray.is_empty() {
+            info!(
+                "Batch decision: {} gray-zone item(s) in ONE LLM call ({} gated)",
+                gray.len(),
+                items.len() - gray.len()
+            );
+            let prompt_items: Vec<(usize, &str, &[SimilarMemory])> = gray
+                .iter()
+                .map(|(i, text, cands)| (*i, *text, cands.as_slice()))
+                .collect();
+            let prompt = super::prompt::build_batch_decision_prompt(&prompt_items, user_id);
+
+            #[derive(serde::Deserialize)]
+            struct BatchItem {
+                i: usize,
+                #[serde(flatten)]
+                decision: MemoryDecision,
+            }
+            #[derive(serde::Deserialize)]
+            struct BatchResponse {
+                decisions: Vec<BatchItem>,
+            }
+
+            let parsed: Option<BatchResponse> = match self
+                .llm
+                .generate(SYSTEM_PROMPT, &prompt, Some("json_object"))
+                .await
+            {
+                Ok((response, _)) => serde_json::from_str(&response)
+                    .map_err(|e| warn!("Batch decision parse failed: {e}"))
+                    .ok(),
+                Err(e) => {
+                    warn!("Batch decision LLM call failed: {e}");
+                    None
+                }
+            };
+
+            if let Some(batch) = parsed {
+                for item in batch.decisions {
+                    let Some((_, _, highly_similar)) = gray.iter().find(|(gi, _, _)| *gi == item.i)
+                    else {
+                        continue;
+                    };
+                    let mut decision = item.decision;
+                    if self.validate_decision(&mut decision, highly_similar)
+                        && decisions.get(item.i).is_some_and(Option::is_none)
+                    {
+                        decisions[item.i] = Some(decision);
+                    }
+                }
+            }
+        }
+
+        // Anything unresolved (batch failure, missing index, validation
+        // reject) falls back to the per-item path — correctness over savings.
+        let mut result = Vec::with_capacity(items.len());
+        for (i, slot) in decisions.into_iter().enumerate() {
+            match slot {
+                Some(d) => result.push(d),
+                None => {
+                    warn!("Batch decision: item {i} unresolved, per-item fallback");
+                    let (new_memory, similar) = &items[i];
+                    result.push(self.decide(new_memory, similar, user_id).await);
+                }
+            }
+        }
+        result
     }
 
     pub fn is_likely_duplicate(&self, similar_memories: &[SimilarMemory]) -> bool {

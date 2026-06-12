@@ -65,16 +65,10 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
+        // Phase A: recall similar memories for every fact.
+        let mut recall: Vec<Vec<SimilarMemory>> = Vec::with_capacity(memories_to_store.len());
         for (i, memory) in memories_to_store.iter().enumerate() {
-            debug!(
-                "Processing memory {}/{}: {}...",
-                i,
-                memories_to_store.len(),
-                safe_truncate(&memory.text, 30)
-            );
-
             let vector = &all_embeddings[i];
-
             let similar_results = self
                 .search_engine
                 .search(
@@ -116,11 +110,50 @@ impl ToolingManager {
                 similar_memories.len(),
                 similar_memories.first().map(|m| m.score).unwrap_or(0.0)
             );
+            recall.push(similar_memories);
+        }
 
-            let decision = self
-                .decision_engine
-                .decide(&memory.text, &similar_memories, user_id)
-                .await;
+        // Phase B: decisions. Under algo_opt all gray-zone facts are judged
+        // in ONE LLM call (W1, #32); deterministic gates never reach the
+        // model either way. Legacy keeps the per-fact loop.
+        let batch_enabled = matches!(
+            crate::core::RetrievalProfile::cached(),
+            crate::core::RetrievalProfile::AlgoOpt
+        ) && !std::env::var("HELIXIR_DISABLE_BATCH_DECISION")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let decisions: Vec<crate::llm::decision::MemoryDecision> =
+            if batch_enabled && memories_to_store.len() > 1 {
+                let items: Vec<(String, Vec<SimilarMemory>)> = memories_to_store
+                    .iter()
+                    .zip(recall.iter())
+                    .map(|(m, sims)| (m.text.clone(), sims.clone()))
+                    .collect();
+                self.decision_engine.decide_batch(&items, user_id).await
+            } else {
+                let mut out = Vec::with_capacity(memories_to_store.len());
+                for (memory, sims) in memories_to_store.iter().zip(recall.iter()) {
+                    out.push(
+                        self.decision_engine
+                            .decide(&memory.text, sims, user_id)
+                            .await,
+                    );
+                }
+                out
+            };
+
+        // Phase C: execute.
+        for (i, memory) in memories_to_store.iter().enumerate() {
+            debug!(
+                "Processing memory {}/{}: {}...",
+                i,
+                memories_to_store.len(),
+                safe_truncate(&memory.text, 30)
+            );
+            let vector = &all_embeddings[i];
+            let similar_memories = &recall[i];
+            let decision = decisions[i].clone();
 
             info!(
                 "Memory {} decision: {:?} (confidence={}, target={:?})",
