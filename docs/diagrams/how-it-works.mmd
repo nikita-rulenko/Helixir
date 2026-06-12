@@ -1,0 +1,63 @@
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 65
+    rankSpacing: 80
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  IN(["Input: I deployed the server to AWS and prefer Terraform"]):::input
+  EX(["LLM Extraction"]):::step
+  M1["Memory: deployed server to AWS<br/>type · action"]:::mem
+  M2["Memory: prefer Terraform<br/>type · preference"]:::mem
+  E1["Entity · AWS"]:::ent
+  E2["Entity · server"]:::ent
+  E3["Entity · Terraform"]:::ent
+  C1["Concept · Preference"]:::ent
+  NO["discard"]:::noop
+  DEC{{"Decision"}}:::step
+  CH(["Memory charter check"]):::phase
+  NC["needs_clarification<br/>agent asks the human"]:::warn
+  DB[("HelixDB<br/>graph + vector")]:::db
+
+  IN --> EX
+  EX --> M1 & M2
+  M1 --> E1 & E2
+  M2 --> E3 & C1
+
+  subgraph DEDUP["Deduplication"]
+    direction TB
+    P1["Phase 1 · personal search<br/>dedup check"]:::phase
+    P2["Phase 2 · cross-user search<br/>shared facts"]:::phase
+    P1 --> P2
+  end
+  E2 --> P1
+  E3 --> P1
+
+  P2 --> DEC
+  DEC -->|ADD / UPDATE / SUPERSEDE| CH
+  DEC -->|NOOP| NO
+  CH -.->|conflict| NC
+  CH --> DB
+
+  classDef input fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef mem fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1.5px
+  classDef ent fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1px
+  classDef phase fill:#fdf6e3,color:#2a2410,stroke:#b8860b,stroke-width:1px,stroke-dasharray:4 3
+  classDef db fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  classDef warn fill:#fdecec,color:#7a1f1f,stroke:#b91c1c,stroke-width:1.5px
+  classDef noop fill:#f1f0ec,color:#777,stroke:#c9c5bb,stroke-width:1px
+  style DEDUP fill:#fbf4dc,stroke:#b8860b,stroke-width:1px,color:#6b5a16
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16

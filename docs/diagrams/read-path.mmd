@@ -1,0 +1,44 @@
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 65
+    rankSpacing: 80
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  Q(["Query"]):::input
+  EMB(["embedding<br/>cached"]):::step
+  ANN["dense ANN<br/>HelixDB HNSW"]:::eng
+  BM["BM25 keyword<br/>SearchBM25"]:::eng
+  RRF{{"RRF fusion"}}:::step
+  GE["graph expansion<br/>one batched HQL call per depth<br/>8 edge families · parent provenance kept"]:::eng
+  PPR["Personalized PageRank<br/>over the typed ego-network"]:::eng
+  RANK["final rank =<br/>0.3·cosine + 0.5·PPR + 0.2·freshness"]:::formula
+  OUT(["results with provenance<br/>origin = seed / graph · edge · parent · ppr"]):::out
+
+  Q --> EMB
+  EMB --> ANN & BM
+  ANN --> RRF
+  BM --> RRF
+  RRF --> GE
+  GE --> PPR
+  PPR --> RANK
+  RANK --> OUT
+
+  classDef input fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef eng fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1px
+  classDef formula fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  classDef out fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1.5px
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16

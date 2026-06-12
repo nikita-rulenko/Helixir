@@ -1,0 +1,62 @@
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 60
+    rankSpacing: 75
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  IDE(["IDE<br/>Cursor · Claude Desktop · Claude Code"]):::ext
+  SERVER(["MCP Server · stdio"]):::step
+  IDE <-. MCP Protocol .-> SERVER
+
+  CLIENT(["HelixirClient"]):::core
+
+  subgraph ORCH["Orchestration"]
+    direction LR
+    TM["ToolingManager<br/>add · search · CRUD · events"]:::core
+    FT["FastThinkManager<br/>working memory"]:::core
+    PG[("petgraph<br/>in-memory")]:::aux
+    FT --- PG
+  end
+
+  subgraph ENGINES["Engines (under ToolingManager)"]
+    direction LR
+    SE["Search Engine<br/>hybrid retrieval"]:::eng
+    DR["Decision · Reasoning Engine<br/>ADD/UPDATE/SUPERSEDE/NOOP"]:::eng
+    EO["Entity · Ontology Manager<br/>8 concept types"]:::eng
+  end
+
+  HCLIENT(["HelixDB Client · HTTP"]):::core
+  HELIX[("HelixDB<br/>graph + vector database")]:::db
+
+  SERVER --> CLIENT
+  CLIENT --> TM
+  CLIENT --> FT
+  TM --> SE & DR & EO
+  SE --> HCLIENT
+  DR --> HCLIENT
+  EO --> HCLIENT
+  PG -. commit .-> HCLIENT
+  HCLIENT --> HELIX
+
+  classDef ext fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef core fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1.5px
+  classDef eng fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1px
+  classDef aux fill:#f3eede,color:#5a4a12,stroke:#b8860b,stroke-width:1px,stroke-dasharray:3 3
+  classDef db fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  style ORCH fill:#fbf4dc,stroke:#b8860b,stroke-width:1px,color:#6b5a16
+  style ENGINES fill:#fdf6e3,stroke:#cda434,stroke-width:1px,color:#6b5a16
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
