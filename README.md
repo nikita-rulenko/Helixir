@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="helixir-logo.jpeg" alt="Helixir" width="320"/>
+  <img src="helixir-logo.png" alt="Helixir" width="320"/>
 </p>
 
 <h1 align="center">Helixir</h1>
