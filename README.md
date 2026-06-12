@@ -112,69 +112,186 @@ make config         # Print MCP config to paste into your IDE
 
 ## How It Works
 
-```
-           Input: "I deployed the server to AWS and prefer using Terraform"
-                                      |
-                                LLM Extraction
-                                      |
-                      +---------------+---------------+
-                      |                               |
-              Memory: "I deployed         Memory: "I prefer
-              the server to AWS"          using Terraform"
-              type: action                type: preference
-                      |                               |
-                +-----+-----+                   +-----+-----+
-                |           |                   |           |
-            Entity:     Entity:            Entity:      Concept:
-            "AWS"       "server"           "Terraform"  Preference
-                      |
-                Phase 1: Personal search (dedup check)
-                Phase 2: Cross-user search (shared facts)
-                      |
-                Decision: ADD / UPDATE / SUPERSEDE / NOOP
-                      |
-                Memory charter check ── conflicts? ──> needs_clarification
-                      |                                (agent asks the human)
-                Store in HelixDB (graph + vector)
+```mermaid
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 65
+    rankSpacing: 80
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  IN(["Input: I deployed the server to AWS and prefer Terraform"]):::input
+  EX(["LLM Extraction"]):::step
+  M1["Memory: deployed server to AWS<br/>type · action"]:::mem
+  M2["Memory: prefer Terraform<br/>type · preference"]:::mem
+  E1["Entity · AWS"]:::ent
+  E2["Entity · server"]:::ent
+  E3["Entity · Terraform"]:::ent
+  C1["Concept · Preference"]:::ent
+  NO["discard"]:::noop
+  DEC{{"Decision"}}:::step
+  CH(["Memory charter check"]):::phase
+  NC["needs_clarification<br/>agent asks the human"]:::warn
+  DB[("HelixDB<br/>graph + vector")]:::db
+
+  IN --> EX
+  EX --> M1 & M2
+  M1 --> E1 & E2
+  M2 --> E3 & C1
+
+  subgraph DEDUP["Deduplication"]
+    direction TB
+    P1["Phase 1 · personal search<br/>dedup check"]:::phase
+    P2["Phase 2 · cross-user search<br/>shared facts"]:::phase
+    P1 --> P2
+  end
+  E2 --> P1
+  E3 --> P1
+
+  P2 --> DEC
+  DEC -->|ADD / UPDATE / SUPERSEDE| CH
+  DEC -->|NOOP| NO
+  CH -.->|conflict| NC
+  CH --> DB
+
+  classDef input fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef mem fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1.5px
+  classDef ent fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1px
+  classDef phase fill:#fdf6e3,color:#2a2410,stroke:#b8860b,stroke-width:1px,stroke-dasharray:4 3
+  classDef db fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  classDef warn fill:#fdecec,color:#7a1f1f,stroke:#b91c1c,stroke-width:1.5px
+  classDef noop fill:#f1f0ec,color:#777,stroke:#c9c5bb,stroke-width:1px
+  style DEDUP fill:#fbf4dc,stroke:#b8860b,stroke-width:1px,color:#6b5a16
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
 ```
 
 ### Architecture
 
-```
-MCP Server (stdio)                        IDE (Cursor / Claude Desktop)
-       |                                           |
-  HelixirClient                               MCP Protocol
-       |
-  ToolingManager ──── FastThinkManager
-       |                    |
-  +----+----+----+     petgraph (in-memory)
-  |    |    |    |          |
-Extract Decision Entity  commit to DB
-  |    Engine  Manager       |
-Search    |    Ontology      |
-Engine  Reasoning Manager    |
-  |    Engine    |           |
-  +----+----+----+-----------+
-       |
-  HelixDB Client (HTTP)
-       |
-  HelixDB (graph + vector database)
+```mermaid
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 60
+    rankSpacing: 75
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  IDE(["IDE<br/>Cursor · Claude Desktop · Claude Code"]):::ext
+  SERVER(["MCP Server · stdio"]):::step
+  IDE <-. MCP Protocol .-> SERVER
+
+  CLIENT(["HelixirClient"]):::core
+
+  subgraph ORCH["Orchestration"]
+    direction LR
+    TM["ToolingManager<br/>add · search · CRUD · events"]:::core
+    FT["FastThinkManager<br/>working memory"]:::core
+    PG[("petgraph<br/>in-memory")]:::aux
+    FT --- PG
+  end
+
+  subgraph ENGINES["Engines (under ToolingManager)"]
+    direction LR
+    SE["Search Engine<br/>hybrid retrieval"]:::eng
+    DR["Decision · Reasoning Engine<br/>ADD/UPDATE/SUPERSEDE/NOOP"]:::eng
+    EO["Entity · Ontology Manager<br/>8 concept types"]:::eng
+  end
+
+  HCLIENT(["HelixDB Client · HTTP"]):::core
+  HELIX[("HelixDB<br/>graph + vector database")]:::db
+
+  SERVER --> CLIENT
+  CLIENT --> TM
+  CLIENT --> FT
+  TM --> SE & DR & EO
+  SE --> HCLIENT
+  DR --> HCLIENT
+  EO --> HCLIENT
+  PG -. commit .-> HCLIENT
+  HCLIENT --> HELIX
+
+  classDef ext fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef core fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1.5px
+  classDef eng fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1px
+  classDef aux fill:#f3eede,color:#5a4a12,stroke:#b8860b,stroke-width:1px,stroke-dasharray:3 3
+  classDef db fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  style ORCH fill:#fbf4dc,stroke:#b8860b,stroke-width:1px,color:#6b5a16
+  style ENGINES fill:#fdf6e3,stroke:#cda434,stroke-width:1px,color:#6b5a16
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
 ```
 
 ### Read path (zero LLM calls)
 
-```
-Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ──┐
-                               └──> BM25 keyword (SearchBM25)  ──┤
-                                                                 ├──> RRF fusion
-                                                                 v
-                              graph expansion: one batched HQL call per depth level
-                              (8 edge families, parent provenance kept)
-                                                                 v
-                              Personalized PageRank over the typed ego-network
-                              final rank = 0.3·cosine + 0.5·PPR + 0.2·freshness
-                                                                 v
-                    results with provenance: origin=seed|graph, edge, parent, ppr
+```mermaid
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 65
+    rankSpacing: 80
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart TD
+  Q(["Query"]):::input
+  EMB(["embedding<br/>cached"]):::step
+  ANN["dense ANN<br/>HelixDB HNSW"]:::eng
+  BM["BM25 keyword<br/>SearchBM25"]:::eng
+  RRF{{"RRF fusion"}}:::step
+  GE["graph expansion<br/>one batched HQL call per depth<br/>8 edge families · parent provenance kept"]:::eng
+  PPR["Personalized PageRank<br/>over the typed ego-network"]:::eng
+  RANK["final rank =<br/>0.3·cosine + 0.5·PPR + 0.2·freshness"]:::formula
+  OUT(["results with provenance<br/>origin = seed / graph · edge · parent · ppr"]):::out
+
+  Q --> EMB
+  EMB --> ANN & BM
+  ANN --> RRF
+  BM --> RRF
+  RRF --> GE
+  GE --> PPR
+  PPR --> RANK
+  RANK --> OUT
+
+  classDef input fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef step fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef eng fill:#fff7e6,color:#2a2410,stroke:#b8860b,stroke-width:1px
+  classDef formula fill:#2b2440,color:#e8e0ff,stroke:#7b3ff2,stroke-width:1.5px
+  classDef out fill:#fbeec1,color:#5a4a12,stroke:#cda434,stroke-width:1.5px
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
 ```
 
 Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on the same machinery — the read path works identically with no LLM configured at all.
@@ -200,27 +317,57 @@ Every memory is classified into one of **8 concept types**. The LLM extractor as
 
 The concept types are organized into a tree stored in HelixDB:
 
-```
-Thing
-  ├── Attribute
-  │     ├── Fact
-  │     ├── Preference
-  │     ├── Skill
-  │     ├── Goal
-  │     ├── Opinion
-  │     └── Trait
-  ├── Event
-  │     ├── Action
-  │     ├── Experience
-  │     └── Achievement
-  ├── Entity
-  │     ├── Person
-  │     ├── Organization
-  │     ├── Location
-  │     ├── Object
-  │     └── Technology
-  ├── Relation
-  └── State
+```mermaid
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 55
+    rankSpacing: 90
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart LR
+  ROOT(["Thing"]):::root
+
+  A["Attribute"]:::branch
+  EVT["Event"]:::branch
+  ENT["Entity"]:::branch
+  REL["Relation"]:::branch
+  ST["State"]:::branch
+
+  A --> AF["Fact"]:::leaf
+  A --> AP["Preference"]:::leaf
+  A --> AS["Skill"]:::leaf
+  A --> AG["Goal"]:::leaf
+  A --> AO["Opinion"]:::leaf
+  A --> AT["Trait"]:::leaf
+
+  EVT --> EA["Action"]:::leaf
+  EVT --> EE["Experience"]:::leaf
+  EVT --> EH["Achievement"]:::leaf
+
+  ENT --> EN1["Person"]:::leaf
+  ENT --> EN2["Organization"]:::leaf
+  ENT --> EN3["Location"]:::leaf
+  ENT --> EN4["Object"]:::leaf
+  ENT --> EN5["Technology"]:::leaf
+
+  ROOT --> A & EVT & ENT & REL & ST
+
+  classDef root fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef branch fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef leaf fill:#fff7e6,color:#2a2410,stroke:#cda434,stroke-width:1px
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
 ```
 
 The hierarchy enables traversal: searching for "Attribute" returns all facts, preferences, skills, goals, and opinions. Entity types (Person, Organization, etc.) are used for extracted named entities.

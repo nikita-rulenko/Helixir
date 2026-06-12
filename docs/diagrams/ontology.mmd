@@ -1,0 +1,50 @@
+---
+config:
+  theme: base
+  flowchart:
+    nodeSpacing: 55
+    rankSpacing: 90
+    htmlLabels: true
+  themeVariables:
+    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial'
+    fontSize: '15px'
+    primaryColor: '#fff7e6'
+    primaryTextColor: '#2a2410'
+    primaryBorderColor: '#b8860b'
+    lineColor: '#8a6d18'
+    secondaryColor: '#fbeec1'
+    tertiaryColor: '#ffffff'
+    edgeLabelBackground: '#fffdf7'
+---
+flowchart LR
+  ROOT(["Thing"]):::root
+
+  A["Attribute"]:::branch
+  EVT["Event"]:::branch
+  ENT["Entity"]:::branch
+  REL["Relation"]:::branch
+  ST["State"]:::branch
+
+  A --> AF["Fact"]:::leaf
+  A --> AP["Preference"]:::leaf
+  A --> AS["Skill"]:::leaf
+  A --> AG["Goal"]:::leaf
+  A --> AO["Opinion"]:::leaf
+  A --> AT["Trait"]:::leaf
+
+  EVT --> EA["Action"]:::leaf
+  EVT --> EE["Experience"]:::leaf
+  EVT --> EH["Achievement"]:::leaf
+
+  ENT --> EN1["Person"]:::leaf
+  ENT --> EN2["Organization"]:::leaf
+  ENT --> EN3["Location"]:::leaf
+  ENT --> EN4["Object"]:::leaf
+  ENT --> EN5["Technology"]:::leaf
+
+  ROOT --> A & EVT & ENT & REL & ST
+
+  classDef root fill:#1c1a17,color:#f5d989,stroke:#b8860b,stroke-width:1.5px
+  classDef branch fill:#b8860b,color:#1c1a17,stroke:#8a6608,stroke-width:1.5px
+  classDef leaf fill:#fff7e6,color:#2a2410,stroke:#cda434,stroke-width:1px
+  linkStyle default stroke:#8a6d18,stroke-width:2.5px,color:#6b5a16
