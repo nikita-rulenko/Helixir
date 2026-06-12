@@ -14,8 +14,12 @@ human), and what it must never do. Three layers, strongest first.
 These rules are not available to charter self-learning and override
 everything below.
 
-- **C1. Never auto-delete.** A `DELETE` decision is always escalated.
-  Memory is an elder brain: it forgets nothing silently.
+- **C1. Never auto-delete.** **Enforced in code**: a `DELETE` verdict from
+  the decision engine is executed as `SUPERSEDE` — the old fact stays in
+  history with the delete-intent recorded in the supersession reason, and
+  the conflict is escalated. Memory is an elder brain: it forgets nothing
+  silently. (The library-level `delete()` remains as an explicit
+  administrative action; it is deliberately not exposed over MCP.)
 - **C2. Never overwrite memories marked `immutable`** (system seeds,
   approved charter rules, memories the user marked final).
 - **C3. Preferences, goals and opinions are never rewritten silently.**

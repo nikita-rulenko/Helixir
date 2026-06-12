@@ -145,19 +145,60 @@ impl ToolingManager {
                 new_id
             }
             MemoryOperation::Delete => {
-                if let Some(target_id) = &decision.target_memory_id {
-                    debug!("DELETE: removing {} before adding new", target_id);
-                    let _ = self
-                        .add_memory_history_event(target_id, "DELETE", &memory.text, "", user_id)
-                        .await;
-                    let _ = self.delete_memory(target_id).await;
-                }
+                // Elder-brain contract (#34, README "no deletion"): the engine
+                // is not allowed to destroy a memory. A DELETE verdict is
+                // executed as SUPERSEDE — the old fact stays in history,
+                // reachable forever; the delete intent is preserved in the
+                // supersession reason and the charter escalates it to the
+                // agent via needs_clarification.
                 let (new_id, new_chunks) =
                     self.store_new_memory(memory, user_id, vector, tags).await?;
                 *chunks_created += new_chunks;
                 let _ = self
                     .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
                     .await;
+                if let Some(target_id) = &decision.target_memory_id {
+                    tracing::warn!(
+                        "DELETE verdict for {} blocked by charter C1 — executing as SUPERSEDE",
+                        target_id
+                    );
+                    #[derive(Serialize)]
+                    struct SupersedeParams {
+                        new_id: String,
+                        old_id: String,
+                        reason: String,
+                        superseded_at: String,
+                        is_contradiction: i64,
+                    }
+                    let _ = self
+                        .db
+                        .execute_query::<serde_json::Value, _>(
+                            "addMemorySupersession",
+                            &SupersedeParams {
+                                new_id: new_id.clone(),
+                                old_id: target_id.clone(),
+                                reason: format!(
+                                    "delete-intent blocked by charter C1: {}",
+                                    decision.reasoning
+                                ),
+                                superseded_at: chrono::Utc::now().to_rfc3339(),
+                                is_contradiction: 0,
+                            },
+                        )
+                        .await;
+                    *relations_created += 1;
+                    let _ = self
+                        .add_memory_history_event(
+                            target_id,
+                            "SUPERSEDE",
+                            &memory.text,
+                            &new_id,
+                            user_id,
+                        )
+                        .await;
+                    self.emit_memory_superseded(&new_id, target_id, user_id)
+                        .await;
+                }
                 added_ids.push(new_id.clone());
                 new_id
             }
