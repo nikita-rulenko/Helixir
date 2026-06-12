@@ -14,9 +14,7 @@
 //!   cargo test -p helixir mcp_read_e2e -- --ignored --nocapture
 //! ```
 
-use std::time::Instant;
-
-use serde_json::{Value, json};
+use serde_json::json;
 
 mod common;
 use common::McpClient;
