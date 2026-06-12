@@ -99,8 +99,8 @@ Each accelerator can be disabled independently without leaving `algo_opt`:
 | `HELIXIR_DISABLE_BATCH_EXPANSION=1` | batched traversal (per-node legacy walk) |
 | `HELIXIR_DISABLE_PPR=1` | PPR re-ranking (legacy combined scores) |
 
-And `HELIXIR_RETRIEVAL_PROFILE=legacy` (or unset) returns everything to
-v0.3.x behaviour.
+And `HELIXIR_RETRIEVAL_PROFILE=legacy` returns everything to v0.3.x
+behaviour (unset now means `algo_opt`).
 
 ### Behavioural changes that are NOT gated by the profile
 
