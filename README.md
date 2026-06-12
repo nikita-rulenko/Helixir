@@ -10,24 +10,36 @@
 </p>
 
 <p align="center">
-  <b><a href="#quick-start">Quick Start</a></b> &middot;
+  <b><a href="#quick-start">⚡ Quick Start</a></b> &middot;
   <a href="#what-is-helixir">What is Helixir?</a> &middot;
-  <a href="#philosophy">Philosophy</a> &middot;
-  <a href="#how-it-works">How It Works</a> &middot;
-  <a href="#mcp-tools">MCP Tools</a> &middot;
-  <a href="#ontology">Ontology</a> &middot;
-  <a href="#graph-schema">Graph Schema</a> &middot;
-  <a href="#integration">Integration</a> &middot;
-  <a href="#configuration">Configuration</a> &middot;
-  <a href="#development">Development</a>
+  <a href="#contents">Contents</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.85+-orange?logo=rust" alt="Rust 1.83+"/>
+  <img src="https://img.shields.io/badge/rust-1.85+-orange?logo=rust" alt="Rust 1.85+"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
 </p>
+
+---
+
+## Contents
+
+- [What is Helixir?](#what-is-helixir)
+- [Philosophy](#philosophy)
+- [**Quick Start**](#quick-start)
+  - [One-command install](#one-command-install)
+  - [Prerequisites](#prerequisites)
+- [How It Works](#how-it-works)
+  - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
+  - [Architecture](#architecture)
+- [Ontology](#ontology)
+- [Graph Schema](#graph-schema)
+- [MCP Tools](#mcp-tools)
+- [Integration](#integration) — Cursor, Claude Desktop
+- [Configuration](#configuration)
+- [Development](#development)
 
 ---
 
