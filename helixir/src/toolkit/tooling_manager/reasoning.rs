@@ -114,8 +114,19 @@ impl ToolingManager {
                                 .relations
                                 .iter()
                                 .map(|r| ChainNode {
-                                    memory_id: r.to_memory_id.clone(),
-                                    content: r.to_memory_content.clone(),
+                                    // GH#23: expose the PEER (the other end of
+                                    // the hop), not the to-endpoint — for
+                                    // incoming edges `to` is the current node.
+                                    memory_id: if r.peer_memory_id.is_empty() {
+                                        r.to_memory_id.clone()
+                                    } else {
+                                        r.peer_memory_id.clone()
+                                    },
+                                    content: if r.peer_memory_id.is_empty() {
+                                        r.to_memory_content.clone()
+                                    } else {
+                                        r.peer_memory_content.clone()
+                                    },
                                     relation: r.relation_type.edge_name().to_string(),
                                     depth: 0,
                                 })

@@ -89,6 +89,10 @@ pub struct GraphEdge {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectMemoriesResult {
     pub found: bool,
+    /// Both anchors resolved to the same memory — a shared relevant fact,
+    /// not a discovered multi-hop path.
+    #[serde(default)]
+    pub shared_seed: bool,
     pub hops: usize,
     /// Product of edge weights along the path (rough chain trust).
     pub confidence: f64,

@@ -150,6 +150,8 @@ mod tests {
     fn test_build_reasoning_trail() {
         let relations = vec![
             ReasoningRelation {
+                peer_memory_id: String::new(),
+                peer_memory_content: String::new(),
                 relation_id: "r1".to_string(),
                 from_memory_id: "mem_aaaa".to_string(),
                 to_memory_id: "mem_bbbb".to_string(),
@@ -160,6 +162,8 @@ mod tests {
                 reasoning_id: None,
             },
             ReasoningRelation {
+                peer_memory_id: String::new(),
+                peer_memory_content: String::new(),
                 relation_id: "r2".to_string(),
                 from_memory_id: "mem_bbbb".to_string(),
                 to_memory_id: "mem_cccc".to_string(),

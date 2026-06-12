@@ -42,6 +42,8 @@ impl ReasoningEngine {
                 crate::safe_truncate(to_id, 12)
             );
             return Ok(ReasoningRelation {
+                peer_memory_id: String::new(),
+                peer_memory_content: String::new(),
                 relation_id: format!(
                     "rel_{}_{}",
                     crate::safe_truncate(from_id, 8),
@@ -58,6 +60,8 @@ impl ReasoningEngine {
         }
 
         let relation = ReasoningRelation {
+            peer_memory_id: String::new(),
+            peer_memory_content: String::new(),
             relation_id: format!(
                 "rel_{}_{}",
                 crate::safe_truncate(from_id, 8),

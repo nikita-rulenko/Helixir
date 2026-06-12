@@ -31,6 +31,14 @@ impl ReasoningType {
 pub struct ReasoningRelation {
     pub relation_id: String,
 
+    /// The node on the other end of this hop, relative to the chain's
+    /// current position — what an agent wants to SEE in nodes[] (GH#23).
+    /// Direction stays available via from/to.
+    #[serde(default)]
+    pub peer_memory_id: String,
+    #[serde(default)]
+    pub peer_memory_content: String,
+
     pub from_memory_id: String,
 
     pub to_memory_id: String,
@@ -80,6 +88,8 @@ pub(super) fn project_relation(
             crate::safe_truncate(from_id, 8),
             crate::safe_truncate(to_id, 8)
         ),
+        peer_memory_id: neighbor_id.to_string(),
+        peer_memory_content: neighbor_content.to_string(),
         from_memory_id: from_id.to_string(),
         to_memory_id: to_id.to_string(),
         to_memory_content: to_content.to_string(),
@@ -139,6 +149,8 @@ mod tests {
     #[test]
     fn test_relation_creation() {
         let relation = ReasoningRelation {
+            peer_memory_id: String::new(),
+            peer_memory_content: String::new(),
             relation_id: "test".to_string(),
             from_memory_id: "mem_1".to_string(),
             to_memory_id: "mem_2".to_string(),

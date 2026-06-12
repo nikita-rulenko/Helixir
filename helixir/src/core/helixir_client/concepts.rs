@@ -120,6 +120,7 @@ impl HelixirClient {
         Ok(match path {
             Some(p) => ConnectMemoriesResult {
                 found: true,
+                shared_seed: p.shared_seed,
                 hops: p.hops,
                 confidence: p.confidence,
                 nodes: p
@@ -141,6 +142,7 @@ impl HelixirClient {
             },
             None => ConnectMemoriesResult {
                 found: false,
+                shared_seed: false,
                 hops: 0,
                 confidence: 0.0,
                 nodes: vec![],

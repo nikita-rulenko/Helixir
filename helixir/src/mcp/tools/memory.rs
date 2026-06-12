@@ -16,7 +16,7 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 #[tool_router(router = memory_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats.processing_time_ms}"
+        description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats}. IMPORTANT: if the response contains a needs_clarification array, the memory charter blocked silent resolution of a conflict — read each entry and ask the user its suggested_question (or apply a standing rule), then add the answer as a new memory."
     )]
     async fn add_memory(
         &self,

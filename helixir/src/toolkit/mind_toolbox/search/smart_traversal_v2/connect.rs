@@ -42,6 +42,9 @@ pub struct ConnectionPath {
     /// Product of edge weights — a rough "how much to trust this chain".
     pub confidence: f64,
     pub hops: usize,
+    /// `true` when both anchors resolved to the same memory (seed overlap on
+    /// a small corpus) — a shared relevant fact, not a discovered graph path.
+    pub shared_seed: bool,
 }
 
 /// Per-side traversal state: parent pointers for path reconstruction.
@@ -109,7 +112,9 @@ pub async fn connect(
         .find(|id| wave_b.parents.contains_key(*id))
     {
         let meeting = meeting.clone();
-        return Ok(Some(build_path(&wave_a, &wave_b, &meeting, &content_by_id)));
+        let mut path = build_path(&wave_a, &wave_b, &meeting, &content_by_id);
+        path.shared_seed = true;
+        return Ok(Some(path));
     }
 
     for level in 0..max_depth {
@@ -230,5 +235,6 @@ fn build_path(
         edges,
         confidence,
         hops,
+        shared_seed: false,
     }
 }

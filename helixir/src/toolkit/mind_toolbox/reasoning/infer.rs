@@ -88,6 +88,8 @@ Rules:
                         let idx = r.get("existing_index")?.as_u64()? as usize;
                         let (target_id, target_content) = similar_memories.get(idx)?;
                         Some(ReasoningRelation {
+                            peer_memory_id: String::new(),
+                            peer_memory_content: String::new(),
                             relation_id: format!(
                                 "inferred_{}_{}",
                                 crate::safe_truncate(new_memory_id, 8),
