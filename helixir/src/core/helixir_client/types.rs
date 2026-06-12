@@ -16,6 +16,11 @@ pub struct AddMemoryResult {
     pub entities_extracted: usize,
     pub relations_created: usize,
     pub stats: HashMap<String, serde_json::Value>,
+    /// Charter escalations: conflicts the write path was not allowed to
+    /// resolve silently (memory-charter.md). The agent decides whether to
+    /// ask the human or apply a learned rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs_clarification: Vec<crate::toolkit::tooling_manager::types::Clarification>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

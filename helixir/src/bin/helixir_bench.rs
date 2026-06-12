@@ -151,6 +151,7 @@ async fn main() -> Result<()> {
     let mut skip_search = false;
     let mut vary_query = false;
     let mut chain_probe = false;
+    let mut add_probe = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -205,6 +206,7 @@ async fn main() -> Result<()> {
             "--skip-search" => skip_search = true,
             "--vary-query" => vary_query = true,
             "--chain-probe" => chain_probe = true,
+            "--add-probe" => add_probe = true,
             other => {
                 anyhow::bail!("unknown arg: {other}");
             }
@@ -222,6 +224,27 @@ async fn main() -> Result<()> {
 
     let client = HelixirClient::new(config).context("HelixirClient::new")?;
     client.initialize().await.context("initialize")?;
+
+    if add_probe {
+        let t0 = Instant::now();
+        let result = client
+            .add(&query, &user_id, None, None)
+            .await
+            .context("add_memory")?;
+        eprintln!(
+            "add probe: {} added, {} clarifications, took {}ms",
+            result.memories_added,
+            result.needs_clarification.len(),
+            t0.elapsed().as_millis()
+        );
+        for c in &result.needs_clarification {
+            eprintln!(
+                "  CLARIFY [{}] {} (conf={}) existing={:?}\n    Q: {}",
+                c.conflict_type, c.decision_taken, c.confidence, c.existing_memory_id, c.suggested_question
+            );
+        }
+        return Ok(());
+    }
 
     if chain_probe {
         let t0 = Instant::now();

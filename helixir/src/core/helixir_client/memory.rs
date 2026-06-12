@@ -43,6 +43,7 @@ impl HelixirClient {
             entities_extracted: result.entities_extracted,
             relations_created: result.reasoning_relations_created,
             stats: result.metadata,
+            needs_clarification: result.needs_clarification,
         })
     }
 

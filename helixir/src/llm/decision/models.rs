@@ -28,7 +28,7 @@ impl Default for MemoryOperation {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryDecision {
     pub operation: MemoryOperation,
 

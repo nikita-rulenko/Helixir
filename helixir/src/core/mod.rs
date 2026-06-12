@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod charter;
 pub mod config;
 pub mod error;
 pub mod events;
