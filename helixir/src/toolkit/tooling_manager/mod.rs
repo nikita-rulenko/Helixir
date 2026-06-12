@@ -5,6 +5,7 @@ mod graph;
 pub(crate) mod helpers;
 mod reasoning;
 mod search;
+pub mod seeds;
 pub mod types;
 
 pub use types::*;
@@ -110,6 +111,7 @@ impl ToolingManager {
         }
 
         self.maybe_warm_embed_cache().await;
+        self.maybe_seed_system_memories().await;
         Ok(())
     }
 
