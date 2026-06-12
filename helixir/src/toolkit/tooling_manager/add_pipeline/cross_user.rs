@@ -57,6 +57,11 @@ impl ToolingManager {
                     .and_then(|v| v.as_str())
                     .map(String::from),
                 is_cross_user: true,
+                memory_type: r
+                    .metadata
+                    .get("memory_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
             })
             .collect();
 
@@ -71,6 +76,7 @@ impl ToolingManager {
         );
 
         let memory_text = memory.text.clone();
+        let memory_type = memory.memory_type.clone();
         let user_id_owned = user_id.to_string();
         let new_mem_id = new_memory_id.to_string();
         let db = self.db.clone();
@@ -78,7 +84,12 @@ impl ToolingManager {
 
         tokio::spawn(async move {
             let cross_decision = decision_engine
-                .decide(&memory_text, &cross_user_similar, &user_id_owned)
+                .decide(
+                    &memory_text,
+                    &memory_type,
+                    &cross_user_similar,
+                    &user_id_owned,
+                )
                 .await;
             info!(
                 "Phase 2 bg: LLM decided {:?} (confidence={})",

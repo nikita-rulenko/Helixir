@@ -95,6 +95,7 @@ impl SimilarMemoryFinder {
                     content: memory.content,
                     embedding: query_embedding.to_vec(),
                     similarity_score: score,
+                    memory_type: None,
                     created_at,
                 });
             }

@@ -36,6 +36,11 @@ impl ToolingManager {
                 created_at: None,
                 user_id: None,
                 is_cross_user: false,
+                memory_type: r
+                    .metadata
+                    .get("memory_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
             })
             .collect();
 

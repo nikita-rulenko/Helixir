@@ -98,6 +98,11 @@ impl ToolingManager {
                         .get("cosine")
                         .and_then(serde_json::Value::as_f64)
                         .unwrap_or(r.score as f64),
+                    memory_type: r
+                        .metadata
+                        .get("memory_type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
                     created_at: None,
                     user_id: None,
                     is_cross_user: false,
@@ -125,10 +130,10 @@ impl ToolingManager {
 
         let decisions: Vec<crate::llm::decision::MemoryDecision> =
             if batch_enabled && memories_to_store.len() > 1 {
-                let items: Vec<(String, Vec<SimilarMemory>)> = memories_to_store
+                let items: Vec<(String, String, Vec<SimilarMemory>)> = memories_to_store
                     .iter()
                     .zip(recall.iter())
-                    .map(|(m, sims)| (m.text.clone(), sims.clone()))
+                    .map(|(m, sims)| (m.text.clone(), m.memory_type.clone(), sims.clone()))
                     .collect();
                 self.decision_engine.decide_batch(&items, user_id).await
             } else {
@@ -136,7 +141,7 @@ impl ToolingManager {
                 for (memory, sims) in memories_to_store.iter().zip(recall.iter()) {
                     out.push(
                         self.decision_engine
-                            .decide(&memory.text, sims, user_id)
+                            .decide(&memory.text, &memory.memory_type, sims, user_id)
                             .await,
                     );
                 }
@@ -163,8 +168,18 @@ impl ToolingManager {
             // Charter escalation (memory-charter.md, flag-don't-block): the
             // decision still executes below; the conflict is surfaced to the
             // agent so it can ask the human or apply a learned rule.
+            let target_id = decision
+                .target_memory_id
+                .as_deref()
+                .or(decision.supersedes_memory_id.as_deref());
+            let target_type = target_id.and_then(|tid| {
+                similar_memories
+                    .iter()
+                    .find(|m| m.id == tid)
+                    .and_then(|m| m.memory_type.as_deref())
+            });
             if let Some(conflict_type) =
-                crate::core::charter::escalation_reason(&decision, &memory.memory_type)
+                crate::core::charter::escalation_reason(&decision, &memory.memory_type, target_type)
             {
                 let existing_content = decision.target_memory_id.as_deref().and_then(|tid| {
                     similar_memories

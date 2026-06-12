@@ -173,6 +173,8 @@ pub struct SimilarMemory {
     pub id: String,
     pub content: String,
     pub score: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
