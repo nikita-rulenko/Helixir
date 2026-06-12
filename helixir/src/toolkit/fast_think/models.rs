@@ -1,6 +1,6 @@
 use petgraph::stable_graph::NodeIndex;
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ThoughtType {
@@ -249,4 +249,3 @@ impl std::fmt::Display for FastThinkError {
 }
 
 impl std::error::Error for FastThinkError {}
-

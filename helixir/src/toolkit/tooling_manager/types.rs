@@ -18,6 +18,29 @@ pub struct AddMemoryResult {
     pub reasoning_relations_created: usize,
     pub chunks_created: usize,
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Charter escalations (memory-charter.md): conflicts Helixir is not
+    /// allowed to resolve silently. Flag-don't-block: the decision already
+    /// executed; the agent decides whether to ask the human.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs_clarification: Vec<Clarification>,
+}
+
+/// One write-path conflict surfaced to the agent per the memory charter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Clarification {
+    /// Charter conflict type: contradiction / cross_user_contradiction /
+    /// low_confidence_rewrite / auto_delete.
+    pub conflict_type: String,
+    pub new_content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_memory_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_content: Option<String>,
+    /// Question the agent can ask the user verbatim.
+    pub suggested_question: String,
+    /// What the engine decided (and already did) on its own.
+    pub decision_taken: String,
+    pub confidence: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

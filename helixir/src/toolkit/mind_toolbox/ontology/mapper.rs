@@ -1,84 +1,97 @@
-
-
 use std::collections::HashMap;
 
 use lazy_static::lazy_static;
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConceptType {
-    
     Preference,
-    
+
     Skill,
-    
+
     Goal,
-    
+
     Opinion,
-    
+
     Fact,
-    
+
     Action,
-    
+
     Experience,
-    
+
     Achievement,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TextConcept {
-    
     pub id: String,
-    
+
     pub name: String,
-    
+
     pub concept_type: ConceptType,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ConceptMatch {
-    
     pub concept: TextConcept,
-    
+
     pub confidence: f64,
-    
+
     pub matched_keywords: Vec<String>,
 }
 
 lazy_static! {
-    
     static ref CONCEPT_KEYWORDS: HashMap<ConceptType, Vec<&'static str>> = {
         let mut m = HashMap::new();
-        m.insert(ConceptType::Preference, vec![
-            "like", "love", "prefer", "favorite", "enjoy", "hate", "dislike"
-        ]);
-        m.insert(ConceptType::Skill, vec![
-            "can", "able to", "skilled at", "expert in", "know how", "proficient"
-        ]);
-        m.insert(ConceptType::Goal, vec![
-            "want", "goal", "aim", "plan", "wish", "hope", "intend"
-        ]);
-        m.insert(ConceptType::Opinion, vec![
-            "think", "believe", "feel", "opinion", "view", "consider"
-        ]);
-        m.insert(ConceptType::Fact, vec![
-            "fact", "is", "has", "knows", "information", "data"
-        ]);
-        m.insert(ConceptType::Action, vec![
-            "did", "does", "doing", "performed", "executed", "ran"
-        ]);
-        m.insert(ConceptType::Experience, vec![
-            "experienced", "went through", "encounter", "witnessed"
-        ]);
-        m.insert(ConceptType::Achievement, vec![
-            "completed", "finished", "achieved", "success", "accomplished"
-        ]);
+        m.insert(
+            ConceptType::Preference,
+            vec![
+                "like", "love", "prefer", "favorite", "enjoy", "hate", "dislike",
+            ],
+        );
+        m.insert(
+            ConceptType::Skill,
+            vec![
+                "can",
+                "able to",
+                "skilled at",
+                "expert in",
+                "know how",
+                "proficient",
+            ],
+        );
+        m.insert(
+            ConceptType::Goal,
+            vec!["want", "goal", "aim", "plan", "wish", "hope", "intend"],
+        );
+        m.insert(
+            ConceptType::Opinion,
+            vec!["think", "believe", "feel", "opinion", "view", "consider"],
+        );
+        m.insert(
+            ConceptType::Fact,
+            vec!["fact", "is", "has", "knows", "information", "data"],
+        );
+        m.insert(
+            ConceptType::Action,
+            vec!["did", "does", "doing", "performed", "executed", "ran"],
+        );
+        m.insert(
+            ConceptType::Experience,
+            vec!["experienced", "went through", "encounter", "witnessed"],
+        );
+        m.insert(
+            ConceptType::Achievement,
+            vec![
+                "completed",
+                "finished",
+                "achieved",
+                "success",
+                "accomplished",
+            ],
+        );
         m
     };
 }
-
 
 pub struct ConceptMapper;
 
@@ -89,13 +102,11 @@ impl Default for ConceptMapper {
 }
 
 impl ConceptMapper {
-    
     #[must_use]
     pub fn new() -> Self {
         Self
     }
 
-    
     #[must_use]
     pub fn map_to_concepts(&self, text: &str, top_k: usize) -> Vec<ConceptMatch> {
         let text_lower = text.to_lowercase();
@@ -124,10 +135,8 @@ impl ConceptMapper {
             }
         }
 
-        
         matches.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
 
-        
         matches.into_iter().take(top_k).collect()
     }
 }

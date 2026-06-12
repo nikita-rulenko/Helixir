@@ -1,9 +1,8 @@
-use serde::{Deserialize, Deserializer};
-use tracing::{info, debug};
+use tracing::info;
 
-use crate::utils::nullable_string;
-use super::types::ToolingError;
 use super::ToolingManager;
+use super::types::ToolingError;
+use crate::utils::nullable_string;
 
 impl ToolingManager {
     pub async fn get_memory_graph(
@@ -12,11 +11,19 @@ impl ToolingManager {
         memory_id: Option<&str>,
         depth: usize,
     ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), ToolingError> {
-        info!("Getting memory graph for user={}, memory={:?}, depth={}", user_id, memory_id, depth);
+        info!(
+            "Getting memory graph for user={}, memory={:?}, depth={}",
+            user_id, memory_id, depth
+        );
 
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut visited = std::collections::HashSet::new();
+        // Tracks `(source, target, edge_type)` triples already emitted so symmetric
+        // `*_in` / `*_out` traversal doesn't surface the same logical edge twice.
+        // See issue #18.
+        let mut emitted_edges: std::collections::HashSet<(String, String, &'static str)> =
+            std::collections::HashSet::new();
 
         let start_ids: Vec<String> = if let Some(mid) = memory_id {
             vec![mid.to_string()]
@@ -27,6 +34,7 @@ impl ToolingManager {
                 memories: Vec<MemoryNode>,
             }
             #[derive(serde::Deserialize)]
+            #[allow(dead_code)] // `content` reflected from HelixDB for schema-mismatch diagnostics.
             struct MemoryNode {
                 #[serde(default, deserialize_with = "nullable_string")]
                 memory_id: String,
@@ -34,10 +42,14 @@ impl ToolingManager {
                 content: String,
             }
 
-            match self.db.execute_query::<UserMemoriesResult, _>(
-                "getUserMemories",
-                &serde_json::json!({"user_id": user_id, "limit": 10i64}),
-            ).await {
+            match self
+                .db
+                .execute_query::<UserMemoriesResult, _>(
+                    "getUserMemories",
+                    &serde_json::json!({"user_id": user_id, "limit": 10i64}),
+                )
+                .await
+            {
                 Ok(result) => result.memories.into_iter().map(|m| m.memory_id).collect(),
                 Err(_) => Vec::new(),
             }
@@ -74,10 +86,14 @@ impl ToolingManager {
                     memory_type: String,
                 }
 
-                if let Ok(result) = self.db.execute_query::<MemoryResult, _>(
-                    "getMemory",
-                    &serde_json::json!({"memory_id": mid}),
-                ).await {
+                if let Ok(result) = self
+                    .db
+                    .execute_query::<MemoryResult, _>(
+                        "getMemory",
+                        &serde_json::json!({"memory_id": mid}),
+                    )
+                    .await
+                {
                     if let Some(mem) = result.memory {
                         nodes.push(serde_json::json!({
                             "id": mem.memory_id,
@@ -88,6 +104,8 @@ impl ToolingManager {
                 }
 
                 #[derive(serde::Deserialize, Default)]
+                #[allow(dead_code)] // *_in/_out symmetrical pairs are filled from HelixDB; only
+                // a subset is iterated below depending on edge direction.
                 struct ConnectionsResult {
                     #[serde(default)]
                     implies_out: Vec<ConnectedMemory>,
@@ -107,6 +125,7 @@ impl ToolingManager {
                     relation_in: Vec<ConnectedMemory>,
                 }
                 #[derive(serde::Deserialize)]
+                #[allow(dead_code)] // `content` reflected for diagnostics on schema drift.
                 struct ConnectedMemory {
                     #[serde(default, deserialize_with = "nullable_string")]
                     memory_id: String,
@@ -114,32 +133,44 @@ impl ToolingManager {
                     content: String,
                 }
 
-                if let Ok(conns) = self.db.execute_query::<ConnectionsResult, _>(
-                    "getMemoryLogicalConnections",
-                    &serde_json::json!({"memory_id": mid}),
-                ).await {
-                    let edge_groups: &[(&Vec<ConnectedMemory>, &str, bool)] = &[
+                if let Ok(conns) = self
+                    .db
+                    .execute_query::<ConnectionsResult, _>(
+                        "getMemoryLogicalConnections",
+                        &serde_json::json!({"memory_id": mid}),
+                    )
+                    .await
+                {
+                    let edge_groups: &[(&Vec<ConnectedMemory>, &'static str, bool)] = &[
                         (&conns.implies_out, "IMPLIES", true),
                         (&conns.implies_in, "IMPLIES", false),
                         (&conns.because_out, "BECAUSE", true),
                         (&conns.because_in, "BECAUSE", false),
                         (&conns.contradicts_out, "CONTRADICTS", true),
+                        (&conns.contradicts_in, "CONTRADICTS", false),
                         (&conns.relation_out, "SUPPORTS", true),
+                        (&conns.relation_in, "SUPPORTS", false),
                     ];
 
                     for (group, edge_type, is_outgoing) in edge_groups {
                         for conn in group.iter() {
+                            if conn.memory_id.is_empty() {
+                                continue;
+                            }
                             let (source, target) = if *is_outgoing {
-                                (mid.as_str(), conn.memory_id.as_str())
+                                (mid.to_string(), conn.memory_id.clone())
                             } else {
-                                (conn.memory_id.as_str(), mid.as_str())
+                                (conn.memory_id.clone(), mid.to_string())
                             };
-                            edges.push(serde_json::json!({
-                                "source": source,
-                                "target": target,
-                                "type": edge_type,
-                                "weight": 1.0,
-                            }));
+                            let key = (source.clone(), target.clone(), *edge_type);
+                            if emitted_edges.insert(key) {
+                                edges.push(serde_json::json!({
+                                    "source": source,
+                                    "target": target,
+                                    "type": edge_type,
+                                    "weight": 1.0,
+                                }));
+                            }
                             next_ids.push(conn.memory_id.clone());
                         }
                     }

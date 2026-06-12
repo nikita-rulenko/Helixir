@@ -1,7 +1,4 @@
-
-
 use thiserror::Error;
-
 
 #[derive(Error, Debug)]
 pub enum HelixirError {
@@ -36,6 +33,4 @@ pub enum HelixirError {
     Internal(String),
 }
 
-
 pub type Result<T> = std::result::Result<T, HelixirError>;
-

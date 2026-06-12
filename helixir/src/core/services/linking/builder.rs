@@ -1,5 +1,3 @@
-
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,27 +9,26 @@ use super::events::{LinkCreatedEvent, LinkingCompleteEvent};
 use crate::core::services::chunking::ChunkCreatedEvent;
 use crate::db::HelixClient;
 
-
 #[derive(Debug, Clone)]
 struct TrackedChunk {
     chunk_id: String,
     chunk_internal_id: Option<Uuid>,
     position: usize,
+    // Plumbed in but not yet emitted on linking events. Will be consumed once
+    // the EventBus carries chunking correlation IDs end-to-end.
+    #[allow(dead_code)]
     correlation_id: Option<String>,
 }
 
-
 pub struct LinkBuilder {
-    
     client: Arc<HelixClient>,
-    
+
     chunks_by_memory: RwLock<HashMap<String, Vec<TrackedChunk>>>,
-    
+
     expected_chunks: RwLock<HashMap<String, usize>>,
-    
+
     event_tx: Option<tokio::sync::mpsc::Sender<LinkBuilderEvent>>,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum LinkBuilderEvent {
@@ -40,7 +37,6 @@ pub enum LinkBuilderEvent {
 }
 
 impl LinkBuilder {
-    
     pub fn new(client: Arc<HelixClient>) -> Self {
         info!("LinkBuilder initialized");
 
@@ -52,13 +48,11 @@ impl LinkBuilder {
         }
     }
 
-    
     pub fn with_event_sender(mut self, tx: tokio::sync::mpsc::Sender<LinkBuilderEvent>) -> Self {
         self.event_tx = Some(tx);
         self
     }
 
-    
     pub async fn handle_chunk_created(&self, event: ChunkCreatedEvent) {
         let memory_id = event.parent_memory_id.clone();
 
@@ -67,7 +61,6 @@ impl LinkBuilder {
             event.chunk_id, event.position, event.total_chunks
         );
 
-        
         {
             let mut chunks = self.chunks_by_memory.write().await;
             let memory_chunks = chunks.entry(memory_id.clone()).or_insert_with(Vec::new);
@@ -83,7 +76,6 @@ impl LinkBuilder {
             expected.insert(memory_id.clone(), event.total_chunks);
         }
 
-        
         let (collected, expected) = {
             let chunks = self.chunks_by_memory.read().await;
             let expected = self.expected_chunks.read().await;
@@ -97,11 +89,9 @@ impl LinkBuilder {
         if collected == expected && expected > 0 {
             debug!("All {} chunks collected for {}", expected, memory_id);
 
-            
             self.create_chunk_chain(&memory_id, event.correlation_id.clone())
                 .await;
 
-            
             {
                 let mut chunks = self.chunks_by_memory.write().await;
                 let mut expected = self.expected_chunks.write().await;
@@ -112,7 +102,6 @@ impl LinkBuilder {
         }
     }
 
-    
     async fn create_chunk_chain(&self, memory_id: &str, correlation_id: Option<String>) {
         let start_time = Instant::now();
 
@@ -121,11 +110,9 @@ impl LinkBuilder {
             chunks.get(memory_id).cloned().unwrap_or_default()
         };
 
-        
         let mut sorted_chunks = chunks;
         sorted_chunks.sort_by_key(|c| c.position);
 
-        
         if sorted_chunks.len() <= 1 {
             debug!("Single chunk for {} - no chain needed", memory_id);
 
@@ -141,7 +128,6 @@ impl LinkBuilder {
             return;
         }
 
-        
         let mut edges_created = 0;
         let mut errors = 0;
 
@@ -182,7 +168,6 @@ impl LinkBuilder {
         .await;
     }
 
-    
     async fn create_next_chunk_edge(
         &self,
         from_chunk: &TrackedChunk,
@@ -230,7 +215,6 @@ impl LinkBuilder {
         })
     }
 
-    
     async fn emit_event(&self, event: LinkBuilderEvent) {
         if let Some(ref tx) = self.event_tx {
             if let Err(e) = tx.send(event).await {
@@ -239,7 +223,6 @@ impl LinkBuilder {
         }
     }
 
-    
     pub async fn get_stats(&self) -> LinkBuilderStats {
         let chunks = self.chunks_by_memory.read().await;
 
@@ -249,7 +232,6 @@ impl LinkBuilder {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct LinkBuilderStats {

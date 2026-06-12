@@ -1,34 +1,28 @@
-
-
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::config::{ChunkingConfig, ChunkingStrategy};
 use super::events::{
-    ChunkCreatedEvent, ChunkingCompleteEvent, ChunkingFailedEvent,
-    ChunkingStartedEvent, MemoryCreatedEvent,
+    ChunkCreatedEvent, ChunkingCompleteEvent, ChunkingFailedEvent, ChunkingStartedEvent,
+    MemoryCreatedEvent,
 };
-use super::splitter::{ContentSplitter, SentenceSplitter, SemanticSplitter, TextChunk};
+use super::splitter::{ContentSplitter, SemanticSplitter, SentenceSplitter, TextChunk};
 use crate::core::services::resolution::IDResolutionService;
 use crate::db::HelixClient;
 
-
 pub struct ChunkingService {
-    
     client: Arc<HelixClient>,
-    
+
     id_resolver: Arc<IDResolutionService>,
-    
+
     splitter: Arc<dyn ContentSplitter>,
-    
+
     config: ChunkingConfig,
-    
+
     event_tx: Option<tokio::sync::mpsc::Sender<ChunkingEvent>>,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum ChunkingEvent {
@@ -39,7 +33,6 @@ pub enum ChunkingEvent {
 }
 
 impl ChunkingService {
-    
     pub fn new(
         client: Arc<HelixClient>,
         id_resolver: Arc<IDResolutionService>,
@@ -71,13 +64,11 @@ impl ChunkingService {
         }
     }
 
-    
     pub fn with_event_sender(mut self, tx: tokio::sync::mpsc::Sender<ChunkingEvent>) -> Self {
         self.event_tx = Some(tx);
         self
     }
 
-    
     pub async fn handle_memory_created(
         &self,
         event: MemoryCreatedEvent,
@@ -91,7 +82,6 @@ impl ChunkingService {
             event.content.len()
         );
 
-        
         if !event.needs_chunking || !self.config.needs_chunking(event.content.len()) {
             debug!("Skipping chunking for {}: content too short", memory_id);
             return Ok(ChunkingCompleteEvent {
@@ -105,7 +95,6 @@ impl ChunkingService {
             });
         }
 
-        
         match self.process_chunking(&event).await {
             Ok(complete_event) => Ok(complete_event),
             Err(e) => {
@@ -123,7 +112,6 @@ impl ChunkingService {
         }
     }
 
-    
     async fn process_chunking(
         &self,
         event: &MemoryCreatedEvent,
@@ -131,7 +119,6 @@ impl ChunkingService {
         let start_time = Instant::now();
         let memory_id = &event.memory_id;
 
-        
         let internal_id = match &event.internal_id {
             Some(id) => *id,
             None => self.id_resolver.resolve(memory_id).await?,
@@ -139,13 +126,11 @@ impl ChunkingService {
 
         debug!("Resolved {} -> {}", memory_id, internal_id);
 
-        
         let chunks = self.splitter.split(&event.content).await?;
         let chunk_count = chunks.len();
 
         debug!("Split into {} chunks", chunk_count);
 
-        
         self.emit_event(ChunkingEvent::Started(ChunkingStartedEvent {
             memory_id: memory_id.clone(),
             internal_id,
@@ -156,7 +141,6 @@ impl ChunkingService {
         }))
         .await;
 
-        
         let mut handles = Vec::with_capacity(chunk_count);
 
         for (position, chunk) in chunks.into_iter().enumerate() {
@@ -178,14 +162,14 @@ impl ChunkingService {
             }));
         }
 
-        
         let mut successful = Vec::new();
         let mut errors = Vec::new();
 
         for handle in handles {
             match handle.await {
                 Ok(Ok(event)) => {
-                    self.emit_event(ChunkingEvent::ChunkCreated(event.clone())).await;
+                    self.emit_event(ChunkingEvent::ChunkCreated(event.clone()))
+                        .await;
                     successful.push(event);
                 }
                 Ok(Err(e)) => errors.push(e),
@@ -201,23 +185,22 @@ impl ChunkingService {
             );
         }
 
-        
         let complete = ChunkingCompleteEvent {
             memory_id: memory_id.clone(),
             chunks_created: successful.len(),
-            links_created: successful.len(), 
-            chains_created: 0,               
+            links_created: successful.len(),
+            chains_created: 0,
             duration_ms: start_time.elapsed().as_secs_f64() * 1000.0,
             success: errors.is_empty(),
             correlation_id: event.correlation_id.clone(),
         };
 
-        self.emit_event(ChunkingEvent::Complete(complete.clone())).await;
+        self.emit_event(ChunkingEvent::Complete(complete.clone()))
+            .await;
 
         Ok(complete)
     }
 
-    
     async fn create_chunk(
         client: &HelixClient,
         parent_memory_id: &str,
@@ -259,9 +242,7 @@ impl ChunkingService {
             .await
             .map_err(|e| e.to_string())?;
 
-        let chunk_internal_id = result
-            .id
-            .and_then(|s| Uuid::parse_str(&s).ok());
+        let chunk_internal_id = result.id.and_then(|s| Uuid::parse_str(&s).ok());
 
         Ok(ChunkCreatedEvent {
             chunk_id,
@@ -276,7 +257,6 @@ impl ChunkingService {
         })
     }
 
-    
     async fn emit_event(&self, event: ChunkingEvent) {
         if let Some(ref tx) = self.event_tx {
             if let Err(e) = tx.send(event).await {

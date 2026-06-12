@@ -1,10 +1,10 @@
-use crate::db::HelixClient;
-use std::sync::Arc;
-use chrono::Utc;
 use super::models::{MemoryRelation, RelationType};
-use tracing::{debug, warn};
-use thiserror::Error;
+use crate::db::HelixClient;
+use chrono::Utc;
 use serde::Serialize;
+use std::sync::Arc;
+use thiserror::Error;
+use tracing::{debug, warn};
 
 #[derive(Error, Debug)]
 pub enum EdgeCreatorError {
@@ -35,6 +35,17 @@ impl EdgeCreator {
         let mut created = 0;
 
         for rel in relations {
+            // Skip self-loops up front (LLM occasionally returns the same
+            // index as the new memory). See issue #16.
+            if source_id == rel.target_id {
+                warn!(
+                    "Skipping self-referential {:?} edge for memory {}",
+                    rel.relation_type,
+                    crate::safe_truncate(source_id, 12)
+                );
+                continue;
+            }
+
             let result: Result<(), _> = match rel.relation_type {
                 RelationType::Implies => {
                     #[derive(Serialize)]
@@ -96,7 +107,8 @@ impl EdgeCreator {
                                 to_id: rel.target_id.clone(),
                                 resolution: String::new(),
                                 resolved: 0,
-                                resolution_strategy: crate::safe_truncate(&rel.reasoning, 255).to_string(),
+                                resolution_strategy: crate::safe_truncate(&rel.reasoning, 255)
+                                    .to_string(),
                             },
                         )
                         .await

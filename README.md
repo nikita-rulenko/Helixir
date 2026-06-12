@@ -1,25 +1,22 @@
 <p align="center">
-  <img src="helixir-logo.jpeg" alt="Helixir" width="320"/>
+  <img src="helixir-logo.png" alt="Helixir" width="320"/>
 </p>
 
 <h1 align="center">Helixir</h1>
 
 <p align="center">
-  Graph-based persistent memory for LLM agents.<br/>
-  Associative recall, causal reasoning, ontology classification — out of the box.
+  An elder brain for LLM agents: memory that never forgets,<br/>
+  reasons in chains, and sees connections others can't.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#how-it-works">How It Works</a> &middot;
-  <a href="#ontology">Ontology</a> &middot;
-  <a href="#graph-schema">Graph Schema</a> &middot;
-  <a href="#mcp-tools">MCP Tools</a> &middot;
-  <a href="#configuration">Configuration</a>
+  <b><a href="#quick-start">⚡ Quick Start</a></b> &middot;
+  <a href="#what-is-helixir">What is Helixir?</a> &middot;
+  <a href="#contents">Contents</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.83+-orange?logo=rust" alt="Rust 1.83+"/>
+  <img src="https://img.shields.io/badge/rust-1.85+-orange?logo=rust" alt="Rust 1.85+"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -27,21 +24,52 @@
 
 ---
 
+## Contents
+
+- [What is Helixir?](#what-is-helixir)
+- [Philosophy](#philosophy)
+- [**Quick Start**](#quick-start)
+  - [One-command install](#one-command-install)
+  - [Prerequisites](#prerequisites)
+- [How It Works](#how-it-works)
+  - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
+  - [Architecture](#architecture)
+- [Ontology](#ontology)
+- [Graph Schema](#graph-schema)
+- [MCP Tools](#mcp-tools)
+- [Integration](#integration) — Cursor, Claude Desktop
+- [Configuration](#configuration)
+- [Development](#development)
+- [Upgrading](UPGRADING.md) — v0.3.x → v0.4.0 migration
+
+---
+
 ## What is Helixir?
 
-Helixir gives AI agents **memory that persists between sessions**. When an agent powered by Helixir starts a new conversation, it recalls past decisions, preferences, goals, and reasoning chains — not from a flat log, but from a **graph of interconnected facts**.
+Helixir gives AI agents **memory that persists between sessions** — and more than that: memory that *reasons*. When an agent starts a new conversation, it recalls past decisions, preferences, goals and the **chains of reasoning behind them**, not a flat log of similar text.
 
-Every piece of information is LLM-extracted into atomic facts, classified by ontology (8 types), linked to named entities, and stored with vector embeddings for semantic search. Duplicate detection, contradiction tracking, and supersession happen automatically.
+Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed logical edges (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`), and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
 
-Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, and any MCP-compatible client.
+Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, Claude Code and any MCP-compatible client.
 
-| Flat memory (key-value / embeddings only) | Helixir (graph + vector + ontology) |
-|:-----------------------------------------|:------------------------------------|
-| Retrieves similar text chunks | Retrieves facts **and their connections** |
-| No deduplication — grows forever | Smart dedup: ADD / UPDATE / SUPERSEDE / NOOP |
-| No reasoning trail | Causal chains: A BECAUSE B, A IMPLIES C |
-| All memories equal | Ontology: skills vs preferences vs goals |
-| Single-user | Cross-user: shared facts, conflict detection |
+| Plain RAG memory | Helixir |
+|:-----------------|:--------|
+| Returns similar text chunks | Returns facts **with provenance**: what matched directly, what was pulled through which edge, and why |
+| Append-only — grows forever | Curated writes: ADD / UPDATE / SUPERSEDE / NOOP decided per fact |
+| No reasoning trail | Causal chains: *A because B*, *A implies C* — and `connect_memories(A, B)` finds the path between any two concepts |
+| LLM in the retrieval loop | Read path is LLM-free: ~15–30 ms warm searches, fully local |
+| Single-user silo | Shared graph: one fact, many knowers, consensus ranking, conflict detection |
+| Silent overwrites | Memory charter: conflicting writes escalate to the agent as questions |
+
+## Philosophy
+
+Three principles drive every design decision; the long version lives in [`helixir/doc/design-rationale.md`](helixir/doc/design-rationale.md).
+
+**An elder brain forgets nothing.** There is deliberately **no delete tool**. Outdated facts are superseded — the old version stays in history (`HAS_HISTORY` edges, `valid_until`), reachable forever. Why? Because the value of memory is not in single facts but in long chains between them: *Rajasthan weather → guar harvest → guar gum price → fracking costs → shale stocks*. A memory that prunes "irrelevant" facts destroys the middle of chains it cannot yet see. Time affects **attention** (what surfaces first), never **reachability** (what can be found through connections).
+
+**The writer pays, the reader flies.** All expensive work — extraction, dedup decisions, relation inference — happens at write time. Reading is pure math over precomputed structure: no LLM, no re-embedding when warm. This is what makes a fully local setup (ollama + HelixDB) practical.
+
+**The memory does not gaslight its owner.** Writes that conflict with what is already known — a reversed preference, a contradiction, anything destructive — are not resolved silently. They come back in `add_memory.needs_clarification` as ready-to-ask questions, governed by a human-editable [memory charter](helixir/memory-charter.md): a constitution of rules the engine may never override.
 
 ---
 
@@ -73,7 +101,7 @@ make config         # Print MCP config to paste into your IDE
 
 ### Prerequisites
 
-- **Rust 1.83+** — [rustup.rs](https://rustup.rs)
+- **Rust 1.85+** — [rustup.rs](https://rustup.rs)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
@@ -105,6 +133,8 @@ make config         # Print MCP config to paste into your IDE
                       |
                 Decision: ADD / UPDATE / SUPERSEDE / NOOP
                       |
+                Memory charter check ── conflicts? ──> needs_clarification
+                      |                                (agent asks the human)
                 Store in HelixDB (graph + vector)
 ```
 
@@ -131,7 +161,23 @@ Engine  Reasoning Manager    |
   HelixDB (graph + vector database)
 ```
 
-See full architectural diagrams in [`helixir/diagrams/`](helixir/diagrams/).
+### Read path (zero LLM calls)
+
+```
+Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ──┐
+                               └──> BM25 keyword (SearchBM25)  ──┤
+                                                                 ├──> RRF fusion
+                                                                 v
+                              graph expansion: one batched HQL call per depth level
+                              (8 edge families, parent provenance kept)
+                                                                 v
+                              Personalized PageRank over the typed ego-network
+                              final rank = 0.3·cosine + 0.5·PPR + 0.2·freshness
+                                                                 v
+                    results with provenance: origin=seed|graph, edge, parent, ppr
+```
+
+Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on the same machinery — the read path works identically with no LLM configured at all.
 
 ---
 
@@ -259,10 +305,11 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts from text, deduplicate, store with entities and relations |
-| `search_memory` | Semantic search with temporal modes: `recent` (4h), `contextual` (30d), `deep` (90d), `full` |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Charter conflicts come back in `needs_clarification` |
+| `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal modes: `recent` (4h), `contextual` (30d), `deep` (90d), `full`. Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
+| `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts, with edge types and cumulative confidence |
 | `search_by_concept` | Filter by ontology type: skill, preference, goal, fact, opinion, experience, achievement, action |
-| `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS |
+| `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS — LLM-free |
 | `get_memory_graph` | Return memory as a graph of nodes and edges |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
@@ -435,6 +482,15 @@ make docker-down    # Stop HelixDB container
 make test-e2e-hive  # Hive cross-user E2E (HelixDB + LLM + embeddings; set HELIX_* like MCP)
 ```
 
+**Read-path E2E:** two suites guard retrieval quality and the LLM-free property — run them with a deliberately dead LLM key:
+
+```bash
+HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt HELIX_LLM_API_KEY=dead-key \
+  cargo test -p helixir --test read_path_e2e -- --ignored --nocapture   # library level
+HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt HELIX_LLM_API_KEY=dead-key \
+  cargo test -p helixir --test mcp_read_e2e  -- --ignored --nocapture   # real MCP binary over stdio
+```
+
 **Hive E2E:** `make test-e2e-hive` runs `hive_cross_user_collective_link_e2e` (ignored by default in `cargo test`). It adds the same fact for two `user_id` values and asserts collective `user_count ≥ 2` on the first memory. LLM decisions can be flaky—retry if needed.
 
 ### Project structure
@@ -446,6 +502,7 @@ helixir-rs/
       bin/
         helixir_mcp.rs          # MCP server entry point
         helixir_deploy.rs       # Schema deployment CLI
+        helixir_bench.rs        # Latency bench + live probes (--chain/--add/--connect-probe)
       core/                     # Config, client, search modes
       db/                       # HelixDB client
       llm/                      # LLM providers, extractor, decision engine
@@ -456,8 +513,10 @@ helixir-rs/
         fast_think/             # Working memory (petgraph-based)
     schema/
       schema.hx                 # Node/edge definitions (15 nodes, 33 edges)
-      queries.hx                # HQL queries (100+)
-    diagrams/                   # Architecture diagrams (D2 + PNG)
+      queries.hx                # HQL queries (120)
+    tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
+    memory-charter.md           # Write-path constitution: what may never be decided silently
+    doc/                        # Engineering docs (architecture, dataflow, design rationale)
     Dockerfile
     docker-compose.yml
 ```

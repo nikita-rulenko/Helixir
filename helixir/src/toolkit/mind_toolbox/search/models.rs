@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -8,7 +8,13 @@ pub enum SearchMethod {
     Bm25,
     Hybrid,
     SmartGraphV2,
+    // <unused reason="OntoSearch backend was disabled together with `search/onto_search/` (issue #26).
+    //                Variant kept to avoid breaking serde-deserialised history rows that may still
+    //                carry `\"method\": \"OntoSearch\"`. Re-enable only when the onto_search pipeline
+    //                is wired back into SearchEngine.">
+    #[allow(dead_code)]
     OntoSearch,
+    // </unused>
 }
 
 impl fmt::Display for SearchMethod {

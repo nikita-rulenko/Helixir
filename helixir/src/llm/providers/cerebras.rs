@@ -1,5 +1,3 @@
-
-
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -45,7 +43,6 @@ struct CerebrasUsage {
     total_tokens: u32,
 }
 
-
 pub struct CerebrasProvider {
     api_key: String,
     model: String,
@@ -54,7 +51,6 @@ pub struct CerebrasProvider {
 }
 
 impl CerebrasProvider {
-    
     pub fn new(api_key: impl Into<String>, model: impl Into<String>, temperature: f64) -> Self {
         let model = model.into();
         info!("Cerebras provider initialized (model={})", model);

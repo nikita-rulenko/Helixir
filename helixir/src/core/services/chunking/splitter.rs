@@ -1,21 +1,16 @@
-
-
 use async_trait::async_trait;
 use thiserror::Error;
 
-
 #[derive(Debug, Clone)]
 pub struct TextChunk {
-    
     pub text: String,
-    
+
     pub token_count: usize,
-    
+
     pub start_pos: usize,
-    
+
     pub end_pos: usize,
 }
-
 
 #[derive(Error, Debug)]
 pub enum SplitterError {
@@ -25,16 +20,12 @@ pub enum SplitterError {
     SplitFailed(String),
 }
 
-
 #[async_trait]
 pub trait ContentSplitter: Send + Sync {
-    
     async fn split(&self, content: &str) -> Result<Vec<TextChunk>, SplitterError>;
 
-    
     fn name(&self) -> &'static str;
 }
-
 
 pub struct SentenceSplitter {
     chunk_size: usize,
@@ -51,15 +42,12 @@ impl SentenceSplitter {
         }
     }
 
-    
     fn estimate_tokens(text: &str) -> usize {
         let words = text.split_whitespace().count();
         (words as f64 / 0.75) as usize
     }
 
-    
     fn split_sentences(text: &str) -> Vec<&str> {
-        
         let mut sentences = Vec::new();
         let mut start = 0;
 
@@ -74,7 +62,6 @@ impl SentenceSplitter {
             }
         }
 
-        
         let remaining = text[start..].trim();
         if !remaining.is_empty() {
             sentences.push(remaining);
@@ -102,11 +89,9 @@ impl ContentSplitter for SentenceSplitter {
         for sentence in sentences {
             let sentence_tokens = Self::estimate_tokens(sentence);
 
-            
             if current_tokens + sentence_tokens > self.chunk_size
                 && sentence_count >= self.min_sentences
             {
-                
                 let chunk_end = chunk_start + current_chunk.len();
                 chunks.push(TextChunk {
                     text: current_chunk.trim().to_string(),
@@ -115,17 +100,13 @@ impl ContentSplitter for SentenceSplitter {
                     end_pos: chunk_end,
                 });
 
-                
-                let overlap_start = current_chunk
-                    .len()
-                    .saturating_sub(self.overlap * 4); 
+                let overlap_start = current_chunk.len().saturating_sub(self.overlap * 4);
                 current_chunk = current_chunk[overlap_start..].to_string();
                 current_tokens = Self::estimate_tokens(&current_chunk);
                 chunk_start = chunk_end - (current_chunk.len());
                 sentence_count = 0;
             }
 
-            
             if !current_chunk.is_empty() {
                 current_chunk.push(' ');
             }
@@ -134,7 +115,6 @@ impl ContentSplitter for SentenceSplitter {
             sentence_count += 1;
         }
 
-        
         if !current_chunk.is_empty() {
             let chunk_end = chunk_start + current_chunk.len();
             chunks.push(TextChunk {
@@ -153,9 +133,11 @@ impl ContentSplitter for SentenceSplitter {
     }
 }
 
-
 pub struct SemanticSplitter {
     chunk_size: usize,
+    // Threshold is captured on construction so the future semantic implementation
+    // (embedding-aware split) can read it without breaking the constructor signature.
+    #[allow(dead_code)]
     similarity_threshold: f64,
 }
 
@@ -171,8 +153,6 @@ impl SemanticSplitter {
 #[async_trait]
 impl ContentSplitter for SemanticSplitter {
     async fn split(&self, content: &str) -> Result<Vec<TextChunk>, SplitterError> {
-        
-        
         let sentence_splitter = SentenceSplitter::new(self.chunk_size, 128, 2);
         sentence_splitter.split(content).await
     }
@@ -181,4 +161,3 @@ impl ContentSplitter for SemanticSplitter {
         "SemanticSplitter"
     }
 }
-

@@ -11,10 +11,30 @@
 
 set -euo pipefail
 
-VERSION="0.3.1"
+# Resolved from $INSTALL_DIR/helixir/Cargo.toml after the repo is cloned/updated.
+# Until then the banner shows "(detecting)" — see detect_version() below.
+# The single source of truth for the version is helixir/Cargo.toml.
+VERSION="(detecting)"
 REPO="https://github.com/nikita-rulenko/Helixir.git"
 DEFAULT_DIR="$HOME/.helixir"
 HELIX_PORT=6969
+
+detect_version() {
+    local cargo_toml="$1/helixir/Cargo.toml"
+    if [ ! -f "$cargo_toml" ]; then
+        warn "Cannot read $cargo_toml — keeping VERSION=$VERSION"
+        return
+    fi
+    # Take the first `version = "X.Y.Z"` line in the [package] table.
+    # `head -n 1` guards against any nested table also using `version =`.
+    VERSION=$(grep -E '^version[[:space:]]*=' "$cargo_toml" \
+              | head -n 1 \
+              | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        warn "Failed to parse version from $cargo_toml"
+        VERSION="unknown"
+    fi
+}
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -53,7 +73,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo ""
-echo -e "${BOLD}  Helixir Installer v${VERSION}${NC}"
+echo -e "${BOLD}  Helixir Installer${NC}"
 echo -e "  Graph-based persistent memory for LLM agents"
 echo ""
 
@@ -121,6 +141,9 @@ else
     git clone --quiet "$REPO" "$INSTALL_DIR"
     ok "Cloned to $INSTALL_DIR"
 fi
+
+detect_version "$INSTALL_DIR"
+ok "Helixir version: v${VERSION}"
 
 # ── Step 4: Build from source ────────────────────────────────────────────────
 

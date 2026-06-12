@@ -62,11 +62,7 @@ impl Concept {
 }
 
 impl ConceptRelation {
-    pub fn new(
-        from_concept: String,
-        to_concept: String,
-        relation_type: RelationType,
-    ) -> Self {
+    pub fn new(from_concept: String, to_concept: String, relation_type: RelationType) -> Self {
         Self {
             from_concept,
             to_concept,

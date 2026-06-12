@@ -1,8 +1,8 @@
 use lru::LruCache;
-use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicU64, Ordering};
-use sha2::{Sha256, Digest};
 use parking_lot::Mutex;
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 pub struct SearchCache<T> {
     cache: Mutex<LruCache<String, (T, Instant)>>,
@@ -68,9 +68,13 @@ impl<T> SearchCache<T> {
         let hits = self.hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;
-        let hit_rate = if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+        let hit_rate = if total > 0 {
+            hits as f64 / total as f64
+        } else {
+            0.0
+        };
         let cache = self.cache.lock();
-        
+
         CacheStats {
             hits,
             misses,

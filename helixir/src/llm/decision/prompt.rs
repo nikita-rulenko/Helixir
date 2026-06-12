@@ -1,7 +1,4 @@
-
-
 use super::models::SimilarMemory;
-
 
 pub const SYSTEM_PROMPT: &str = r#"You are a memory management expert. Analyze the new memory and similar existing memories to decide what operation to perform.
 
@@ -14,7 +11,6 @@ Your goal is to:
 
 Always respond with valid JSON."#;
 
-
 pub fn build_decision_prompt(
     new_memory: &str,
     similar_memories: &[SimilarMemory],
@@ -26,7 +22,10 @@ pub fn build_decision_prompt(
         .iter()
         .map(|m| {
             let owner_info = if m.is_cross_user {
-                format!("  Owner: {} (DIFFERENT USER)\n", m.user_id.as_deref().unwrap_or("unknown"))
+                format!(
+                    "  Owner: {} (DIFFERENT USER)\n",
+                    m.user_id.as_deref().unwrap_or("unknown")
+                )
             } else {
                 String::new()
             };
@@ -116,6 +115,10 @@ Decide what to do with the new memory. Choose ONE operation:
 
 5. **SUPERSEDE** - Replace old memory with evolved version
    - Use when: Preference/opinion changed over time
+   - Use when: Both memories answer the SAME mutable question (current
+     state, status, version, plan, "next step") and the new one reports a
+     LATER state — even if worded very differently. "Stage X is next" vs
+     "stage X is complete" is SUPERSEDE, never ADD.
    - Set `supersedes_memory_id` to old memory ID
 
 6. **CONTRADICT** - Mark logical conflict between memories
@@ -145,3 +148,44 @@ Decide what to do with the new memory. Choose ONE operation:
     )
 }
 
+/// Batch variant (#32 W1): one prompt deciding every gray-zone fact of an
+/// add_memory call at once. Personal-phase only (no cross-user operations).
+/// Kept compact on purpose — small local models handle short schemas better.
+pub fn build_batch_decision_prompt(
+    items: &[(usize, &str, &[SimilarMemory])],
+    user_id: &str,
+) -> String {
+    let items_str = items
+        .iter()
+        .map(|(i, new_memory, candidates)| {
+            let cands = candidates
+                .iter()
+                .map(|m| {
+                    format!(
+                        "    - id: {} | sim: {:.2} | text: {}",
+                        m.id, m.score, m.content
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("ITEM {i}:\n  new: \"{new_memory}\"\n  candidates:\n{cands}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    format!(
+        r#"Decide one memory operation for EACH item below. Items are independent.
+
+Operations: ADD (new info) | UPDATE (extends an existing memory; provide merged_content about ONE topic, no contradictions) | NOOP (duplicate) | SUPERSEDE (replaces an outdated version; set supersedes_memory_id) | CONTRADICT (conflicts but both may be valid; set contradicts_memory_id) | DELETE (old one is plainly wrong; set target_memory_id).
+
+Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND whenever both memories answer the same mutable question (state/status/plan) with the new one reporting a later state — even if worded differently; UPDATE for added detail; NOOP for duplicates; never merge unrelated topics.
+
+**User ID:** {user_id}
+
+{items_str}
+
+Respond with JSON only:
+{{"decisions":[{{"i": <item number>, "operation": "ADD|UPDATE|NOOP|SUPERSEDE|CONTRADICT|DELETE", "target_memory_id": null, "confidence": 0-100, "reasoning": "...", "merged_content": null, "supersedes_memory_id": null, "contradicts_memory_id": null}}]}}
+Every item number must appear exactly once."#
+    )
+}

@@ -1,22 +1,18 @@
-
-
-pub mod models;
+pub mod context;
 pub mod crud;
 pub mod evolution;
-pub mod context;
+pub mod models;
 pub mod retrieval;
 
-
-pub use models::{Memory, Entity, EntityType, MemoryStats, Context, MemoryBuilder};
-pub use crud::{MemoryCrud, CrudError};
-pub use evolution::{MemoryEvolution, EvolutionError, EvolutionResult};
-pub use context::{ContextManager, ContextDef, ContextError};
-pub use retrieval::{RetrievalManager, RetrievalResult, RetrievalDepth, RetrievalError};
+pub use context::{ContextDef, ContextError, ContextManager};
+pub use crud::{CrudError, MemoryCrud};
+pub use evolution::{EvolutionError, EvolutionResult, MemoryEvolution};
+pub use models::{Context, Entity, EntityType, Memory, MemoryBuilder, MemoryStats};
+pub use retrieval::{RetrievalDepth, RetrievalError, RetrievalManager, RetrievalResult};
 
 use crate::db::HelixClient;
-use std::sync::Arc;
 use crate::llm::embeddings::EmbeddingGenerator;
-
+use std::sync::Arc;
 
 pub struct MemoryManager {
     pub crud: MemoryCrud,
@@ -40,7 +36,18 @@ impl MemoryManager {
         context_tags: Option<String>,
         metadata: Option<String>,
     ) -> Result<Memory, CrudError> {
-        self.crud.add_memory(content, user_id, memory_type, certainty, importance, source, context_tags, metadata).await
+        self.crud
+            .add_memory(
+                content,
+                user_id,
+                memory_type,
+                certainty,
+                importance,
+                source,
+                context_tags,
+                metadata,
+            )
+            .await
     }
 
     pub async fn get_memory(&self, memory_id: &str) -> Result<Option<Memory>, CrudError> {

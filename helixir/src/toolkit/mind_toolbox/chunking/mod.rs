@@ -1,8 +1,5 @@
-
-
 pub mod manager;
 
 pub use manager::{
-    Chunk, ChunkingManager, ChunkingResult, ChunkingError,
-    DEFAULT_THRESHOLD, DEFAULT_CHUNK_SIZE,
+    Chunk, ChunkingError, ChunkingManager, ChunkingResult, DEFAULT_CHUNK_SIZE, DEFAULT_THRESHOLD,
 };

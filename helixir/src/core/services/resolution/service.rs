@@ -1,32 +1,26 @@
-
-
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use super::error::ResolutionError;
 use crate::db::HelixClient;
-
 
 struct CacheEntry {
     uuid: Uuid,
     inserted_at: std::time::Instant,
 }
 
-
 pub struct IDResolutionService {
-    
     client: Arc<HelixClient>,
-    
+
     cache: RwLock<lru::LruCache<String, CacheEntry>>,
-    
+
     ttl: Duration,
-    
+
     stats: RwLock<ResolutionStats>,
 }
-
 
 #[derive(Debug, Default, Clone)]
 pub struct ResolutionStats {
@@ -37,8 +31,6 @@ pub struct ResolutionStats {
 }
 
 impl IDResolutionService {
-    
-    
     pub fn new(client: Arc<HelixClient>, max_size: usize, ttl_secs: u64) -> Self {
         info!(
             "IDResolutionService initialized: max_size={}, ttl={}s",
@@ -48,36 +40,32 @@ impl IDResolutionService {
         Self {
             client,
             cache: RwLock::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(max_size).unwrap_or(std::num::NonZeroUsize::new(10000).unwrap())
+                std::num::NonZeroUsize::new(max_size)
+                    .unwrap_or(std::num::NonZeroUsize::new(10000).unwrap()),
             )),
             ttl: Duration::from_secs(ttl_secs),
             stats: RwLock::new(ResolutionStats::default()),
         }
     }
 
-    
     pub async fn resolve(&self, memory_id: &str) -> Result<Uuid, ResolutionError> {
         debug!("Resolving ID: {}", memory_id);
 
-        
         {
             let mut cache = self.cache.write().await;
             if let Some(entry) = cache.get(memory_id) {
-                
                 if entry.inserted_at.elapsed() < self.ttl {
                     let mut stats = self.stats.write().await;
                     stats.hits += 1;
                     debug!("Cache HIT for {}", memory_id);
                     return Ok(entry.uuid);
                 } else {
-                    
                     cache.pop(memory_id);
                     debug!("Cache entry expired for {}", memory_id);
                 }
             }
         }
 
-        
         {
             let mut stats = self.stats.write().await;
             stats.misses += 1;
@@ -86,7 +74,6 @@ impl IDResolutionService {
 
         let uuid = self.query_db(memory_id).await?;
 
-        
         {
             let mut cache = self.cache.write().await;
             cache.put(
@@ -102,7 +89,6 @@ impl IDResolutionService {
         Ok(uuid)
     }
 
-    
     pub async fn resolve_many(
         &self,
         memory_ids: &[String],
@@ -143,7 +129,6 @@ impl IDResolutionService {
         resolved
     }
 
-    
     async fn query_db(&self, memory_id: &str) -> Result<Uuid, ResolutionError> {
         debug!("Querying DB for {}", memory_id);
 
@@ -170,7 +155,6 @@ impl IDResolutionService {
         Uuid::parse_str(&id_str).map_err(|e| ResolutionError::InvalidUuid(e.to_string()))
     }
 
-    
     pub async fn invalidate(&self, memory_id: &str) {
         let mut cache = self.cache.write().await;
         if cache.pop(memory_id).is_some() {
@@ -180,14 +164,12 @@ impl IDResolutionService {
         }
     }
 
-    
     pub async fn clear(&self) {
         let mut cache = self.cache.write().await;
         cache.clear();
         info!("Cache cleared");
     }
 
-    
     pub async fn get_stats(&self) -> ResolutionStats {
         self.stats.read().await.clone()
     }

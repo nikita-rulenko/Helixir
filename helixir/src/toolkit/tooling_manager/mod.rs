@@ -5,6 +5,7 @@ mod graph;
 pub(crate) mod helpers;
 mod reasoning;
 mod search;
+pub mod seeds;
 pub mod types;
 
 pub use types::*;
@@ -16,10 +17,10 @@ use tracing::{info, warn};
 use crate::core::config::HelixirConfig;
 use crate::core::events::EventBus;
 use crate::db::HelixClient;
+use crate::llm::EmbeddingGenerator;
 use crate::llm::decision::LLMDecisionEngine;
 use crate::llm::extractor::LlmExtractor;
 use crate::llm::providers::base::LlmProvider;
-use crate::llm::EmbeddingGenerator;
 use crate::toolkit::mind_toolbox::chunking::ChunkingManager;
 use crate::toolkit::mind_toolbox::entity::EntityManager;
 use crate::toolkit::mind_toolbox::ontology::OntologyManager;
@@ -58,17 +59,11 @@ impl ToolingManager {
             thresholds.similarity_threshold,
             thresholds.exact_duplicate_score,
         );
-        let chunking_manager = ChunkingManager::new(
-            Arc::clone(&db),
-            Some(Arc::clone(&embedder)),
-        );
+        let chunking_manager = ChunkingManager::new(Arc::clone(&db), Some(Arc::clone(&embedder)));
         let entity_manager = EntityManager::new(Arc::clone(&db), 1000);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));
-        let reasoning_engine = ReasoningEngine::new(
-            Arc::clone(&db),
-            Some(Arc::clone(&llm_provider)),
-            500,
-        );
+        let reasoning_engine =
+            ReasoningEngine::new(Arc::clone(&db), Some(Arc::clone(&llm_provider)), 500);
         let search_engine = SearchEngine::new(
             Arc::clone(&db),
             Arc::clone(&embedder),
@@ -114,6 +109,125 @@ impl ToolingManager {
             *self.ontology_manager.write() = ontology_manager;
             info!("Ontology loaded successfully");
         }
+
+        self.verify_algo_opt_deployment().await;
+        self.maybe_warm_embed_cache().await;
+        self.maybe_seed_system_memories().await;
         Ok(())
     }
+
+    /// algo-opt R2: optionally pre-embed the whole corpus so re-rank phases
+    /// never pay an ollama round-trip at query time. Opt in with
+    /// `HELIXIR_EMBED_CACHE_WARMUP=1` (background) or `=blocking` (await before
+    /// serving — for short-lived processes like benches). Pairs with
+    /// `HELIXIR_EMBED_CACHE_PATH`, which persists the warmed entries across
+    /// restarts — after the first warm run the startup cost is a file read.
+    async fn maybe_warm_embed_cache(&self) {
+        let mode = std::env::var("HELIXIR_EMBED_CACHE_WARMUP").unwrap_or_default();
+        let mode = mode.trim().to_ascii_lowercase();
+        if mode.is_empty() || mode == "0" || mode == "false" {
+            return;
+        }
+
+        let db = Arc::clone(&self.db);
+        let embedder = Arc::clone(&self.embedder);
+        let task = warm_embed_cache(db, embedder);
+        if mode == "blocking" {
+            task.await;
+        } else {
+            tokio::spawn(task);
+        }
+    }
+    /// Upgrade guard (#21): under `algo_opt` the read path needs HQL queries
+    /// that older deployments don't have. Each call site falls back
+    /// gracefully, but silently — this startup probe turns a misdeployed
+    /// instance into one loud, actionable warning instead.
+    async fn verify_algo_opt_deployment(&self) {
+        let profile = crate::core::RetrievalProfile::cached();
+        if !matches!(profile, crate::core::RetrievalProfile::AlgoOpt) {
+            return;
+        }
+
+        let mut missing: Vec<&str> = Vec::new();
+
+        let probe = serde_json::json!({ "memory_ids": ["helixir-startup-probe"] });
+        if self
+            .db
+            .execute_query::<serde_json::Value, _>("getConnectionsLevelBatch", &probe)
+            .await
+            .is_err()
+        {
+            missing.push("getConnectionsLevelBatch (batched graph expansion)");
+        }
+
+        let probe = serde_json::json!({ "text": "helixir-startup-probe", "limit": 1 });
+        match self
+            .db
+            .execute_query::<serde_json::Value, _>("searchMemoriesByBm25", &probe)
+            .await
+        {
+            Err(_) => missing.push("searchMemoriesByBm25 (BM25 hybrid)"),
+            Ok(_) => {}
+        }
+
+        // smartVectorSearchWithChunksCutoff ships in the same schema as the
+        // two queries above — probing it would need a correctly-dimensioned
+        // vector, so the two probes above stand in for the whole deployment.
+
+        if missing.is_empty() {
+            info!("algo_opt deployment check: all required HQL queries present");
+        } else {
+            warn!(
+                "algo_opt is active but this HelixDB instance is missing: {}. \
+                 Searches will silently fall back to slower/legacy paths. \
+                 Fix: deploy the current schema (make deploy-schema / helix push) \
+                 and ensure bm25 = true in the instance config — see UPGRADING.md.",
+                missing.join("; ")
+            );
+        }
+    }
+}
+
+/// Fetch every memory's content and run it through the (persistent) embedding
+/// cache. See [`ToolingManager::maybe_warm_embed_cache`].
+async fn warm_embed_cache(db: Arc<HelixClient>, embedder: Arc<EmbeddingGenerator>) {
+    #[derive(serde::Deserialize)]
+    struct MemoriesResponse {
+        #[serde(default)]
+        memories: Vec<MemoryContent>,
+    }
+    #[derive(serde::Deserialize)]
+    struct MemoryContent {
+        #[serde(default)]
+        content: String,
+    }
+
+    let params = serde_json::json!({ "limit": 100_000 });
+    let response: MemoriesResponse = match db.execute_query("getRecentMemories", &params).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Embed cache warmup: corpus fetch failed: {}", e);
+            return;
+        }
+    };
+
+    let contents: Vec<&str> = response
+        .memories
+        .iter()
+        .map(|m| m.content.as_str())
+        .filter(|c| !c.is_empty())
+        .collect();
+    let total = contents.len();
+    let started = std::time::Instant::now();
+    for chunk in contents.chunks(64) {
+        if let Err(e) = embedder.generate_batch(chunk, true).await {
+            warn!("Embed cache warmup: batch failed: {}", e);
+            return;
+        }
+    }
+    info!(
+        "Embed cache warmup: {} memories embedded in {}ms",
+        total,
+        started.elapsed().as_millis()
+    );
 }

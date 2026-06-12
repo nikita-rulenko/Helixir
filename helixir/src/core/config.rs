@@ -1,7 +1,4 @@
-
-
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchThresholds {
@@ -38,10 +35,8 @@ impl Default for SearchThresholds {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixirConfig {
-    
     pub host: String,
     pub port: u16,
     pub instance: String,
@@ -49,34 +44,28 @@ pub struct HelixirConfig {
     pub timeout: u64,
     pub max_retries: u32,
 
-    
     pub llm_provider: String,
     pub llm_model: String,
     pub llm_api_key: Option<String>,
     pub llm_base_url: Option<String>,
     pub llm_temperature: f32,
 
-    
     pub llm_fallback_enabled: bool,
     pub llm_fallback_url: String,
     pub llm_fallback_model: String,
 
-    
     pub embedding_provider: String,
     pub embedding_model: String,
     pub embedding_url: String,
     pub embedding_api_key: Option<String>,
 
-    
     pub embedding_fallback_enabled: bool,
     pub embedding_fallback_url: String,
     pub embedding_fallback_model: String,
 
-    
     pub default_certainty: u8,
     pub default_importance: u8,
 
-    
     pub default_search_limit: usize,
     pub default_search_mode: String,
     pub vector_search_enabled: bool,
@@ -89,7 +78,6 @@ pub struct HelixirConfig {
 }
 
 impl HelixirConfig {
-    
     pub fn new(host: &str, port: u16) -> Self {
         Self {
             host: host.to_string(),
@@ -133,12 +121,10 @@ impl HelixirConfig {
         }
     }
 
-    
     pub fn base_url(&self) -> String {
         format!("http://{}:{}", self.host, self.port)
     }
 
-    
     pub fn from_env() -> Self {
         let mut config = Self::new(
             &std::env::var("HELIX_HOST").unwrap_or_else(|_| "localhost".to_string()),
@@ -202,7 +188,10 @@ mod tests {
         }
 
         let config = HelixirConfig::from_env();
-        assert_eq!(config.llm_base_url.as_deref(), Some("http://localhost:11434"));
+        assert_eq!(
+            config.llm_base_url.as_deref(),
+            Some("http://localhost:11434")
+        );
 
         unsafe {
             std::env::remove_var("HELIX_LLM_BASE_URL");
@@ -214,5 +203,20 @@ mod tests {
         let config = HelixirConfig::default();
         assert!(config.llm_base_url.is_none());
     }
-}
 
+    #[test]
+    fn test_from_env_reads_embedding_url() {
+        // Set a recognizable URL different from the ollama default so the
+        // assertion catches a regression where embedding_url is shadowed.
+        unsafe {
+            std::env::set_var("HELIX_EMBEDDING_URL", "https://openrouter.ai/api/v1");
+        }
+
+        let config = HelixirConfig::from_env();
+        assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
+
+        unsafe {
+            std::env::remove_var("HELIX_EMBEDDING_URL");
+        }
+    }
+}

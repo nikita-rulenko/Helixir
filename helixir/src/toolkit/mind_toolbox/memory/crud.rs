@@ -1,13 +1,13 @@
-use chrono::{DateTime, Utc};
 use crate::db::HelixClient;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::llm::embeddings::EmbeddingGenerator;
 use super::models::Memory;
+use crate::llm::embeddings::EmbeddingGenerator;
 
 #[derive(Error, Debug)]
 pub enum CrudError {
@@ -48,6 +48,7 @@ struct AddMemoryOutput {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // `memory_id` deserialized for diagnostics on schema mismatch.
 struct MemoryNode {
     id: String,
     memory_id: String,
@@ -106,9 +107,16 @@ impl MemoryCrud {
         context_tags: Option<String>,
         metadata: Option<String>,
     ) -> Result<Memory, CrudError> {
-        let memory_id = format!("mem_{}", Uuid::new_v4().to_string().chars().take(12).collect::<String>());
+        let memory_id = format!(
+            "mem_{}",
+            Uuid::new_v4()
+                .to_string()
+                .chars()
+                .take(12)
+                .collect::<String>()
+        );
         let now = Utc::now().to_rfc3339();
-        
+
         let input = AddMemoryInput {
             memory_id: memory_id.clone(),
             user_id: user_id.clone(),
@@ -125,7 +133,7 @@ impl MemoryCrud {
 
         let result: AddMemoryOutput = self.client.execute_query("addMemory", &input).await?;
         let internal_id = result.memory.id;
-        
+
         if internal_id.is_empty() {
             return Err(CrudError::MissingInternalId);
         }
@@ -141,7 +149,11 @@ impl MemoryCrud {
                         embedding_model: embedder.model(),
                         created_at: now.clone(),
                     };
-                    if let Err(e) = self.client.execute_query::<(), _>("addMemoryEmbedding", &embed_input).await {
+                    if let Err(e) = self
+                        .client
+                        .execute_query::<(), _>("addMemoryEmbedding", &embed_input)
+                        .await
+                    {
                         warn!("Failed to create embedding for {}: {}", memory_id, e);
                     } else {
                         debug!("Embedding created for {}", memory_id);
@@ -151,9 +163,24 @@ impl MemoryCrud {
             }
         }
 
-        if self.client.execute_query::<serde_json::Value, _>("getUser", &serde_json::json!({"user_id": user_id.clone()})).await.is_err() {
-            let user_input = AddUserInput { user_id: user_id.clone(), name: user_id.clone() };
-            if let Err(e) = self.client.execute_query::<(), _>("addUser", &user_input).await {
+        if self
+            .client
+            .execute_query::<serde_json::Value, _>(
+                "getUser",
+                &serde_json::json!({"user_id": user_id.clone()}),
+            )
+            .await
+            .is_err()
+        {
+            let user_input = AddUserInput {
+                user_id: user_id.clone(),
+                name: user_id.clone(),
+            };
+            if let Err(e) = self
+                .client
+                .execute_query::<(), _>("addUser", &user_input)
+                .await
+            {
                 warn!("Failed to create user {}: {}", user_id, e);
             } else {
                 debug!("Created user {}", user_id);
@@ -165,7 +192,11 @@ impl MemoryCrud {
             memory_id: memory_id.clone(),
             context: "created".to_string(),
         };
-        if let Err(e) = self.client.execute_query::<(), _>("linkUserToMemory", &link_input).await {
+        if let Err(e) = self
+            .client
+            .execute_query::<(), _>("linkUserToMemory", &link_input)
+            .await
+        {
             warn!("Failed to link memory to user: {}", e);
         } else {
             debug!("Linked memory {} to user", memory_id);
@@ -192,14 +223,16 @@ impl MemoryCrud {
             deleted_by: String::new(),
             concepts: Vec::new(),
         };
-        
+
         Ok(memory)
     }
 
     pub async fn get_memory(&self, memory_id: &str) -> Result<Option<Memory>, CrudError> {
-        let input = GetMemoryInput { memory_id: memory_id.to_string() };
+        let input = GetMemoryInput {
+            memory_id: memory_id.to_string(),
+        };
         let result: GetMemoryOutput = self.client.execute_query("getMemory", &input).await?;
-        
+
         if let Some(data) = result.memory {
             let memory: Memory = serde_json::from_value(data)?;
             Ok(Some(memory))
@@ -208,7 +241,10 @@ impl MemoryCrud {
         }
     }
 
-    pub async fn get_memory_by_internal_id(&self, internal_id: &str) -> Result<Option<Memory>, CrudError> {
+    pub async fn get_memory_by_internal_id(
+        &self,
+        _internal_id: &str,
+    ) -> Result<Option<Memory>, CrudError> {
         warn!("get_memory_by_internal_id not implemented - requires HelixDB query by internal ID");
         Ok(None)
     }

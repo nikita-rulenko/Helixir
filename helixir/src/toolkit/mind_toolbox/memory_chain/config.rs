@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainDirection {
-    Forward,   
-    Backward,  
-    Both,      
+    Forward,
+    Backward,
+    Both,
 }
 
 impl Default for ChainDirection {
@@ -14,18 +13,16 @@ impl Default for ChainDirection {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryChainConfig {
-    
     pub max_depth: u32,
-    
+
     pub direction: ChainDirection,
-    
+
     pub relation_types: Vec<String>,
-    
+
     pub min_confidence: f64,
-    
+
     pub include_contradictions: bool,
 }
 
@@ -46,8 +43,6 @@ impl Default for MemoryChainConfig {
 }
 
 impl MemoryChainConfig {
-    
-    
     pub fn causal_only() -> Self {
         Self {
             max_depth: 5,
@@ -57,8 +52,7 @@ impl MemoryChainConfig {
             include_contradictions: false,
         }
     }
-    
-    
+
     pub fn implications_only() -> Self {
         Self {
             max_depth: 5,
@@ -68,8 +62,7 @@ impl MemoryChainConfig {
             include_contradictions: false,
         }
     }
-    
-    
+
     pub fn deep_context() -> Self {
         Self {
             max_depth: 7,

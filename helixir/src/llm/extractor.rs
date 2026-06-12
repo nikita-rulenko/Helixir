@@ -1,39 +1,32 @@
-
-
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use super::providers::base::{LlmProvider, LlmProviderError};
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionResult {
-    
     pub memories: Vec<ExtractedMemory>,
-    
+
     pub entities: Vec<ExtractedEntity>,
-    
+
     pub relations: Vec<ExtractedRelation>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedMemory {
-    
     pub text: String,
-    
+
     pub memory_type: String,
-    
+
     pub certainty: i32,
-    
+
     pub importance: i32,
-    
+
     pub entities: Vec<String>,
 
     #[serde(default)]
     pub context: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntityRelation {
@@ -45,18 +38,16 @@ pub struct ExtractedEntityRelation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntity {
-    
     pub id: String,
-    
+
     pub name: String,
-    
+
     #[serde(rename = "type")]
     pub entity_type: String,
 
     #[serde(default)]
     pub relations: Option<Vec<ExtractedEntityRelation>>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedRelation {
@@ -68,36 +59,39 @@ pub struct ExtractedRelation {
     pub from_memory_content: String,
     #[serde(default)]
     pub to_memory_content: String,
-    
+
     pub relation_type: String,
-    
+
     #[serde(default = "default_strength")]
     pub strength: i32,
-    
+
     #[serde(default = "default_confidence")]
     pub confidence: i32,
-    
+
     #[serde(default)]
     pub explanation: String,
 }
 
-fn default_strength() -> i32 { 80 }
-fn default_strength_i64() -> i64 { 80 }
-fn default_confidence() -> i32 { 80 }
-
+fn default_strength() -> i32 {
+    80
+}
+fn default_strength_i64() -> i64 {
+    80
+}
+fn default_confidence() -> i32 {
+    80
+}
 
 pub struct LlmExtractor<P: LlmProvider> {
     provider: P,
 }
 
 impl<P: LlmProvider> LlmExtractor<P> {
-    
     #[must_use]
     pub fn new(provider: P) -> Self {
         Self { provider }
     }
 
-    
     pub async fn extract(
         &self,
         text: &str,
@@ -108,8 +102,7 @@ impl<P: LlmProvider> LlmExtractor<P> {
         let preview: String = text.chars().take(50).collect();
         info!(
             "Extracting memories from text: {}... (user={})",
-            preview,
-            user_id
+            preview, user_id
         );
 
         let system_prompt = self.build_system_prompt(extract_entities, extract_relations);
@@ -136,30 +129,38 @@ impl<P: LlmProvider> LlmExtractor<P> {
                     Err(e) => format!("parse error: {}", e),
                     _ => unreachable!(),
                 };
-                warn!("Extraction attempt 1 failed ({}), retrying with stricter prompt", first_err);
+                warn!(
+                    "Extraction attempt 1 failed ({}), retrying with stricter prompt",
+                    first_err
+                );
 
                 let retry_prompt = format!(
                     "{}\n\nIMPORTANT: Your previous response was invalid ({}). Output ONLY valid JSON matching the schema. No markdown fences, no explanation text outside JSON.",
                     user_prompt, first_err
                 );
 
-                match self.provider.generate(&system_prompt, &retry_prompt, Some("json_object")).await {
-                    Ok((retry_response, _)) => {
-                        match self.try_parse_extraction(&retry_response) {
-                            Ok(result) if !result.memories.is_empty() => {
-                                info!("Extraction retry succeeded: {} memories", result.memories.len());
-                                Ok(result)
-                            }
-                            Ok(_) => {
-                                warn!("Extraction retry also returned 0 memories, using fallback");
-                                Ok(self.fallback_extraction(text))
-                            }
-                            Err(e) => {
-                                warn!("Extraction retry parse failed: {}, using fallback", e);
-                                Ok(self.fallback_extraction(text))
-                            }
+                match self
+                    .provider
+                    .generate(&system_prompt, &retry_prompt, Some("json_object"))
+                    .await
+                {
+                    Ok((retry_response, _)) => match self.try_parse_extraction(&retry_response) {
+                        Ok(result) if !result.memories.is_empty() => {
+                            info!(
+                                "Extraction retry succeeded: {} memories",
+                                result.memories.len()
+                            );
+                            Ok(result)
                         }
-                    }
+                        Ok(_) => {
+                            warn!("Extraction retry also returned 0 memories, using fallback");
+                            Ok(self.fallback_extraction(text))
+                        }
+                        Err(e) => {
+                            warn!("Extraction retry parse failed: {}, using fallback", e);
+                            Ok(self.fallback_extraction(text))
+                        }
+                    },
                     Err(e) => {
                         warn!("Extraction retry LLM call failed: {}, using fallback", e);
                         Ok(self.fallback_extraction(text))
@@ -198,7 +199,6 @@ impl<P: LlmProvider> LlmExtractor<P> {
         }
     }
 
-    
     fn build_system_prompt(&self, extract_entities: bool, extract_relations: bool) -> String {
         let mut prompt = String::from(
             r#"You are a memory extraction system. Analyze the text and extract structured information.
@@ -269,8 +269,10 @@ For each entity, optionally include "relations" — connections to OTHER entitie
 - Omit "relations" if no inter-entity relationships are evident"#,
             );
         } else {
-            prompt.push_str(r#",
-  "entities": []"#);
+            prompt.push_str(
+                r#",
+  "entities": []"#,
+            );
         }
 
         if extract_relations {
@@ -306,8 +308,10 @@ CRITICAL relation extraction rules:
 - Even for 2 memories, check if there is a logical connection between them.
 - Use from_memory_index and to_memory_index (0-based indices into the memories array)."#);
         } else {
-            prompt.push_str(r#",
-  "relations": []"#);
+            prompt.push_str(
+                r#",
+  "relations": []"#,
+            );
         }
 
         prompt.push_str(r#"

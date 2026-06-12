@@ -1,7 +1,4 @@
-
-
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -10,18 +7,15 @@ use super::models::{
     EventType, IssueState, IssueStatus, IssueTransition, VelocityEvent, VelocityMetrics,
 };
 
-
 pub struct VelocityController {
-    
     project_id: String,
-    
+
     events: RwLock<Vec<VelocityEvent>>,
-    
+
     issue_states: RwLock<HashMap<String, IssueState>>,
 }
 
 impl VelocityController {
-    
     pub fn new(project_id: impl Into<String>) -> Self {
         let project_id = project_id.into();
         info!("VelocityController initialized for project: {}", project_id);
@@ -33,14 +27,12 @@ impl VelocityController {
         }
     }
 
-    
     pub async fn track_event(&self, event: VelocityEvent) {
         debug!(
             "Tracking event: {:?} for entity: {}",
             event.event_type, event.entity_id
         );
 
-        
         match event.event_type {
             EventType::IssueCreated => {
                 let mut states = self.issue_states.write().await;
@@ -97,12 +89,10 @@ impl VelocityController {
             _ => {}
         }
 
-        
         let mut events = self.events.write().await;
         events.push(event);
     }
 
-    
     pub async fn calculate_metrics(&self, period_days: i64) -> VelocityMetrics {
         let events = self.events.read().await;
         let issue_states = self.issue_states.read().await;
@@ -110,13 +100,11 @@ impl VelocityController {
         calculate_metrics(&events, &issue_states, period_days)
     }
 
-    
     pub async fn get_issue_lifecycle(&self, issue_id: &str) -> Option<IssueState> {
         let states = self.issue_states.read().await;
         states.get(issue_id).cloned()
     }
 
-    
     pub async fn get_stats(&self) -> ControllerStats {
         let events = self.events.read().await;
         let issue_states = self.issue_states.read().await;
@@ -135,7 +123,6 @@ impl VelocityController {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ControllerStats {
     pub project_id: String,
@@ -143,4 +130,3 @@ pub struct ControllerStats {
     pub tracked_issues: usize,
     pub open_issues: usize,
 }
-

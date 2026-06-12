@@ -1,16 +1,12 @@
-
-
 mod config;
 mod events;
-mod splitter;
 mod service;
+mod splitter;
 
 pub use config::{ChunkingConfig, ChunkingStrategy};
 pub use events::{
-    ChunkCreatedEvent, ChunkingCompleteEvent, ChunkingFailedEvent,
-    ChunkingStartedEvent, ChunkLinkedEvent, ChunkChainedEvent,
-    MemoryCreatedEvent,
+    ChunkChainedEvent, ChunkCreatedEvent, ChunkLinkedEvent, ChunkingCompleteEvent,
+    ChunkingFailedEvent, ChunkingStartedEvent, MemoryCreatedEvent,
 };
-pub use splitter::{ContentSplitter, SentenceSplitter, SemanticSplitter, TextChunk, SplitterError};
-pub use service::{ChunkingService, ChunkingEvent};
-
+pub use service::{ChunkingEvent, ChunkingService};
+pub use splitter::{ContentSplitter, SemanticSplitter, SentenceSplitter, SplitterError, TextChunk};

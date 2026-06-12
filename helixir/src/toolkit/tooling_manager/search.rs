@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::utils::nullable_string;
-use super::helpers::safe_truncate;
-use super::types::{SearchMemoryResult, ToolingError};
 use super::ToolingManager;
+use super::types::{SearchMemoryResult, ToolingError};
+use crate::safe_truncate;
+use crate::utils::nullable_string;
 
 impl ToolingManager {
     pub async fn search_memory(
@@ -16,12 +15,16 @@ impl ToolingManager {
         limit: Option<usize>,
         mode: &str,
         temporal_days: Option<f64>,
-        _graph_depth: Option<usize>,
+        graph_depth: Option<usize>,
         scope: &str,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
         info!(
             "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, scope={}]",
-            safe_truncate(query, 50), mode, limit, temporal_days, scope
+            safe_truncate(query, 50),
+            mode,
+            limit,
+            temporal_days,
+            scope
         );
 
         let query_embedding = self
@@ -30,24 +33,45 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
+        let graph_depth = graph_depth.map(|d| d as u32);
         let effective_limit = limit.unwrap_or(10);
 
         let results = match scope {
             "collective" | "all" => {
                 self.search_engine
-                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, scope)
+                    .search(
+                        query,
+                        &query_embedding,
+                        user_id,
+                        effective_limit,
+                        mode,
+                        temporal_days,
+                        graph_depth,
+                        scope,
+                    )
                     .await?
             }
             _ => {
                 self.search_engine
-                    .search(query, &query_embedding, user_id, effective_limit, mode, temporal_days, "personal")
+                    .search(
+                        query,
+                        &query_embedding,
+                        user_id,
+                        effective_limit,
+                        mode,
+                        temporal_days,
+                        graph_depth,
+                        "personal",
+                    )
                     .await?
             }
         };
 
-        self.emit_search_executed(user_id, mode, results.len()).await;
+        self.emit_search_executed(user_id, mode, results.len())
+            .await;
 
-        info!("Found {} memories via SearchEngine [method={}, scope={}]",
+        info!(
+            "Found {} memories via SearchEngine [method={}, scope={}]",
             results.len(),
             results.first().map(|r| r.method.as_str()).unwrap_or("none"),
             scope
@@ -82,13 +106,21 @@ impl ToolingManager {
 
         if scope == "collective" || scope == "all" {
             search_results.sort_by(|a, b| {
-                let a_uc = a.metadata.get("user_count")
-                    .and_then(|v| v.as_u64()).unwrap_or(1);
-                let b_uc = b.metadata.get("user_count")
-                    .and_then(|v| v.as_u64()).unwrap_or(1);
+                let a_uc = a
+                    .metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
+                let b_uc = b
+                    .metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
                 let a_combined = a.score * (1.0 + (a_uc as f64 - 1.0) * 0.1);
                 let b_combined = b.score * (1.0 + (b_uc as f64 - 1.0) * 0.1);
-                b_combined.partial_cmp(&a_combined).unwrap_or(std::cmp::Ordering::Equal)
+                b_combined
+                    .partial_cmp(&a_combined)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
 
@@ -103,6 +135,7 @@ impl ToolingManager {
         info!("Searching by tag: {} [limit={}]", tag, limit);
 
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)] // `context_tags` reflected from HelixDB; surfaced through diagnostics.
         struct TaggedMemory {
             #[serde(default, deserialize_with = "nullable_string")]
             memory_id: String,
@@ -131,7 +164,11 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
-        info!("Found {} memories with tag '{}'", result.memories.len(), tag);
+        info!(
+            "Found {} memories with tag '{}'",
+            result.memories.len(),
+            tag
+        );
 
         Ok(result
             .memories
@@ -156,8 +193,12 @@ impl ToolingManager {
         mode: &str,
         limit: usize,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
-        info!("Concept search: '{}...' type={:?} tags={:?}",
-            safe_truncate(query, 30), concept_type, tags);
+        info!(
+            "Concept search: '{}...' type={:?} tags={:?}",
+            safe_truncate(query, 30),
+            concept_type,
+            tags
+        );
 
         let query_embedding = self
             .embedder
@@ -167,7 +208,16 @@ impl ToolingManager {
 
         let candidates = self
             .search_engine
-            .search(query, &query_embedding, user_id, limit * 3, mode, None, "personal")
+            .search(
+                query,
+                &query_embedding,
+                user_id,
+                limit * 3,
+                mode,
+                None,
+                None,
+                "personal",
+            )
             .await?;
 
         let mut results = Vec::new();
@@ -175,6 +225,7 @@ impl ToolingManager {
         if !candidates.is_empty() {
             for candidate in &candidates {
                 #[derive(serde::Deserialize)]
+                #[allow(dead_code)] // `belongs_to` paired with `instance_of`; the latter is iterated below.
                 struct ConceptsResult {
                     #[serde(default)]
                     instance_of: Vec<ConceptNode>,
@@ -190,7 +241,8 @@ impl ToolingManager {
                     name: String,
                 }
 
-                if let Ok(concepts) = self.db
+                if let Ok(concepts) = self
+                    .db
                     .execute_query::<ConceptsResult, _>(
                         "getMemoryConcepts",
                         &serde_json::json!({"memory_id": candidate.memory_id}),
@@ -199,16 +251,17 @@ impl ToolingManager {
                 {
                     let matches_type = match concept_type {
                         Some(ct) => {
-                            let has_db_link = concepts.instance_of.iter().any(|c|
-                                c.name.to_lowercase() == ct.to_lowercase() ||
-                                c.concept_id.to_lowercase().contains(&ct.to_lowercase())
-                            );
+                            let has_db_link = concepts.instance_of.iter().any(|c| {
+                                c.name.to_lowercase() == ct.to_lowercase()
+                                    || c.concept_id.to_lowercase().contains(&ct.to_lowercase())
+                            });
 
                             if has_db_link {
                                 true
                             } else {
                                 let memory_type = self.get_memory_type(&candidate.memory_id).await;
-                                let type_matches = memory_type.as_ref()
+                                let type_matches = memory_type
+                                    .as_ref()
                                     .map(|mt| mt.to_lowercase() == ct.to_lowercase())
                                     .unwrap_or(false);
 
@@ -221,10 +274,10 @@ impl ToolingManager {
                                             &candidate.content,
                                             memory_type.as_deref(),
                                         );
-                                        mapped.iter().any(|m|
-                                            m.concept.name.to_lowercase() == ct.to_lowercase() ||
-                                            m.concept.id.to_lowercase() == ct.to_lowercase()
-                                        )
+                                        mapped.iter().any(|m| {
+                                            m.concept.name.to_lowercase() == ct.to_lowercase()
+                                                || m.concept.id.to_lowercase() == ct.to_lowercase()
+                                        })
                                     } else {
                                         false
                                     }
@@ -237,9 +290,12 @@ impl ToolingManager {
                     let matches_tags = match tags {
                         Some(t) => {
                             let tag_list: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
-                            tag_list.iter().any(|tag|
-                                candidate.content.to_lowercase().contains(&tag.to_lowercase())
-                            )
+                            tag_list.iter().any(|tag| {
+                                candidate
+                                    .content
+                                    .to_lowercase()
+                                    .contains(&tag.to_lowercase())
+                            })
                         }
                         None => true,
                     };
@@ -263,7 +319,10 @@ impl ToolingManager {
         }
 
         if let Some(ct) = concept_type.filter(|_| results.is_empty()) {
-            debug!("Vector search yielded no concept matches for type='{}', falling back to getUserMemories", ct);
+            debug!(
+                "Vector search yielded no concept matches for type='{}', falling back to getUserMemories",
+                ct
+            );
 
             #[derive(serde::Deserialize)]
             struct FallbackMemoriesResult {
@@ -280,10 +339,15 @@ impl ToolingManager {
                 memory_type: String,
                 #[serde(default, deserialize_with = "nullable_string")]
                 created_at: String,
+                #[serde(default)]
+                certainty: i64,
+                #[serde(default)]
+                importance: i64,
             }
 
             let fetch_limit = (limit * 5).max(50) as i64;
-            if let Ok(fallback) = self.db
+            if let Ok(fallback) = self
+                .db
                 .execute_query::<FallbackMemoriesResult, _>(
                     "getUserMemories",
                     &serde_json::json!({"user_id": user_id, "limit": fetch_limit}),
@@ -291,23 +355,35 @@ impl ToolingManager {
                 .await
             {
                 let ct_lower = ct.to_lowercase();
+                let query_lower = query.to_lowercase();
                 for mem in fallback.memories {
                     if mem.memory_type.to_lowercase() == ct_lower {
                         let matches_tags = match tags {
                             Some(t) => {
                                 let tag_list: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
-                                tag_list.iter().any(|tag|
+                                tag_list.iter().any(|tag| {
                                     mem.content.to_lowercase().contains(&tag.to_lowercase())
-                                )
+                                })
                             }
                             None => true,
                         };
 
                         if matches_tags {
+                            // Real score: combine token overlap with the
+                            // memory's own importance/certainty. Replaces the
+                            // hard-coded 0.75 constant that made the field
+                            // useless for ranking. See issue #22.
+                            let score = concept_fallback_score(
+                                &query_lower,
+                                &mem.content,
+                                mem.importance,
+                                mem.certainty,
+                            );
+
                             results.push(SearchMemoryResult {
                                 memory_id: mem.memory_id,
                                 content: mem.content,
-                                score: 0.75,
+                                score,
                                 method: "concept_search_db_fallback".to_string(),
                                 metadata: HashMap::new(),
                                 created_at: mem.created_at,
@@ -319,11 +395,110 @@ impl ToolingManager {
                         }
                     }
                 }
-                debug!("DB fallback found {} results for type='{}'", results.len(), ct);
+                // Sort DB-fallback results by descending score so the response
+                // is monotone-relevant — without this the ordering reflects
+                // HelixDB insertion order, which is meaningless to callers.
+                results.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                debug!(
+                    "DB fallback found {} results for type='{}'",
+                    results.len(),
+                    ct
+                );
             }
         }
 
         info!("Concept search found {} results", results.len());
         Ok(results)
+    }
+}
+
+/// Score function used in the `search_by_concept` DB fallback path.
+///
+/// We don't have a real vector similarity at this point (we already fell
+/// back to `getUserMemories` precisely because vector search returned
+/// nothing), so the score is a deterministic mix of two cheap signals:
+///
+/// * **Token-overlap** between the query and the memory content
+///   (`|q ∩ c| / |q|`). Cheap, language-agnostic, and good enough to
+///   discriminate "this memory is on-topic" from "this memory happens to
+///   share a `memory_type`".
+/// * **Author's own importance + certainty** averaged into a [0, 1]
+///   confidence proxy. Stops near-zero-overlap matches from being ranked
+///   above well-attested but slightly off-topic ones.
+///
+/// The final score is `0.7 * overlap + 0.3 * confidence`, clamped to
+/// `[0, 1]`. Replaces the constant `0.75` from issue #22.
+fn concept_fallback_score(
+    query_lower: &str,
+    memory_content: &str,
+    importance: i64,
+    certainty: i64,
+) -> f64 {
+    let query_tokens: std::collections::HashSet<&str> = query_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() > 2)
+        .collect();
+
+    let overlap = if query_tokens.is_empty() {
+        0.0
+    } else {
+        let content_lower = memory_content.to_lowercase();
+        let hit = query_tokens
+            .iter()
+            .filter(|t| content_lower.contains(*t))
+            .count();
+        hit as f64 / query_tokens.len() as f64
+    };
+
+    let importance = importance.clamp(0, 100) as f64 / 100.0;
+    let certainty = certainty.clamp(0, 100) as f64 / 100.0;
+    let confidence = (importance + certainty) / 2.0;
+
+    (0.7 * overlap + 0.3 * confidence).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::concept_fallback_score;
+
+    #[test]
+    fn concept_fallback_score_rewards_token_overlap() {
+        let high = concept_fallback_score("rust gen keyword", "Rust 2024 reserves gen.", 80, 90);
+        let low =
+            concept_fallback_score("rust gen keyword", "I like coffee in the morning.", 80, 90);
+        assert!(
+            high > low,
+            "overlap-heavy match must score above unrelated content: {high} <= {low}"
+        );
+    }
+
+    #[test]
+    fn concept_fallback_score_uses_importance_when_overlap_is_zero() {
+        let strong =
+            concept_fallback_score("alpha beta", "Completely unrelated content.", 100, 100);
+        let weak = concept_fallback_score("alpha beta", "Completely unrelated content.", 0, 0);
+        assert!(strong > weak);
+        assert!(strong <= 1.0);
+        assert!(weak >= 0.0);
+    }
+
+    #[test]
+    fn concept_fallback_score_is_bounded() {
+        // Saturating inputs must not let the score escape [0, 1].
+        let high = concept_fallback_score("zzz", "zzz", 200, 200);
+        assert!((0.0..=1.0).contains(&high));
+    }
+
+    #[test]
+    fn concept_fallback_score_handles_empty_query() {
+        // An empty query should produce a non-NaN, bounded fallback driven
+        // entirely by importance/certainty.
+        let s = concept_fallback_score("", "anything", 50, 50);
+        assert!(s.is_finite());
+        assert!((0.0..=1.0).contains(&s));
     }
 }

@@ -1,14 +1,14 @@
+use super::models::{SearchMethod, SearchResult};
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use lazy_static::lazy_static;
-use super::models::{SearchResult, SearchMethod};
 
 lazy_static! {
     static ref STOPWORDS: HashSet<&'static str> = {
         let mut set = HashSet::new();
         set.extend([
-            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", 
-            "with", "by", "from", "as", "is", "was", "are", "were", "be", "been", "being"
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+            "by", "from", "as", "is", "was", "are", "were", "be", "been", "being",
         ]);
         set
     };

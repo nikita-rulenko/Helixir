@@ -1,11 +1,7 @@
-
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
 use strum::{EnumString, IntoStaticStr};
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
@@ -17,7 +13,6 @@ pub enum IssueStatus {
     Resolved,
     Deprecated,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
@@ -31,7 +26,6 @@ pub enum EventType {
     FeatureCompleted,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VelocityEvent {
     pub event_type: EventType,
@@ -42,7 +36,6 @@ pub struct VelocityEvent {
 }
 
 impl VelocityEvent {
-    
     pub fn new(
         event_type: EventType,
         entity_id: impl Into<String>,
@@ -57,7 +50,6 @@ impl VelocityEvent {
         }
     }
 
-    
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
         self.metadata.insert(
             key.into(),
@@ -66,7 +58,6 @@ impl VelocityEvent {
         self
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueState {
@@ -77,7 +68,6 @@ pub struct IssueState {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueTransition {
     pub from: Option<IssueStatus>,
@@ -85,32 +75,30 @@ pub struct IssueTransition {
     pub at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VelocityMetrics {
-    
     pub avg_bug_resolution_secs: f64,
-    
+
     pub bugs_resolved_count: usize,
-    
+
     pub bugs_open_count: usize,
-    
+
     pub avg_feature_implementation_secs: f64,
-    
+
     pub features_completed_count: usize,
-    
+
     pub commits_per_day: f64,
-    
+
     pub memories_per_session: f64,
-    
+
     pub bug_reopen_rate: f64,
-    
+
     pub memory_update_rate: f64,
-    
+
     pub velocity_score: f64,
-    
+
     pub period_start: DateTime<Utc>,
-    
+
     pub period_end: DateTime<Utc>,
 }
 
@@ -133,4 +121,3 @@ impl Default for VelocityMetrics {
         }
     }
 }
-

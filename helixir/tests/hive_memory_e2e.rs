@@ -39,7 +39,10 @@ async fn hive_cross_user_collective_link_e2e() {
     let user_b = format!("e2e_hive_{token}_b");
 
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
-    client.initialize().await.expect("initialize (health + ontology)");
+    client
+        .initialize()
+        .await
+        .expect("initialize (health + ontology)");
 
     let r_a = client
         .add(&message, &user_a, None, None)
@@ -82,7 +85,19 @@ async fn hive_cross_user_collective_link_e2e() {
         })
         .collect();
 
-    let ok = matched.iter().any(|(_, uc, _)| *uc >= 2);
+    // The Hive invariant is "one fact, many knowers" — which NODE becomes
+    // canonical may legitimately vary (since the W2 gates, byte-nearest
+    // candidates such as the raw_input twin can win the link). Accept any
+    // memory from THIS run (token in content) reaching user_count >= 2.
+    let ok = matched.iter().any(|(_, uc, _)| *uc >= 2)
+        || results.iter().any(|r| {
+            r.content.contains(&token)
+                && r.metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    >= 2
+        });
 
     if !ok {
         eprintln!("E2E Hive assertion failed.");
@@ -105,7 +120,7 @@ async fn hive_cross_user_collective_link_e2e() {
 
     assert!(
         ok,
-        "expected collective search to show mem_a with user_count >= 2 after cross-user link; \
-         see stderr for diagnostics (LLM may have chosen ADD instead of LINK_EXISTING)"
+        "expected SOME memory from this run to reach user_count >= 2 after the \
+         cross-user link; see stderr for diagnostics (LLM may have chosen ADD)"
     );
 }

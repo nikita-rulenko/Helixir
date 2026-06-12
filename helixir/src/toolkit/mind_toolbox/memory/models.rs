@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use strum::{EnumString, IntoStaticStr};
 use std::collections::HashMap;
+use strum::{EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone, Serialize, Deserialize, EnumString, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -17,40 +17,32 @@ pub enum EntityType {
     Event,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
-    
     pub memory_id: String,
     pub content: String,
     pub memory_type: String,
     pub user_id: String,
-    
-    
-    pub certainty: i64,      
-    pub importance: i64,     
-    
-    
+
+    pub certainty: i64,
+    pub importance: i64,
+
     pub created_at: String,
     pub updated_at: String,
     pub valid_from: String,
-    pub valid_until: String,  
-    
-    
+    pub valid_until: String,
+
     pub immutable: i64,
     pub verified: i64,
-    
-    
+
     pub context_tags: String,
     pub source: String,
     pub metadata: String,
-    
-    
+
     pub is_deleted: i64,
     pub deleted_at: String,
     pub deleted_by: String,
-    
-    
+
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub concepts: Vec<String>,
 }
@@ -183,7 +175,12 @@ impl MemoryBuilder {
     pub fn build(self) -> Memory {
         let now = Utc::now().to_rfc3339();
         Memory {
-            memory_id: self.memory_id.unwrap_or_else(|| format!("mem_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12])),
+            memory_id: self.memory_id.unwrap_or_else(|| {
+                format!(
+                    "mem_{}",
+                    &uuid::Uuid::new_v4().to_string().replace("-", "")[..12]
+                )
+            }),
             content: self.content.unwrap_or_default(),
             memory_type: self.memory_type.unwrap_or_else(|| "fact".to_string()),
             user_id: self.user_id.unwrap_or_default(),
@@ -206,26 +203,23 @@ impl MemoryBuilder {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub entity_id: String,
     pub name: String,
-    pub entity_type: String,  
-    pub properties: String,   
-    pub aliases: String,      
+    pub entity_type: String,
+    pub properties: String,
+    pub aliases: String,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
     pub context_id: String,
     pub name: String,
     pub context_type: String,
-    pub properties: String,      
-    pub parent_context: String,  
+    pub properties: String,
+    pub parent_context: String,
 }
-
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryStats {

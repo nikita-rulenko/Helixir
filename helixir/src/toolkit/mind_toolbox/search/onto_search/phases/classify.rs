@@ -1,35 +1,88 @@
-
-
 use super::super::config::OntoSearchConfig;
 use super::super::models::ConceptMatch;
 
-
 const CONCEPT_KEYWORDS: &[(&str, &str)] = &[
-    ("preference", "Preference"), ("like", "Preference"), ("love", "Preference"),
-    ("enjoy", "Preference"), ("hate", "Preference"), ("dislike", "Preference"),
-    ("skill", "Skill"), ("know", "Skill"), ("learn", "Skill"),
-    ("expert", "Skill"), ("master", "Skill"),
-    ("goal", "Goal"), ("want", "Goal"), ("plan", "Goal"),
-    ("aim", "Goal"), ("objective", "Goal"),
-    ("fact", "Fact"), ("remember", "Fact"), ("true", "Fact"), ("false", "Fact"),
-    ("opinion", "Opinion"), ("think", "Opinion"), ("believe", "Opinion"), ("feel", "Opinion"),
-    ("experience", "Experience"), ("did", "Experience"), ("happened", "Experience"),
-    ("achievement", "Achievement"), ("completed", "Achievement"),
-    ("finished", "Achievement"), ("succeeded", "Achievement"),
+    ("preference", "Preference"),
+    ("like", "Preference"),
+    ("love", "Preference"),
+    ("enjoy", "Preference"),
+    ("hate", "Preference"),
+    ("dislike", "Preference"),
+    ("skill", "Skill"),
+    ("know", "Skill"),
+    ("learn", "Skill"),
+    ("expert", "Skill"),
+    ("master", "Skill"),
+    ("goal", "Goal"),
+    ("want", "Goal"),
+    ("plan", "Goal"),
+    ("aim", "Goal"),
+    ("objective", "Goal"),
+    ("fact", "Fact"),
+    ("remember", "Fact"),
+    ("true", "Fact"),
+    ("false", "Fact"),
+    ("opinion", "Opinion"),
+    ("think", "Opinion"),
+    ("believe", "Opinion"),
+    ("feel", "Opinion"),
+    ("experience", "Experience"),
+    ("did", "Experience"),
+    ("happened", "Experience"),
+    ("achievement", "Achievement"),
+    ("completed", "Achievement"),
+    ("finished", "Achievement"),
+    ("succeeded", "Achievement"),
 ];
-
 
 const KNOWN_TAGS: &[&str] = &[
-    "python", "fastapi", "rust", "javascript", "typescript", "react",
-    "django", "flask", "nodejs", "docker", "kubernetes", "aws", "gcp",
-    "postgresql", "mongodb", "redis", "helixdb", "ollama", "openai",
-    "async", "api", "backend", "frontend", "database", "graph",
-    "work", "personal", "project", "home", "travel", "health",
-    "finance", "learning", "career", "family",
-    "ai", "ml", "memory", "llm", "embedding", "vector", "search",
-    "programming", "coding", "development", "architecture",
+    "python",
+    "fastapi",
+    "rust",
+    "javascript",
+    "typescript",
+    "react",
+    "django",
+    "flask",
+    "nodejs",
+    "docker",
+    "kubernetes",
+    "aws",
+    "gcp",
+    "postgresql",
+    "mongodb",
+    "redis",
+    "helixdb",
+    "ollama",
+    "openai",
+    "async",
+    "api",
+    "backend",
+    "frontend",
+    "database",
+    "graph",
+    "work",
+    "personal",
+    "project",
+    "home",
+    "travel",
+    "health",
+    "finance",
+    "learning",
+    "career",
+    "family",
+    "ai",
+    "ml",
+    "memory",
+    "llm",
+    "embedding",
+    "vector",
+    "search",
+    "programming",
+    "coding",
+    "development",
+    "architecture",
 ];
-
 
 pub fn classify_query_concepts(query: &str, config: &OntoSearchConfig) -> Vec<ConceptMatch> {
     let query_lower = query.to_lowercase();
@@ -49,7 +102,6 @@ pub fn classify_query_concepts(query: &str, config: &OntoSearchConfig) -> Vec<Co
     concepts
 }
 
-
 pub fn extract_query_tags(query: &str, config: &OntoSearchConfig) -> Vec<String> {
     let query_lower = query.to_lowercase();
     let mut tags = Vec::new();
@@ -63,4 +115,3 @@ pub fn extract_query_tags(query: &str, config: &OntoSearchConfig) -> Vec<String>
     tags.truncate(config.max_tags_per_query);
     tags
 }
-

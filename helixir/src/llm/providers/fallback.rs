@@ -1,8 +1,6 @@
-
-
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -12,15 +10,13 @@ use super::ollama::OllamaProvider;
 const DEFAULT_FALLBACK_URL: &str = "http://localhost:11434";
 const DEFAULT_FALLBACK_MODEL: &str = "llama3.2";
 
-
 pub struct LlmProviderWithFallback {
     primary: Arc<dyn LlmProvider>,
     fallback_enabled: bool,
     fallback_url: String,
     fallback_model: String,
     temperature: f64,
-    
-    
+
     fallback_provider: RwLock<Option<OllamaProvider>>,
     using_fallback: AtomicBool,
     fallback_count: AtomicUsize,
@@ -28,7 +24,6 @@ pub struct LlmProviderWithFallback {
 }
 
 impl LlmProviderWithFallback {
-    
     pub fn new(
         primary: Arc<dyn LlmProvider>,
         fallback_enabled: bool,
@@ -38,14 +33,14 @@ impl LlmProviderWithFallback {
     ) -> Self {
         let fallback_url = fallback_url.unwrap_or_else(|| DEFAULT_FALLBACK_URL.to_string());
         let fallback_model = fallback_model.unwrap_or_else(|| DEFAULT_FALLBACK_MODEL.to_string());
-        
+
         info!(
             "LlmProviderWithFallback initialized: primary={}, fallback={}/{}",
             primary.provider_name(),
             fallback_url,
             fallback_model
         );
-        
+
         Self {
             primary,
             fallback_enabled,
@@ -59,10 +54,9 @@ impl LlmProviderWithFallback {
         }
     }
 
-    
     async fn get_fallback_provider(&self) -> OllamaProvider {
         let guard = self.fallback_provider.read().await;
-        if let Some(ref provider) = *guard {
+        if guard.is_some() {
             return OllamaProvider::new(
                 self.fallback_url.clone(),
                 self.fallback_model.clone(),
@@ -78,9 +72,12 @@ impl LlmProviderWithFallback {
                 self.fallback_model.clone(),
                 self.temperature,
             ));
-            info!("Fallback provider initialized: {}/{}", self.fallback_url, self.fallback_model);
+            info!(
+                "Fallback provider initialized: {}/{}",
+                self.fallback_url, self.fallback_model
+            );
         }
-        
+
         OllamaProvider::new(
             self.fallback_url.clone(),
             self.fallback_model.clone(),
@@ -88,7 +85,6 @@ impl LlmProviderWithFallback {
         )
     }
 
-    
     async fn fallback_generate(
         &self,
         system_prompt: &str,
@@ -121,22 +117,18 @@ impl LlmProviderWithFallback {
         Ok((content, metadata))
     }
 
-    
     pub fn is_using_fallback(&self) -> bool {
         self.using_fallback.load(Ordering::SeqCst)
     }
 
-    
     pub fn fallback_count(&self) -> usize {
         self.fallback_count.load(Ordering::SeqCst)
     }
 
-    
     pub fn primary_failures(&self) -> usize {
         self.primary_failures.load(Ordering::SeqCst)
     }
 
-    
     pub fn reset_fallback_state(&self) {
         self.using_fallback.store(false, Ordering::SeqCst);
         self.primary_failures.store(0, Ordering::SeqCst);
@@ -152,7 +144,11 @@ impl LlmProvider for LlmProviderWithFallback {
         user_prompt: &str,
         response_format: Option<&str>,
     ) -> Result<(String, LlmMetadata), LlmProviderError> {
-        match self.primary.generate(system_prompt, user_prompt, response_format).await {
+        match self
+            .primary
+            .generate(system_prompt, user_prompt, response_format)
+            .await
+        {
             Ok((content, metadata)) => {
                 self.using_fallback.store(false, Ordering::SeqCst);
                 self.primary_failures.store(0, Ordering::SeqCst);
@@ -167,7 +163,8 @@ impl LlmProvider for LlmProviderWithFallback {
                 );
 
                 if self.fallback_enabled {
-                    self.fallback_generate(system_prompt, user_prompt, response_format, &e).await
+                    self.fallback_generate(system_prompt, user_prompt, response_format, &e)
+                        .await
                 } else {
                     Err(e)
                 }

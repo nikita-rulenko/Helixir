@@ -1,14 +1,11 @@
-
-
-use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use crate::db::HelixClient;
-use crate::toolkit::mind_toolbox::reasoning::{ReasoningEngine, ReasoningType, ReasoningError};
-
+use crate::toolkit::mind_toolbox::reasoning::{ReasoningEngine, ReasoningError, ReasoningType};
 
 #[derive(Error, Debug)]
 pub enum EvolutionError {
@@ -22,7 +19,6 @@ pub enum EvolutionError {
     InvalidOperation(String),
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionResult {
     pub success: bool,
@@ -33,14 +29,12 @@ pub struct EvolutionResult {
     pub timestamp: DateTime<Utc>,
 }
 
-
 pub struct MemoryEvolution {
     client: Arc<HelixClient>,
     reasoning_engine: Arc<ReasoningEngine>,
 }
 
 impl MemoryEvolution {
-    
     pub fn new(client: Arc<HelixClient>, reasoning_engine: Arc<ReasoningEngine>) -> Self {
         info!("MemoryEvolution initialized");
         Self {
@@ -49,12 +43,11 @@ impl MemoryEvolution {
         }
     }
 
-    
     pub async fn handle_supersession(
         &self,
         old_memory_id: &str,
         new_memory_id: &str,
-        reason: Option<&str>,
+        _reason: Option<&str>,
         _changed_by: Option<&str>,
     ) -> Result<EvolutionResult, EvolutionError> {
         info!(
@@ -63,11 +56,10 @@ impl MemoryEvolution {
             crate::safe_truncate(old_memory_id, 12)
         );
 
-        
         debug!("Setting temporal boundary on old memory: {}", old_memory_id);
-        
+
         let now = Utc::now();
-        
+
         #[derive(Serialize)]
         struct UpdateValidUntil {
             memory_id: String,
@@ -85,7 +77,6 @@ impl MemoryEvolution {
             .await
             .map_err(|e| EvolutionError::Database(e.to_string()))?;
 
-        
         debug!(
             "Creating SUPERSEDES edge: {} → {}",
             new_memory_id, old_memory_id
@@ -96,8 +87,8 @@ impl MemoryEvolution {
             .add_relation(
                 new_memory_id,
                 old_memory_id,
-                ReasoningType::Supports, 
-                95, 
+                ReasoningType::Supports,
+                95,
                 None,
             )
             .await
@@ -128,7 +119,6 @@ impl MemoryEvolution {
         })
     }
 
-    
     pub async fn handle_contradiction(
         &self,
         existing_memory_id: &str,
@@ -144,7 +134,6 @@ impl MemoryEvolution {
 
         let now = Utc::now();
 
-        
         let edge1 = self
             .reasoning_engine
             .add_relation(
@@ -156,7 +145,6 @@ impl MemoryEvolution {
             )
             .await;
 
-        
         let edge2 = self
             .reasoning_engine
             .add_relation(
@@ -194,17 +182,13 @@ impl MemoryEvolution {
         })
     }
 
-    
     pub async fn handle_enhancement(
         &self,
         memory_id: &str,
         enhanced_content: &str,
         _enhanced_by: Option<&str>,
     ) -> Result<EvolutionResult, EvolutionError> {
-        info!(
-            "Enhancing memory: {}",
-            crate::safe_truncate(memory_id, 12)
-        );
+        info!("Enhancing memory: {}", crate::safe_truncate(memory_id, 12));
 
         let now = Utc::now();
 
@@ -235,9 +219,9 @@ impl MemoryEvolution {
         Ok(EvolutionResult {
             success: true,
             old_memory_id: memory_id.to_string(),
-            new_memory_id: None, 
+            new_memory_id: None,
             operation: "enhancement".to_string(),
-            edge_created: false, 
+            edge_created: false,
             timestamp: now,
         })
     }
@@ -248,4 +232,3 @@ impl std::fmt::Debug for MemoryEvolution {
         f.debug_struct("MemoryEvolution").finish()
     }
 }
-

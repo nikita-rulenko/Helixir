@@ -1,44 +1,94 @@
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
-use lazy_static::lazy_static;
 use super::models::Concept;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 lazy_static! {
     static ref KEYWORD_PATTERNS: HashMap<String, Vec<String>> = {
         let mut map = HashMap::new();
-        map.insert("Preference".to_string(), vec![
-            "love".to_string(), "like".to_string(), "prefer".to_string(),
-            "enjoy".to_string(), "favorite".to_string(), "hate".to_string(), "dislike".to_string()
-        ]);
-        map.insert("Skill".to_string(), vec![
-            "can".to_string(), "know how".to_string(), "able to".to_string(),
-            "expert".to_string(), "proficient".to_string(), "skilled".to_string()
-        ]);
-        map.insert("Fact".to_string(), vec![
-            "is".to_string(), "are".to_string(), "was".to_string(),
-            "were".to_string(), "has".to_string(), "have".to_string()
-        ]);
-        map.insert("Goal".to_string(), vec![
-            "want".to_string(), "plan".to_string(), "goal".to_string(),
-            "aim".to_string(), "intend".to_string(), "wish".to_string()
-        ]);
-        map.insert("Opinion".to_string(), vec![
-            "think".to_string(), "believe".to_string(), "feel".to_string(),
-            "opinion".to_string(), "view".to_string()
-        ]);
-        map.insert("Experience".to_string(), vec![
-            "did".to_string(), "went".to_string(), "saw".to_string(),
-            "experienced".to_string(), "happened".to_string()
-        ]);
-        map.insert("Achievement".to_string(), vec![
-            "completed".to_string(), "finished".to_string(), "achieved".to_string(),
-            "accomplished".to_string(), "built".to_string()
-        ]);
+        map.insert(
+            "Preference".to_string(),
+            vec![
+                "love".to_string(),
+                "like".to_string(),
+                "prefer".to_string(),
+                "enjoy".to_string(),
+                "favorite".to_string(),
+                "hate".to_string(),
+                "dislike".to_string(),
+            ],
+        );
+        map.insert(
+            "Skill".to_string(),
+            vec![
+                "can".to_string(),
+                "know how".to_string(),
+                "able to".to_string(),
+                "expert".to_string(),
+                "proficient".to_string(),
+                "skilled".to_string(),
+            ],
+        );
+        map.insert(
+            "Fact".to_string(),
+            vec![
+                "is".to_string(),
+                "are".to_string(),
+                "was".to_string(),
+                "were".to_string(),
+                "has".to_string(),
+                "have".to_string(),
+            ],
+        );
+        map.insert(
+            "Goal".to_string(),
+            vec![
+                "want".to_string(),
+                "plan".to_string(),
+                "goal".to_string(),
+                "aim".to_string(),
+                "intend".to_string(),
+                "wish".to_string(),
+            ],
+        );
+        map.insert(
+            "Opinion".to_string(),
+            vec![
+                "think".to_string(),
+                "believe".to_string(),
+                "feel".to_string(),
+                "opinion".to_string(),
+                "view".to_string(),
+            ],
+        );
+        map.insert(
+            "Experience".to_string(),
+            vec![
+                "did".to_string(),
+                "went".to_string(),
+                "saw".to_string(),
+                "experienced".to_string(),
+                "happened".to_string(),
+            ],
+        );
+        map.insert(
+            "Achievement".to_string(),
+            vec![
+                "completed".to_string(),
+                "finished".to_string(),
+                "achieved".to_string(),
+                "accomplished".to_string(),
+                "built".to_string(),
+            ],
+        );
         map
     };
 }
 
 pub struct ConceptClassifier {
+    // Shared concept index; the classifier currently routes via keyword patterns
+    // but the field is plumbed through for the upcoming embedding-based path.
+    #[allow(dead_code)]
     concepts: Arc<RwLock<HashMap<String, Concept>>>,
     keyword_patterns: HashMap<String, Vec<String>>,
 }

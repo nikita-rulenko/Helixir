@@ -1,4 +1,3 @@
-
 use serde::{Deserialize, Deserializer};
 
 pub fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -9,7 +8,6 @@ pub fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Err
 pub fn safe_truncate(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()
 }
-
 
 #[inline]
 pub fn safe_truncate_ellipsis(s: &str, max_chars: usize) -> String {
@@ -50,4 +48,3 @@ mod tests {
         assert_eq!(safe_truncate_ellipsis("hi", 10), "hi");
     }
 }
-

@@ -1,5 +1,3 @@
-
-
 pub fn cosine_similarity(vec1: &[f32], vec2: &[f32]) -> f64 {
     if vec1.len() != vec2.len() || vec1.is_empty() {
         return 0.0;
@@ -15,7 +13,6 @@ pub fn cosine_similarity(vec1: &[f32], vec2: &[f32]) -> f64 {
 
     (dot_product / (mag1 * mag2)) as f64
 }
-
 
 pub fn batch_cosine_similarity(query: &[f32], candidates: &[Vec<f32>]) -> Vec<f64> {
     candidates

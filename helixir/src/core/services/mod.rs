@@ -1,23 +1,18 @@
-
-
-pub mod resolution;
 pub mod chunking;
 pub mod linking;
+pub mod resolution;
 
 pub use resolution::{
-    IDResolutionService, BatchIDResolver, ResolutionStats,
-    ResolutionError, BatchResolutionError, BatchResult,
+    BatchIDResolver, BatchResolutionError, BatchResult, IDResolutionService, ResolutionError,
+    ResolutionStats,
 };
 
 pub use chunking::{
-    ChunkingService, ChunkingConfig, ChunkingStrategy, ChunkingEvent,
-    ChunkCreatedEvent, ChunkingCompleteEvent, ChunkingFailedEvent,
-    ChunkingStartedEvent, MemoryCreatedEvent,
-    ContentSplitter, SentenceSplitter, SemanticSplitter, TextChunk,
+    ChunkCreatedEvent, ChunkingCompleteEvent, ChunkingConfig, ChunkingEvent, ChunkingFailedEvent,
+    ChunkingService, ChunkingStartedEvent, ChunkingStrategy, ContentSplitter, MemoryCreatedEvent,
+    SemanticSplitter, SentenceSplitter, TextChunk,
 };
 
 pub use linking::{
-    LinkBuilder, LinkBuilderEvent, LinkBuilderStats,
-    LinkCreatedEvent, LinkingCompleteEvent,
+    LinkBuilder, LinkBuilderEvent, LinkBuilderStats, LinkCreatedEvent, LinkingCompleteEvent,
 };
-

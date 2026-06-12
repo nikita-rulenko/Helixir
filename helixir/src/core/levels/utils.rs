@@ -1,31 +1,24 @@
-
-
-use super::definitions::{get_level_definition, LEVELS};
-use super::models::{AccumulatedSchema, HelixirLevel, LevelDefinition};
-
+use super::definitions::get_level_definition;
+use super::models::{AccumulatedSchema, HelixirLevel};
 
 pub fn validate_level_dependencies(target_level: HelixirLevel) -> Vec<HelixirLevel> {
     let definition = get_level_definition(target_level);
     let mut required: std::collections::HashSet<HelixirLevel> =
         definition.dependencies.iter().cloned().collect();
 
-    
     for dep in &definition.dependencies {
         let dep_def = get_level_definition(*dep);
         required.extend(dep_def.dependencies.iter().cloned());
     }
 
-    
     let mut sorted: Vec<_> = required.into_iter().collect();
     sorted.sort();
     sorted
 }
 
-
 pub fn get_deployment_order(max_level: HelixirLevel) -> Vec<HelixirLevel> {
     max_level.levels_up_to()
 }
-
 
 pub fn get_accumulated_schema(max_level: HelixirLevel) -> AccumulatedSchema {
     let mut schema = AccumulatedSchema::default();
@@ -38,7 +31,6 @@ pub fn get_accumulated_schema(max_level: HelixirLevel) -> AccumulatedSchema {
     schema
 }
 
-
 pub fn get_accumulated_queries(max_level: HelixirLevel) -> Vec<String> {
     let mut queries = Vec::new();
 
@@ -49,7 +41,6 @@ pub fn get_accumulated_queries(max_level: HelixirLevel) -> Vec<String> {
 
     queries
 }
-
 
 pub fn format_level_info(level: HelixirLevel) -> String {
     let definition = get_level_definition(level);
@@ -77,12 +68,19 @@ pub fn format_level_info(level: HelixirLevel) -> String {
         }
     ));
     if !definition.schema_extends.is_empty() {
-        output.push_str(&format!("  Extends: {}\n", definition.schema_extends.join(", ")));
+        output.push_str(&format!(
+            "  Extends: {}\n",
+            definition.schema_extends.join(", ")
+        ));
     }
     output.push_str(&format!("\nQueries: {}\n", definition.queries.join(", ")));
     output.push_str(&format!(
         "Dependencies: {:?}\n",
-        definition.dependencies.iter().map(|d| d.number()).collect::<Vec<_>>()
+        definition
+            .dependencies
+            .iter()
+            .map(|d| d.number())
+            .collect::<Vec<_>>()
     ));
     if !definition.notes.is_empty() {
         output.push_str(&format!("\nNotes:\n{}\n", definition.notes));
@@ -91,7 +89,6 @@ pub fn format_level_info(level: HelixirLevel) -> String {
 
     output
 }
-
 
 pub fn format_pyramid() -> String {
     let mut output = String::new();
@@ -142,4 +139,3 @@ mod tests {
         assert!(!deps.contains(&HelixirLevel::Level3));
     }
 }
-

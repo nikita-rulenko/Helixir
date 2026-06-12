@@ -8,7 +8,7 @@ use crate::db::HelixClient;
 use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 
 use self::{
     edge_creator::{EdgeCreator, EdgeCreatorError},
@@ -33,6 +33,9 @@ pub struct MemoryIntegrator {
     finder: SimilarMemoryFinder,
     reasoner: RelationInferrer,
     edge_creator: EdgeCreator,
+    // Held for later runtime tuning (similarity/decay thresholds). Read once
+    // at construction by the subcomponents above.
+    #[allow(dead_code)]
     config: IntegrationConfig,
 }
 
@@ -43,7 +46,11 @@ impl MemoryIntegrator {
         reasoning_engine: Option<Arc<dyn ReasoningEngine>>,
     ) -> Self {
         Self {
-            finder: SimilarMemoryFinder::new(client.clone(), config.similarity_threshold, config.max_similar),
+            finder: SimilarMemoryFinder::new(
+                client.clone(),
+                config.similarity_threshold,
+                config.max_similar,
+            ),
             reasoner: RelationInferrer::new(reasoning_engine, config.enable_reasoning),
             edge_creator: EdgeCreator::new(client),
             config,
@@ -90,7 +97,9 @@ impl MemoryIntegrator {
 
         info!(
             "Integration complete for {}: {} similar, {} relations created",
-            memory_id, similar_memories.len(), created_count
+            memory_id,
+            similar_memories.len(),
+            created_count
         );
 
         Ok(IntegrationResult {

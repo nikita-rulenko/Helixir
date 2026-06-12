@@ -1,7 +1,4 @@
-
-
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OntoSearchConfig {
@@ -49,7 +46,6 @@ impl Default for OntoSearchConfig {
 }
 
 impl OntoSearchConfig {
-    
     pub fn from_mode(mode: &str) -> Self {
         match mode {
             "recent" => Self {
@@ -97,4 +93,3 @@ impl OntoSearchConfig {
         }
     }
 }
-

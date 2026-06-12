@@ -19,13 +19,17 @@ pub struct SearchMemoryParams {
     pub user_id: String,
     #[schemars(description = "Max results (default: mode-based)")]
     pub limit: Option<i32>,
-    #[schemars(description = "Search mode: 'recent' (4h), 'contextual' (30d), 'deep' (90d), 'full'")]
+    #[schemars(
+        description = "Search mode: 'recent' (4h), 'contextual' (30d), 'deep' (90d), 'full'"
+    )]
     pub mode: Option<String>,
     #[schemars(description = "Override time window in days")]
     pub temporal_days: Option<f64>,
     #[schemars(description = "Override graph depth")]
     pub graph_depth: Option<i32>,
-    #[schemars(description = "Search scope: 'personal' (only this user), 'collective' (all users, ranked by consensus), 'all' (combined). Default: 'personal'")]
+    #[schemars(
+        description = "Search scope: 'personal' (only this user), 'collective' (all users, ranked by consensus), 'all' (combined). Default: 'personal'"
+    )]
     pub scope: Option<String>,
 }
 
@@ -55,7 +59,9 @@ pub struct SearchByConceptParams {
     pub query: String,
     #[schemars(description = "User identifier")]
     pub user_id: String,
-    #[schemars(description = "Concept type: 'skill', 'preference', 'goal', 'fact', 'opinion', 'experience', 'achievement', 'action'")]
+    #[schemars(
+        description = "Concept type: 'skill', 'preference', 'goal', 'fact', 'opinion', 'experience', 'achievement', 'action'"
+    )]
     pub concept_type: Option<String>,
     #[schemars(description = "Comma-separated tags to filter by")]
     pub tags: Option<String>,
@@ -71,7 +77,9 @@ pub struct SearchReasoningChainParams {
     pub query: String,
     #[schemars(description = "User identifier")]
     pub user_id: String,
-    #[schemars(description = "Chain mode: 'causal' (BECAUSE), 'forward' (IMPLIES), 'both', 'deep'")]
+    #[schemars(
+        description = "Chain mode: 'causal' (BECAUSE), 'forward' (IMPLIES), 'both', 'deep'"
+    )]
     pub chain_mode: Option<String>,
     #[schemars(description = "Maximum chain depth (default: 5)")]
     pub max_depth: Option<i32>,
@@ -161,6 +169,20 @@ pub struct ListMemoriesParams {
     pub user_id: String,
     #[schemars(description = "Max results (default: 100)")]
     pub limit: Option<i32>,
-    #[schemars(description = "Filter by memory type: fact, preference, skill, goal, opinion, experience, achievement, action")]
+    #[schemars(
+        description = "Filter by memory type: fact, preference, skill, goal, opinion, experience, achievement, action"
+    )]
     pub memory_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ConnectMemoriesParams {
+    #[schemars(description = "First anchor: query describing concept A")]
+    pub query_a: String,
+    #[schemars(description = "Second anchor: query describing concept B")]
+    pub query_b: String,
+    #[schemars(description = "User identifier")]
+    pub user_id: String,
+    #[schemars(description = "Maximum total hops between anchors (default: 4)")]
+    pub max_depth: Option<i32>,
 }

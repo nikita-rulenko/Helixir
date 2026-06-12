@@ -1,19 +1,16 @@
-
-
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
-    
-    
+
     let mut host = "localhost".to_string();
     let mut port = 6969u16;
     let mut schema_only = false;
     let mut queries_only = false;
     let mut schema_dir = PathBuf::from("schema");
-    
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -45,15 +42,13 @@ fn main() -> anyhow::Result<()> {
         }
         i += 1;
     }
-    
+
     println!("🚀 Helixir Schema Deployment");
     println!("   Target: {}:{}", host, port);
     println!("   Schema dir: {}", schema_dir.display());
     println!();
-    
-    
+
     if !schema_dir.exists() {
-        
         let exe_dir = env::current_exe()?.parent().unwrap().to_path_buf();
         let alt_schema_dir = exe_dir.join("schema");
         if alt_schema_dir.exists() {
@@ -64,17 +59,16 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
-    
+
     let base_url = format!("http://{}:{}", host, port);
     let client = reqwest::blocking::Client::new();
-    
-    
+
     if !queries_only {
         let schema_file = schema_dir.join("schema.hx");
         if schema_file.exists() {
             println!("📦 Deploying schema...");
             let schema_content = fs::read_to_string(&schema_file)?;
-            
+
             match deploy_schema(&client, &base_url, &schema_content) {
                 Ok(_) => println!("   ✅ Schema deployed successfully"),
                 Err(e) => {
@@ -88,14 +82,13 @@ fn main() -> anyhow::Result<()> {
             eprintln!("   ⚠️  schema.hx not found, skipping");
         }
     }
-    
-    
+
     if !schema_only {
         let queries_file = schema_dir.join("queries.hx");
         if queries_file.exists() {
             println!("📦 Deploying queries...");
             let queries_content = fs::read_to_string(&queries_file)?;
-            
+
             match deploy_queries(&client, &base_url, &queries_content) {
                 Ok(_) => println!("   ✅ Queries deployed successfully"),
                 Err(e) => {
@@ -107,21 +100,25 @@ fn main() -> anyhow::Result<()> {
             eprintln!("   ⚠️  queries.hx not found, skipping");
         }
     }
-    
+
     println!();
     println!("🎉 Deployment complete!");
-    
+
     Ok(())
 }
 
-fn deploy_schema(client: &reqwest::blocking::Client, base_url: &str, content: &str) -> anyhow::Result<()> {
+fn deploy_schema(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    content: &str,
+) -> anyhow::Result<()> {
     let url = format!("{}/schema", base_url);
     let response = client
         .post(&url)
         .header("Content-Type", "text/plain")
         .body(content.to_string())
         .send()?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -131,14 +128,18 @@ fn deploy_schema(client: &reqwest::blocking::Client, base_url: &str, content: &s
     }
 }
 
-fn deploy_queries(client: &reqwest::blocking::Client, base_url: &str, content: &str) -> anyhow::Result<()> {
+fn deploy_queries(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    content: &str,
+) -> anyhow::Result<()> {
     let url = format!("{}/queries", base_url);
     let response = client
         .post(&url)
         .header("Content-Type", "text/plain")
         .body(content.to_string())
         .send()?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -149,7 +150,8 @@ fn deploy_queries(client: &reqwest::blocking::Client, base_url: &str, content: &
 }
 
 fn print_help() {
-    println!(r#"
+    println!(
+        r#"
 Helixir Schema Deployment CLI
 
 USAGE:
@@ -176,6 +178,6 @@ EXAMPLES:
 ENVIRONMENT:
     HELIX_HOST              Override default host
     HELIX_PORT              Override default port
-"#);
+"#
+    );
 }
-
