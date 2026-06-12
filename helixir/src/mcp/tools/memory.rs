@@ -265,6 +265,39 @@ impl HelixirMcpServer {
     }
 
     #[tool(
+        description = "Discover how two concepts are related through the memory graph: bidirectional path search between anchors A and B. Returns the connecting chain with edge types (IMPLIES/BECAUSE/...) and cumulative confidence. The elder-brain primitive: sees connections that are several logical hops apart."
+    )]
+    async fn connect_memories(
+        &self,
+        Parameters(params): Parameters<ConnectMemoriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        info!(
+            "🌉 Connect: '{}' <-> '{}'",
+            params.query_a.chars().take(30).collect::<String>(),
+            params.query_b.chars().take(30).collect::<String>()
+        );
+
+        let result = self
+            .client
+            .connect_memories(
+                &params.query_a,
+                &params.query_b,
+                &params.user_id,
+                params.max_depth.map(|d| d as usize),
+            )
+            .await
+            .map_err(Self::convert_error)?;
+
+        info!(
+            "✅ Connection: found={} hops={}",
+            result.found, result.hops
+        );
+
+        let json = Self::result_to_json(&result)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
         description = "Find incomplete thoughts from previous sessions that timed out. Use at session start to continue unfinished research. Returns: [{memory_id, content, created_at}]"
     )]
     async fn search_incomplete_thoughts(

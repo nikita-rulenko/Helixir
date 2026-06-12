@@ -48,6 +48,7 @@ impl ToolingManager {
         let mut stored_memory_ids: HashMap<usize, String> = HashMap::new();
         let mut skipped = 0usize;
         let mut entities_linked = 0usize;
+        let mut clarifications: Vec<super::super::types::Clarification> = Vec::new();
         let mut relations_created = 0usize;
         let mut chunks_created = 0usize;
 
@@ -116,6 +117,33 @@ impl ToolingManager {
                 "Memory {} decision: {:?} (confidence={}, target={:?})",
                 i, decision.operation, decision.confidence, decision.target_memory_id
             );
+
+            // Charter escalation (memory-charter.md, flag-don't-block): the
+            // decision still executes below; the conflict is surfaced to the
+            // agent so it can ask the human or apply a learned rule.
+            if let Some(conflict_type) =
+                crate::core::charter::escalation_reason(&decision, &memory.memory_type)
+            {
+                let existing_content = decision.target_memory_id.as_deref().and_then(|tid| {
+                    similar_memories
+                        .iter()
+                        .find(|m| m.id == tid)
+                        .map(|m| m.content.clone())
+                });
+                clarifications.push(super::super::types::Clarification {
+                    conflict_type: conflict_type.to_string(),
+                    new_content: memory.text.clone(),
+                    existing_memory_id: decision.target_memory_id.clone(),
+                    existing_content: existing_content.clone(),
+                    suggested_question: crate::core::charter::suggested_question(
+                        conflict_type,
+                        &memory.text,
+                        existing_content.as_deref().unwrap_or(""),
+                    ),
+                    decision_taken: format!("{:?}", decision.operation),
+                    confidence: decision.confidence,
+                });
+            }
 
             let memory_id = match self
                 .handle_memory_operation(
@@ -220,6 +248,7 @@ impl ToolingManager {
             reasoning_relations_created: relations_created,
             chunks_created,
             metadata,
+            needs_clarification: clarifications,
         })
     }
 }

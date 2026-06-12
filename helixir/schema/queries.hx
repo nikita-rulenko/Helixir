@@ -164,6 +164,13 @@ QUERY smartVectorSearchWithChunks(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   memories <- embeddings::In<HAS_EMBEDDING>
   RETURN memories
+QUERY smartVectorSearchWithChunksCutoff(query_vector: [F64], limit: I64, cutoff_date: Date) =>
+  embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)::WHERE(_::{created_at}::GTE(cutoff_date))
+  memories <- embeddings::In<HAS_EMBEDDING>
+  RETURN memories
+QUERY searchMemoriesByBm25(text: String, limit: I64) =>
+  memories <- SearchBM25<Memory>(text, limit)
+  RETURN memories
 QUERY searchSimilarEntities(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<EntityEmbedding>(query_vector, limit)
   RETURN embeddings
@@ -756,3 +763,22 @@ QUERY getErrorConcepts(code: String) =>
   error <- N<ErrorCode>::WHERE(_::{code}::EQ(code))::FIRST
   concepts <- error::Out<ERROR_REFERENCES_CONCEPT>
   RETURN concepts
+QUERY getConnectionsLevelBatch(memory_ids: [String]) =>
+  memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
+  implies_out_e <- memories::OutE<IMPLIES>
+  implies_out_n <- memories::Out<IMPLIES>
+  implies_in_e <- memories::InE<IMPLIES>
+  implies_in_n <- memories::In<IMPLIES>
+  because_out_e <- memories::OutE<BECAUSE>
+  because_out_n <- memories::Out<BECAUSE>
+  because_in_e <- memories::InE<BECAUSE>
+  because_in_n <- memories::In<BECAUSE>
+  contradicts_out_e <- memories::OutE<CONTRADICTS>
+  contradicts_out_n <- memories::Out<CONTRADICTS>
+  contradicts_in_e <- memories::InE<CONTRADICTS>
+  contradicts_in_n <- memories::In<CONTRADICTS>
+  relation_out_e <- memories::OutE<MEMORY_RELATION>
+  relation_out_n <- memories::Out<MEMORY_RELATION>
+  relation_in_e <- memories::InE<MEMORY_RELATION>
+  relation_in_n <- memories::In<MEMORY_RELATION>
+  RETURN memories, implies_out_e, implies_out_n, implies_in_e, implies_in_n, because_out_e, because_out_n, because_in_e, because_in_n, contradicts_out_e, contradicts_out_n, contradicts_in_e, contradicts_in_n, relation_out_e, relation_out_n, relation_in_e, relation_in_n

@@ -1,5 +1,7 @@
 use super::models::{SearchConfig, SearchResult, edge_weights};
+use super::rrf;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
+use crate::core::RetrievalProfile;
 use crate::db::HelixClient;
 use crate::utils::nullable_string;
 use chrono::{DateTime, Utc};
@@ -72,12 +74,37 @@ struct ConnectedMemory {
     memory_type: String,
 }
 
+async fn fetch_bm25_memories(
+    client: &HelixClient,
+    query_text: &str,
+    limit: i64,
+) -> Result<Vec<VectorMemory>, TraversalError> {
+    #[derive(Debug, Deserialize)]
+    struct Bm25Response {
+        #[serde(default)]
+        memories: Vec<VectorMemory>,
+    }
+
+    let params = serde_json::json!({
+        "text": query_text,
+        "limit": limit,
+    });
+
+    let resp: Bm25Response = client
+        .execute_query("searchMemoriesByBm25", &params)
+        .await
+        .map_err(|e| TraversalError::Database(e.to_string()))?;
+    Ok(resp.memories)
+}
+
 pub async fn vector_search_phase(
     client: Arc<HelixClient>,
+    query_text: &str,
     query_embedding: &[f32],
     user_id: Option<&str>,
     config: &SearchConfig,
     temporal_cutoff: Option<DateTime<Utc>>,
+    profile: RetrievalProfile,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     let top_k = config.vector_top_k;
     let min_score = config.min_vector_score;
@@ -89,28 +116,110 @@ pub async fn vector_search_phase(
         top_k as i64
     };
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
-    let params = serde_json::json!({
-        "query_vector": query_vector,
-        "limit": fetch_limit
-    });
 
-    let response: VectorSearchResponse = client
-        .execute_query("smartVectorSearchWithChunks", &params)
-        .await
-        .map_err(|e| TraversalError::Database(e.to_string()))?;
+    let hql_cutoff_active = profile.temporal_cutoff_in_hql() && temporal_cutoff.is_some();
+    let vector_response: VectorSearchResponse = if hql_cutoff_active {
+        let cutoff = temporal_cutoff.unwrap();
+        let params = serde_json::json!({
+            "query_vector": query_vector,
+            "limit": fetch_limit,
+            "cutoff_date": cutoff.to_rfc3339()
+        });
+        debug!(
+            "Phase 1 (algo_opt P0.1): pushing cutoff_date={} into HQL ::WHERE",
+            cutoff.to_rfc3339()
+        );
+        client
+            .execute_query("smartVectorSearchWithChunksCutoff", &params)
+            .await
+            .map_err(|e| TraversalError::Database(e.to_string()))?
+    } else {
+        let params = serde_json::json!({
+            "query_vector": query_vector,
+            "limit": fetch_limit
+        });
+        client
+            .execute_query("smartVectorSearchWithChunks", &params)
+            .await
+            .map_err(|e| TraversalError::Database(e.to_string()))?
+    };
+
+    let bm25_limit = fetch_limit.saturating_mul(2).max(fetch_limit);
+    let bm25_memories: Option<Vec<VectorMemory>> = if profile.native_hybrid_bm25() {
+        match fetch_bm25_memories(&client, query_text, bm25_limit).await {
+            Ok(rows) if !rows.is_empty() => Some(rows),
+            Ok(_) => {
+                debug!("BM25 returned no rows; using vector ordering only");
+                None
+            }
+            Err(e) => {
+                warn!(
+                    "BM25 hybrid skipped (is bm25=true in Helix and query deployed?): {}",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let visit_order: Vec<String> = if let Some(ref bm25_rows) = bm25_memories {
+        let v_ids: Vec<String> = vector_response
+            .memories
+            .iter()
+            .filter(|m| !m.memory_id.is_empty())
+            .map(|m| m.memory_id.clone())
+            .collect();
+        let b_ids: Vec<String> = bm25_rows
+            .iter()
+            .filter(|m| !m.memory_id.is_empty())
+            .map(|m| m.memory_id.clone())
+            .collect();
+        info!(
+            "Phase 1 hybrid (RRF k=60): merging {} vector + {} BM25 hits",
+            v_ids.len(),
+            b_ids.len()
+        );
+        rrf::fused_memory_order(&v_ids, &b_ids)
+    } else {
+        vector_response
+            .memories
+            .iter()
+            .filter(|m| !m.memory_id.is_empty())
+            .map(|m| m.memory_id.clone())
+            .collect()
+    };
+
+    let mut memory_by_id: HashMap<String, VectorMemory> = HashMap::new();
+    for m in &vector_response.memories {
+        if m.memory_id.is_empty() {
+            continue;
+        }
+        memory_by_id
+            .entry(m.memory_id.clone())
+            .or_insert_with(|| m.clone());
+    }
+    if let Some(rows) = bm25_memories {
+        for m in rows {
+            if m.memory_id.is_empty() {
+                continue;
+            }
+            memory_by_id.entry(m.memory_id.clone()).or_insert(m);
+        }
+    }
 
     let mut results = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut accepted_rank: usize = 0;
 
-    // SearchV returns results ordered by cosine similarity (best first).
-    // HelixDB does not propagate the raw score through edge traversal, so we
-    // approximate using exponential rank decay: score = 0.95 * 0.92^rank.
-    // This gives meaningful discrimination: rank 0 → 0.95, rank 4 → 0.66, rank 9 → 0.41.
     const RANK_BASE: f64 = 0.95;
     const RANK_DECAY: f64 = 0.92;
 
-    for memory in response.memories {
+    for memory_id in visit_order {
+        let Some(memory) = memory_by_id.get(&memory_id) else {
+            continue;
+        };
         if let Some(uid) = user_id {
             if memory.user_id.is_empty() {
                 warn!(
@@ -127,6 +236,9 @@ pub async fn vector_search_phase(
         }
         seen_ids.insert(memory.memory_id.clone());
 
+        // Defence in depth (P0.1): the HQL cutoff covers only the vector
+        // query — BM25 rows arrive unfiltered, so the Rust filter must stay
+        // active even when hql_cutoff_active.
         if let Some(cutoff) = &temporal_cutoff {
             if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
                 if created_at.with_timezone(&Utc) < *cutoff {
@@ -162,6 +274,18 @@ pub async fn vector_search_phase(
             meta.insert(
                 "memory_type".to_string(),
                 serde_json::Value::String(memory.memory_type.clone()),
+            );
+        }
+        if profile.native_hybrid_bm25() {
+            meta.insert(
+                "phase1_hybrid".to_string(),
+                serde_json::Value::String("vector_rrf_bm25".to_string()),
+            );
+        }
+        if profile.result_provenance() {
+            meta.insert(
+                "origin".to_string(),
+                serde_json::Value::String("seed".to_string()),
             );
         }
         if !meta.is_empty() {

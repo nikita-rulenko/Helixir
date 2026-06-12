@@ -29,7 +29,7 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
-        let seed_results = self
+        let mut seed_results = self
             .search_engine
             .search(
                 query,
@@ -41,6 +41,26 @@ impl ToolingManager {
                 "personal",
             )
             .await?;
+
+        // algo_opt R3: a corpus older than the contextual window (30d) used to
+        // make every chain query return empty. Widen to `full` before giving up.
+        if seed_results.is_empty()
+            && crate::core::RetrievalProfile::cached().embedding_guided_chains()
+        {
+            debug!("No contextual seeds; widening seed search to mode=full");
+            seed_results = self
+                .search_engine
+                .search(
+                    query,
+                    &query_embedding,
+                    user_id,
+                    limit,
+                    "full",
+                    None,
+                    "personal",
+                )
+                .await?;
+        }
 
         if seed_results.is_empty() {
             debug!("No seed memories found for query");
@@ -55,10 +75,18 @@ impl ToolingManager {
         let mut max_chain_depth = 0;
         let mut total_memories = 0;
 
+        // algo_opt R3: hand the query embedding to the chain walker so hop
+        // selection runs on cosine similarity instead of an LLM call per hop.
+        let guided = crate::core::RetrievalProfile::cached().embedding_guided_chains();
+
         for seed in &seed_results {
+            let guidance = guided.then(|| crate::toolkit::mind_toolbox::reasoning::ChainGuidance {
+                query_embedding: &query_embedding,
+                embedder: &self.embedder,
+            });
             match self
                 .reasoning_engine
-                .get_chain(&seed.memory_id, &seed.content, chain_mode, max_depth)
+                .get_chain(&seed.memory_id, &seed.content, chain_mode, max_depth, guidance)
                 .await
             {
                 Ok(chain) => {
@@ -109,5 +137,48 @@ impl ToolingManager {
             total_memories,
             deepest_chain: max_chain_depth,
         })
+    }
+
+    /// Elder-brain #14: "how is A related to B?" — bidirectional path
+    /// discovery between two anchor queries over the typed reasoning graph.
+    pub async fn connect_memories(
+        &self,
+        query_a: &str,
+        query_b: &str,
+        user_id: &str,
+        max_depth: usize,
+    ) -> Result<Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath>, ToolingError>
+    {
+        info!(
+            "connect_memories: '{}' <-> '{}' (depth {})",
+            safe_truncate(query_a, 30),
+            safe_truncate(query_b, 30),
+            max_depth
+        );
+
+        let mut seed_sets = Vec::with_capacity(2);
+        for query in [query_a, query_b] {
+            let embedding = self
+                .embedder
+                .generate(query, true)
+                .await
+                .map_err(|e| ToolingError::Embedding(e.to_string()))?;
+            let seeds: Vec<(String, String)> = self
+                .search_engine
+                .search(query, &embedding, user_id, 3, "full", None, "personal")
+                .await?
+                .into_iter()
+                .map(|r| (r.memory_id, r.content))
+                .collect();
+            seed_sets.push(seeds);
+        }
+        let seeds_b = seed_sets.pop().unwrap_or_default();
+        let seeds_a = seed_sets.pop().unwrap_or_default();
+
+        crate::toolkit::mind_toolbox::search::smart_traversal_v2::connect::connect(
+            &self.db, &seeds_a, &seeds_b, max_depth,
+        )
+        .await
+        .map_err(|e| ToolingError::Database(e.to_string()))
     }
 }

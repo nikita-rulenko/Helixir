@@ -180,6 +180,11 @@ user, `user_count` on that Memory is incremented and the new user's
  │    c) Smart-traversal v2: graph expansion from seed memories         │
  │       src/toolkit/mind_toolbox/search/smart_traversal_v2/            │
  │       — walks all 8 reasoning-related edges + 33 edge directions     │
+ │                                                                      │
+ │    Under HELIXIR_RETRIEVAL_PROFILE=algo_opt (see architecture.md     │
+ │    §7.2): (b) is HelixDB-native SearchBM25 fused via RRF k=60, and   │
+ │    (c) runs levelwise-batched — one getConnectionsLevelBatch call    │
+ │    per BFS level (batch_expansion.rs) instead of one call per node.  │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼

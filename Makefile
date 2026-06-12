@@ -1,4 +1,4 @@
-.PHONY: build test test-e2e-hive check run deploy-schema setup config docker-up docker-down clean help
+.PHONY: build test test-e2e-hive check run deploy-schema setup config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
@@ -68,6 +68,31 @@ docker-up: ## Start HelixDB container
 
 docker-down: ## Stop HelixDB container
 	docker stop helixdb 2>/dev/null || true
+
+migrate-helix-fresh: ## Archive helixdb_data volume to .helix-archives/, wipe volume (DESTRUCTIVE)
+	@set -e; \
+	STAMP=$$(date +%Y%m%d-%H%M%S); \
+	ARCH="$(CURDIR)/.helix-archives/helixdb-helixdb_data-$${STAMP}.tar.gz"; \
+	mkdir -p "$(CURDIR)/.helix-archives"; \
+	if docker ps -a --format '{{.Names}}' | grep -qx helixdb; then \
+		docker stop helixdb || true; \
+		docker rm helixdb || true; \
+	fi; \
+	if docker volume inspect helixdb_data >/dev/null 2>&1; then \
+		echo "Archiving volume helixdb_data -> $$(basename $$ARCH) ..."; \
+		docker run --rm \
+			-v helixdb_data:/v:ro \
+			-v "$(CURDIR)/.helix-archives:/out" \
+			alpine \
+			tar czf "/out/$$(basename $$ARCH)" -C /v .; \
+		docker volume rm helixdb_data; \
+	else \
+		echo "Volume helixdb_data does not exist (nothing to archive)."; \
+	fi; \
+	docker volume create helixdb_data; \
+	echo ""; \
+	echo "Done. Next: make docker-up && make deploy-schema   OR   helix dockerdev run (repo-root helix.toml)"; \
+	echo "MCP: HELIXIR_RETRIEVAL_PROFILE=algo_opt for native BM25 hybrid when Helix has bm25=true."
 
 docker-compose-up: ## Start full stack via docker-compose
 	cd helixir && docker compose up -d

@@ -108,6 +108,75 @@ impl ToolingManager {
             *self.ontology_manager.write() = ontology_manager;
             info!("Ontology loaded successfully");
         }
+
+        self.maybe_warm_embed_cache().await;
         Ok(())
     }
+
+    /// algo-opt R2: optionally pre-embed the whole corpus so re-rank phases
+    /// never pay an ollama round-trip at query time. Opt in with
+    /// `HELIXIR_EMBED_CACHE_WARMUP=1` (background) or `=blocking` (await before
+    /// serving — for short-lived processes like benches). Pairs with
+    /// `HELIXIR_EMBED_CACHE_PATH`, which persists the warmed entries across
+    /// restarts — after the first warm run the startup cost is a file read.
+    async fn maybe_warm_embed_cache(&self) {
+        let mode = std::env::var("HELIXIR_EMBED_CACHE_WARMUP").unwrap_or_default();
+        let mode = mode.trim().to_ascii_lowercase();
+        if mode.is_empty() || mode == "0" || mode == "false" {
+            return;
+        }
+
+        let db = Arc::clone(&self.db);
+        let embedder = Arc::clone(&self.embedder);
+        let task = warm_embed_cache(db, embedder);
+        if mode == "blocking" {
+            task.await;
+        } else {
+            tokio::spawn(task);
+        }
+    }
+}
+
+/// Fetch every memory's content and run it through the (persistent) embedding
+/// cache. See [`ToolingManager::maybe_warm_embed_cache`].
+async fn warm_embed_cache(db: Arc<HelixClient>, embedder: Arc<EmbeddingGenerator>) {
+    #[derive(serde::Deserialize)]
+    struct MemoriesResponse {
+        #[serde(default)]
+        memories: Vec<MemoryContent>,
+    }
+    #[derive(serde::Deserialize)]
+    struct MemoryContent {
+        #[serde(default)]
+        content: String,
+    }
+
+    let params = serde_json::json!({ "limit": 100_000 });
+    let response: MemoriesResponse = match db.execute_query("getRecentMemories", &params).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Embed cache warmup: corpus fetch failed: {}", e);
+            return;
+        }
+    };
+
+    let contents: Vec<&str> = response
+        .memories
+        .iter()
+        .map(|m| m.content.as_str())
+        .filter(|c| !c.is_empty())
+        .collect();
+    let total = contents.len();
+    let started = std::time::Instant::now();
+    for chunk in contents.chunks(64) {
+        if let Err(e) = embedder.generate_batch(chunk, true).await {
+            warn!("Embed cache warmup: batch failed: {}", e);
+            return;
+        }
+    }
+    info!(
+        "Embed cache warmup: {} memories embedded in {}ms",
+        total,
+        started.elapsed().as_millis()
+    );
 }

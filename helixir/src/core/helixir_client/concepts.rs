@@ -2,7 +2,10 @@
 
 use super::client::HelixirClient;
 use super::error::HelixirClientError;
-use super::types::{ChainNode, ReasoningChain, ReasoningChainResult, SearchResult};
+use super::types::{
+    ChainNode, ConnectMemoriesResult, ConnectionEdge, ConnectionNode, ReasoningChain,
+    ReasoningChainResult, SearchResult,
+};
 
 impl HelixirClient {
     pub async fn search_by_concept(
@@ -94,6 +97,55 @@ impl HelixirClient {
             chains,
             total_memories: result.total_memories,
             deepest_chain: result.deepest_chain,
+        })
+    }
+
+    /// "How is A related to B?" — bidirectional path discovery between two
+    /// anchor queries (elder-brain primitive).
+    pub async fn connect_memories(
+        &self,
+        query_a: &str,
+        query_b: &str,
+        user_id: &str,
+        max_depth: Option<usize>,
+    ) -> Result<ConnectMemoriesResult, HelixirClientError> {
+        self.ensure_initialized().await?;
+
+        let path = self
+            .tooling_manager
+            .connect_memories(query_a, query_b, user_id, max_depth.unwrap_or(4))
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
+
+        Ok(match path {
+            Some(p) => ConnectMemoriesResult {
+                found: true,
+                hops: p.hops,
+                confidence: p.confidence,
+                nodes: p
+                    .nodes
+                    .into_iter()
+                    .map(|n| ConnectionNode {
+                        memory_id: n.memory_id,
+                        content: n.content,
+                    })
+                    .collect(),
+                edges: p
+                    .edges
+                    .into_iter()
+                    .map(|e| ConnectionEdge {
+                        edge_type: e.edge_type,
+                        weight: e.weight,
+                    })
+                    .collect(),
+            },
+            None => ConnectMemoriesResult {
+                found: false,
+                hops: 0,
+                confidence: 0.0,
+                nodes: vec![],
+                edges: vec![],
+            },
         })
     }
 }
