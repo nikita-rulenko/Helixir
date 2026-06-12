@@ -40,6 +40,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
+- [Upgrading](UPGRADING.md) — v0.3.x → v0.4.0 migration
 
 ---
 
