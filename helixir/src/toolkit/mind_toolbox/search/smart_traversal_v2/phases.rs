@@ -282,6 +282,12 @@ pub async fn vector_search_phase(
                 serde_json::Value::String("vector_rrf_bm25".to_string()),
             );
         }
+        if profile.result_provenance() {
+            meta.insert(
+                "origin".to_string(),
+                serde_json::Value::String("seed".to_string()),
+            );
+        }
         if !meta.is_empty() {
             result.metadata = Some(meta);
         }

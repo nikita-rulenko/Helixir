@@ -253,6 +253,43 @@ async fn read_path_e2e() {
         "collective results must carry user_count enrichment (Hive consensus)"
     );
 
+    // ---------- 4d. provenance: graph-pulled results must say so ----------
+    // Elder-brain requirement: the agent must be able to tell a direct hit
+    // from a fact pulled through the graph, and see the link that pulled it.
+    let provenance_results = client
+        .search(
+            "repository interfaces",
+            USER,
+            Some(15),
+            Some("deep"),
+            None,
+            None,
+            Some("personal"),
+        )
+        .await
+        .expect("provenance search");
+    let seed_count = provenance_results
+        .iter()
+        .filter(|r| r.metadata.get("origin").and_then(|v| v.as_str()) == Some("seed"))
+        .count();
+    let graph_pulled: Vec<_> = provenance_results
+        .iter()
+        .filter(|r| r.metadata.get("origin").and_then(|v| v.as_str()) == Some("graph"))
+        .collect();
+    assert!(seed_count > 0, "results must mark direct hits as origin=seed");
+    assert!(
+        !graph_pulled.is_empty(),
+        "deep search around the repository-interfaces cluster must pull at \
+         least one neighbour through the graph (origin=graph)"
+    );
+    for r in &graph_pulled {
+        assert!(
+            r.metadata.contains_key("edge") && r.metadata.contains_key("parent"),
+            "graph-pulled result {} must carry edge + parent provenance",
+            r.id
+        );
+    }
+
     // ---------- 5. get_memory_graph ----------
     let t0 = Instant::now();
     let graph = client
@@ -299,6 +336,11 @@ async fn read_path_e2e() {
         collective_ms
     );
     println!("causal 'why'   : BECAUSE cause restored: {causal_because}");
+    println!(
+        "provenance     : {} seeds + {} graph-pulled (edge+parent attached)",
+        seed_count,
+        graph_pulled.len()
+    );
     println!(
         "reasoning_chain: {} chains, deepest {}, {:.1}ms (LLM key is dead — zero LLM calls)",
         chains.chains.len(),

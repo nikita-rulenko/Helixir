@@ -35,6 +35,10 @@ struct BatchNode {
     content: String,
     #[serde(default)]
     created_at: String,
+    #[serde(default)]
+    user_id: String,
+    #[serde(default)]
+    memory_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,18 +228,54 @@ pub async fn graph_expansion_phase_batched(
 
                 // Same as the legacy DFS: every unvisited neighbour becomes a
                 // result; the 0.5 placeholder is replaced by the P0.2 re-rank.
-                results.push(SearchResult::from_graph_weighted(
+                let mut result = SearchResult::from_graph_weighted(
                     &child.memory_id,
                     &child.content,
                     0.5,
                     graph_score,
                     temporal_score,
-                    1,
+                    depth,
                     vec![edge_type.to_string()],
                     config.graph_semantic_weight,
                     config.graph_graph_weight,
                     config.graph_temporal_weight,
-                ));
+                );
+                result.created_at = Some(child.created_at.clone());
+
+                // Provenance (elder-brain #6): make the chain visible to the
+                // agent — which parent pulled this in, via which edge, how far.
+                let parent_memory_id = node_by_uuid
+                    .get(parent_uuid)
+                    .map(|p| p.memory_id.clone())
+                    .unwrap_or_default();
+                let mut meta = HashMap::new();
+                meta.insert(
+                    "origin".to_string(),
+                    serde_json::Value::String("graph".to_string()),
+                );
+                meta.insert(
+                    "edge".to_string(),
+                    serde_json::Value::String(edge_type.to_string()),
+                );
+                meta.insert(
+                    "parent".to_string(),
+                    serde_json::Value::String(parent_memory_id),
+                );
+                meta.insert("depth".to_string(), serde_json::Value::from(depth));
+                if !child.user_id.is_empty() {
+                    meta.insert(
+                        "user_id".to_string(),
+                        serde_json::Value::String(child.user_id.clone()),
+                    );
+                }
+                if !child.memory_type.is_empty() {
+                    meta.insert(
+                        "memory_type".to_string(),
+                        serde_json::Value::String(child.memory_type.clone()),
+                    );
+                }
+                result.metadata = Some(meta);
+                results.push(result);
 
                 children_by_parent
                     .entry(parent_uuid)

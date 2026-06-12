@@ -90,6 +90,14 @@ impl RetrievalProfile {
         matches!(self, Self::AlgoOpt)
     }
 
+    /// Provenance in search results (elder-brain #6): every result's metadata
+    /// says whether it was a direct hit (`origin=seed`) or pulled through the
+    /// graph (`origin=graph` + edge type, parent memory and depth), so the
+    /// agent can see — and verify — the chain instead of a flat list.
+    pub fn result_provenance(self) -> bool {
+        matches!(self, Self::AlgoOpt)
+    }
+
     /// R3 — reasoning chains walk breadth-first (`VecDeque`) and pick the next
     /// hop by cosine similarity to the query instead of one LLM call per hop.
     /// Removes the last LLM dependency from the read path.
