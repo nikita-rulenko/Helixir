@@ -54,6 +54,32 @@ What Helixir **is not**:
 - Not a fixed-schema RDF/OWL system. The ontology is small, deliberate,
   and code-owned, not extensible by users at runtime.
 
+### 1.1 The elder brain (north star)
+
+The goal Helixir converges on is an **elder brain**: a memory that remembers
+everything and uses connection structure to see what isolated facts cannot
+show. The canonical example: *Rajasthan weather → guar harvest → guar gum
+price → fracking fluid costs → shale stock valuations* — five facts, each
+mundane, whose chain is an insight. Design consequences, each enforceable:
+
+- **No deletion.** There is no delete MCP tool by design; supersession keeps
+  history (`HAS_HISTORY`, `valid_until`). Pruning "irrelevant" facts destroys
+  the middle of chains nobody has asked about yet. (The decision engine's
+  internal `DELETE` path is scheduled to become SUPERSEDE-only — issue #34.)
+- **Time governs attention, not reachability.** Temporal windows and decay
+  apply to search entry points; graph traversal pulls connected context from
+  any era. A three-day window anchors *where you start*, not *what exists*.
+- **Distance must not equal death.** Per-hop multiplicative score decay made
+  nodes beyond ~3 hops unreachable; PPR replaced it — relevance mass flows
+  along edges and *accumulates* over coherent paths.
+- **Chains are hypotheses, not proofs.** Every result carries provenance
+  (origin, edge, parent, ppr) and every connection a cumulative confidence,
+  so the agent can verify a chain instead of believing it.
+- **The write side is governed by a charter** (`memory-charter.md`):
+  a constitution of conflicts the engine may never resolve silently
+  (deleting, rewriting preferences/goals/opinions, contradictions) —
+  they escalate to the agent as `needs_clarification` questions.
+
 ---
 
 ## 2. Evolution by release

@@ -3,6 +3,7 @@
 This folder is the engineering source-of-truth for the Helixir codebase. The
 README (in the repo root) is product-facing; everything here is for contributors
 who need to reason about the system, the data, the flows, and the tests.
+The write-path constitution lives next door in `../memory-charter.md`.
 
 ## Layout
 
@@ -14,6 +15,7 @@ doc/
 ├── dataflow.md           how data moves: add_memory + search + FastThink pipelines
 ├── userflow.md           MCP tools and typical agent sessions
 ├── test-design.md        what is tested, what is not, what to add next
+├── retrieval-research.md research record behind the algo_opt profile (mostly shipped)
 ├── design-rationale.md   what Helixir is, evolution by release, and WHY
 │                         the load-bearing decisions are the way they are
 └── <version>/            per-version snapshot (release notes, state)

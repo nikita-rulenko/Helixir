@@ -1,5 +1,12 @@
 # Graph traversal & retrieval research — proposals for acceleration
 
+> **Status (2026-06-12):** this research is largely SHIPPED on `dev` under the
+> `algo_opt` retrieval profile. Landed: P0.1–P0.4, P1.1 (native BM25 + RRF),
+> P1.2-equivalent (LLM-free embedding-guided chains), P1.3 (levelwise batched
+> expansion), P2.3, plus PPR re-ranking and `connect_memories` that grew out
+> of §6. Open: P1.4 (HNSW tuning), P1.5a (HelixDB distance exposure), P2.1,
+> P2.2, P2.4. Kept as the historical record of the reasoning behind the work.
+
 > _Reflects code as of `dev` @ e1b05e5. Last verified: 2026-05-12. Source for §1–§3 is the audit performed on the live build; §4–§6 cross-reference HelixDB docs and current RAG literature (2026)._
 
 This document collects everything we learned from a focused research pass on

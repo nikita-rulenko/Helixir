@@ -143,11 +143,15 @@ of these.
 
 ### 1bis.4 Capability surface (one paragraph)
 
-Tools today: `add_memory`, `search_memory` (modes `recent / contextual /
-deep / full`; scopes `personal / collective / all`), `search_by_concept`
-(8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`),
-`list_memories`, `get_memory_graph`, `update_memory`, `search_incomplete_thoughts`,
+Tools today: `add_memory` (returns charter escalations in
+`needs_clarification` under `algo_opt`), `search_memory` (modes `recent /
+contextual / deep / full`; scopes `personal / collective / all`; results carry
+provenance), `connect_memories` (path between two concepts), `search_by_concept`
+(8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`,
+LLM-free under `algo_opt`), `list_memories`, `get_memory_graph`,
+`update_memory`, `search_incomplete_thoughts`,
 plus seven FastThink tools (`think_start/add/recall/conclude/commit/discard/status`).
+The write-path escalation rules live in `helixir/memory-charter.md`.
 Full enumeration in `helixir/doc/architecture.md §7` and
 `helixir/doc/design-rationale.md §4`.
 

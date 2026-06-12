@@ -21,7 +21,14 @@ are 14 tools, 2 prompts, 2 resources.
 | `get_memory_graph` | `user_id` | `memory_id`, `depth` | Visualizing relationships around a node. |
 | `search_by_concept` | `user_id`, `query` | `concept_type`, `tags`, `mode`, `limit` | When the agent knows it wants skills, preferences, goals, etc. |
 | `search_reasoning_chain` | `user_id`, `query` | `chain_mode` (`causal`/`forward`/`both`/`deep`), `max_depth`, `limit` | Answering "why" / "what follows" questions. |
+| `connect_memories` | `user_id`, `query_a`, `query_b` | `max_depth` | "How is A related to B?" — path between two concepts with edge types and confidence. |
 | `search_incomplete_thoughts` | — | `limit` | Session start, to resume interrupted FastThink sessions. |
+
+Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
+`needs_clarification` array — write-path conflicts the memory charter
+(`memory-charter.md`) forbids resolving silently. Each entry has the conflict
+type, the existing memory, the decision already taken and a ready-to-ask
+question; the agent decides whether to ask the human.
 
 ### FastThink tools (ephemeral working memory)
 

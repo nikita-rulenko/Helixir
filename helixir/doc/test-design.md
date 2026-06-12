@@ -172,3 +172,23 @@ list of open testing-adjacent issues at this release.)
 If the test takes more than 30 lines to write, the invariant is probably
 better defended at the schema or type-system level. Stop and refactor
 instead.
+
+---
+
+## E2E read-path suites (added with the local-reasoning pre-release)
+
+Two suites over a shared golden query set (10 queries tied to the bench
+corpus), both gated by `HELIX_E2E=1` and run with a deliberately **dead LLM
+key** — passing proves the read path makes zero LLM calls:
+
+- `tests/read_path_e2e.rs` — library level (`HelixirClient`): hit@5 / MRR
+  quality bars (baseline MRR 0.687 after PPR), cold/warm latency, causal
+  "why" restoration, collective scope, provenance shape, temporal-window
+  isolation, `connect_memories` path shape.
+- `tests/mcp_read_e2e.rs` — spawns the real `helixir-mcp` binary and speaks
+  stdio JSON-RPC like a real client; same quality bars; measures server boot
+  and per-call transport overhead (~0.2 ms vs library).
+
+Run via the commands in the root README §Development. Quality bars are
+regression guards set slightly below measured baselines; raising the
+baselines is feature work, not test work.
