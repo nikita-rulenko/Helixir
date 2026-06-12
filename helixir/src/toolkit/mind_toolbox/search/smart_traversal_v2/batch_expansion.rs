@@ -24,8 +24,16 @@ use tracing::{debug, info};
 
 use super::models::{SearchConfig, SearchResult, edge_weights};
 use super::phases::TraversalError;
+use super::ppr::PprEdge;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::db::HelixClient;
+
+/// Expansion results plus the ego-network edges collected on the way —
+/// the input for PPR re-ranking (elder-brain #9).
+pub struct ExpansionOutput {
+    pub results: Vec<SearchResult>,
+    pub edges: Vec<PprEdge>,
+}
 
 #[derive(Debug, Deserialize, Clone)]
 struct BatchNode {
@@ -153,7 +161,7 @@ pub async fn graph_expansion_phase_batched(
     client: Arc<HelixClient>,
     vector_hits: &[SearchResult],
     config: &SearchConfig,
-) -> Result<Vec<SearchResult>, TraversalError> {
+) -> Result<ExpansionOutput, TraversalError> {
     let max_depth = config.graph_depth;
     info!(
         "Starting Phase 2 (batched): levelwise expansion from {} seeds, depth {}",
@@ -162,6 +170,10 @@ pub async fn graph_expansion_phase_batched(
     );
 
     let mut results: Vec<SearchResult> = Vec::new();
+    // Ego-network edges for PPR. Includes edges to already-visited nodes
+    // (they don't create new results, but mass must flow through them).
+    let mut ego_edges: Vec<PprEdge> = Vec::new();
+    let mut seen_edges: HashSet<(String, String, &'static str)> = HashSet::new();
     let mut visited: HashSet<String> = vector_hits
         .iter()
         .map(|h| h.memory_id.clone())
@@ -218,6 +230,23 @@ pub async fn graph_expansion_phase_batched(
                 let Some(child) = node_by_uuid.get(child_uuid) else {
                     continue;
                 };
+
+                // Record the edge for PPR regardless of visited status.
+                if let Some(parent_node) = node_by_uuid.get(parent_uuid) {
+                    let key = (
+                        parent_node.memory_id.clone(),
+                        child.memory_id.clone(),
+                        *edge_type,
+                    );
+                    if seen_edges.insert(key) {
+                        ego_edges.push(PprEdge {
+                            from: parent_node.memory_id.clone(),
+                            to: child.memory_id.clone(),
+                            weight: *edge_weight,
+                        });
+                    }
+                }
+
                 if visited.contains(&child.memory_id) {
                     continue;
                 }
@@ -311,8 +340,12 @@ pub async fn graph_expansion_phase_batched(
     }
 
     info!(
-        "Phase 2 (batched) completed: {} expanded results",
-        results.len()
+        "Phase 2 (batched) completed: {} expanded results, {} ego edges",
+        results.len(),
+        ego_edges.len()
     );
-    Ok(results)
+    Ok(ExpansionOutput {
+        results,
+        edges: ego_edges,
+    })
 }

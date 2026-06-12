@@ -1,4 +1,5 @@
 use super::batch_expansion::graph_expansion_phase_batched;
+use super::ppr::personalized_pagerank;
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
@@ -177,22 +178,60 @@ impl SmartTraversalV2 {
         }
 
         let phase2_start = Instant::now();
-        let mut graph_results = if self.profile.batched_graph_expansion() {
-            graph_expansion_phase_batched(Arc::clone(&self.client), &vector_hits, &config).await?
+        let (mut graph_results, ego_edges) = if self.profile.batched_graph_expansion() {
+            let expansion =
+                graph_expansion_phase_batched(Arc::clone(&self.client), &vector_hits, &config)
+                    .await?;
+            (expansion.results, expansion.edges)
         } else {
-            graph_expansion_phase(
+            let results = graph_expansion_phase(
                 Arc::clone(&self.client),
                 &vector_hits,
                 query_embedding,
                 &config,
             )
-            .await?
+            .await?;
+            (results, Vec::new())
         };
         let phase2_duration = phase2_start.elapsed();
 
         if self.profile.real_cosine_for_graph_nodes() && !graph_results.is_empty() {
             self.rerank_graph_results(query_embedding, &mut graph_results, &config)
                 .await;
+        }
+
+        // Elder-brain #9: blend PPR mass over the typed ego-network into the
+        // final rank of every result (seeds included), replacing the per-hop
+        // multiplicative decay that buried distant-but-coherent nodes.
+        if self.profile.ppr_ranking() && !ego_edges.is_empty() {
+            let personalization: std::collections::HashMap<String, f64> = vector_hits
+                .iter()
+                .map(|h| (h.memory_id.clone(), h.combined_score.max(0.01)))
+                .collect();
+            let ppr_scores = personalized_pagerank(&ego_edges, &personalization);
+            let mut rescored = 0usize;
+            for result in vector_hits.iter_mut().chain(graph_results.iter_mut()) {
+                let Some(ppr) = ppr_scores.get(&result.memory_id) else {
+                    continue;
+                };
+                result.graph_score = *ppr;
+                result.combined_score = (config.graph_semantic_weight * result.vector_score
+                    + config.graph_graph_weight * ppr
+                    + config.graph_temporal_weight * result.temporal_score)
+                    .clamp(0.0, 1.0);
+                if let Some(meta) = result.metadata.as_mut() {
+                    meta.insert(
+                        "ppr".to_string(),
+                        serde_json::Value::from((ppr * 1000.0).round() / 1000.0),
+                    );
+                }
+                rescored += 1;
+            }
+            info!(
+                "PPR re-rank: {} results rescored over {} ego edges",
+                rescored,
+                ego_edges.len()
+            );
         }
 
         let mut all_results = vector_hits;

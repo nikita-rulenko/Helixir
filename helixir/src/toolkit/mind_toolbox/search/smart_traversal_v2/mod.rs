@@ -1,6 +1,7 @@
 pub mod batch_expansion;
 pub mod models;
 pub mod phases;
+pub mod ppr;
 pub mod rrf;
 pub mod scoring;
 pub mod traversal;

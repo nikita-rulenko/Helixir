@@ -90,6 +90,24 @@ impl RetrievalProfile {
         matches!(self, Self::AlgoOpt)
     }
 
+    /// PPR re-ranking (elder-brain #9): final relevance of every result —
+    /// seed or graph-pulled — blends real cosine, Personalized-PageRank mass
+    /// over the typed ego-network, and temporal freshness. Replaces the
+    /// per-hop multiplicative decay that made distant nodes unreachable.
+    /// Opt out with `HELIXIR_DISABLE_PPR=1`.
+    pub fn ppr_ranking(self) -> bool {
+        if !matches!(self, Self::AlgoOpt) {
+            return false;
+        }
+        if std::env::var("HELIXIR_DISABLE_PPR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        true
+    }
+
     /// Provenance in search results (elder-brain #6): every result's metadata
     /// says whether it was a direct hit (`origin=seed`) or pulled through the
     /// graph (`origin=graph` + edge type, parent memory and depth), so the
