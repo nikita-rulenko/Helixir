@@ -186,6 +186,7 @@ impl ServerHandler for HelixirMcpServer {
                     },
                     "tools": [
                         "add_memory",
+                        "get_add_status",
                         "search_memory",
                         "search_by_concept",
                         "search_reasoning_chain",

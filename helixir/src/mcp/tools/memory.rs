@@ -92,7 +92,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Check the status of a buffered add_memory by its pending_id. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — the canonical path is check_inbox at session start."
+        description = "Check the status of a buffered add_memory by its pending_id. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — outcomes are also delivered opportunistically as pending_outcomes on your next add_memory, so polling is not required."
     )]
     async fn get_add_status(
         &self,
