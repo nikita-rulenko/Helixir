@@ -116,7 +116,7 @@ impl Bm25Search {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        results.sort_by(|a, b| crate::toolkit::mind_toolbox::ranking::desc(&a.score, &b.score));
         results.truncate(limit);
         results
     }

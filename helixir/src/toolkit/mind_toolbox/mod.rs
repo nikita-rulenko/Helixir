@@ -3,6 +3,7 @@ pub mod entity;
 pub mod memory;
 pub mod memory_chain;
 pub mod ontology;
+pub mod ranking;
 pub mod reasoning;
 pub mod search;
 

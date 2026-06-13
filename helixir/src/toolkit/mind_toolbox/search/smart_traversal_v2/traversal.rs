@@ -151,8 +151,12 @@ impl SmartTraversalV2 {
                         reranked += 1;
                     }
                 }
-                vector_hits
-                    .sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+                vector_hits.sort_by(|a, b| {
+                    crate::toolkit::mind_toolbox::ranking::desc(
+                        &a.combined_score,
+                        &b.combined_score,
+                    )
+                });
                 let rerank_ms = rerank_start.elapsed().as_millis();
                 if reranked > 0 {
                     let top = vector_hits.first().unwrap().combined_score;
