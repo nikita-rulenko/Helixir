@@ -4,8 +4,8 @@ QUERY addUser(user_id: String, name: String) =>
 QUERY getUser(user_id: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
   RETURN user
-QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String) =>
-  memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
+QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
