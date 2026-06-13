@@ -20,8 +20,17 @@ pub struct McpClient {
 
 impl McpClient {
     pub fn spawn() -> (Self, f64) {
+        Self::spawn_with_env(&[])
+    }
+
+    /// Spawn a fresh `helixir-mcp` process (a distinct MCP consumer) with extra
+    /// environment overrides — e.g. `HELIXIR_INGEST_BUFFER=1` for one consumer
+    /// while another runs the sync path. Each call is a separate OS process
+    /// against the shared HelixDB, which is the real multi-consumer topology.
+    pub fn spawn_with_env(envs: &[(&str, &str)]) -> (Self, f64) {
         let t0 = Instant::now();
         let mut child = Command::new(env!("CARGO_BIN_EXE_helixir-mcp"))
+            .envs(envs.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

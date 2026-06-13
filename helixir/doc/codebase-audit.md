@@ -7,9 +7,16 @@ actually blocks or enables the transition to *one daemon per machine, many
 agents*.
 
 **Method (the methodology we hold to):** every finding here is grounded in a
-concrete probe (grep/wc/call-site trace), not vibes. A finding stays
-`suspected` until a call-site trace or a compile proves it. Nothing gets
-deleted on suspicion alone — we verify, then act.
+concrete probe (grep/wc/call-site trace), not vibes.
+
+**Liveness oracle — compilation is NOT proof of life.** A finding that something
+is dead/safe-to-delete is confirmed only when the *behaviour* of the product is
+unchanged: all e2e green, memory actually writes and reads back, and **every MCP
+Helixir function** is exercised through the transport. "Still compiles after
+deletion" only proves the code was *referenced* in the build graph — a dead twin
+compiles fine. So we first build a full-surface MCP e2e (the oracle), then gate
+every deletion stage on it being green, not on `cargo check`. Compilation is
+necessary, not sufficient.
 
 **Snapshot:** branch `audit/codebase-health`, ~27.5k LOC of `src/`, 130 HQL
 queries defined (0 dangling), only 5 TODO/FIXME markers (so the cruft is in
@@ -19,9 +26,38 @@ Status legend: `confirmed` · `suspected` · `parked-intentional` · `done`
 
 ---
 
+## 0. Liveness oracle — current MCP-surface coverage · BLOCKER for deletion
+
+We can only classify "live" once every MCP function is exercised e2e. Current
+coverage of the 17 tools (grep across `tests/`):
+
+**Covered (8):** add_memory, search_memory, get_add_status, get_memory_graph,
+search_by_concept, search_reasoning_chain, connect_memories, (search_memory).
+
+**NOT covered (9):** list_memories, update_memory, search_incomplete_thoughts,
+and the **entire FastThink family** — think_start, think_add, think_recall,
+think_conclude, think_commit, think_discard, think_status.
+
+- **Implication:** FastThink (~845 LOC: `fast_think/manager.rs` 464 +
+  `session.rs` 381) is wired as MCP tools but **never exercised by any e2e** —
+  its liveness is currently unknown. Same for list/update/incomplete-thoughts.
+- **Action (must precede any deletion):** build a full-surface MCP e2e that
+  drives all 17 tools through the transport + verifies write→read-back
+  persistence. That is the oracle every deletion stage is gated on.
+
 ## A. Dead / parked code (the "sprawl")
 
-### A1 — `src/toolkit/analytics/` (450 LOC) — DEAD, not even compiled · confirmed
+**Two tiers of "dead" — they need different proof:**
+- **Tier 1 — not in the binary** (module never declared via `mod`). The compiler
+  never includes these, so they *cannot* be exercised by the oracle — dead by
+  construction. Deleting them cannot change product behaviour; the oracle run
+  after deletion just guards against a wrong "undeclared" call (e.g. a hidden
+  `#[path]`). ~1863 LOC.
+- **Tier 2 — compiled but no live caller** (declared/re-exported, never invoked).
+  Here "compiles" proves nothing — only the full MCP oracle proves the live
+  paths don't use it. ~1355 LOC.
+
+### A1 — `src/toolkit/analytics/` (450 LOC) — DEAD, not even compiled · confirmed [Tier 1]
 No `mod analytics;` exists in any `mod.rs` (`lib.rs`, `toolkit/mod.rs`,
 `tooling_manager/mod.rs` all clean). The files sit on disk but are **outside
 the compilation unit** — they aren't type-checked, can't be called, and rot
@@ -68,6 +104,22 @@ them is a public-API regression (schema shared with HelixDB)". Parked surfaces:
 
 ---
 
+### A5 — `mind_toolbox/memory/` dead cluster + `misc_toolbox/` — not in binary · confirmed [Tier 1]
+`memory/mod.rs` declares only `context, crud, evolution, models, retrieval`. The
+following sit in the dir but are **never declared → not compiled → not in the
+binary**: `contradiction.rs` (51), `relations.rs` (168), `supersession.rs` (155),
+`user_link.rs` (74), `deletion/` (545), `remark/` (419). Plus `toolkit/misc_toolbox/`
+(~empty).
+- **The tell:** the live DELETE→SUPERSEDE logic (release-blocker #20) lives in
+  `llm/decision/models.rs::supersede()` + `core/charter.rs` +
+  `tooling_manager/crud.rs` — **not** in `memory/supersession.rs`. So these are
+  old copies left on disk after the logic moved; the real implementations
+  superseded them.
+- **Action:** Tier-1 deletion candidates — removing them cannot change behaviour
+  (not in the product). Confirm with a full oracle run after deletion.
+
+---
+
 ## B. #42 (daemon) readiness — what blocks vs enables
 
 ### B1 — Global state is modest and daemon-friendly · confirmed
@@ -109,6 +161,29 @@ Harden category (b) like we did the ranking sorts.
   dedicated hardening pass (sibling of #41).
 
 ---
+
+## D. Findings the liveness oracle surfaced · the oracle is built and green
+
+`tests/mcp_full_surface_e2e.rs` (L1: all 17 tools + write→read-back) and
+`tests/mcp_multi_consumer_e2e.rs` (L2: the 7 multi-consumer invariants) are now
+green against the live stack. Building them already paid off:
+
+- **FastThink is live, not broken.** L1's first run failed `think_commit`
+  (empty memory_id) — but the cause was a *test* artifact: the conclusion
+  duplicated a fact added earlier in the same run, so the pipeline correctly
+  deduped to 0 new memories. With a novel conclusion, commit persists. So the
+  845-LOC FastThink subsystem (`fast_think/`) is **confirmed live** — keep it.
+  Methodology note: an assertion failure is not proof of a bug; verify the cause.
+- **Cross-user consensus fragments under concurrent timing → #43.** Three
+  agents writing an identical fact fragment into three `user_count=1` nodes
+  instead of consolidating, because of HelixDB snapshot lag (the prior write
+  isn't visible to the next writer's dedup search). Confirmed it's timing, not
+  logic: visibility-gated writes consolidate. Strengthens the serial-worker /
+  daemon case (#25 / #42).
+- **Three e2e test artifacts in a row** (FastThink self-dup, buffer self-dup,
+  id-matching) taught a reusable lesson: extractor rewording + cross-run dedup
+  make id/exact-content assertions unreliable — assert by a unique entity token
+  in the fact + metadata (user_count), and gate on visibility, not fixed sleeps.
 
 ## Running conclusions (for the #42 decision)
 
