@@ -8,3 +8,7 @@ target/
 .DS_Store
 Cargo.lock
 __pycache__/
+
+# Private design docs (Moira / generative-memory vision) — not for public exposure yet
+*.private.md
+helixir/doc/private/
