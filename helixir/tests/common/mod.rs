@@ -14,6 +14,8 @@ pub struct McpClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// Server-initiated notifications captured while waiting for responses.
+    pub notifications: Vec<Value>,
 }
 
 impl McpClient {
@@ -32,6 +34,7 @@ impl McpClient {
             stdin,
             stdout,
             next_id: 1,
+            notifications: Vec::new(),
         };
 
         let _init = client.request(
@@ -72,7 +75,11 @@ impl McpClient {
                 );
                 return value["result"].clone();
             }
-            // skip server-initiated notifications/logs
+            // Server-initiated notification (no matching id): capture it so
+            // tests can assert on best-effort pushes, then keep waiting.
+            if value.get("method").is_some() && value.get("id").is_none() {
+                self.notifications.push(value);
+            }
         }
     }
 

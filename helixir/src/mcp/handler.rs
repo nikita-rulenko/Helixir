@@ -7,6 +7,7 @@ use rmcp::{
     model::*, prompt, prompt_handler, prompt_router, service::RequestContext, tool_handler,
 };
 use serde_json::json;
+use tokio::sync::broadcast;
 
 use super::params::*;
 use super::prompts;
@@ -95,6 +96,41 @@ impl ServerHandler for HelixirMcpServer {
             },
             instructions: Some(prompts::get_server_instructions()),
         }
+    }
+
+    /// Capture the peer once the client is ready and, when the ingest buffer
+    /// is on, forward worker completion events as best-effort logging
+    /// notifications (#25 phase 2). Authoritative delivery is still the
+    /// opportunistic outbox — this just pushes a heads-up sooner for clients
+    /// that surface notifications.
+    async fn on_initialized(&self, context: rmcp::service::NotificationContext<RoleServer>) {
+        if !crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
+            return;
+        }
+        let peer = context.peer.clone();
+        let mut rx = crate::toolkit::tooling_manager::ingest_buffer::subscribe_notify();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let _ = peer
+                            .notify_logging_message(LoggingMessageNotificationParam {
+                                level: LoggingLevel::Info,
+                                logger: Some("helixir.ingest".to_string()),
+                                data: json!({
+                                    "kind": event.kind,
+                                    "user_id": event.user_id,
+                                    "message": event.summary,
+                                }),
+                            })
+                            .await;
+                    }
+                    // Lagged (slow consumer) — keep going; Closed — stop.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
     }
 
     async fn list_resources(

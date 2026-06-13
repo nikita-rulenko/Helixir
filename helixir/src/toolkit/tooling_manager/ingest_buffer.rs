@@ -18,14 +18,45 @@
 //! remains the default (backward compatible); the buffer is strictly opt-in.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::ToolingManager;
 use super::types::ToolingError;
+
+/// A completed (or failed) buffered write, broadcast for best-effort MCP
+/// push (#25 phase 2). The MCP layer subscribes in `on_initialized` and
+/// forwards each event to the client as a logging notification — purely
+/// best-effort, the authoritative delivery is the opportunistic outbox.
+#[derive(Debug, Clone)]
+pub struct NotifyEvent {
+    pub user_id: String,
+    pub kind: String,
+    pub summary: String,
+}
+
+/// Process-wide broadcast channel bridging the worker (tooling layer) to the
+/// MCP server (which holds the peer). A module-level static avoids threading
+/// a sender through every constructor.
+fn notify_channel() -> &'static broadcast::Sender<NotifyEvent> {
+    static CH: OnceLock<broadcast::Sender<NotifyEvent>> = OnceLock::new();
+    CH.get_or_init(|| broadcast::channel(256).0)
+}
+
+/// Subscribe to write-completion events (for the MCP push forwarder).
+pub fn subscribe_notify() -> broadcast::Receiver<NotifyEvent> {
+    notify_channel().subscribe()
+}
+
+fn publish_notify(event: NotifyEvent) {
+    // Err only means no subscribers — fine, the outbox still has the outcome.
+    let _ = notify_channel().send(event);
+}
 
 /// A queued input's lifecycle. Stored as the `status` string on the node.
 pub const STATUS_PENDING: &str = "pending";
@@ -220,6 +251,29 @@ impl ToolingManager {
         Ok(resp.pending)
     }
 
+    /// Reset items stuck in `processing` (a worker process died mid-flight)
+    /// back to `pending` so the next drain retries them.
+    async fn recover_stuck_processing(&self) {
+        let params = serde_json::json!({ "status": STATUS_PROCESSING, "limit": 256 });
+        let stuck: PendingList = match self
+            .db
+            .execute_query("getPendingInputsByStatus", &params)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for node in stuck.pending {
+            warn!(
+                "Ingest worker: recovering orphaned processing item {}",
+                node.pending_id
+            );
+            let _ = self
+                .set_pending_status(&node.pending_id, STATUS_PENDING, "", "")
+                .await;
+        }
+    }
+
     async fn set_pending_status(
         &self,
         pending_id: &str,
@@ -304,6 +358,17 @@ impl ToolingManager {
                 // as the add_result and carries any charter escalations.
                 self.enqueue_notice(&node.user_id, "add_result", &payload, &node.pending_id)
                     .await;
+                // Best-effort push (phase 2): notify the agent now, in
+                // addition to the opportunistic outbox.
+                publish_notify(NotifyEvent {
+                    user_id: node.user_id.clone(),
+                    kind: "add_result".to_string(),
+                    summary: format!(
+                        "stored {} memor{}",
+                        result.added.len(),
+                        if result.added.len() == 1 { "y" } else { "ies" }
+                    ),
+                });
                 debug!("Ingest worker: {} done", node.pending_id);
                 true
             }
@@ -324,6 +389,11 @@ impl ToolingManager {
                 });
                 self.enqueue_notice(&node.user_id, "add_failed", &payload, &node.pending_id)
                     .await;
+                publish_notify(NotifyEvent {
+                    user_id: node.user_id.clone(),
+                    kind: "add_failed".to_string(),
+                    summary: "a buffered write failed after retries".to_string(),
+                });
                 false
             }
         }
@@ -430,6 +500,11 @@ pub async fn run_ingest_worker(tm: Arc<ToolingManager>) {
         "Ingest worker started (poll {}ms); add_memory now returns pending_id",
         interval.as_millis()
     );
+
+    // Recover orphans: a `processing` item whose worker process was killed
+    // mid-flight would otherwise be stuck forever (the worker only fetches
+    // `pending`). Reset them to `pending` so they get retried.
+    tm.recover_stuck_processing().await;
 
     loop {
         match tm.fetch_pending_batch(32).await {

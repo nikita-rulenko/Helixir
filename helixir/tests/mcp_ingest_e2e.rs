@@ -106,10 +106,24 @@ fn mcp_ingest_buffer() {
         ack2["pending_outcomes"].is_array(),
         "buffered add response must carry a pending_outcomes array: {ack2}"
     );
+    // 5. Best-effort push: a logging notification from helixir.ingest should
+    // have arrived while we were polling/searching (captured by the harness).
+    let pushed = mcp.notifications.iter().any(|n| {
+        n["method"].as_str() == Some("notifications/message")
+            && n["params"]["logger"].as_str() == Some("helixir.ingest")
+    });
+
     println!("\n==== mcp_ingest_e2e ====");
     println!("queued ack in {ms:.0}ms; worker done; fact searchable");
     println!(
         "opportunistic outcomes on next add: {} item(s)",
         outcomes.len()
+    );
+    println!("best-effort push notification observed: {pushed}");
+    assert!(
+        pushed,
+        "expected a helixir.ingest logging notification (best-effort push); \
+         captured: {:?}",
+        mcp.notifications
     );
 }
