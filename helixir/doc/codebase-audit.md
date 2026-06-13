@@ -195,9 +195,12 @@ green against the live stack → commit. Behaviour unchanged at every step.
 | 1 | Tier-1 not-in-binary (analytics, misc_toolbox, memory/{contradiction,relations,supersession,user_link,deletion,remark}) | ~1863 | `ec80a60` |
 | 2 | `core/services/{chunking,linking,resolution}` dead twin (compiled, no caller) | ~1355 | `686b2b9` |
 | 3 | `integrator/` dead twin (was `mod`-commented) | ~589 | `1b91d04` |
+| 4 | `velocity/` dead twin + `exceptions.rs` (stale dup of `error.rs`) | ~457 | (stage 4) |
 
-`src/` 27477 → 23654 LOC (−3823, ~14%). `reserved.rs` deliberately KEPT — it
-parks the Session/Agent surfaces #42 will wire (A4).
+`src/` 27477 → 23191 LOC (−4286, ~15.6%). `reserved.rs` deliberately KEPT — it
+parks the Session/Agent surfaces #42 will wire (A4). `levels/` was flagged by
+the grep heuristic but is LIVE (re-exported fns used by name) — kept; that false
+positive is exactly why every removal is gated on the oracle, not on grep.
 
 ## Running conclusions (for the #42 decision)
 
