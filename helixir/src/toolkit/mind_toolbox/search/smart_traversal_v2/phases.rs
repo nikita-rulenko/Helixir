@@ -297,7 +297,9 @@ pub async fn vector_search_phase(
         }
     }
 
-    results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+    results.sort_by(|a, b| {
+        crate::toolkit::mind_toolbox::ranking::desc(&a.combined_score, &b.combined_score)
+    });
 
     if !results.is_empty() {
         let top = results.first().unwrap().combined_score;
@@ -488,7 +490,7 @@ async fn expand_from_node(
     );
 
     if current_depth < max_depth {
-        neighbors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        neighbors.sort_by(|a, b| crate::toolkit::mind_toolbox::ranking::desc(&a.1, &b.1));
         for (neighbor_id, neighbor_score) in neighbors.into_iter().take(3) {
             if !visited.contains(&neighbor_id) {
                 visited.insert(neighbor_id.clone());
@@ -578,7 +580,9 @@ pub fn rank_and_filter(results: Vec<SearchResult>, min_combined_score: f64) -> V
         .filter(|r| r.combined_score >= min_combined_score)
         .collect();
 
-    filtered_results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+    filtered_results.sort_by(|a, b| {
+        crate::toolkit::mind_toolbox::ranking::desc(&a.combined_score, &b.combined_score)
+    });
 
     info!(
         "Phase 3 completed: {} final results",

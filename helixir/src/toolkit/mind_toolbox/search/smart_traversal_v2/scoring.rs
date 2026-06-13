@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
 
+use crate::toolkit::mind_toolbox::ranking::sanitize_unit;
+
 /// Cosine **score** in `[0, 1]` — the cosine similarity of two embedding
 /// vectors, affinely remapped from its mathematical range `[-1, 1]`.
 ///
@@ -60,7 +62,10 @@ pub fn calculate_vector_combined_score_weighted(
     vector_weight: f64,
     temporal_weight: f64,
 ) -> f64 {
-    (vector_score * vector_weight + temporal_score * temporal_weight).clamp(0.0, 1.0)
+    // sanitize_unit (not bare clamp): a NaN vector score from a degenerate
+    // HelixDB vector would otherwise pass straight through clamp and poison
+    // the ranking sort downstream (#41).
+    sanitize_unit(vector_score * vector_weight + temporal_score * temporal_weight)
 }
 
 pub fn calculate_graph_combined_score(
@@ -86,12 +91,15 @@ pub fn calculate_graph_combined_score_weighted(
     graph_weight: f64,
     temporal_weight: f64,
 ) -> f64 {
-    (semantic_sim * semantic_weight + graph_score * graph_weight + temporal_score * temporal_weight)
-        .clamp(0.0, 1.0)
+    sanitize_unit(
+        semantic_sim * semantic_weight
+            + graph_score * graph_weight
+            + temporal_score * temporal_weight,
+    )
 }
 
 pub fn calculate_graph_score(edge_weight: f64, parent_score: f64) -> f64 {
-    (edge_weight * parent_score).clamp(0.0, 1.0)
+    sanitize_unit(edge_weight * parent_score)
 }
 
 #[cfg(test)]
@@ -145,6 +153,35 @@ mod tests {
         let graph_combined = calculate_graph_combined_score(0.5, 0.8, 0.9);
 
         assert!((graph_combined - 0.73).abs() < 0.01);
+    }
+
+    // --- #41 regression: a NaN score must never reach an unwrap'd sort ---
+    //
+    // The combine functions now route through `sanitize_unit`, so a NaN
+    // vector score (e.g. a degenerate HelixDB phase-1 vector) is mapped to
+    // 0.0 at the scoring boundary instead of passing through `.clamp()` and
+    // panicking the downstream ranking sort. The NaN-safety of the sort
+    // comparator itself is covered in `ranking::tests`.
+    //
+    // Pre-fix this asserted `combined.is_nan()` (the bug); it now asserts the
+    // sanitized behaviour.
+
+    #[test]
+    fn combine_sanitizes_a_nan_vector_score_to_zero() {
+        let combined = calculate_vector_combined_score_weighted(f64::NAN, 0.5, 0.7, 0.3);
+        assert!(
+            combined.is_finite() && combined == 0.0,
+            "a NaN input must be sanitized to 0.0, got {combined}"
+        );
+    }
+
+    #[test]
+    fn combine_sanitizes_a_nan_semantic_score_to_zero() {
+        let combined = calculate_graph_combined_score_weighted(f64::NAN, 0.8, 0.9, 0.3, 0.5, 0.2);
+        assert!(
+            combined.is_finite(),
+            "a NaN input must not propagate, got {combined}"
+        );
     }
 
     #[test]

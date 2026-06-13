@@ -186,3 +186,9 @@ pub struct ConnectMemoriesParams {
     #[schemars(description = "Maximum total hops between anchors (default: 4)")]
     pub max_depth: Option<i32>,
 }
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct GetAddStatusParams {
+    #[schemars(description = "The pending_id returned by a buffered add_memory")]
+    pub pending_id: String,
+}

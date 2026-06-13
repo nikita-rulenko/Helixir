@@ -121,7 +121,7 @@ impl ConceptClassifier {
             }
         }
 
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scores.sort_by(|a, b| crate::toolkit::mind_toolbox::ranking::desc(&a.1, &b.1));
         scores
     }
 

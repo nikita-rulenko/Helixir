@@ -3,6 +3,7 @@ mod crud;
 mod events;
 mod graph;
 pub(crate) mod helpers;
+pub mod ingest_buffer;
 mod reasoning;
 mod search;
 pub mod seeds;

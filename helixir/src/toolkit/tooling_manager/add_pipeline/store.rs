@@ -50,6 +50,7 @@ impl ToolingManager {
             importance: i64,
             created_at: String,
             updated_at: String,
+            valid_from: String,
             context_tags: String,
             source: String,
             metadata: String,
@@ -65,6 +66,7 @@ impl ToolingManager {
             importance: memory.importance as i64,
             created_at: now.clone(),
             updated_at: now.clone(),
+            valid_from: now.clone(),
             context_tags: context_tags.to_string(),
             source: "llm_extraction".to_string(),
             metadata: "{}".to_string(),
@@ -81,7 +83,7 @@ impl ToolingManager {
 
         let response: AddMemoryResponse = self
             .db
-            .execute_query("addMemory", &input)
+            .execute_query("addMemoryWithValidFrom", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
@@ -222,6 +224,7 @@ impl ToolingManager {
             importance: i64,
             created_at: String,
             updated_at: String,
+            valid_from: String,
             context_tags: String,
             source: String,
             metadata: String,
@@ -236,6 +239,7 @@ impl ToolingManager {
             importance: memory.importance as i64,
             created_at: now.clone(),
             updated_at: now.clone(),
+            valid_from: now.clone(),
             context_tags: context_tags.to_string(),
             source: "raw_input".to_string(),
             metadata: "{}".to_string(),
@@ -252,7 +256,7 @@ impl ToolingManager {
 
         let resp: Resp = self
             .db
-            .execute_query("addMemory", &input)
+            .execute_query("addMemoryWithValidFrom", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 

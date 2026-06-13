@@ -14,12 +14,23 @@ pub struct McpClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// Server-initiated notifications captured while waiting for responses.
+    pub notifications: Vec<Value>,
 }
 
 impl McpClient {
     pub fn spawn() -> (Self, f64) {
+        Self::spawn_with_env(&[])
+    }
+
+    /// Spawn a fresh `helixir-mcp` process (a distinct MCP consumer) with extra
+    /// environment overrides — e.g. `HELIXIR_INGEST_BUFFER=1` for one consumer
+    /// while another runs the sync path. Each call is a separate OS process
+    /// against the shared HelixDB, which is the real multi-consumer topology.
+    pub fn spawn_with_env(envs: &[(&str, &str)]) -> (Self, f64) {
         let t0 = Instant::now();
         let mut child = Command::new(env!("CARGO_BIN_EXE_helixir-mcp"))
+            .envs(envs.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -32,6 +43,7 @@ impl McpClient {
             stdin,
             stdout,
             next_id: 1,
+            notifications: Vec::new(),
         };
 
         let _init = client.request(
@@ -72,7 +84,11 @@ impl McpClient {
                 );
                 return value["result"].clone();
             }
-            // skip server-initiated notifications/logs
+            // Server-initiated notification (no matching id): capture it so
+            // tests can assert on best-effort pushes, then keep waiting.
+            if value.get("method").is_some() && value.get("id").is_none() {
+                self.notifications.push(value);
+            }
         }
     }
 

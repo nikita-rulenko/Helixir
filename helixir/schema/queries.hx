@@ -7,6 +7,15 @@ QUERY getUser(user_id: String) =>
 QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// addMemoryWithValidFrom: like addMemory but also sets valid_from explicitly.
+// The schema default `valid_from: String DEFAULT "{{timestamp}}"` is a literal,
+// not a macro (HelixDB's only timestamp default is `DEFAULT NOW`, valid on Date
+// fields only — see #45), so an unset String valid_from persists "{{timestamp}}".
+// Passing it here keeps valid_from a real RFC3339 timestamp without a Date-type
+// migration. Additive — addMemory stays for backward compatibility.
+QUERY addMemoryWithValidFrom(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
@@ -792,3 +801,29 @@ QUERY getMemoryStances(memory_id: String) =>
   stance_edges <- memory::InE<HAS_MEMORY>
   knowers <- memory::In<HAS_MEMORY>
   RETURN stance_edges, knowers
+QUERY enqueuePendingInput(pending_id: String, user_id: String, raw_message: String, agent_id: String, context_tags: String, status: String, created_at: String) =>
+  pending <- AddN<PendingInput>({ pending_id: pending_id, user_id: user_id, raw_message: raw_message, agent_id: agent_id, context_tags: context_tags, status: status, created_at: created_at })
+  RETURN pending
+QUERY getPendingInputsByStatus(status: String, limit: I64) =>
+  pending <- N<PendingInput>::WHERE(_::{status}::EQ(status))::RANGE(0, limit)
+  RETURN pending
+QUERY getPendingInput(pending_id: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  RETURN pending
+QUERY updatePendingInput(pending_id: String, status: String, processed_at: String, result: String, error: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  updated <- pending::UPDATE({ status: status, processed_at: processed_at, result: result, error: error })
+  RETURN updated
+QUERY deletePendingInput(pending_id: String) =>
+  DROP N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))
+  RETURN "ok"
+QUERY enqueueNotice(notice_id: String, user_id: String, kind: String, payload: String, pending_id: String, created_at: String) =>
+  notice <- AddN<MemoryNotice>({ notice_id: notice_id, user_id: user_id, kind: kind, payload: payload, pending_id: pending_id, created_at: created_at })
+  RETURN notice
+QUERY getUndeliveredNotices(user_id: String, limit: I64) =>
+  notices <- N<MemoryNotice>::WHERE(AND(_::{user_id}::EQ(user_id), _::{delivered}::EQ(0)))::RANGE(0, limit)
+  RETURN notices
+QUERY markNoticeDelivered(notice_id: String) =>
+  notice <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))::FIRST
+  updated <- notice::UPDATE({ delivered: 1 })
+  RETURN updated

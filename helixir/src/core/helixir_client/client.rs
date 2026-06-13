@@ -94,6 +94,13 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
+        // Ingest buffer (#25): one serial background worker drains the queue
+        // when HELIXIR_INGEST_BUFFER=1. The synchronous path stays the default.
+        if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
+            let tm = Arc::clone(&self.tooling_manager);
+            tokio::spawn(crate::toolkit::tooling_manager::ingest_buffer::run_ingest_worker(tm));
+        }
+
         self.is_initialized.store(true, Ordering::Relaxed);
         Ok(())
     }
