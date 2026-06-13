@@ -24,6 +24,38 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         info!("🧠 Adding memory for user={}", params.user_id);
 
+        // Ingest buffer (#25): when HELIXIR_INGEST_BUFFER=1, persist the raw
+        // input and return a pending_id instantly; a serial worker processes
+        // it and posts the result to the outbox (check_inbox). Synchronous
+        // path (below) stays the default — backward compatible.
+        if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
+            let enq = self
+                .client
+                .add_buffered(
+                    &params.message,
+                    &params.user_id,
+                    params.agent_id.as_deref(),
+                    None,
+                )
+                .await
+                .map_err(Self::convert_error)?;
+            info!("📥 Queued {} for background processing", enq.pending_id);
+            // Opportunistic outbox delivery: ride prior write outcomes back on
+            // this ack so the agent learns them without polling or check_inbox.
+            let outcomes = self
+                .client
+                .drain_notices(&params.user_id, 20)
+                .await
+                .unwrap_or_default();
+            let json = Self::result_to_json(&serde_json::json!({
+                "pending_id": enq.pending_id,
+                "status": enq.status,
+                "queued": enq.queued,
+                "pending_outcomes": outcomes,
+            }))?;
+            return Ok(CallToolResult::success(vec![Content::text(json)]));
+        }
+
         let result = self
             .client
             .add(
@@ -40,7 +72,38 @@ impl HelixirMcpServer {
             result.memories_added, result.chunks_created
         );
 
+        if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
+            let outcomes = self
+                .client
+                .drain_notices(&params.user_id, 20)
+                .await
+                .unwrap_or_default();
+            if !outcomes.is_empty() {
+                let mut json = Self::result_to_value(&result)?;
+                json["pending_outcomes"] = serde_json::to_value(&outcomes).unwrap_or_default();
+                return Ok(CallToolResult::success(vec![Content::text(
+                    json.to_string(),
+                )]));
+            }
+        }
+
         let json = Self::result_to_json(&result)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Check the status of a buffered add_memory by its pending_id. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — the canonical path is check_inbox at session start."
+    )]
+    async fn get_add_status(
+        &self,
+        Parameters(params): Parameters<GetAddStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let status = self
+            .client
+            .add_status(&params.pending_id)
+            .await
+            .map_err(Self::convert_error)?;
+        let json = Self::result_to_json(&status)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 

@@ -47,6 +47,53 @@ impl HelixirClient {
         })
     }
 
+    /// Ingest buffer (#25): persist the raw input and return a `pending_id`
+    /// immediately. A background worker drains the queue serially. Use
+    /// [`Self::add_status`] to poll for the result.
+    pub async fn add_buffered(
+        &self,
+        message: &str,
+        user_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+    ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::EnqueuedInput, HelixirClientError>
+    {
+        self.ensure_initialized().await?;
+        self.tooling_manager
+            .enqueue_input(message, user_id, agent_id, context_tags)
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))
+    }
+
+    /// Poll a queued input's status (and result once done).
+    pub async fn add_status(
+        &self,
+        pending_id: &str,
+    ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::PendingStatus, HelixirClientError>
+    {
+        self.ensure_initialized().await?;
+        self.tooling_manager
+            .pending_status(pending_id)
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))
+    }
+
+    /// Drain the user's outbox (прихожая): completed adds and escalations
+    /// that landed while the agent was away. Marks them delivered and prunes
+    /// their queue tombstones. The session-start counterpart to the buffer.
+    pub async fn drain_notices(
+        &self,
+        user_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::toolkit::tooling_manager::ingest_buffer::MemoryNotice>, HelixirClientError>
+    {
+        self.ensure_initialized().await?;
+        self.tooling_manager
+            .drain_notices(user_id, limit)
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))
+    }
+
     pub async fn search(
         &self,
         query: &str,

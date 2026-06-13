@@ -58,6 +58,12 @@ impl HelixirMcpServer {
         serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
+
+    /// Like `result_to_json` but returns a `Value` so callers can splice in
+    /// extra fields (e.g. opportunistic `pending_outcomes`) before serializing.
+    pub(super) fn result_to_value<T: Serialize>(result: T) -> Result<serde_json::Value, McpError> {
+        serde_json::to_value(&result).map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
 }
 
 /// Returns true when HelixDB's error message indicates that a user-scoped

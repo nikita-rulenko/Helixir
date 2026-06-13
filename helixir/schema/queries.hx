@@ -792,3 +792,29 @@ QUERY getMemoryStances(memory_id: String) =>
   stance_edges <- memory::InE<HAS_MEMORY>
   knowers <- memory::In<HAS_MEMORY>
   RETURN stance_edges, knowers
+QUERY enqueuePendingInput(pending_id: String, user_id: String, raw_message: String, agent_id: String, context_tags: String, status: String, created_at: String) =>
+  pending <- AddN<PendingInput>({ pending_id: pending_id, user_id: user_id, raw_message: raw_message, agent_id: agent_id, context_tags: context_tags, status: status, created_at: created_at })
+  RETURN pending
+QUERY getPendingInputsByStatus(status: String, limit: I64) =>
+  pending <- N<PendingInput>::WHERE(_::{status}::EQ(status))::RANGE(0, limit)
+  RETURN pending
+QUERY getPendingInput(pending_id: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  RETURN pending
+QUERY updatePendingInput(pending_id: String, status: String, processed_at: String, result: String, error: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  updated <- pending::UPDATE({ status: status, processed_at: processed_at, result: result, error: error })
+  RETURN updated
+QUERY deletePendingInput(pending_id: String) =>
+  DROP N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))
+  RETURN "ok"
+QUERY enqueueNotice(notice_id: String, user_id: String, kind: String, payload: String, pending_id: String, created_at: String) =>
+  notice <- AddN<MemoryNotice>({ notice_id: notice_id, user_id: user_id, kind: kind, payload: payload, pending_id: pending_id, created_at: created_at })
+  RETURN notice
+QUERY getUndeliveredNotices(user_id: String, limit: I64) =>
+  notices <- N<MemoryNotice>::WHERE(AND(_::{user_id}::EQ(user_id), _::{delivered}::EQ(0)))::RANGE(0, limit)
+  RETURN notices
+QUERY markNoticeDelivered(notice_id: String) =>
+  notice <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))::FIRST
+  updated <- notice::UPDATE({ delivered: 1 })
+  RETURN updated
