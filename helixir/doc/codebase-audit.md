@@ -185,6 +185,20 @@ green against the live stack. Building them already paid off:
   make id/exact-content assertions unreliable — assert by a unique entity token
   in the fact + metadata (user_count), and gate on visibility, not fixed sleeps.
 
+## Stage log — dead code removed (oracle-gated)
+
+Each stage: delete → `cargo build --all-targets -D warnings` → L1 + L2 oracle
+green against the live stack → commit. Behaviour unchanged at every step.
+
+| Stage | What | LOC | Commit |
+|-------|------|-----|--------|
+| 1 | Tier-1 not-in-binary (analytics, misc_toolbox, memory/{contradiction,relations,supersession,user_link,deletion,remark}) | ~1863 | `ec80a60` |
+| 2 | `core/services/{chunking,linking,resolution}` dead twin (compiled, no caller) | ~1355 | `686b2b9` |
+| 3 | `integrator/` dead twin (was `mod`-commented) | ~589 | `1b91d04` |
+
+`src/` 27477 → 23654 LOC (−3823, ~14%). `reserved.rs` deliberately KEPT — it
+parks the Session/Agent surfaces #42 will wire (A4).
+
 ## Running conclusions (for the #42 decision)
 
 1. There is real cleanable cruft — **~1.8k+ LOC** across `analytics/` (dead) and
