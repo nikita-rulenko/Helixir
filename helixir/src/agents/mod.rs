@@ -5,8 +5,8 @@
 //!
 //! - **Clotho** — the Spinner: tags memories from a controlled vocabulary so
 //!   shared tags weave distant memories into subsets.
-//! - **Lachesis** — the Measurer: routes chains within subsets, gated against
-//!   apophenia. *(not built yet)*
+//! - **Lachesis** — the Measurer: routes chains within subsets and gates them
+//!   against apophenia (coherence gate — first increment landed).
 //! - **Atropos** — the Cutter: curates surviving chains into an insight journal.
 //!   *(not built yet)*
 //!
@@ -15,3 +15,4 @@
 //! nothing about agents.
 
 pub mod clotho;
+pub mod lachesis;

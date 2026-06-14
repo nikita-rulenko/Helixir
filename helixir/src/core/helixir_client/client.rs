@@ -146,6 +146,13 @@ impl HelixirClient {
     pub fn clotho(&self) -> crate::agents::clotho::Clotho<'_> {
         crate::agents::clotho::Clotho::new(self.tooling())
     }
+
+    /// Lachesis the Measurer (#39 / Moira) — routes chains and gates them
+    /// against apophenia, labelling survivors as hypotheses-requiring-
+    /// verification. Borrows the toolkit it routes over.
+    pub fn lachesis(&self) -> crate::agents::lachesis::Lachesis<'_> {
+        crate::agents::lachesis::Lachesis::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {
