@@ -22,6 +22,8 @@
 //! Later increments fold in category specificity (a thick axis like raw-material
 //! is a weak bridge) and an LLM coherence judge for the borderline survivors.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::Serialize;
 
 use crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath;
@@ -147,6 +149,71 @@ pub fn pmi(count_a: usize, count_b: usize, count_ab: usize, total: usize) -> f64
     ((count_ab as f64 * total as f64) / (count_a as f64 * count_b as f64)).ln()
 }
 
+/// PMI a subset link must clear to be a chain hop (above-chance co-occurrence).
+const SUBSET_PMI_BAR: f64 = 0.5;
+
+/// One category in a routed cross-domain thread.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubsetStep {
+    pub category_id: String,
+    pub category_name: String,
+    /// PMI of the link from the previous step; `0.0` for the seed.
+    pub pmi_from_prev: f64,
+}
+
+/// A cross-domain thread over the subset-overlap graph — the generative output:
+/// "these distant domains connect through this chain of above-chance overlaps".
+/// Always a hypothesis, never a verdict.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubsetHypothesis {
+    /// Ordered category chain, seed → … → end.
+    pub steps: Vec<SubsetStep>,
+    pub hops: usize,
+    /// The weakest PMI link — a chain is only as coherent as its weakest hop.
+    pub min_pmi: f64,
+    /// Always `true`: Lachesis proposes the connection, it does not assert it.
+    pub requires_verification: bool,
+}
+
+/// DFS for the longest simple path over the PMI subset graph, ranked by hops then
+/// the weakest link (min PMI). `adj`: category_id → [(neighbour, pmi)].
+fn subset_dfs(
+    node: &str,
+    adj: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    on_path: &mut HashSet<String>,
+    cur: &mut Vec<(String, f64)>,
+    cur_min: f64,
+    best: &mut Vec<(String, f64)>,
+    best_key: &mut (usize, f64),
+    budget: &mut u64,
+) {
+    if *budget == 0 {
+        return;
+    }
+    *budget -= 1;
+
+    if cur.len() > best_key.0 || (cur.len() == best_key.0 && cur_min > best_key.1) {
+        *best_key = (cur.len(), cur_min);
+        *best = cur.clone();
+    }
+
+    if let Some(neighbours) = adj.get(node) {
+        for (next, p) in neighbours {
+            if on_path.contains(next) {
+                continue;
+            }
+            on_path.insert(next.clone());
+            cur.push((next.clone(), *p));
+            subset_dfs(next, adj, on_path, cur, cur_min.min(*p), best, best_key, budget);
+            cur.pop();
+            on_path.remove(next);
+            if *budget == 0 {
+                return;
+            }
+        }
+    }
+}
+
 /// A routed chain plus the gate's verdict on it.
 #[derive(Debug, Clone, Serialize)]
 pub struct GatedHypothesis {
@@ -208,6 +275,104 @@ impl<'a> Lachesis<'a> {
         let b = self.tooling.category_member_ids(category_b_id).await?;
         let overlap = a.iter().filter(|id| b.contains(*id)).count();
         Ok(pmi(a.len(), b.len(), overlap, universe))
+    }
+
+    /// Route a cross-domain thread over the subset-overlap graph: from a seed
+    /// category, walk to other `candidates` through above-chance (PMI ≥ bar)
+    /// overlaps, and return the longest such chain. This is the generative move —
+    /// "domain A connects to distant domain Z via this chain of overlaps" — but
+    /// only over links that beat chance, so a thick axis (PMI ≈ 0) never carries
+    /// the route. `candidates` are `(category_id, name)` to consider; `universe`
+    /// is N. Returns `None` if the seed has no qualifying neighbour.
+    ///
+    /// v0 takes the candidate set explicitly (a test passes a few; production
+    /// passes the dictionary or the topic-relevant categories) and computes PMI
+    /// on the fly — a `CO_OCCURS`-edge cache replaces the fetch at scale.
+    pub async fn route_subsets(
+        &self,
+        seed_category_id: &str,
+        candidates: &[(String, String)],
+        universe: usize,
+        max_hops: usize,
+    ) -> Result<Option<SubsetHypothesis>, ToolingError> {
+        // Unique candidate ids (+ names), seed included.
+        let mut name_of: HashMap<String, String> = HashMap::new();
+        for (id, name) in candidates {
+            name_of.entry(id.clone()).or_insert_with(|| name.clone());
+        }
+        if !name_of.contains_key(seed_category_id) {
+            return Ok(None);
+        }
+
+        // Member set per category (cached).
+        let mut members: HashMap<String, HashSet<String>> = HashMap::new();
+        for id in name_of.keys() {
+            members.insert(id.clone(), self.tooling.category_member_ids(id).await?);
+        }
+
+        // Symmetric PMI adjacency over qualifying links.
+        let ids: Vec<String> = name_of.keys().cloned().collect();
+        let mut adj: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let (a, b) = (&ids[i], &ids[j]);
+                let ma = &members[a];
+                let mb = &members[b];
+                let overlap = ma.iter().filter(|m| mb.contains(*m)).count();
+                let p = pmi(ma.len(), mb.len(), overlap, universe);
+                if p >= SUBSET_PMI_BAR {
+                    adj.entry(a.clone()).or_default().push((b.clone(), p));
+                    adj.entry(b.clone()).or_default().push((a.clone(), p));
+                }
+            }
+        }
+
+        // Longest high-PMI simple path from the seed.
+        let mut best: Vec<(String, f64)> = Vec::new();
+        let mut best_key = (0usize, f64::INFINITY);
+        let mut on_path: HashSet<String> = HashSet::new();
+        on_path.insert(seed_category_id.to_string());
+        let mut cur: Vec<(String, f64)> = vec![(seed_category_id.to_string(), 0.0)];
+        let mut budget: u64 = 200_000;
+        subset_dfs(
+            seed_category_id,
+            &adj,
+            &mut on_path,
+            &mut cur,
+            f64::INFINITY,
+            &mut best,
+            &mut best_key,
+            &mut budget,
+        );
+        // Respect max_hops by truncating an over-long thread.
+        if best.len() > max_hops + 1 {
+            best.truncate(max_hops + 1);
+        }
+
+        if best.len() < 2 {
+            return Ok(None);
+        }
+
+        let min_pmi = best
+            .iter()
+            .skip(1)
+            .map(|(_, p)| *p)
+            .fold(f64::INFINITY, f64::min);
+        let steps: Vec<SubsetStep> = best
+            .into_iter()
+            .map(|(id, p)| SubsetStep {
+                category_name: name_of.get(&id).cloned().unwrap_or_default(),
+                category_id: id,
+                pmi_from_prev: p,
+            })
+            .collect();
+        let hops = steps.len() - 1;
+        Ok(Some(SubsetHypothesis {
+            hops,
+            min_pmi,
+            requires_verification: true,
+            steps,
+        }))
     }
 }
 
