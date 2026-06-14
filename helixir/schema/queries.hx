@@ -124,9 +124,10 @@ QUERY getMemoryByEmbeddingId(embedding_id: ID) =>
   embedding <- V<MemoryEmbedding>(embedding_id)
   memory <- embedding::In<HAS_EMBEDDING>
   RETURN memory
-QUERY addEntityEmbedding(entity_id: ID, vector_data: [F64], content: String, embedding_model: String) =>
+QUERY addEntityEmbedding(entity_id: String, vector_data: [F64], content: String, embedding_model: String) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
   embedding <- AddV<EntityEmbedding>(vector_data, { name: content })
-  link <- AddE<ENTITY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(entity_id)::To(embedding)
+  link <- AddE<ENTITY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(entity)::To(embedding)
   RETURN embedding
 QUERY getEntity(entity_id: String) =>
   entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
@@ -846,9 +847,10 @@ QUERY getCategoryByName(name: String) =>
 QUERY getAllCategories(limit: I64) =>
   categories <- N<Category>::RANGE(0, limit)
   RETURN categories
-QUERY addCategoryEmbedding(category_id: ID, vector_data: [F64], content: String, embedding_model: String) =>
+QUERY addCategoryEmbedding(category_id: String, vector_data: [F64], content: String, embedding_model: String) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
   embedding <- AddV<CategoryEmbedding>(vector_data, { name: content })
-  link <- AddE<CATEGORY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(category_id)::To(embedding)
+  link <- AddE<CATEGORY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(category)::To(embedding)
   RETURN embedding
 QUERY searchSimilarCategories(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<CategoryEmbedding>(query_vector, limit)
