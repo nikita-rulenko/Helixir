@@ -1,0 +1,201 @@
+//! Atropos — the Cutter (#48 / Moira). Curation → insight journal.
+//!
+//! Clotho weaves subsets; Lachesis routes and gates candidate threads; Atropos
+//! curates the survivors into a journal worth a human's attention. It dedups
+//! (a long thread subsumes its sub-threads), ranks by value (length × the
+//! weakest link), enforces a quality bar, and emits first-class `Insight`s —
+//! each a hypothesis carrying its provenance (the category path + the anchor
+//! memories that witness it) and a lifecycle (`proposed → verified → refuted`).
+//! It proposes; it never asserts (the charter, extended to generated insight).
+//!
+//! v0 routes via Lachesis per seed and curates the results; the insight journal
+//! is JSONL written by the CLL (deploy-free). Persisting `Insight` nodes to the
+//! graph and ranking by novelty-vs-journal-history are later steps.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use tracing::info;
+
+use crate::agents::lachesis::{Lachesis, SubsetHypothesis};
+use crate::toolkit::tooling_manager::ToolingManager;
+use crate::toolkit::tooling_manager::types::ToolingError;
+
+/// A thread must hold this weakest-link PMI and span ≥2 hops to be journaled.
+const QUALITY_PMI_BAR: f64 = 1.0;
+const MIN_HOPS: usize = 2;
+
+/// A memory that witnesses one link of an insight's chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsightWitness {
+    pub link: String,
+    pub memory_id: String,
+    pub snippet: String,
+}
+
+/// A curated cross-domain hypothesis — the journal's unit. Provenance-carrying,
+/// always `requires_verification`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Insight {
+    pub category_path: Vec<String>,
+    pub hops: usize,
+    /// Weakest PMI link — the chain's coherence floor.
+    pub min_pmi: f64,
+    /// Ranking score: `hops × min_pmi` (long AND coherent wins).
+    pub value: f64,
+    pub witnesses: Vec<InsightWitness>,
+    /// Lifecycle: `proposed → verified → refuted`.
+    pub status: String,
+    pub requires_verification: bool,
+}
+
+/// Atropos the Cutter. Borrows the toolkit; composes Lachesis (the pipeline).
+pub struct Atropos<'a> {
+    tooling: &'a ToolingManager,
+}
+
+impl<'a> Atropos<'a> {
+    pub fn new(tooling: &'a ToolingManager) -> Self {
+        Self { tooling }
+    }
+
+    /// Route a thread from each seed category, then curate the survivors into
+    /// ranked, deduped insights. `candidates` is the full category set routing
+    /// considers; `universe` is the PMI N.
+    pub async fn curate(
+        &self,
+        seeds: &[(String, String)],
+        candidates: &[(String, String)],
+        universe: usize,
+        max_hops: usize,
+    ) -> Result<Vec<Insight>, ToolingError> {
+        let lachesis = Lachesis::new(self.tooling);
+        let mut hyps: Vec<SubsetHypothesis> = Vec::new();
+        for (sid, _) in seeds {
+            if let Some(h) = lachesis.route_subsets(sid, candidates, universe, max_hops).await? {
+                hyps.push(h);
+            }
+        }
+        let insights = curate_hypotheses(hyps);
+        info!(
+            "atropos.curate: {} insights from {} seeds",
+            insights.len(),
+            seeds.len()
+        );
+        Ok(insights)
+    }
+}
+
+/// The pure curation policy: quality bar → build → dedup (a thread subsumes any
+/// sub-thread of it) → rank by value. No DB, so it's unit-testable in isolation.
+pub fn curate_hypotheses(hyps: Vec<SubsetHypothesis>) -> Vec<Insight> {
+    let mut insights: Vec<Insight> = hyps
+        .iter()
+        .filter(|h| h.hops >= MIN_HOPS && h.min_pmi >= QUALITY_PMI_BAR)
+        .map(build_insight)
+        .collect();
+
+    // Strongest first, then keep a thread only if it isn't a subset of one
+    // already kept — a 5-hop thread subsumes its 3-hop sub-threads.
+    insights.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    let mut kept: Vec<Insight> = Vec::new();
+    for ins in insights {
+        let cs: HashSet<&String> = ins.category_path.iter().collect();
+        let subsumed = kept.iter().any(|k| {
+            let ks: HashSet<&String> = k.category_path.iter().collect();
+            cs.is_subset(&ks)
+        });
+        if !subsumed {
+            kept.push(ins);
+        }
+    }
+    kept
+}
+
+fn build_insight(h: &SubsetHypothesis) -> Insight {
+    let category_path: Vec<String> = h.steps.iter().map(|s| s.category_name.clone()).collect();
+    let mut witnesses = Vec::new();
+    for (i, s) in h.steps.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        let link = format!("{} → {}", h.steps[i - 1].category_name, s.category_name);
+        for w in &s.witnesses {
+            witnesses.push(InsightWitness {
+                link: link.clone(),
+                memory_id: w.memory_id.clone(),
+                snippet: w.snippet.clone(),
+            });
+        }
+    }
+    Insight {
+        value: h.hops as f64 * h.min_pmi,
+        category_path,
+        hops: h.hops,
+        min_pmi: h.min_pmi,
+        witnesses,
+        status: "proposed".to_string(),
+        requires_verification: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::lachesis::{SubsetStep, SubsetWitness};
+
+    fn step(name: &str, pmi: f64) -> SubsetStep {
+        SubsetStep {
+            category_id: format!("id_{name}"),
+            category_name: name.to_string(),
+            pmi_from_prev: pmi,
+            witnesses: vec![SubsetWitness {
+                memory_id: format!("mem_{name}"),
+                snippet: format!("about {name}"),
+            }],
+        }
+    }
+
+    fn hyp(names_pmis: &[(&str, f64)]) -> SubsetHypothesis {
+        let steps: Vec<SubsetStep> = names_pmis.iter().map(|(n, p)| step(n, *p)).collect();
+        let min_pmi = names_pmis
+            .iter()
+            .skip(1)
+            .map(|(_, p)| *p)
+            .fold(f64::INFINITY, f64::min);
+        SubsetHypothesis {
+            hops: steps.len() - 1,
+            min_pmi,
+            requires_verification: true,
+            steps,
+        }
+    }
+
+    #[test]
+    fn quality_bar_drops_weak_and_short() {
+        // Below the PMI bar, and a single-hop link.
+        let weak = hyp(&[("a", 0.0), ("b", 0.5)]);
+        let short = hyp(&[("a", 0.0)]);
+        assert!(curate_hypotheses(vec![weak, short]).is_empty());
+    }
+
+    #[test]
+    fn ranks_by_value_and_carries_provenance() {
+        let small = hyp(&[("a", 0.0), ("b", 1.2), ("c", 1.2)]); // 2 hops × 1.2 = 2.4
+        let big = hyp(&[("x", 0.0), ("y", 2.0), ("z", 2.0)]); // 2 hops × 2.0 = 4.0
+        let out = curate_hypotheses(vec![small, big]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].category_path, vec!["x", "y", "z"], "highest value first");
+        assert!(out[0].requires_verification, "an insight is a hypothesis");
+        assert_eq!(out[0].status, "proposed");
+        assert!(!out[0].witnesses.is_empty(), "insights carry provenance");
+    }
+
+    #[test]
+    fn dedups_subthreads_into_the_longest() {
+        let full = hyp(&[("a", 0.0), ("b", 2.0), ("c", 2.0)]); // value 4.0
+        let sub = hyp(&[("a", 0.0), ("b", 1.5)]); // {a,b} ⊂ {a,b,c} → dropped
+        let out = curate_hypotheses(vec![sub, full]);
+        assert_eq!(out.len(), 1, "the sub-thread is subsumed");
+        assert_eq!(out[0].hops, 2);
+    }
+}

@@ -153,6 +153,12 @@ impl HelixirClient {
     pub fn lachesis(&self) -> crate::agents::lachesis::Lachesis<'_> {
         crate::agents::lachesis::Lachesis::new(self.tooling())
     }
+
+    /// Atropos the Cutter (#48 / Moira) — curates Lachesis threads into ranked,
+    /// deduped insights with provenance. Borrows the toolkit.
+    pub fn atropos(&self) -> crate::agents::atropos::Atropos<'_> {
+        crate::agents::atropos::Atropos::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {

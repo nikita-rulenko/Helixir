@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use helixir::agents::atropos::Insight;
 use helixir::core::HelixirClient;
 use tracing_subscriber::EnvFilter;
 
@@ -54,6 +55,20 @@ enum Cmd {
     /// Show recent agent activity from the journal.
     Journal {
         #[arg(long, default_value_t = 20)]
+        tail: usize,
+    },
+    /// Atropos — curate Lachesis threads into ranked insights + journal them.
+    Atropos {
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+        #[arg(long = "max-seeds", default_value_t = 24)]
+        max_seeds: usize,
+        #[arg(long = "max-hops", default_value_t = 5)]
+        max_hops: usize,
+    },
+    /// Show the insight journal (Atropos output).
+    Insights {
+        #[arg(long, default_value_t = 15)]
         tail: usize,
     },
 }
@@ -150,7 +165,54 @@ async fn main() -> Result<()> {
             max_hops,
         } => chain(&client, &user, &topic, max_hops).await?,
         Cmd::Journal { tail } => journal_tail(tail)?,
+        Cmd::Atropos {
+            limit,
+            max_seeds,
+            max_hops,
+        } => atropos_run(&client, limit, max_seeds, max_hops).await?,
+        Cmd::Insights { tail } => insights_tail(tail)?,
     }
+    Ok(())
+}
+
+async fn atropos_run(
+    client: &HelixirClient,
+    limit: i64,
+    max_seeds: usize,
+    max_hops: usize,
+) -> Result<()> {
+    let candidates = client.tooling().list_categories(limit).await?;
+    let universe = resolve_universe(client, None).await?;
+    let seeds: Vec<(String, String)> = candidates.iter().take(max_seeds).cloned().collect();
+    println!(
+        "Atropos curating from {} seeds over {} candidates (N={universe})...",
+        seeds.len(),
+        candidates.len()
+    );
+    let insights = client
+        .atropos()
+        .curate(&seeds, &candidates, universe, max_hops)
+        .await?;
+
+    println!("{} insights (journaled):", insights.len());
+    for ins in &insights {
+        write_insight(ins);
+        println!(
+            "  ★ value {:.2}  [{} hops, min PMI {:.2}]  {}",
+            ins.value,
+            ins.hops,
+            ins.min_pmi,
+            ins.category_path.join(" → ")
+        );
+        for w in ins.witnesses.iter().take(2) {
+            println!("       · {} :: {}", w.link, w.snippet);
+        }
+    }
+    journal(
+        "atropos",
+        "run",
+        &format!("seeds={} insights={}", seeds.len(), insights.len()),
+    );
     Ok(())
 }
 
@@ -359,6 +421,51 @@ fn journal(agent: &str, action: &str, detail: &str) {
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(journal_path()) {
         let _ = writeln!(f, "{entry}");
     }
+}
+
+// --- insight journal (Atropos output; separate JSONL) ---
+
+fn insight_journal_path() -> PathBuf {
+    std::env::var("HELIXIR_INSIGHT_LOG")
+        .unwrap_or_else(|_| "helixir-insights.jsonl".to_string())
+        .into()
+}
+
+fn write_insight(insight: &Insight) {
+    if let Ok(line) = serde_json::to_string(insight) {
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(insight_journal_path())
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
+fn insights_tail(n: usize) -> Result<()> {
+    let path = insight_journal_path();
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("no insight journal yet at {}", path.display()))?;
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(n);
+    println!("insight journal (last {} of {}):", lines.len() - start, lines.len());
+    for line in &lines[start..] {
+        if let Ok(ins) = serde_json::from_str::<Insight>(line) {
+            println!(
+                "  ★ value {:.2}  [{} hops, min PMI {:.2}, {}]  {}",
+                ins.value,
+                ins.hops,
+                ins.min_pmi,
+                ins.status,
+                ins.category_path.join(" → ")
+            );
+            for w in ins.witnesses.iter().take(2) {
+                println!("       · {} :: {}", w.link, w.snippet);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn journal_tail(n: usize) -> Result<()> {
