@@ -152,6 +152,83 @@ impl ToolingManager {
             .collect())
     }
 
+    /// All categories as `(category_id, name)` — dictionary listing for the CLI
+    /// and as the candidate set for Lachesis subset routing.
+    pub async fn list_categories(&self, limit: i64) -> Result<Vec<(String, String)>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            categories: Vec<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            category_id: String,
+            #[serde(default, deserialize_with = "nullable_string")]
+            name: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query("getAllCategories", &serde_json::json!({ "limit": limit }))
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp
+            .categories
+            .into_iter()
+            .filter(|r| !r.category_id.is_empty())
+            .map(|r| (r.category_id, r.name))
+            .collect())
+    }
+
+    /// `(memory_id, content)` for a user — the corpus a Clotho pass tags over.
+    pub async fn list_user_memories(
+        &self,
+        user_id: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            memories: Vec<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            memory_id: String,
+            #[serde(default, deserialize_with = "nullable_string")]
+            content: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query(
+                "getUserMemories",
+                &serde_json::json!({ "user_id": user_id, "limit": limit }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp
+            .memories
+            .into_iter()
+            .filter(|r| !r.memory_id.is_empty())
+            .map(|r| (r.memory_id, r.content))
+            .collect())
+    }
+
+    /// Total memory count — the PMI universe N for subset routing.
+    pub async fn total_memory_count(&self, scan_limit: i64) -> Result<usize, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            memories: Vec<serde_json::Value>,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query("getRecentMemories", &serde_json::json!({ "limit": scan_limit }))
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp.memories.len())
+    }
+
     /// Canonical id for a normalized category name, or None if absent.
     /// `getCategoryByName` uses `::FIRST`, which raises GRAPH_ERROR "No value
     /// found" when missing (same shape as #19) — mapped to None.

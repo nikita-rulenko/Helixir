@@ -28,6 +28,9 @@ serde_json = "1.0"
 thiserror = "2.0"
 anyhow = "1.0"
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -97,4 +100,8 @@ path = "src/bin/helixir_deploy.rs"
 [[bin]]
 name = "helixir-bench"
 path = "src/bin/helixir_bench.rs"
+
+[[bin]]
+name = "helixir"
+path = "src/bin/helixir.rs"
 
