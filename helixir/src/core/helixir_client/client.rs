@@ -140,6 +140,12 @@ impl HelixirClient {
     pub fn tooling(&self) -> &ToolingManager {
         &self.tooling_manager
     }
+
+    /// Clotho the Spinner (#33 / Moira) — the auto-tagging agent over the
+    /// category dictionary. Borrows the toolkit it drives.
+    pub fn clotho(&self) -> crate::agents::clotho::Clotho<'_> {
+        crate::agents::clotho::Clotho::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {

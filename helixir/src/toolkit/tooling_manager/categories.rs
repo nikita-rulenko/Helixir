@@ -1,25 +1,29 @@
-//! Clotho category dictionary operations (#33, Moira).
+//! Category primitives (#33, Moira) — the capability layer the Clotho agent
+//! composes over. These are the "hands": create/link/tag categories and match
+//! a memory's text against the dictionary by embedding. The *policy* (which
+//! dictionary, what threshold, ancestor propagation, charter escalation) lives
+//! in the Clotho agent (`crate::agents::clotho`), not here.
 //!
 //! Categories are the THIRD DIMENSION over the flat reasoning graph: a memory's
-//! membership in a category lets it bridge to distant memories that share it,
-//! and each memory carries several categories (several jump-planes). Tagging is
-//! `Memory -TAGGED_AS-> Category`; the bridge is realised by routing THROUGH the
+//! membership in a category lets it bridge to distant memories that share it.
+//! Tagging is `Memory -TAGGED_AS-> Category`; the bridge routes THROUGH the
 //! shared Category node (no pairwise edges — that would flatten the dimension
-//! and explode hubs). Bridge strength ∝ category specificity (a "thin" axis is a
-//! strong bridge; a "thick" one like raw-material is weak) — the future Lachesis
-//! gate.
+//! and explode hubs).
 
 use serde::Deserialize;
-use tracing::warn;
 
 use super::ToolingManager;
 use super::types::ToolingError;
 use crate::utils::nullable_string;
 
 impl ToolingManager {
-    /// Canonical category_id for `name` (normalized trim+lowercase), creating it
-    /// — and its embedding for later embedding-match tagging — if absent.
-    /// Idempotent.
+    /// Canonical category_id for `name` (normalized trim+lowercase), creating the
+    /// `Category` node if absent. Idempotent.
+    ///
+    /// Note: this does NOT persist a `CategoryEmbedding`. Clotho's auto-tagging
+    /// matches via in-memory cosine over the dictionary (SearchV exposes no
+    /// readable score — see `helixdb-hql-gotchas`), so a DB-side category vector
+    /// index is unnecessary until the dictionary is large enough to need ANN.
     pub async fn ensure_category(
         &self,
         name: &str,
@@ -54,34 +58,6 @@ impl ToolingManager {
             )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
-
-        // Embedding (name + description) for Clotho's embedding-match tagging.
-        let embed_text = if description.trim().is_empty() {
-            norm.clone()
-        } else {
-            format!("{norm}: {description}")
-        };
-        match self.embedder.generate(&embed_text, true).await {
-            Ok(vec) => {
-                let vector_data: Vec<f64> = vec.iter().map(|&x| x as f64).collect();
-                if let Err(e) = self
-                    .db
-                    .execute_query::<serde_json::Value, _>(
-                        "addCategoryEmbedding",
-                        &serde_json::json!({
-                            "category_id": category_id,
-                            "vector_data": vector_data,
-                            "content": norm,
-                            "embedding_model": self.embedder.model(),
-                        }),
-                    )
-                    .await
-                {
-                    warn!("ensure_category: embedding persist failed for {}: {}", norm, e);
-                }
-            }
-            Err(e) => warn!("ensure_category: embed failed for {}: {}", norm, e),
-        }
 
         Ok(category_id)
     }
@@ -125,10 +101,24 @@ impl ToolingManager {
         Ok(())
     }
 
+    /// Embed arbitrary text with the active model (cached). The primitive the
+    /// agents use to compute similarity in-memory: SearchV exposes no readable
+    /// score (see `helixdb-hql-gotchas`), so thresholded matching over a small
+    /// controlled vocabulary is done in Rust, not in the DB.
+    pub async fn embed_text(&self, text: &str) -> Result<Vec<f32>, ToolingError> {
+        self.embedder
+            .generate(text, true)
+            .await
+            .map_err(|e| ToolingError::Embedding(e.to_string()))
+    }
+
     /// Canonical id for a normalized category name, or None if absent.
     /// `getCategoryByName` uses `::FIRST`, which raises GRAPH_ERROR "No value
     /// found" when missing (same shape as #19) — mapped to None.
-    async fn get_category_id(&self, normalized_name: &str) -> Result<Option<String>, ToolingError> {
+    pub(crate) async fn get_category_id(
+        &self,
+        normalized_name: &str,
+    ) -> Result<Option<String>, ToolingError> {
         #[derive(Deserialize)]
         struct Resp {
             #[serde(default)]
