@@ -204,4 +204,43 @@ impl ToolingManager {
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
     }
+
+    /// Longest-chain context reconstruction (#47): from a `topic`, resolve seed
+    /// memories, grow their reasoning ego-network, and return the single longest
+    /// coherent reasoning thread — an ordered cause → effect → supersession
+    /// narrative with edge types and cumulative confidence.
+    pub async fn longest_chain(
+        &self,
+        topic: &str,
+        user_id: &str,
+        max_hops: usize,
+    ) -> Result<
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ChainNarrative>,
+        ToolingError,
+    > {
+        info!(
+            "longest_chain: topic '{}' (max_hops {})",
+            safe_truncate(topic, 30),
+            max_hops
+        );
+
+        let embedding = self
+            .embedder
+            .generate(topic, true)
+            .await
+            .map_err(|e| ToolingError::Embedding(e.to_string()))?;
+        let seeds: Vec<(String, String)> = self
+            .search_engine
+            .search(topic, &embedding, user_id, 5, "full", None, None, "personal")
+            .await?
+            .into_iter()
+            .map(|r| (r.memory_id, r.content))
+            .collect();
+
+        crate::toolkit::mind_toolbox::search::smart_traversal_v2::longest_chain::longest_chain(
+            &self.db, &seeds, max_hops,
+        )
+        .await
+        .map_err(|e| ToolingError::Database(e.to_string()))
+    }
 }

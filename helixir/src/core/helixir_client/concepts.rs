@@ -150,4 +150,23 @@ impl HelixirClient {
             },
         })
     }
+
+    /// Longest-chain context reconstruction (#47): the longest coherent
+    /// reasoning thread running through `topic` — an ordered cause → effect →
+    /// supersession narrative with edge types and cumulative confidence.
+    pub async fn longest_chain(
+        &self,
+        topic: &str,
+        user_id: &str,
+        max_hops: usize,
+    ) -> Result<
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ChainNarrative>,
+        HelixirClientError,
+    > {
+        self.ensure_initialized().await?;
+        self.tooling_manager
+            .longest_chain(topic, user_id, max_hops)
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))
+    }
 }

@@ -53,6 +53,12 @@ pub(crate) struct BatchNode {
 struct BatchEdge {
     from_node: String,
     to_node: String,
+    // Per-edge confidence the writer (LLM) assigned. IMPLIES carries it as
+    // `probability`, the others as `strength`. Optional: older edges lack it.
+    #[serde(default)]
+    strength: Option<i64>,
+    #[serde(default)]
+    probability: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,7 +167,13 @@ pub(crate) struct LevelEdge {
     pub(crate) parent_uuid: String,
     pub(crate) child_uuid: String,
     pub(crate) edge_type: &'static str,
+    /// Per-family structural weight (direction/type semantics, dampened `*_IN`).
     pub(crate) weight: f64,
+    /// The writer's per-edge confidence normalised to `0..1` (LLM `strength` /
+    /// `probability` ÷ 100); `1.0` when the edge stored none. Distinct from
+    /// `weight` so existing consumers keep family-weight semantics while
+    /// longest-chain can fold in real per-edge confidence.
+    pub(crate) strength_norm: f64,
 }
 
 pub(crate) struct LevelFetch {
@@ -200,11 +212,17 @@ pub(crate) async fn fetch_level(
             } else {
                 (e.from_node.clone(), e.to_node.clone())
             };
+            let strength_norm = e
+                .strength
+                .or(e.probability)
+                .map(|s| (s as f64 / 100.0).clamp(0.0, 1.0))
+                .unwrap_or(1.0);
             edges.push(LevelEdge {
                 parent_uuid,
                 child_uuid,
                 edge_type,
                 weight: *weight,
+                strength_norm,
             });
         }
     }
