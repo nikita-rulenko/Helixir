@@ -130,6 +130,23 @@ pub fn assess(edges: &[ChainEdge]) -> CoherenceVerdict {
     }
 }
 
+/// Pointwise mutual information of two subsets from their cardinalities — the
+/// apophenia-safe overlap measure that routes the cross-domain (category) plane.
+/// `> 0`: they co-occur MORE than chance (a real, surprising link); `0`: exactly
+/// chance (no signal); `NEG_INFINITY`: never co-occur. A thick subset has a huge
+/// cardinality in the denominator, so even large overlaps fall to ≈0 — it gates
+/// itself out (the `raw material` problem solved by arithmetic). `total` is the
+/// universe size N. One number = apophenia gate = surprise = specificity.
+pub fn pmi(count_a: usize, count_b: usize, count_ab: usize, total: usize) -> f64 {
+    if count_a == 0 || count_b == 0 || total == 0 {
+        return 0.0;
+    }
+    if count_ab == 0 {
+        return f64::NEG_INFINITY;
+    }
+    ((count_ab as f64 * total as f64) / (count_a as f64 * count_b as f64)).ln()
+}
+
 /// A routed chain plus the gate's verdict on it.
 #[derive(Debug, Clone, Serialize)]
 pub struct GatedHypothesis {
@@ -175,6 +192,22 @@ impl<'a> Lachesis<'a> {
             .collect();
         let verdict = assess(&edges);
         Ok(Some(GatedHypothesis { path, verdict }))
+    }
+
+    /// PMI link strength between two category subsets over a `universe` of N
+    /// memories — the apophenia-safe overlap Lachesis routes the cross-domain
+    /// plane with. Fetches both member sets and intersects them in memory (the
+    /// deploy-free v0; a `CO_OCCURS`-edge cache replaces the fetch at scale).
+    pub async fn subset_pmi(
+        &self,
+        category_a_id: &str,
+        category_b_id: &str,
+        universe: usize,
+    ) -> Result<f64, ToolingError> {
+        let a = self.tooling.category_member_ids(category_a_id).await?;
+        let b = self.tooling.category_member_ids(category_b_id).await?;
+        let overlap = a.iter().filter(|id| b.contains(*id)).count();
+        Ok(pmi(a.len(), b.len(), overlap, universe))
     }
 }
 
@@ -236,5 +269,32 @@ mod tests {
     #[test]
     fn empty_is_not_a_chain() {
         assert_eq!(assess(&[]).label, EpistemicLabel::LikelyApophenia);
+    }
+
+    // --- PMI subset-overlap routing (the cross-domain apophenia guard) ---
+
+    #[test]
+    fn pmi_thick_axis_gates_itself_out() {
+        // A subset covering the whole universe co-occurs with anything at exactly
+        // chance → PMI 0, regardless of overlap. The raw-material problem, solved.
+        assert!(pmi(10, 100, 10, 100).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pmi_specific_pair_scores_high() {
+        // Two small subsets fully overlapping, far above chance.
+        assert!(pmi(5, 5, 5, 1000) > 3.0);
+    }
+
+    #[test]
+    fn pmi_no_overlap_is_neg_inf() {
+        assert_eq!(pmi(10, 10, 0, 1000), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn pmi_specific_beats_thick() {
+        let specific = pmi(5, 5, 5, 100); // narrow, fully overlapping
+        let thick = pmi(5, 100, 5, 100); // B spans the whole universe
+        assert!(specific > thick, "specific {specific} should beat thick {thick}");
     }
 }

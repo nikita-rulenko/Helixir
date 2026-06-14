@@ -10,6 +10,8 @@
 //! shared Category node (no pairwise edges — that would flatten the dimension
 //! and explode hubs).
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 
 use super::ToolingManager;
@@ -110,6 +112,44 @@ impl ToolingManager {
             .generate(text, true)
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))
+    }
+
+    /// The member set of a category subset — every memory_id tagged with it.
+    /// Deploy-free PMI input for Lachesis subset routing; `limit` is high so it
+    /// counts the whole subset on today's corpora (a `CO_OCCURS`-edge cache
+    /// replaces this fetch once the dictionary is large).
+    pub async fn category_member_ids(
+        &self,
+        category_id: &str,
+    ) -> Result<HashSet<String>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            memories: Vec<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            memory_id: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query(
+                "getMemoriesByCategory",
+                &serde_json::json!({
+                    "category_id": category_id,
+                    "exclude_memory_id": "",
+                    "limit": 1_000_000,
+                }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp
+            .memories
+            .into_iter()
+            .map(|m| m.memory_id)
+            .filter(|s| !s.is_empty())
+            .collect())
     }
 
     /// Canonical id for a normalized category name, or None if absent.
