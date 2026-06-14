@@ -12,6 +12,7 @@ mod dictionary;
 
 use tracing::{info, warn};
 
+use crate::llm::providers::base::LlmProvider;
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::{Clarification, ToolingError};
 
@@ -33,6 +34,19 @@ pub struct AutoTagOutcome {
     /// Set when NOTHING cleared the threshold: Clotho met an unknown and
     /// escalates per the charter instead of inventing a category silently.
     pub escalation: Option<Clarification>,
+}
+
+/// Outcome of a grow-and-tag pass over a corpus.
+#[derive(Debug, Default)]
+pub struct GrowStats {
+    pub scanned: usize,
+    /// Tagged from a category already in the dictionary.
+    pub tagged_by_match: usize,
+    /// New categories minted via the LLM (the dictionary grew).
+    pub minted: usize,
+    /// Tagged by a category minted earlier in THIS pass (reuse — convergence).
+    pub reused_mint: usize,
+    pub failed: usize,
 }
 
 /// Clotho the Spinner. Borrows the toolkit it drives; cheap to construct per
@@ -161,6 +175,143 @@ impl<'a> Clotho<'a> {
             matched.len()
         );
         Ok(outcome)
+    }
+
+    /// Grow-and-tag pass: match each memory against the LIVE dictionary by
+    /// cosine; on a miss, mint a fitting category via the LLM (charter-permitting
+    /// — auto-add by default here), add it to the dictionary, and tag — so the
+    /// next similar memory reuses it instead of minting again. This is how a
+    /// category layer accretes over the flat graph from the corpus itself.
+    pub async fn grow_pass(
+        &self,
+        memories: &[(String, String)],
+        threshold: f64,
+    ) -> Result<GrowStats, ToolingError> {
+        let mut stats = GrowStats::default();
+
+        // Load the live dictionary and embed it once (name: description). This
+        // is what lets minted categories be reused: their name+description
+        // persist, and the next pass re-embeds them (DB vectors aren't readable).
+        let mut dict: Vec<(String, String, Vec<f32>)> = Vec::new();
+        for (id, name, desc) in self.tooling.list_categories_full(2000).await? {
+            let text = if desc.trim().is_empty() {
+                name.clone()
+            } else {
+                format!("{name}: {desc}")
+            };
+            if let Ok(v) = self.tooling.embed_text(&text).await {
+                dict.push((id, name, v));
+            }
+        }
+
+        for (mem_id, content) in memories {
+            stats.scanned += 1;
+            if content.trim().is_empty() {
+                continue;
+            }
+            let cv = match self.tooling.embed_text(content).await {
+                Ok(v) => v,
+                Err(_) => {
+                    stats.failed += 1;
+                    continue;
+                }
+            };
+
+            // ALL matches above threshold — a memory belongs to several
+            // categories at once, and that multi-membership is what makes
+            // categories co-occur (the overlaps Lachesis routes over). Single-
+            // tagging would leave the subset-overlap graph empty.
+            let matches: Vec<(String, i64)> = dict
+                .iter()
+                .filter_map(|(cid, _, ev)| {
+                    let s = cosine(&cv, ev);
+                    (s >= threshold).then(|| (cid.clone(), (s.clamp(0.0, 1.0) * 100.0).round() as i64))
+                })
+                .collect();
+
+            if !matches.is_empty() {
+                for (cid, conf) in &matches {
+                    let _ = self
+                        .tooling
+                        .tag_memory(mem_id, cid, *conf, "clotho-embed")
+                        .await;
+                }
+                stats.tagged_by_match += 1;
+                continue;
+            }
+
+            // Miss → mint a category via the LLM, tag, and add it to the dict.
+            match self.mint_category(content).await {
+                Ok(Some((cid, name, emb))) => {
+                    let _ = self
+                        .tooling
+                        .tag_memory(mem_id, &cid, 70, "clotho-llm-mint")
+                        .await;
+                    if dict.iter().any(|(id, _, _)| id == &cid) {
+                        stats.reused_mint += 1;
+                    } else {
+                        stats.minted += 1;
+                        dict.push((cid, name, emb));
+                    }
+                }
+                _ => stats.failed += 1,
+            }
+        }
+
+        info!(
+            "clotho.grow_pass: scanned={} matched={} minted={} reused={} failed={}",
+            stats.scanned, stats.tagged_by_match, stats.minted, stats.reused_mint, stats.failed
+        );
+        Ok(stats)
+    }
+
+    /// Ask the LLM for a BROAD, reusable category for `content`, create it
+    /// (idempotent) and return `(id, name, embedding)`. The "general/reusable"
+    /// instruction is the guard against category explosion — many memories
+    /// should share each minted category.
+    async fn mint_category(
+        &self,
+        content: &str,
+    ) -> Result<Option<(String, String, Vec<f32>)>, ToolingError> {
+        const SYS: &str = "You are Clotho, a librarian maintaining a small controlled vocabulary \
+            of BROAD, reusable domain categories for a memory graph. Given a memory, return the \
+            single best category that MANY related memories could also share. Strongly prefer \
+            general domains (e.g. \"graph databases\", \"software testing\", \"distributed \
+            systems\", \"information retrieval\") over narrow, memory-specific labels. Respond \
+            with JSON only: {\"category\": \"<short lowercase english noun phrase>\", \
+            \"description\": \"<one short sentence>\"}.";
+
+        let (raw, _meta) = self
+            .tooling
+            .llm_provider
+            .generate(SYS, content, Some("json_object"))
+            .await
+            .map_err(|e| ToolingError::Extraction(e.to_string()))?;
+        let v: serde_json::Value = serde_json::from_str(raw.trim())
+            .map_err(|e| ToolingError::Extraction(format!("mint parse: {e}; raw={raw}")))?;
+        let name = v
+            .get("category")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let desc = v
+            .get("description")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let cid = self.tooling.ensure_category(&name, "concept", &desc).await?;
+        let text = if desc.is_empty() {
+            name.clone()
+        } else {
+            format!("{name}: {desc}")
+        };
+        let emb = self.tooling.embed_text(&text).await.unwrap_or_default();
+        Ok(Some((cid, name, emb)))
     }
 }
 

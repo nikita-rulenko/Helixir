@@ -180,6 +180,42 @@ impl ToolingManager {
             .collect())
     }
 
+    /// All categories as `(category_id, name, description)` — the LIVE dictionary
+    /// Clotho matches against (and grows). Distinct from `list_categories`: it
+    /// carries the description so the matcher can re-embed the whole vocabulary,
+    /// including categories minted at runtime (their vectors aren't readable from
+    /// the DB — see `helixdb-hql-gotchas`).
+    pub async fn list_categories_full(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(String, String, String)>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            categories: Vec<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            category_id: String,
+            #[serde(default, deserialize_with = "nullable_string")]
+            name: String,
+            #[serde(default, deserialize_with = "nullable_string")]
+            description: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query("getAllCategories", &serde_json::json!({ "limit": limit }))
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp
+            .categories
+            .into_iter()
+            .filter(|r| !r.category_id.is_empty())
+            .map(|r| (r.category_id, r.name, r.description))
+            .collect())
+    }
+
     /// `(memory_id, content)` for a user — the corpus a Clotho pass tags over.
     pub async fn list_user_memories(
         &self,

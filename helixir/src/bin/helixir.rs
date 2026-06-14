@@ -73,6 +73,16 @@ enum ClothoCmd {
         #[arg(long = "top-k", default_value_t = 5)]
         top_k: i64,
     },
+    /// Grow-and-tag: match against the live dictionary, mint a category via the
+    /// LLM on a miss — the dictionary self-builds from the corpus.
+    Grow {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 200)]
+        limit: i64,
+        #[arg(long, default_value_t = 0.62)]
+        threshold: f64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -116,6 +126,11 @@ async fn main() -> Result<()> {
                 threshold,
                 top_k,
             } => clotho_tag(&client, &user, limit, threshold, top_k).await?,
+            ClothoCmd::Grow {
+                user,
+                limit,
+                threshold,
+            } => clotho_grow(&client, &user, limit, threshold).await?,
         },
         Cmd::Lachesis { cmd } => match cmd {
             LachesisCmd::Pmi {
@@ -197,6 +212,28 @@ async fn clotho_tag(
         &format!(
             "user={user} scanned={} tagged={tagged_mems} tags={tags} escalations={escalations}",
             mems.len()
+        ),
+    );
+    Ok(())
+}
+
+async fn clotho_grow(client: &HelixirClient, user: &str, limit: i64, threshold: f64) -> Result<()> {
+    let mems = client.tooling().list_user_memories(user, limit).await?;
+    println!(
+        "Clotho grow-pass over {} memories for '{user}' (bar {threshold}); minting on miss...",
+        mems.len()
+    );
+    let s = client.clotho().grow_pass(&mems, threshold).await?;
+    println!(
+        "done: scanned={} matched={} minted={} reused={} failed={}",
+        s.scanned, s.tagged_by_match, s.minted, s.reused_mint, s.failed
+    );
+    journal(
+        "clotho",
+        "grow",
+        &format!(
+            "user={user} scanned={} matched={} minted={} reused={} failed={}",
+            s.scanned, s.tagged_by_match, s.minted, s.reused_mint, s.failed
         ),
     );
     Ok(())
