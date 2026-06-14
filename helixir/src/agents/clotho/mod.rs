@@ -16,6 +16,13 @@ use crate::llm::providers::base::LlmProvider;
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::{Clarification, ToolingError};
 
+/// Dominance margin for grow-pass tagging: tag only categories within this much
+/// of the best match. nomic on-target cosine is ~0.70–0.74 and the noise floor
+/// ~0.45–0.57, a ~0.13+ gap, so this keeps the top domain(s) and drops the
+/// noise-floor smear that wove spurious cross-domain bridges (the provenance
+/// drill exposed exactly this).
+const DOMINANCE_MARGIN: f64 = 0.07;
+
 /// One category an auto-tag pass attached to a memory.
 #[derive(Debug, Clone)]
 pub struct AutoTagHit {
@@ -217,16 +224,18 @@ impl<'a> Clotho<'a> {
                 }
             };
 
-            // ALL matches above threshold — a memory belongs to several
-            // categories at once, and that multi-membership is what makes
-            // categories co-occur (the overlaps Lachesis routes over). Single-
-            // tagging would leave the subset-overlap graph empty.
-            let matches: Vec<(String, i64)> = dict
+            // Dominance gate: score every category, then tag those within
+            // DOMINANCE_MARGIN of the best AND over the floor. Multi-tag for
+            // genuine multi-domain membership (the overlaps Lachesis routes
+            // over), but NOT everything that merely grazes the threshold — that
+            // noise-floor smear is what wove the spurious cross-domain bridges.
+            let scored: Vec<(&String, f64)> =
+                dict.iter().map(|(cid, _, ev)| (cid, cosine(&cv, ev))).collect();
+            let best = scored.iter().map(|(_, s)| *s).fold(f64::MIN, f64::max);
+            let matches: Vec<(String, i64)> = scored
                 .iter()
-                .filter_map(|(cid, _, ev)| {
-                    let s = cosine(&cv, ev);
-                    (s >= threshold).then(|| (cid.clone(), (s.clamp(0.0, 1.0) * 100.0).round() as i64))
-                })
+                .filter(|(_, s)| *s >= threshold && *s >= best - DOMINANCE_MARGIN)
+                .map(|(cid, s)| ((*cid).clone(), (s.clamp(0.0, 1.0) * 100.0).round() as i64))
                 .collect();
 
             if !matches.is_empty() {

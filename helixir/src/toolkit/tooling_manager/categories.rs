@@ -250,6 +250,38 @@ impl ToolingManager {
             .collect())
     }
 
+    /// Names of the categories a memory is tagged with (`Memory -TAGGED_AS->
+    /// Category`) — for inspecting tag quality.
+    pub async fn memory_category_names(
+        &self,
+        memory_id: &str,
+    ) -> Result<Vec<String>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            categories: Vec<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            name: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query(
+                "getMemoryCategories",
+                &serde_json::json!({ "memory_id": memory_id }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(resp
+            .categories
+            .into_iter()
+            .map(|r| r.name)
+            .filter(|n| !n.is_empty())
+            .collect())
+    }
+
     /// Content of one memory by id (the witness snippet for provenance), or
     /// None if absent. `getMemory` uses `::FIRST` → "no value found" when missing.
     pub async fn memory_content(&self, memory_id: &str) -> Result<Option<String>, ToolingError> {
