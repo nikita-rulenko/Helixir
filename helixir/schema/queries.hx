@@ -488,6 +488,15 @@ QUERY getMemoryEntities(memory_id: String) =>
   entities <- memory::Out<EXTRACTED_ENTITY>
   mentions <- memory::Out<MENTIONS>
   RETURN entities, mentions
+// #33 relation density: memories linked to a given entity via EXTRACTED_ENTITY,
+// excluding `exclude_memory_id`. The cross-domain bridge primitive — the
+// background consolidate pass (Clotho-lite) uses it to weave reasoning edges
+// between memories that share an entity but are embedding-dissimilar (which
+// similarity alone can never surface). Additive — getMemoryEntities is untouched.
+QUERY getMemoriesByEntity(entity_id: String, exclude_memory_id: String, limit: I64) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
+  memories <- entity::In<EXTRACTED_ENTITY>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories
 
 QUERY getMemoryConcepts(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
@@ -827,3 +836,43 @@ QUERY markNoticeDelivered(notice_id: String) =>
   notice <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))::FIRST
   updated <- notice::UPDATE({ delivered: 1 })
   RETURN updated
+// --- Clotho category dictionary queries — Moira #33 (additive) ---
+QUERY addCategory(category_id: String, name: String, kind: String, description: String, created_at: String) =>
+  category <- AddN<Category>({ category_id: category_id, name: name, kind: kind, description: description, created_at: created_at })
+  RETURN category
+QUERY getCategoryByName(name: String) =>
+  category <- N<Category>::WHERE(_::{name}::EQ(name))::FIRST
+  RETURN category
+QUERY getAllCategories(limit: I64) =>
+  categories <- N<Category>::RANGE(0, limit)
+  RETURN categories
+QUERY addCategoryEmbedding(category_id: ID, vector_data: [F64], content: String, embedding_model: String) =>
+  embedding <- AddV<CategoryEmbedding>(vector_data, { name: content })
+  link <- AddE<CATEGORY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(category_id)::To(embedding)
+  RETURN embedding
+QUERY searchSimilarCategories(query_vector: [F64], limit: I64) =>
+  embeddings <- SearchV<CategoryEmbedding>(query_vector, limit)
+  RETURN embeddings
+QUERY linkSubcategory(child_id: String, parent_id: String) =>
+  child <- N<Category>::WHERE(_::{category_id}::EQ(child_id))::FIRST
+  parent <- N<Category>::WHERE(_::{category_id}::EQ(parent_id))::FIRST
+  link <- AddE<SUBCATEGORY_OF>::From(child)::To(parent)
+  RETURN link
+QUERY addCategoryAlias(alias_id: String, canonical_id: String) =>
+  alias <- N<Category>::WHERE(_::{category_id}::EQ(alias_id))::FIRST
+  canonical <- N<Category>::WHERE(_::{category_id}::EQ(canonical_id))::FIRST
+  link <- AddE<ALIAS_OF>::From(alias)::To(canonical)
+  RETURN link
+QUERY tagMemoryWithCategory(memory_id: String, category_id: String, confidence: I64, source: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  link <- AddE<TAGGED_AS>({ confidence: confidence, source: source })::From(memory)::To(category)
+  RETURN link
+QUERY getMemoryCategories(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  categories <- memory::Out<TAGGED_AS>
+  RETURN categories
+QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limit: I64) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories
