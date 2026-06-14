@@ -286,6 +286,9 @@ async fn lachesis_route(
                     println!("  {}", s.category_name);
                 } else {
                     println!("  └─[PMI {:.2}]→ {}", s.pmi_from_prev, s.category_name);
+                    for w in &s.witnesses {
+                        println!("        · witness [{}] {}", w.memory_id, w.snippet);
+                    }
                 }
             }
             journal(

@@ -152,6 +152,14 @@ pub fn pmi(count_a: usize, count_b: usize, count_ab: usize, total: usize) -> f64
 /// PMI a subset link must clear to be a chain hop (above-chance co-occurrence).
 const SUBSET_PMI_BAR: f64 = 0.5;
 
+/// A memory that witnesses a chain hop — tagged with BOTH the categories whose
+/// overlap forms the link. The provenance that makes a hypothesis verifiable.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubsetWitness {
+    pub memory_id: String,
+    pub snippet: String,
+}
+
 /// One category in a routed cross-domain thread.
 #[derive(Debug, Clone, Serialize)]
 pub struct SubsetStep {
@@ -159,6 +167,10 @@ pub struct SubsetStep {
     pub category_name: String,
     /// PMI of the link from the previous step; `0.0` for the seed.
     pub pmi_from_prev: f64,
+    /// Memories that witness the link from the previous step (its overlap
+    /// members) — the anchors a reader checks to confirm or reject. Empty for
+    /// the seed.
+    pub witnesses: Vec<SubsetWitness>,
 }
 
 /// A cross-domain thread over the subset-overlap graph — the generative output:
@@ -358,14 +370,39 @@ impl<'a> Lachesis<'a> {
             .skip(1)
             .map(|(_, p)| *p)
             .fold(f64::INFINITY, f64::min);
-        let steps: Vec<SubsetStep> = best
-            .into_iter()
-            .map(|(id, p)| SubsetStep {
-                category_name: name_of.get(&id).cloned().unwrap_or_default(),
-                category_id: id,
-                pmi_from_prev: p,
-            })
-            .collect();
+
+        // Drill each hop down to its anchor memories — the overlap members that
+        // witness the link. This is what makes a hypothesis verifiable: read the
+        // anchors and the connection stands or falls.
+        let mut steps: Vec<SubsetStep> = Vec::with_capacity(best.len());
+        for (i, (id, p)) in best.iter().enumerate() {
+            let mut witnesses = Vec::new();
+            if i > 0 {
+                let prev = &best[i - 1].0;
+                if let (Some(ma), Some(mb)) = (members.get(prev), members.get(id)) {
+                    let overlap: Vec<String> =
+                        ma.iter().filter(|m| mb.contains(*m)).take(3).cloned().collect();
+                    for mid in overlap {
+                        let snippet = self
+                            .tooling
+                            .memory_content(&mid)
+                            .await?
+                            .map(|c| c.chars().take(110).collect())
+                            .unwrap_or_default();
+                        witnesses.push(SubsetWitness {
+                            memory_id: mid,
+                            snippet,
+                        });
+                    }
+                }
+            }
+            steps.push(SubsetStep {
+                category_name: name_of.get(id).cloned().unwrap_or_default(),
+                category_id: id.clone(),
+                pmi_from_prev: *p,
+                witnesses,
+            });
+        }
         let hops = steps.len() - 1;
         Ok(Some(SubsetHypothesis {
             hops,

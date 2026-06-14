@@ -250,6 +250,30 @@ impl ToolingManager {
             .collect())
     }
 
+    /// Content of one memory by id (the witness snippet for provenance), or
+    /// None if absent. `getMemory` uses `::FIRST` → "no value found" when missing.
+    pub async fn memory_content(&self, memory_id: &str) -> Result<Option<String>, ToolingError> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            memory: Option<Row>,
+        }
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default, deserialize_with = "nullable_string")]
+            content: String,
+        }
+        match self
+            .db
+            .execute_query::<Resp, _>("getMemory", &serde_json::json!({ "memory_id": memory_id }))
+            .await
+        {
+            Ok(r) => Ok(r.memory.map(|m| m.content).filter(|c| !c.is_empty())),
+            Err(e) if e.to_string().to_lowercase().contains("no value found") => Ok(None),
+            Err(e) => Err(ToolingError::Database(e.to_string())),
+        }
+    }
+
     /// Total memory count — the PMI universe N for subset routing.
     pub async fn total_memory_count(&self, scan_limit: i64) -> Result<usize, ToolingError> {
         #[derive(Deserialize, Default)]
