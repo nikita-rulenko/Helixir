@@ -61,6 +61,18 @@ struct BatchEdge {
     probability: Option<i64>,
 }
 
+impl BatchEdge {
+    /// The writer's per-edge confidence normalised to `0..1` (`strength` or
+    /// `probability` ÷ 100); `1.0` when the edge stored none, so an unweighted
+    /// (legacy) edge is a no-op multiplier.
+    fn strength_norm(&self) -> f64 {
+        self.strength
+            .or(self.probability)
+            .map(|s| (s as f64 / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(1.0)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct LevelBatchResponse {
     #[serde(default)]
@@ -212,17 +224,12 @@ pub(crate) async fn fetch_level(
             } else {
                 (e.from_node.clone(), e.to_node.clone())
             };
-            let strength_norm = e
-                .strength
-                .or(e.probability)
-                .map(|s| (s as f64 / 100.0).clamp(0.0, 1.0))
-                .unwrap_or(1.0);
             edges.push(LevelEdge {
                 parent_uuid,
                 child_uuid,
                 edge_type,
                 weight: *weight,
-                strength_norm,
+                strength_norm: e.strength_norm(),
             });
         }
     }
@@ -304,6 +311,12 @@ pub async fn graph_expansion_phase_batched(
                     continue;
                 };
 
+                // Fold the writer's per-edge confidence into the family weight:
+                // a strongly-asserted reasoning edge carries more PPR mass and
+                // lifts its child's rank; a weak one carries less. Legacy edges
+                // (no stored strength) multiply by 1.0 — unchanged.
+                let eff_weight = *edge_weight * edge.strength_norm();
+
                 // Record the edge for PPR regardless of visited status.
                 if let Some(parent_node) = node_by_uuid.get(parent_uuid) {
                     let key = (
@@ -315,7 +328,7 @@ pub async fn graph_expansion_phase_batched(
                         ego_edges.push(PprEdge {
                             from: parent_node.memory_id.clone(),
                             to: child.memory_id.clone(),
-                            weight: *edge_weight,
+                            weight: eff_weight,
                         });
                     }
                 }
@@ -324,7 +337,7 @@ pub async fn graph_expansion_phase_batched(
                     continue;
                 }
 
-                let graph_score = calculate_graph_score(*edge_weight, *parent_score);
+                let graph_score = calculate_graph_score(eff_weight, *parent_score);
                 let temporal_score =
                     calculate_temporal_freshness(&child.created_at, config.temporal_decay_days);
 

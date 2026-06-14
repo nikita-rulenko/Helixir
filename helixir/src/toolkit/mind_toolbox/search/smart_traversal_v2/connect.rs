@@ -169,7 +169,11 @@ pub async fn connect(
             }
             wave.parents.insert(
                 (*child_mid).to_string(),
-                Some(((*parent_mid).to_string(), edge.edge_type, edge.weight)),
+                Some((
+                    (*parent_mid).to_string(),
+                    edge.edge_type,
+                    edge.weight * edge.strength_norm,
+                )),
             );
             next_frontier.push((*child_mid).to_string());
 
