@@ -159,6 +159,12 @@ impl HelixirClient {
     pub fn atropos(&self) -> crate::agents::atropos::Atropos<'_> {
         crate::agents::atropos::Atropos::new(self.tooling())
     }
+
+    /// The Moira orchestrator (#41) — runs the full Clotho→Lachesis→Atropos
+    /// scenario as one pass. Borrows the toolkit.
+    pub fn orchestrator(&self) -> crate::agents::orchestrator::Orchestrator<'_> {
+        crate::agents::orchestrator::Orchestrator::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {

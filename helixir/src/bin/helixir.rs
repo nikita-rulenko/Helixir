@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use helixir::agents::atropos::Insight;
+use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 use tracing_subscriber::EnvFilter;
 
@@ -70,6 +71,17 @@ enum Cmd {
     Insights {
         #[arg(long, default_value_t = 15)]
         tail: usize,
+    },
+    /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
+    Pipeline {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 0.62)]
+        threshold: f64,
+        #[arg(long = "max-seeds", default_value_t = 24)]
+        max_seeds: usize,
+        #[arg(long = "max-hops", default_value_t = 5)]
+        max_hops: usize,
     },
 }
 
@@ -171,7 +183,55 @@ async fn main() -> Result<()> {
             max_hops,
         } => atropos_run(&client, limit, max_seeds, max_hops).await?,
         Cmd::Insights { tail } => insights_tail(tail)?,
+        Cmd::Pipeline {
+            user,
+            threshold,
+            max_seeds,
+            max_hops,
+        } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
     }
+    Ok(())
+}
+
+async fn pipeline_run(
+    client: &HelixirClient,
+    user: &str,
+    threshold: f64,
+    max_seeds: usize,
+    max_hops: usize,
+) -> Result<()> {
+    let cfg = PassConfig {
+        grow_threshold: threshold,
+        max_seeds,
+        max_hops,
+        ..PassConfig::default()
+    };
+    println!("Orchestrated pass for '{user}' (Clotho → Lachesis → Atropos)...");
+    let run = client.orchestrator().full_pass(user, &cfg).await?;
+    println!(
+        "Clotho: matched={} minted={} reused={}",
+        run.grow.tagged_by_match, run.grow.minted, run.grow.reused_mint
+    );
+    println!("Atropos: {} insights (journaled):", run.insights.len());
+    for ins in &run.insights {
+        write_insight(ins);
+        println!(
+            "  ★ value {:.2}  [{} hops, min PMI {:.2}]  {}",
+            ins.value,
+            ins.hops,
+            ins.min_pmi,
+            ins.category_path.join(" → ")
+        );
+    }
+    journal(
+        "orchestrator",
+        "full_pass",
+        &format!(
+            "user={user} minted={} insights={}",
+            run.grow.minted,
+            run.insights.len()
+        ),
+    );
     Ok(())
 }
 
