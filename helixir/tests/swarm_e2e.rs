@@ -63,10 +63,11 @@ async fn two_hosts_appear_in_one_roster() {
     assert_eq!(pa.role, "researcher");
     assert_eq!(pa.status, "working");
 
-    // Fresh heartbeats are active in a generous window, stale in a zero window.
+    // Fresh heartbeats are active in a generous window. (The active/stale
+    // boundary itself is unit-tested with a controlled clock — here both were
+    // just stamped, so age≈0 and any non-negative window counts them live.)
     assert!(pa.is_active(now, 120), "a should be active: age={:?}", pa.age_seconds(now));
     assert!(pb.is_active(now, 120), "b should be active");
-    assert!(!pa.is_active(now, 0), "a should be stale at window=0");
 
     // Re-heartbeat is idempotent: no duplicate node, presence just updates.
     tooling
