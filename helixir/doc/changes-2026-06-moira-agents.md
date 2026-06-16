@@ -79,3 +79,34 @@ feature; and, for anything touching the read path, the liveness oracle (L1 17/17
 + L2) + the cross-domain/connect tests + the MRR read-path tests. New permanent
 suites: `clotho_autotag_e2e`, `cross_domain_bridge_e2e`, `longest_chain_e2e`,
 `lachesis_gate_e2e`, `lachesis_pmi_e2e`, plus 10 Lachesis unit tests.
+
+---
+
+## Update — the full pipeline + operability (later in 2026-06)
+
+The agents matured into an end-to-end, operable pipeline:
+
+- **Lachesis** completed: a coherence gate (geometric-mean edge weight × reasoning
+  support), **PMI subset-overlap routing** (`ln(|A∩B|·N/(|A|·|B|))` — a thick axis
+  gates itself out; one number = apophenia gate = surprise = specificity),
+  `route_subsets` for end-to-end cross-domain threads, and **drill-to-anchors**
+  (every hop carries its witness memories — provenance is what makes a hypothesis
+  falsifiable).
+- **Clotho** grew a self-building dictionary (LLM mints a category on a miss) and a
+  **dominance gate** (tag only within a margin of the best match) that kills the
+  noise-floor cross-tags the provenance drill exposed.
+- **Atropos** (#48): curates Lachesis threads into ranked, deduplicated `Insight`s
+  with provenance and a `proposed → verified → refuted` lifecycle.
+- **Orchestrator** (#41): one `full_pass` runs Clotho → Lachesis → Atropos —
+  choreography kept separate from scheduling.
+- **Daemon** (#42, #49): schedules `full_pass`; `helixir daemon start/stop/status`
+  runs it **detached** (setsid + PID file in `~/.helixir`).
+- **CLI + onboarding**: the `helixir` binary drives + monitors the agents with
+  activity/insight journals; **`helixir setup`** (#50) wires the MCP server into
+  agent clients (Claude Code / Desktop / Cursor / Gemini CLI), non-destructively.
+
+**Capstone (#48):** the whole pipeline, run on clean controlled data, reconstructs
+the guar chain *weather → crop → thickener → fracking → price* as a single
+provenance-carrying insight — `clean-in → signal-out`. On a real (mono-domain,
+noisy) corpus it faithfully curates noise, which the provenance exposes on sight:
+**output quality equals corpus/tag hygiene, not code.**

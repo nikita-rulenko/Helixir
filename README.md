@@ -34,9 +34,11 @@
 - [How It Works](#how-it-works)
   - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
   - [Architecture](#architecture)
+- [**Generative memory — the Moirai**](#generative-memory--the-moirai) — Clotho · Lachesis · Atropos
 - [Ontology](#ontology)
 - [Graph Schema](#graph-schema)
 - [MCP Tools](#mcp-tools)
+- [CLI](#cli) — `helixir setup` + driving the agents
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
@@ -60,6 +62,8 @@ Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database
 | LLM in the retrieval loop | Read path is LLM-free: ~15–30 ms warm searches, fully local |
 | Single-user silo | Shared graph: one fact, many knowers, consensus ranking, conflict detection |
 | Silent overwrites | Memory charter: conflicting writes escalate to the agent as questions |
+
+And recall is only the floor. Helixir now takes the next step — from *retrieving* chains to **generating** them: three background agents (the Moirai) weave a category layer over the graph and surface non-obvious cross-domain connections as **hypotheses with provenance**. See [Generative memory](#generative-memory--the-moirai).
 
 ## Philosophy
 
@@ -181,6 +185,20 @@ Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on 
 
 ---
 
+## Generative memory — the Moirai
+
+The chain *Rajasthan weather → guar harvest → guar gum → fracking cost → shale stocks* is never a single stored edge — it runs through layers of abstraction. Helixir's next step is to **generate** those connections itself: three background agents, named for the Fates, spin a second axis over the flat graph and surface non-obvious cross-domain links — always as **hypotheses with provenance**, never asserted truth (the charter, extended from stored facts to generated connections).
+
+- **Clotho — the Spinner.** Tags memories from a controlled, self-growing category vocabulary (embedding-match; on a miss it mints a fitting category via the LLM). Shared tags weave distant memories into subsets — a category layer that accretes over the graph from the corpus itself.
+- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it.
+- **Atropos — the Cutter.** Curates the survivors into ranked, deduplicated **insights** carrying provenance and a lifecycle (`proposed → verified → refuted`).
+
+The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli) — writing to an insight journal. Drive and watch them with the [`helixir` CLI](#cli).
+
+> **Status.** The pipeline is built and validated end-to-end on clean data — the guar chain reconstructs as a single insight. On a real corpus, insight quality tracks tag/corpus hygiene; the provenance is what lets you tell signal from noise.
+
+---
+
 ## Ontology
 
 Every memory is classified into one of **8 concept types**. The LLM extractor assigns the type during ingestion; `search_by_concept` retrieves memories by type.
@@ -229,7 +247,7 @@ The hierarchy enables traversal: searching for "Attribute" returns all facts, pr
 
 ## Graph Schema
 
-Helixir stores everything as a typed graph: **15 node types** connected by **33 edge types**.
+Helixir stores everything as a typed graph: **15 node types** connected by **33 edge types** — plus the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) for the generative layer.
 
 ### Node types
 
@@ -334,7 +352,28 @@ If a session times out, partial thoughts are auto-saved with an `[INCOMPLETE]` t
 
 ---
 
+## CLI
+
+Beyond the MCP server, the `helixir` binary drives and monitors the generative agents:
+
+```bash
+helixir setup                          # interactive: configure + wire the MCP server into
+                                       #   Claude Code / Claude Desktop / Cursor / Gemini CLI
+helixir categories                     # the category dictionary + member counts (coverage)
+helixir clotho grow --user <id>        # tag a user's memories, growing the dictionary on misses
+helixir lachesis route --seed <cat>    # route a cross-domain subset thread (with witnesses)
+helixir atropos                        # curate threads into ranked, journaled insights
+helixir pipeline --user <id>           # one orchestrated pass: Clotho → Lachesis → Atropos
+helixir daemon start --user <id> --interval 600   # run passes in the background
+helixir daemon status | stop           # inspect / stop the background daemon
+helixir journal | insights             # activity + insight journals (with provenance)
+```
+
+`helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.
+
 ## Integration
+
+> The quickest path is **`helixir setup`** (above) — it detects your clients and writes the config for you. The manual JSON below is for reference or custom setups.
 
 ### Cursor
 
