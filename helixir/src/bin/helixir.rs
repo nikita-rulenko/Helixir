@@ -12,12 +12,13 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use dialoguer::{Confirm, Input, MultiSelect};
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
@@ -91,6 +92,19 @@ enum Cmd {
     Daemon {
         #[command(subcommand)]
         cmd: DaemonCmd,
+    },
+    /// Configure Helixir + wire its MCP server into your agent clients
+    /// (Claude Code, Claude Desktop, Cursor, Gemini CLI).
+    Setup {
+        /// Skip prompts: use HELIX_* env + defaults, wire all detected clients.
+        #[arg(long = "non-interactive")]
+        non_interactive: bool,
+        /// Show what would be written without changing anything.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Wire this exact config file instead of auto-detecting clients.
+        #[arg(long)]
+        target: Option<String>,
     },
 }
 
@@ -204,6 +218,16 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Setup configures files + client configs; no DB connection needed.
+    if let Cmd::Setup {
+        non_interactive,
+        dry_run,
+        target,
+    } = &cli.cmd
+    {
+        return setup_run(!non_interactive, *dry_run, target.clone());
+    }
+
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
     client.initialize().await.context("initialize")?;
 
@@ -264,6 +288,7 @@ async fn main() -> Result<()> {
             } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
             _ => unreachable!("daemon start/stop/status handled before client init"),
         },
+        Cmd::Setup { .. } => unreachable!("setup handled before client init"),
     }
     Ok(())
 }
@@ -583,6 +608,195 @@ async fn resolve_universe(client: &HelixirClient, universe: Option<usize>) -> Re
         Some(u) => Ok(u),
         None => Ok(client.tooling().total_memory_count(1_000_000).await?.max(1)),
     }
+}
+
+// --- setup wizard: configure + wire the MCP server into agent clients ---
+
+struct SetupConfig {
+    host: String,
+    port: String,
+    instance: String,
+    llm_provider: String,
+    llm_model: String,
+    llm_key: String,
+    emb_provider: String,
+    emb_model: String,
+    emb_url: String,
+    mcp_bin: String,
+}
+
+fn default_mcp_bin() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.join("helixir-mcp")))
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "helixir-mcp".to_string())
+}
+
+fn gather_config(interactive: bool) -> Result<SetupConfig> {
+    let e = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    let mut c = SetupConfig {
+        host: e("HELIX_HOST", "localhost"),
+        port: e("HELIX_PORT", "6970"),
+        instance: e("HELIX_INSTANCE", "bench"),
+        llm_provider: e("HELIX_LLM_PROVIDER", "ollama"),
+        llm_model: e("HELIX_LLM_MODEL", "llama3.1:8b"),
+        llm_key: e("HELIX_LLM_API_KEY", ""),
+        emb_provider: e("HELIX_EMBEDDING_PROVIDER", "ollama"),
+        emb_model: e("HELIX_EMBEDDING_MODEL", "nomic-embed-text"),
+        emb_url: e("HELIX_EMBEDDING_URL", "http://localhost:11434"),
+        mcp_bin: default_mcp_bin(),
+    };
+    if interactive {
+        let ask = |prompt: &str, def: &str| -> Result<String> {
+            Ok(Input::<String>::new()
+                .with_prompt(prompt)
+                .default(def.to_string())
+                .allow_empty(true)
+                .interact_text()?)
+        };
+        c.host = ask("HelixDB host", &c.host)?;
+        c.port = ask("HelixDB port", &c.port)?;
+        c.instance = ask("HelixDB instance", &c.instance)?;
+        c.llm_provider = ask("LLM provider (cerebras / ollama)", &c.llm_provider)?;
+        c.llm_model = ask("LLM model", &c.llm_model)?;
+        c.llm_key = ask("LLM API key (blank for local)", &c.llm_key)?;
+        c.emb_model = ask("Embedding model", &c.emb_model)?;
+        c.emb_url = ask("Embedding URL", &c.emb_url)?;
+        c.mcp_bin = ask("Path to the helixir-mcp binary", &c.mcp_bin)?;
+    }
+    Ok(c)
+}
+
+fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
+    serde_json::json!({
+        "command": c.mcp_bin,
+        "args": [],
+        "env": {
+            "HELIX_HOST": c.host,
+            "HELIX_PORT": c.port,
+            "HELIX_INSTANCE": c.instance,
+            "HELIX_LLM_PROVIDER": c.llm_provider,
+            "HELIX_LLM_MODEL": c.llm_model,
+            "HELIX_LLM_API_KEY": c.llm_key,
+            "HELIX_EMBEDDING_PROVIDER": c.emb_provider,
+            "HELIX_EMBEDDING_MODEL": c.emb_model,
+            "HELIX_EMBEDDING_URL": c.emb_url,
+            "HELIXIR_RETRIEVAL_PROFILE": "algo_opt",
+        }
+    })
+}
+
+fn client_targets() -> Vec<(String, PathBuf)> {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let desktop = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/Claude/claude_desktop_config.json")
+    } else {
+        home.join(".config/Claude/claude_desktop_config.json")
+    };
+    vec![
+        ("Claude Code".to_string(), home.join(".claude.json")),
+        ("Claude Desktop".to_string(), desktop),
+        ("Cursor".to_string(), home.join(".cursor/mcp.json")),
+        ("Gemini CLI".to_string(), home.join(".gemini/settings.json")),
+    ]
+}
+
+/// Merge the `helixir-local` MCP entry into a client's config JSON (creating
+/// `mcpServers` if absent), backing the file up first. Non-destructive: other
+/// servers and keys are preserved.
+fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool) -> Result<()> {
+    let mut root: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(path)?).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        *servers = serde_json::json!({});
+    }
+    servers
+        .as_object_mut()
+        .unwrap()
+        .insert("helixir-local".to_string(), entry.clone());
+
+    if dry_run {
+        println!("  [dry-run] {name}: would set helixir-local in {}", path.display());
+        return Ok(());
+    }
+    if path.exists() {
+        std::fs::copy(path, PathBuf::from(format!("{}.bak", path.display()))).ok();
+    } else if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&root)?)?;
+    println!("  ✓ {name}: wired helixir-local → {} (backup .bak)", path.display());
+    Ok(())
+}
+
+fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
+    println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
+    let cfg = gather_config(interactive && target.is_none())?;
+    let entry = mcp_entry(&cfg);
+
+    // An explicit --target wires exactly that file; otherwise detect clients.
+    if let Some(t) = target {
+        let path = PathBuf::from(&t);
+        println!("Wiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+        wire_client("target", &path, &entry, dry_run)?;
+        println!("{}", if dry_run { "\n(dry-run — nothing was written.)" } else { "\nDone." });
+        return Ok(());
+    }
+
+    let targets = client_targets();
+    let selected: Vec<(String, PathBuf)> = if interactive {
+        let labels: Vec<String> = targets
+            .iter()
+            .map(|(n, p)| format!("{n}  [{}]{}", p.display(), if p.exists() { "" } else { " (new)" }))
+            .collect();
+        let picks = MultiSelect::new()
+            .with_prompt("Wire which clients? (space to toggle, enter to confirm)")
+            .items(&labels)
+            .interact()?;
+        picks.into_iter().map(|i| targets[i].clone()).collect()
+    } else {
+        targets
+    };
+
+    if selected.is_empty() {
+        println!("No clients selected — nothing to do.");
+        return Ok(());
+    }
+    if interactive
+        && !dry_run
+        && !Confirm::new()
+            .with_prompt("Write the helixir-local MCP entry to the selected clients?")
+            .default(true)
+            .interact()?
+    {
+        println!("Aborted — no changes made.");
+        return Ok(());
+    }
+
+    println!("\nWiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+    for (name, path) in &selected {
+        if let Err(e) = wire_client(name, path, &entry, dry_run) {
+            println!("  ✗ {name}: {e}");
+        }
+    }
+    if dry_run {
+        println!("\n(dry-run — nothing was written.)");
+    } else {
+        println!("\nDone. Restart the client(s) to pick up the helixir-local MCP server.");
+    }
+    Ok(())
 }
 
 // --- daemon background lifecycle (PID file in ~/.helixir) ---
