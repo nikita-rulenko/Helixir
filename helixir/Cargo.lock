@@ -859,6 +859,7 @@ dependencies = [
  "futures",
  "helix-rs",
  "lazy_static",
+ "libc",
  "lru",
  "moka",
  "parking_lot",

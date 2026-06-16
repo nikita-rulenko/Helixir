@@ -11,7 +11,9 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -85,8 +87,17 @@ enum Cmd {
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
     },
-    /// Run the Moira daemon: schedule full passes (continuous vs --once).
+    /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
+        #[command(subcommand)]
+        cmd: DaemonCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Run in the FOREGROUND (loop on the interval, Ctrl-C to stop; or --once).
+    Run {
         #[arg(long)]
         user: String,
         #[arg(long, default_value_t = 300)]
@@ -100,6 +111,24 @@ enum Cmd {
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
     },
+    /// Start a DETACHED background daemon (a frequency implies it should keep
+    /// running). Writes a PID file; `stop` ends it.
+    Start {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 300)]
+        interval: u64,
+        #[arg(long, default_value_t = 0.62)]
+        threshold: f64,
+        #[arg(long = "max-seeds", default_value_t = 24)]
+        max_seeds: usize,
+        #[arg(long = "max-hops", default_value_t = 5)]
+        max_hops: usize,
+    },
+    /// Stop the background daemon.
+    Stop,
+    /// Show the background daemon's status.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -157,6 +186,24 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Daemon process management touches no DB — handle it before connecting, so
+    // `stop`/`status` work even when HelixDB is down.
+    if let Cmd::Daemon { cmd } = &cli.cmd {
+        match cmd {
+            DaemonCmd::Start {
+                user,
+                interval,
+                threshold,
+                max_seeds,
+                max_hops,
+            } => return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops),
+            DaemonCmd::Stop => return daemon_stop(),
+            DaemonCmd::Status => return daemon_status(),
+            DaemonCmd::Run { .. } => {} // needs the client — fall through
+        }
+    }
+
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
     client.initialize().await.context("initialize")?;
 
@@ -206,14 +253,17 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
-        Cmd::Daemon {
-            user,
-            interval,
-            once,
-            threshold,
-            max_seeds,
-            max_hops,
-        } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
+        Cmd::Daemon { cmd } => match cmd {
+            DaemonCmd::Run {
+                user,
+                interval,
+                once,
+                threshold,
+                max_seeds,
+                max_hops,
+            } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
+            _ => unreachable!("daemon start/stop/status handled before client init"),
+        },
     }
     Ok(())
 }
@@ -533,6 +583,130 @@ async fn resolve_universe(client: &HelixirClient, universe: Option<usize>) -> Re
         Some(u) => Ok(u),
         None => Ok(client.tooling().total_memory_count(1_000_000).await?.max(1)),
     }
+}
+
+// --- daemon background lifecycle (PID file in ~/.helixir) ---
+
+fn helixir_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let dir = PathBuf::from(home).join(".helixir");
+    std::fs::create_dir_all(&dir).ok();
+    Ok(dir)
+}
+
+fn pid_file() -> Result<PathBuf> {
+    Ok(helixir_dir()?.join("daemon.pid"))
+}
+
+fn read_pid_state() -> Option<serde_json::Value> {
+    let body = std::fs::read_to_string(pid_file().ok()?).ok()?;
+    serde_json::from_str(&body).ok()
+}
+
+/// Signal 0 probes a pid's existence without delivering anything.
+fn is_alive(pid: i32) -> bool {
+    pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+fn daemon_start(
+    user: &str,
+    interval: u64,
+    threshold: f64,
+    max_seeds: usize,
+    max_hops: usize,
+) -> Result<()> {
+    if let Some(pid) = read_pid_state().and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
+        if is_alive(pid as i32) {
+            anyhow::bail!("daemon already running (pid {pid}); `helixir daemon stop` first");
+        }
+    }
+
+    let exe = std::env::current_exe().context("current_exe")?;
+    let log = helixir_dir()?.join("daemon.log");
+    let out = OpenOptions::new().create(true).append(true).open(&log)?;
+    let err = out.try_clone()?;
+
+    let mut cmd = Command::new(exe);
+    cmd.args([
+        "daemon",
+        "run",
+        "--user",
+        user,
+        "--interval",
+        &interval.to_string(),
+        "--threshold",
+        &threshold.to_string(),
+        "--max-seeds",
+        &max_seeds.to_string(),
+        "--max-hops",
+        &max_hops.to_string(),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::from(out))
+    .stderr(Stdio::from(err));
+    // Detach from the controlling terminal so it survives the shell closing.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let pid = cmd.spawn().context("spawn detached daemon")?.id();
+
+    let state = serde_json::json!({
+        "pid": pid, "user": user, "interval": interval, "threshold": threshold,
+        "max_seeds": max_seeds, "max_hops": max_hops,
+        "started_at": chrono::Utc::now().to_rfc3339(), "log": log.display().to_string(),
+    });
+    std::fs::write(pid_file()?, serde_json::to_string_pretty(&state)?)?;
+    println!("daemon started (pid {pid}) for '{user}', every {interval}s; log: {}", log.display());
+    Ok(())
+}
+
+fn daemon_stop() -> Result<()> {
+    let Some(state) = read_pid_state() else {
+        println!("daemon not running (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
+    if is_alive(pid) {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        println!("daemon stopped (pid {pid})");
+    } else {
+        println!("daemon already gone (stale pid {pid}); cleaned up");
+    }
+    std::fs::remove_file(pid_file()?).ok();
+    Ok(())
+}
+
+fn daemon_status() -> Result<()> {
+    let Some(state) = read_pid_state() else {
+        println!("daemon: stopped (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    println!(
+        "daemon: {}  pid={pid} user={} interval={}s started={}",
+        if is_alive(pid) { "running" } else { "STALE (process gone)" },
+        state.get("user").and_then(|v| v.as_str()).unwrap_or("?"),
+        state.get("interval").and_then(|v| v.as_u64()).unwrap_or(0),
+        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+    );
+    if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
+        println!("  log: {l}");
+    }
+    if let Ok(body) = std::fs::read_to_string(journal_path()) {
+        if let Some(last) = body.lines().filter(|l| l.contains("\"agent\":\"daemon\"")).last() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(last) {
+                println!(
+                    "  last pass: {} — {}",
+                    v.get("ts").and_then(|x| x.as_str()).unwrap_or("?"),
+                    v.get("detail").and_then(|x| x.as_str()).unwrap_or("")
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 // --- activity journal (append-only JSONL; the daemon will share it) ---
