@@ -78,6 +78,16 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         tail: usize,
     },
+    /// Contradiction debt — open cross-user disputes; `--reconcile` drains the
+    /// dead ones (preferences coexist; live factual disputes are kept) (#45).
+    Debt {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 500)]
+        limit: i64,
+        #[arg(long)]
+        reconcile: bool,
+    },
     /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
     Pipeline {
         #[arg(long)]
@@ -297,6 +307,11 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
+        Cmd::Debt {
+            user,
+            limit,
+            reconcile,
+        } => debt(&client, &user, limit, reconcile).await?,
         Cmd::Swarm { window } => swarm(&client, window).await?,
         Cmd::Heartbeat {
             agent,
@@ -963,6 +978,69 @@ async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> 
     } else {
         println!("\nDone. Restart the client(s) to pick up the helixir-local MCP server.");
     }
+    Ok(())
+}
+
+// --- contradiction debt (#45): the Cutter's hygiene dashboard ---
+
+async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -> Result<()> {
+    use helixir::agents::atropos::reconcile::{classify, DisputeKind};
+
+    if reconcile {
+        let s = client
+            .atropos()
+            .reconcile(user, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!(
+            "Reconciled '{user}': scanned {}, drained {} preference + {} superseded, {} live kept",
+            s.scanned, s.drained_preference, s.drained_superseded, s.kept_live
+        );
+        journal(
+            "atropos",
+            "reconcile",
+            &format!(
+                "user={user} drained={} kept={}",
+                s.drained_preference + s.drained_superseded,
+                s.kept_live
+            ),
+        );
+        return Ok(());
+    }
+
+    let open = client
+        .tooling()
+        .gather_open_contradictions(user, limit)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if open.is_empty() {
+        println!("No open contradiction debt for '{user}'.");
+        return Ok(());
+    }
+    let (mut pref, mut live) = (0u32, 0u32);
+    println!("Open contradiction debt for '{user}' — {} dispute(s):\n", open.len());
+    for oc in &open {
+        let tag = match classify(&oc.resolution_strategy) {
+            DisputeKind::Preference => {
+                pref += 1;
+                "preference"
+            }
+            DisputeKind::Factual => {
+                live += 1;
+                "factual"
+            }
+        };
+        println!(
+            "  {} ⇄ {}  [{tag}]  {}",
+            trunc(&oc.from_id, 16),
+            trunc(&oc.to_id, 16),
+            oc.resolution_strategy
+        );
+    }
+    println!(
+        "\n  {pref} preference (drainable as coexist) · {live} factual (live — need an owner)"
+    );
+    println!("  Run with --reconcile to retire the drainable ones.");
     Ok(())
 }
 

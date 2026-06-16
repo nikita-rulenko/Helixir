@@ -73,6 +73,21 @@ QUERY addMemoryContradiction(from_id: String, to_id: String, resolution: String,
   to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
   contradiction <- AddE<CONTRADICTS>({ resolution: resolution, resolved: resolved, resolution_strategy: resolution_strategy })::From(from_memory)::To(to_memory)
   RETURN contradiction
+
+// Contradiction-debt reconciliation (#45): enumerate a memory's outgoing
+// disputes (edges + their targets, parallel order) so the Cutter can drain the
+// dead ones; and retire the open ones from a memory with a strategy label.
+QUERY getMemoryContradictionsFull(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  out_edges <- memory::OutE<CONTRADICTS>
+  out_targets <- memory::Out<CONTRADICTS>
+  RETURN out_edges, out_targets
+
+QUERY resolveMemoryContradictions(memory_id: String, strategy: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  edges <- memory::OutE<CONTRADICTS>::WHERE(_::{resolved}::EQ(0))
+  updated <- edges::UPDATE({ resolved: 1, resolution_strategy: strategy })
+  RETURN updated
 QUERY addMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
   new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
   old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::FIRST

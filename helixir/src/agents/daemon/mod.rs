@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use tracing::{info, warn};
 
+use crate::agents::atropos::Atropos;
 use crate::agents::orchestrator::{Orchestrator, PassConfig, PipelineRun};
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::ToolingError;
@@ -75,6 +76,17 @@ impl<'a> Daemon<'a> {
             match orchestrator.full_pass(&cfg.user, &cfg.pass).await {
                 Ok(run) => on_pass(pass, &run),
                 Err(e) => warn!("daemon: pass {pass} failed: {e}"),
+            }
+
+            // Drain contradiction debt each pass — keep resolved=0 cross-user
+            // disputes from piling up as the collective grows (#45).
+            match Atropos::new(self.tooling).reconcile(&cfg.user, 500).await {
+                Ok(s) if s.scanned > 0 => info!(
+                    "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept",
+                    s.drained_preference, s.drained_superseded, s.kept_live
+                ),
+                Ok(_) => {}
+                Err(e) => warn!("daemon: reconcile failed: {e}"),
             }
 
             if cfg.once {
