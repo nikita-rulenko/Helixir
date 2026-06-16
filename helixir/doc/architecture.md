@@ -371,9 +371,13 @@ knows nothing about agents.
 
 | Agent | Entry | Role |
 |---|---|---|
-| **Clotho** | `HelixirClient::clotho()` | Tags memories from a controlled category vocabulary (embedding-match, ancestor propagation, charter escalation). Weaves subsets. |
-| **Lachesis** | `HelixirClient::lachesis()` | Routes chains within/across subsets and **gates them against apophenia**: a coherence gate (geometric-mean edge weight × reasoning support) and PMI subset-overlap routing (`ln(\|A∩B\|·N / (\|A\|·\|B\|))` — a thick axis gates itself out). Survivors are **hypotheses flagged `requires_verification`** — it proposes, never adjudicates. |
-| **Atropos** | — | Curation → insight journal. *(not built)* |
+| **Clotho** | `HelixirClient::clotho()` | Tags memories from a controlled, **self-growing** vocabulary — in-memory cosine match; the LLM mints a category on a miss; a **dominance gate** drops noise-floor tags; ancestor propagation; charter escalation. |
+| **Lachesis** | `HelixirClient::lachesis()` | Routes chains and **gates them against apophenia**: a coherence gate (geometric-mean edge weight × reasoning support) + PMI subset-overlap (`ln(\|A∩B\|·N / (\|A\|·\|B\|))` — a thick axis gates itself out), **drilling each link to its anchor witnesses**. Survivors are **hypotheses flagged `requires_verification`** — it proposes, never adjudicates. |
+| **Atropos** | `HelixirClient::atropos()` | Curates Lachesis threads into ranked, deduplicated `Insight`s with provenance and a lifecycle (`proposed → verified → refuted`). |
+| **Orchestrator** | `HelixirClient::orchestrator()` | One `full_pass`: Clotho → Lachesis → Atropos. Choreography (what sequence), kept separate from scheduling (when). |
+| **Daemon** | `HelixirClient::daemon()` | Schedules `full_pass` (continuous / on-call). `helixir daemon start/stop/status` runs it detached with a PID file. |
+
+Surface: the **`helixir` CLI** drives + monitors the agents (`categories`, `clotho`, `lachesis`, `atropos`, `pipeline`, `daemon`, `journal`, `insights`) with activity + insight journals, plus **`helixir setup`** to wire the MCP server into agent clients (Claude Code / Desktop / Cursor / Gemini CLI).
 
 Supporting capabilities (toolkit, this release): the **category subgraph**
 (`Category`/`SUBCATEGORY_OF`/`ALIAS_OF`/`TAGGED_AS`), `connect_memories`'

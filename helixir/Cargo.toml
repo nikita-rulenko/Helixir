@@ -30,6 +30,8 @@ anyhow = "1.0"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+dialoguer = "0.11"
 
 # Logging
 tracing = "0.1"

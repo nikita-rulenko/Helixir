@@ -11,11 +11,14 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use dialoguer::{Confirm, Input, MultiSelect};
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
@@ -85,8 +88,30 @@ enum Cmd {
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
     },
-    /// Run the Moira daemon: schedule full passes (continuous vs --once).
+    /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
+        #[command(subcommand)]
+        cmd: DaemonCmd,
+    },
+    /// Configure Helixir + wire its MCP server into your agent clients
+    /// (Claude Code, Claude Desktop, Cursor, Gemini CLI).
+    Setup {
+        /// Skip prompts: use HELIX_* env + defaults, wire all detected clients.
+        #[arg(long = "non-interactive")]
+        non_interactive: bool,
+        /// Show what would be written without changing anything.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Wire this exact config file instead of auto-detecting clients.
+        #[arg(long)]
+        target: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Run in the FOREGROUND (loop on the interval, Ctrl-C to stop; or --once).
+    Run {
         #[arg(long)]
         user: String,
         #[arg(long, default_value_t = 300)]
@@ -100,6 +125,24 @@ enum Cmd {
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
     },
+    /// Start a DETACHED background daemon (a frequency implies it should keep
+    /// running). Writes a PID file; `stop` ends it.
+    Start {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 300)]
+        interval: u64,
+        #[arg(long, default_value_t = 0.62)]
+        threshold: f64,
+        #[arg(long = "max-seeds", default_value_t = 24)]
+        max_seeds: usize,
+        #[arg(long = "max-hops", default_value_t = 5)]
+        max_hops: usize,
+    },
+    /// Stop the background daemon.
+    Stop,
+    /// Show the background daemon's status.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -157,6 +200,34 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Daemon process management touches no DB — handle it before connecting, so
+    // `stop`/`status` work even when HelixDB is down.
+    if let Cmd::Daemon { cmd } = &cli.cmd {
+        match cmd {
+            DaemonCmd::Start {
+                user,
+                interval,
+                threshold,
+                max_seeds,
+                max_hops,
+            } => return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops),
+            DaemonCmd::Stop => return daemon_stop(),
+            DaemonCmd::Status => return daemon_status(),
+            DaemonCmd::Run { .. } => {} // needs the client — fall through
+        }
+    }
+
+    // Setup configures files + client configs; no DB connection needed.
+    if let Cmd::Setup {
+        non_interactive,
+        dry_run,
+        target,
+    } = &cli.cmd
+    {
+        return setup_run(!non_interactive, *dry_run, target.clone());
+    }
+
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
     client.initialize().await.context("initialize")?;
 
@@ -206,14 +277,18 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
-        Cmd::Daemon {
-            user,
-            interval,
-            once,
-            threshold,
-            max_seeds,
-            max_hops,
-        } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
+        Cmd::Daemon { cmd } => match cmd {
+            DaemonCmd::Run {
+                user,
+                interval,
+                once,
+                threshold,
+                max_seeds,
+                max_hops,
+            } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
+            _ => unreachable!("daemon start/stop/status handled before client init"),
+        },
+        Cmd::Setup { .. } => unreachable!("setup handled before client init"),
     }
     Ok(())
 }
@@ -533,6 +608,319 @@ async fn resolve_universe(client: &HelixirClient, universe: Option<usize>) -> Re
         Some(u) => Ok(u),
         None => Ok(client.tooling().total_memory_count(1_000_000).await?.max(1)),
     }
+}
+
+// --- setup wizard: configure + wire the MCP server into agent clients ---
+
+struct SetupConfig {
+    host: String,
+    port: String,
+    instance: String,
+    llm_provider: String,
+    llm_model: String,
+    llm_key: String,
+    emb_provider: String,
+    emb_model: String,
+    emb_url: String,
+    mcp_bin: String,
+}
+
+fn default_mcp_bin() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.join("helixir-mcp")))
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "helixir-mcp".to_string())
+}
+
+fn gather_config(interactive: bool) -> Result<SetupConfig> {
+    let e = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    let mut c = SetupConfig {
+        host: e("HELIX_HOST", "localhost"),
+        port: e("HELIX_PORT", "6970"),
+        instance: e("HELIX_INSTANCE", "bench"),
+        llm_provider: e("HELIX_LLM_PROVIDER", "ollama"),
+        llm_model: e("HELIX_LLM_MODEL", "llama3.1:8b"),
+        llm_key: e("HELIX_LLM_API_KEY", ""),
+        emb_provider: e("HELIX_EMBEDDING_PROVIDER", "ollama"),
+        emb_model: e("HELIX_EMBEDDING_MODEL", "nomic-embed-text"),
+        emb_url: e("HELIX_EMBEDDING_URL", "http://localhost:11434"),
+        mcp_bin: default_mcp_bin(),
+    };
+    if interactive {
+        let ask = |prompt: &str, def: &str| -> Result<String> {
+            Ok(Input::<String>::new()
+                .with_prompt(prompt)
+                .default(def.to_string())
+                .allow_empty(true)
+                .interact_text()?)
+        };
+        c.host = ask("HelixDB host", &c.host)?;
+        c.port = ask("HelixDB port", &c.port)?;
+        c.instance = ask("HelixDB instance", &c.instance)?;
+        c.llm_provider = ask("LLM provider (cerebras / ollama)", &c.llm_provider)?;
+        c.llm_model = ask("LLM model", &c.llm_model)?;
+        c.llm_key = ask("LLM API key (blank for local)", &c.llm_key)?;
+        c.emb_model = ask("Embedding model", &c.emb_model)?;
+        c.emb_url = ask("Embedding URL", &c.emb_url)?;
+        c.mcp_bin = ask("Path to the helixir-mcp binary", &c.mcp_bin)?;
+    }
+    Ok(c)
+}
+
+fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
+    serde_json::json!({
+        "command": c.mcp_bin,
+        "args": [],
+        "env": {
+            "HELIX_HOST": c.host,
+            "HELIX_PORT": c.port,
+            "HELIX_INSTANCE": c.instance,
+            "HELIX_LLM_PROVIDER": c.llm_provider,
+            "HELIX_LLM_MODEL": c.llm_model,
+            "HELIX_LLM_API_KEY": c.llm_key,
+            "HELIX_EMBEDDING_PROVIDER": c.emb_provider,
+            "HELIX_EMBEDDING_MODEL": c.emb_model,
+            "HELIX_EMBEDDING_URL": c.emb_url,
+            "HELIXIR_RETRIEVAL_PROFILE": "algo_opt",
+        }
+    })
+}
+
+fn client_targets() -> Vec<(String, PathBuf)> {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let desktop = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/Claude/claude_desktop_config.json")
+    } else {
+        home.join(".config/Claude/claude_desktop_config.json")
+    };
+    vec![
+        ("Claude Code".to_string(), home.join(".claude.json")),
+        ("Claude Desktop".to_string(), desktop),
+        ("Cursor".to_string(), home.join(".cursor/mcp.json")),
+        ("Gemini CLI".to_string(), home.join(".gemini/settings.json")),
+    ]
+}
+
+/// Merge the `helixir-local` MCP entry into a client's config JSON (creating
+/// `mcpServers` if absent), backing the file up first. Non-destructive: other
+/// servers and keys are preserved.
+fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool) -> Result<()> {
+    let mut root: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(path)?).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        *servers = serde_json::json!({});
+    }
+    servers
+        .as_object_mut()
+        .unwrap()
+        .insert("helixir-local".to_string(), entry.clone());
+
+    if dry_run {
+        println!("  [dry-run] {name}: would set helixir-local in {}", path.display());
+        return Ok(());
+    }
+    if path.exists() {
+        std::fs::copy(path, PathBuf::from(format!("{}.bak", path.display()))).ok();
+    } else if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&root)?)?;
+    println!("  ✓ {name}: wired helixir-local → {} (backup .bak)", path.display());
+    Ok(())
+}
+
+fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
+    println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
+    let cfg = gather_config(interactive && target.is_none())?;
+    let entry = mcp_entry(&cfg);
+
+    // An explicit --target wires exactly that file; otherwise detect clients.
+    if let Some(t) = target {
+        let path = PathBuf::from(&t);
+        println!("Wiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+        wire_client("target", &path, &entry, dry_run)?;
+        println!("{}", if dry_run { "\n(dry-run — nothing was written.)" } else { "\nDone." });
+        return Ok(());
+    }
+
+    let targets = client_targets();
+    let selected: Vec<(String, PathBuf)> = if interactive {
+        let labels: Vec<String> = targets
+            .iter()
+            .map(|(n, p)| format!("{n}  [{}]{}", p.display(), if p.exists() { "" } else { " (new)" }))
+            .collect();
+        let picks = MultiSelect::new()
+            .with_prompt("Wire which clients? (space to toggle, enter to confirm)")
+            .items(&labels)
+            .interact()?;
+        picks.into_iter().map(|i| targets[i].clone()).collect()
+    } else {
+        targets
+    };
+
+    if selected.is_empty() {
+        println!("No clients selected — nothing to do.");
+        return Ok(());
+    }
+    if interactive
+        && !dry_run
+        && !Confirm::new()
+            .with_prompt("Write the helixir-local MCP entry to the selected clients?")
+            .default(true)
+            .interact()?
+    {
+        println!("Aborted — no changes made.");
+        return Ok(());
+    }
+
+    println!("\nWiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+    for (name, path) in &selected {
+        if let Err(e) = wire_client(name, path, &entry, dry_run) {
+            println!("  ✗ {name}: {e}");
+        }
+    }
+    if dry_run {
+        println!("\n(dry-run — nothing was written.)");
+    } else {
+        println!("\nDone. Restart the client(s) to pick up the helixir-local MCP server.");
+    }
+    Ok(())
+}
+
+// --- daemon background lifecycle (PID file in ~/.helixir) ---
+
+fn helixir_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let dir = PathBuf::from(home).join(".helixir");
+    std::fs::create_dir_all(&dir).ok();
+    Ok(dir)
+}
+
+fn pid_file() -> Result<PathBuf> {
+    Ok(helixir_dir()?.join("daemon.pid"))
+}
+
+fn read_pid_state() -> Option<serde_json::Value> {
+    let body = std::fs::read_to_string(pid_file().ok()?).ok()?;
+    serde_json::from_str(&body).ok()
+}
+
+/// Signal 0 probes a pid's existence without delivering anything.
+fn is_alive(pid: i32) -> bool {
+    pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+fn daemon_start(
+    user: &str,
+    interval: u64,
+    threshold: f64,
+    max_seeds: usize,
+    max_hops: usize,
+) -> Result<()> {
+    if let Some(pid) = read_pid_state().and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
+        if is_alive(pid as i32) {
+            anyhow::bail!("daemon already running (pid {pid}); `helixir daemon stop` first");
+        }
+    }
+
+    let exe = std::env::current_exe().context("current_exe")?;
+    let log = helixir_dir()?.join("daemon.log");
+    let out = OpenOptions::new().create(true).append(true).open(&log)?;
+    let err = out.try_clone()?;
+
+    let mut cmd = Command::new(exe);
+    cmd.args([
+        "daemon",
+        "run",
+        "--user",
+        user,
+        "--interval",
+        &interval.to_string(),
+        "--threshold",
+        &threshold.to_string(),
+        "--max-seeds",
+        &max_seeds.to_string(),
+        "--max-hops",
+        &max_hops.to_string(),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::from(out))
+    .stderr(Stdio::from(err));
+    // Detach from the controlling terminal so it survives the shell closing.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let pid = cmd.spawn().context("spawn detached daemon")?.id();
+
+    let state = serde_json::json!({
+        "pid": pid, "user": user, "interval": interval, "threshold": threshold,
+        "max_seeds": max_seeds, "max_hops": max_hops,
+        "started_at": chrono::Utc::now().to_rfc3339(), "log": log.display().to_string(),
+    });
+    std::fs::write(pid_file()?, serde_json::to_string_pretty(&state)?)?;
+    println!("daemon started (pid {pid}) for '{user}', every {interval}s; log: {}", log.display());
+    Ok(())
+}
+
+fn daemon_stop() -> Result<()> {
+    let Some(state) = read_pid_state() else {
+        println!("daemon not running (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
+    if is_alive(pid) {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        println!("daemon stopped (pid {pid})");
+    } else {
+        println!("daemon already gone (stale pid {pid}); cleaned up");
+    }
+    std::fs::remove_file(pid_file()?).ok();
+    Ok(())
+}
+
+fn daemon_status() -> Result<()> {
+    let Some(state) = read_pid_state() else {
+        println!("daemon: stopped (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    println!(
+        "daemon: {}  pid={pid} user={} interval={}s started={}",
+        if is_alive(pid) { "running" } else { "STALE (process gone)" },
+        state.get("user").and_then(|v| v.as_str()).unwrap_or("?"),
+        state.get("interval").and_then(|v| v.as_u64()).unwrap_or(0),
+        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+    );
+    if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
+        println!("  log: {l}");
+    }
+    if let Ok(body) = std::fs::read_to_string(journal_path()) {
+        if let Some(last) = body.lines().filter(|l| l.contains("\"agent\":\"daemon\"")).last() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(last) {
+                println!(
+                    "  last pass: {} — {}",
+                    v.get("ts").and_then(|x| x.as_str()).unwrap_or("?"),
+                    v.get("detail").and_then(|x| x.as_str()).unwrap_or("")
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 // --- activity journal (append-only JSONL; the daemon will share it) ---
