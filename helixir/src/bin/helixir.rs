@@ -993,8 +993,8 @@ async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         println!(
-            "Reconciled '{user}': scanned {}, drained {} preference + {} superseded, {} live kept",
-            s.scanned, s.drained_preference, s.drained_superseded, s.kept_live
+            "Reconciled '{user}': scanned {}, drained {} preference + {} superseded, {} live kept, {} surfaced to owners",
+            s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, s.notified
         );
         journal(
             "atropos",

@@ -82,8 +82,8 @@ impl<'a> Daemon<'a> {
             // disputes from piling up as the collective grows (#45).
             match Atropos::new(self.tooling).reconcile(&cfg.user, 500).await {
                 Ok(s) if s.scanned > 0 => info!(
-                    "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept",
-                    s.drained_preference, s.drained_superseded, s.kept_live
+                    "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
+                    s.drained_preference, s.drained_superseded, s.kept_live, s.notified
                 ),
                 Ok(_) => {}
                 Err(e) => warn!("daemon: reconcile failed: {e}"),

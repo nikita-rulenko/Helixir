@@ -94,6 +94,8 @@ pub struct DebtSummary {
     pub drained_preference: usize,
     pub drained_superseded: usize,
     pub kept_live: usize,
+    /// Live disputes surfaced to an owner's outbox this pass (deduped).
+    pub notified: usize,
 }
 
 impl DebtSummary {
@@ -157,6 +159,14 @@ impl Atropos<'_> {
             for (d, v) in &decided {
                 // If the group is mixed, nothing was retired — record as kept.
                 let applied = if all_resolve { v.clone() } else { DrainVerdict::Keep };
+                // A kept live dispute is surfaced to the owner's outbox (deduped)
+                // — never silently left, never silently resolved.
+                if matches!(applied, DrainVerdict::Keep) {
+                    summary.notified += self
+                        .tooling
+                        .surface_dispute(&d.from_id, &d.to_id, &d.resolution_strategy)
+                        .await;
+                }
                 summary.record(d, &applied);
             }
         }
@@ -222,6 +232,7 @@ mod tests {
                 drained_preference: 1,
                 drained_superseded: 1,
                 kept_live: 1,
+                notified: 0,
             }
         );
     }

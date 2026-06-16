@@ -95,6 +95,8 @@ async fn reconcile_drains_preference_keeps_factual() {
     assert!(s.drained_preference >= 1, "preference must drain: {s:?}");
     assert!(s.drained_superseded >= 1, "superseded-factual must drain: {s:?}");
     assert!(s.kept_live >= 1, "live factual must be kept: {s:?}");
+    // The kept live dispute is surfaced to its owner's outbox — never silent.
+    assert!(s.notified >= 1, "a live dispute must be surfaced to an owner: {s:?}");
 
     // Drained disputes leave the worklist; the live factual one remains open.
     let after = tooling
@@ -114,13 +116,15 @@ async fn reconcile_drains_preference_keeps_factual() {
         "live factual m3→m4 must still be open: {after:?}"
     );
 
-    // Idempotent: a second pass drains nothing new (no live preference left).
+    // Idempotent: a second pass drains nothing new and re-surfaces nothing
+    // (the outbox notice is already pending → deduped).
     let s2 = client.atropos().reconcile(&user, 500).await.expect("reconcile 2");
     assert_eq!(s2.drained_preference, 0, "nothing new to drain: {s2:?}");
+    assert_eq!(s2.notified, 0, "live dispute already surfaced — must dedup: {s2:?}");
 
     println!("\n==== contradiction_debt_e2e ====");
     println!(
-        "scanned {}, drained {} preference + {} superseded, kept {} live; after: {} open dispute(s)",
-        s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, after.len()
+        "scanned {}, drained {} preference + {} superseded, kept {} live, surfaced {}; after: {} open dispute(s)",
+        s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, s.notified, after.len()
     );
 }

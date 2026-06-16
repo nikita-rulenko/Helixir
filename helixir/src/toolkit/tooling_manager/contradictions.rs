@@ -71,6 +71,101 @@ impl ToolingManager {
         Ok(open)
     }
 
+    /// Owners (user_ids) of a memory — who a dispute on it should surface to.
+    pub async fn memory_owners(&self, memory_id: &str) -> Vec<String> {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            users: Vec<UserRow>,
+        }
+        #[derive(Deserialize)]
+        struct UserRow {
+            #[serde(default, deserialize_with = "nullable_string")]
+            user_id: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query("getMemoryUsers", &serde_json::json!({ "memory_id": memory_id }))
+            .await
+            .unwrap_or_default();
+        resp.users
+            .into_iter()
+            .map(|u| u.user_id)
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Surface a live dispute to the owners of `to_id` as an outbox question
+    /// (#25/#39), unless an identical notice is already pending for that owner —
+    /// the daemon reconciles every pass and must never spam. Returns how many
+    /// owners were newly notified. Never resolves anything: the owner decides.
+    pub async fn surface_dispute(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        resolution_strategy: &str,
+    ) -> usize {
+        let owners = self.memory_owners(to_id).await;
+        let mut notified = 0;
+        for owner in owners {
+            let notice_id = format!("cr_{from_id}_{to_id}_{owner}");
+            if self.has_pending_notice(&owner, &notice_id).await {
+                continue;
+            }
+            let payload = serde_json::json!({
+                "from_id": from_id,
+                "to_id": to_id,
+                "resolution_strategy": resolution_strategy,
+                "question": format!(
+                    "A live cross-user dispute contradicts your memory {to_id} — \
+                     reconcile (confirm / retract / mark as preference)?"
+                ),
+            })
+            .to_string();
+            let ok = self
+                .db
+                .execute_query::<serde_json::Value, _>(
+                    "enqueueNotice",
+                    &serde_json::json!({
+                        "notice_id": notice_id,
+                        "user_id": owner,
+                        "kind": "contradiction_review",
+                        "payload": payload,
+                        "pending_id": "",
+                        "created_at": chrono::Utc::now().to_rfc3339(),
+                    }),
+                )
+                .await
+                .is_ok();
+            if ok {
+                notified += 1;
+            }
+        }
+        notified
+    }
+
+    async fn has_pending_notice(&self, user_id: &str, notice_id: &str) -> bool {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            notices: Vec<NoticeRow>,
+        }
+        #[derive(Deserialize)]
+        struct NoticeRow {
+            #[serde(default, deserialize_with = "nullable_string")]
+            notice_id: String,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query(
+                "getUndeliveredNotices",
+                &serde_json::json!({ "user_id": user_id, "limit": 1000 }),
+            )
+            .await
+            .unwrap_or_default();
+        resp.notices.iter().any(|n| n.notice_id == notice_id)
+    }
+
     /// True if `memory_id` has been superseded — something points a SUPERSEDES
     /// edge AT it (`In<SUPERSEDES>` non-empty). The temporal signal the drain
     /// policy uses to retire a moot factual dispute toward the live side (#45).
