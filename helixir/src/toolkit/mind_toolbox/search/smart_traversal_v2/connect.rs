@@ -18,6 +18,13 @@ use super::batch_expansion::fetch_level;
 use super::phases::TraversalError;
 use crate::db::HelixClient;
 
+/// Cap on category-bridge neighbours fetched per frontier memory — bounds the
+/// jump through a "thick" category (a broad axis like raw-material touches many).
+const CATEGORY_BRIDGE_CAP: i64 = 25;
+/// Weight of a category jump — below a stated reasoning edge (1.0): it is an
+/// inferred bridge, not an asserted relation. Specificity-weighting is Lachesis.
+const CATEGORY_BRIDGE_WEIGHT: f64 = 0.5;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PathNode {
     pub memory_id: String,
@@ -162,12 +169,42 @@ pub async fn connect(
             }
             wave.parents.insert(
                 (*child_mid).to_string(),
-                Some(((*parent_mid).to_string(), edge.edge_type, edge.weight)),
+                Some((
+                    (*parent_mid).to_string(),
+                    edge.edge_type,
+                    edge.weight * edge.strength_norm,
+                )),
             );
             next_frontier.push((*child_mid).to_string());
 
             if other.parents.contains_key(*child_mid) && meeting.is_none() {
                 meeting = Some((*child_mid).to_string());
+            }
+        }
+
+        // Third-dimension routing (#33): besides reasoning edges, bridge to
+        // memories that share a CATEGORY — a perpendicular axis over the flat
+        // graph. The Category node is the shared projection; we route THROUGH it
+        // (Memory -TAGGED_AS-> Category -In TAGGED_AS-> Memory), materialising no
+        // pairwise edge. Skipped once the waves already met this level.
+        if meeting.is_none() {
+            for parent_mid in wave.frontier.clone() {
+                let neighbours =
+                    fetch_category_neighbours(client, &parent_mid, CATEGORY_BRIDGE_CAP).await?;
+                for (child_mid, content) in neighbours {
+                    content_by_id.entry(child_mid.clone()).or_insert(content);
+                    if wave.parents.contains_key(&child_mid) {
+                        continue;
+                    }
+                    wave.parents.insert(
+                        child_mid.clone(),
+                        Some((parent_mid.clone(), "VIA_CATEGORY", CATEGORY_BRIDGE_WEIGHT)),
+                    );
+                    if other.parents.contains_key(&child_mid) && meeting.is_none() {
+                        meeting = Some(child_mid.clone());
+                    }
+                    next_frontier.push(child_mid);
+                }
             }
         }
 
@@ -180,6 +217,84 @@ pub async fn connect(
     }
 
     Ok(None)
+}
+
+/// Memories sharing a category with `memory_id` (the third-dimension neighbours):
+/// `Memory -TAGGED_AS-> Category -In TAGGED_AS-> Memory`. Routes through the
+/// shared Category node and dedups; `cap` bounds the per-category fan-out so a
+/// broad axis can't blow up the frontier. A memory with no categories (the
+/// common case today) yields an empty list — the bridge is purely additive.
+async fn fetch_category_neighbours(
+    client: &HelixClient,
+    memory_id: &str,
+    cap: i64,
+) -> Result<Vec<(String, String)>, TraversalError> {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Default)]
+    struct CategoriesResp {
+        #[serde(default)]
+        categories: Vec<CatRow>,
+    }
+    #[derive(Deserialize)]
+    struct CatRow {
+        #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+        category_id: String,
+    }
+    #[derive(Deserialize, Default)]
+    struct MemoriesResp {
+        #[serde(default)]
+        memories: Vec<MemRow>,
+    }
+    #[derive(Deserialize)]
+    struct MemRow {
+        #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+        memory_id: String,
+        #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+        content: String,
+    }
+
+    let cats: CategoriesResp = client
+        .execute_query(
+            "getMemoryCategories",
+            &serde_json::json!({ "memory_id": memory_id }),
+        )
+        .await
+        .map_err(|e| TraversalError::Database(e.to_string()))?;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for cat in cats.categories {
+        if cat.category_id.is_empty() {
+            continue;
+        }
+        let mems: MemoriesResp = match client
+            .execute_query(
+                "getMemoriesByCategory",
+                &serde_json::json!({
+                    "category_id": cat.category_id,
+                    "exclude_memory_id": memory_id,
+                    "limit": cap,
+                }),
+            )
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                debug!("connect: getMemoriesByCategory failed for {}: {e}", cat.category_id);
+                continue;
+            }
+        };
+        for m in mems.memories {
+            if m.memory_id.is_empty() {
+                continue;
+            }
+            if seen.insert(m.memory_id.clone()) {
+                out.push((m.memory_id, m.content));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn build_path(

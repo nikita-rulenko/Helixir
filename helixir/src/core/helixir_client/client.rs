@@ -140,6 +140,37 @@ impl HelixirClient {
     pub fn tooling(&self) -> &ToolingManager {
         &self.tooling_manager
     }
+
+    /// Clotho the Spinner (#33 / Moira) — the auto-tagging agent over the
+    /// category dictionary. Borrows the toolkit it drives.
+    pub fn clotho(&self) -> crate::agents::clotho::Clotho<'_> {
+        crate::agents::clotho::Clotho::new(self.tooling())
+    }
+
+    /// Lachesis the Measurer (#39 / Moira) — routes chains and gates them
+    /// against apophenia, labelling survivors as hypotheses-requiring-
+    /// verification. Borrows the toolkit it routes over.
+    pub fn lachesis(&self) -> crate::agents::lachesis::Lachesis<'_> {
+        crate::agents::lachesis::Lachesis::new(self.tooling())
+    }
+
+    /// Atropos the Cutter (#48 / Moira) — curates Lachesis threads into ranked,
+    /// deduped insights with provenance. Borrows the toolkit.
+    pub fn atropos(&self) -> crate::agents::atropos::Atropos<'_> {
+        crate::agents::atropos::Atropos::new(self.tooling())
+    }
+
+    /// The Moira orchestrator (#41) — runs the full Clotho→Lachesis→Atropos
+    /// scenario as one pass. Borrows the toolkit.
+    pub fn orchestrator(&self) -> crate::agents::orchestrator::Orchestrator<'_> {
+        crate::agents::orchestrator::Orchestrator::new(self.tooling())
+    }
+
+    /// The Moira daemon (#42) — schedules orchestrator passes (continuous vs
+    /// on-call). Borrows the toolkit.
+    pub fn daemon(&self) -> crate::agents::daemon::Daemon<'_> {
+        crate::agents::daemon::Daemon::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {

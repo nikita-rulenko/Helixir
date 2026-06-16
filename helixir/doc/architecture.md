@@ -359,3 +359,26 @@ agent-driven ontology learning.
 These are intentional schema surface decisions made in earlier releases
 (v0.2.0 for most) and are not dead code in the schema sense — the HQL
 queries that materialize them already exist. They are awaiting Rust callers.
+
+### 7.7 Generative-memory agents — `src/agents/` (the Moirai)
+
+Helixir is no longer only an MCP server; it is an **agent** whose MCP surface is
+one part. `src/agents/` holds background agents that **compose toolkit
+primitives** into behaviour. The layering rule is strict: agent *policy* lives in
+`agents/<name>/`; the *capabilities* it drives stay in `toolkit/` (primitives
+only). Dependencies flow `agents → toolkit`, never the reverse — the toolkit
+knows nothing about agents.
+
+| Agent | Entry | Role |
+|---|---|---|
+| **Clotho** | `HelixirClient::clotho()` | Tags memories from a controlled category vocabulary (embedding-match, ancestor propagation, charter escalation). Weaves subsets. |
+| **Lachesis** | `HelixirClient::lachesis()` | Routes chains within/across subsets and **gates them against apophenia**: a coherence gate (geometric-mean edge weight × reasoning support) and PMI subset-overlap routing (`ln(\|A∩B\|·N / (\|A\|·\|B\|))` — a thick axis gates itself out). Survivors are **hypotheses flagged `requires_verification`** — it proposes, never adjudicates. |
+| **Atropos** | — | Curation → insight journal. *(not built)* |
+
+Supporting capabilities (toolkit, this release): the **category subgraph**
+(`Category`/`SUBCATEGORY_OF`/`ALIAS_OF`/`TAGGED_AS`), `connect_memories`'
+category-bridge axis, **longest-chain reconstruction** (`HelixirClient::
+longest_chain`), and **per-edge reasoning weights** now flowing through PPR
+ranking + path confidence. In perspective the Moirai run as **N parallel
+instances** (memory only grows), supervised inside the daemon (§6 open items).
+

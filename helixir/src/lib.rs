@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod core;
 pub mod db;
 pub mod llm;

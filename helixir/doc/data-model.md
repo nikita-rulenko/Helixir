@@ -70,6 +70,27 @@ Nodes group into five purposes:
 | **ConceptEmbedding** | `embedding: [F64]` | Vector for concept search (reserved). |
 | **DocPage / DocChunk / CodeExample / ErrorCode** | — | Reserved doc-ingest pipeline. Schema present, no Rust producer. |
 
+### 2.1 Category subgraph (Clotho, 2026-06)
+
+The controlled-vocabulary substrate the Moirai route over (`d8edc85`). A
+deliberate **third axis** over the flat memory graph: a memory's category
+membership lets it bridge to distant memories that share it.
+
+| Artifact | Shape | Notes |
+|---|---|---|
+| **Category** node | `category_id`, `name` (normalized, English-canonical), `kind`, `description`, `created_at` | Dictionary entry. Seeded by `Clotho::seed_dictionary`. |
+| **CategoryEmbedding** node | `name` | Vector for embedding-match tagging. *Reserved* — Clotho v0 matches by in-memory cosine (SearchV exposes no readable score), so no producer wires this yet. |
+| `TAGGED_AS` edge | Memory → Category, `{confidence, source}` | The tag. `Clotho::auto_tag` (`source="clotho-embed"`). |
+| `SUBCATEGORY_OF` edge | Category → Category | Hierarchy (agriculture ⊂ raw-material). Not yet read at query time — Clotho propagates ancestors from the in-memory seed table. |
+| `ALIAS_OF` edge | Category → Category | Synonyms (collapses "raw material"/"сырьё"). |
+| `CATEGORY_HAS_EMBEDDING` edge | Category → CategoryEmbedding | *Reserved* (see CategoryEmbedding). |
+
+Routing reads: `getMemoryCategories`, `getMemoriesByCategory` (membership +
+cross-domain bridge in `connect_memories`); `category_member_ids` feeds
+Lachesis PMI subset-overlap (`ln(\|A∩B\|·N / (\|A\|·\|B\|))`). The planned
+`Category —CO_OCCURS{count, pmi}→ Category` edge + `Insight` journal nodes are
+the next schema step (persists what PMI v0 computes on the fly).
+
 ## 3. Edge taxonomy
 
 ```

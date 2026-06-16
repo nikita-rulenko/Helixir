@@ -53,6 +53,24 @@ pub(crate) struct BatchNode {
 struct BatchEdge {
     from_node: String,
     to_node: String,
+    // Per-edge confidence the writer (LLM) assigned. IMPLIES carries it as
+    // `probability`, the others as `strength`. Optional: older edges lack it.
+    #[serde(default)]
+    strength: Option<i64>,
+    #[serde(default)]
+    probability: Option<i64>,
+}
+
+impl BatchEdge {
+    /// The writer's per-edge confidence normalised to `0..1` (`strength` or
+    /// `probability` ÷ 100); `1.0` when the edge stored none, so an unweighted
+    /// (legacy) edge is a no-op multiplier.
+    fn strength_norm(&self) -> f64 {
+        self.strength
+            .or(self.probability)
+            .map(|s| (s as f64 / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(1.0)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,7 +179,13 @@ pub(crate) struct LevelEdge {
     pub(crate) parent_uuid: String,
     pub(crate) child_uuid: String,
     pub(crate) edge_type: &'static str,
+    /// Per-family structural weight (direction/type semantics, dampened `*_IN`).
     pub(crate) weight: f64,
+    /// The writer's per-edge confidence normalised to `0..1` (LLM `strength` /
+    /// `probability` ÷ 100); `1.0` when the edge stored none. Distinct from
+    /// `weight` so existing consumers keep family-weight semantics while
+    /// longest-chain can fold in real per-edge confidence.
+    pub(crate) strength_norm: f64,
 }
 
 pub(crate) struct LevelFetch {
@@ -205,6 +229,7 @@ pub(crate) async fn fetch_level(
                 child_uuid,
                 edge_type,
                 weight: *weight,
+                strength_norm: e.strength_norm(),
             });
         }
     }
@@ -286,6 +311,12 @@ pub async fn graph_expansion_phase_batched(
                     continue;
                 };
 
+                // Fold the writer's per-edge confidence into the family weight:
+                // a strongly-asserted reasoning edge carries more PPR mass and
+                // lifts its child's rank; a weak one carries less. Legacy edges
+                // (no stored strength) multiply by 1.0 — unchanged.
+                let eff_weight = *edge_weight * edge.strength_norm();
+
                 // Record the edge for PPR regardless of visited status.
                 if let Some(parent_node) = node_by_uuid.get(parent_uuid) {
                     let key = (
@@ -297,7 +328,7 @@ pub async fn graph_expansion_phase_batched(
                         ego_edges.push(PprEdge {
                             from: parent_node.memory_id.clone(),
                             to: child.memory_id.clone(),
-                            weight: *edge_weight,
+                            weight: eff_weight,
                         });
                     }
                 }
@@ -306,7 +337,7 @@ pub async fn graph_expansion_phase_batched(
                     continue;
                 }
 
-                let graph_score = calculate_graph_score(*edge_weight, *parent_score);
+                let graph_score = calculate_graph_score(eff_weight, *parent_score);
                 let temporal_score =
                     calculate_temporal_freshness(&child.created_at, config.temporal_decay_days);
 

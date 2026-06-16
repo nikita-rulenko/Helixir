@@ -1,5 +1,6 @@
 pub mod batch_expansion;
 pub mod connect;
+pub mod longest_chain;
 pub mod models;
 pub mod phases;
 pub mod ppr;
@@ -19,4 +20,5 @@ pub use scoring::{
 pub use phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 
 pub use connect::{ConnectionPath, PathEdge, PathNode};
+pub use longest_chain::{ChainNarrative, ChainStep};
 pub use traversal::SmartTraversalV2;

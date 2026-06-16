@@ -1,4 +1,6 @@
 mod add_pipeline;
+pub mod categories;
+pub mod consolidate;
 mod crud;
 mod events;
 mod graph;
