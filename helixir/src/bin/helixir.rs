@@ -838,6 +838,15 @@ async fn verify_backend(cfg: &SetupConfig) -> Result<()> {
     }
 }
 
+/// Best-effort primary LAN IP: open a UDP socket "toward" a public address and
+/// read which local interface the OS would route through. Sends no packet.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+}
+
 async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
     println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
 
@@ -850,7 +859,12 @@ async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> 
         // shown by the verify line below; if you see a live one here but verify
         // points elsewhere, your HELIX_* env is pinned to a different port.
         Some((h, p)) => println!("  ✓ a live HelixDB is answering at {h}:{p}.\n"),
-        None => println!("  · none found on the usual ports — set a host/port below.\n"),
+        None => {
+            println!("  · none found on the usual ports.");
+            println!("    → join an existing collective: set the host/port below to a reachable");
+            println!("      HelixDB (e.g. another machine that ran setup → its LAN address).");
+            println!("    → or deploy one here: `helix push` in a HelixDB project, then re-run.\n");
+        }
     }
 
     let cfg = gather_config(interactive && target.is_none(), found.into_iter().next())?;
@@ -872,6 +886,28 @@ async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> 
                 println!("Aborted — fix the host/port or deploy HelixDB, then re-run.");
                 return Ok(());
             }
+        }
+    }
+
+    // 3. Multi-host — if this machine hosts the (local) DB, surface the LAN
+    //    address other hosts point their client at to join the same collective.
+    //    That is the rendezvous (#39) in practice: one shared DB, many hosts.
+    let host_is_local = matches!(
+        cfg.host.as_str(),
+        "localhost" | "127.0.0.1" | "0.0.0.0" | "::1"
+    );
+    if host_is_local {
+        match lan_ip() {
+            Some(ip) => {
+                println!("This machine's LAN address: {ip}:{}", cfg.port);
+                println!(
+                    "  Other hosts join the same collective by setting their client's"
+                );
+                println!(
+                    "  HELIX_HOST={ip} (full network trust assumed — no auth token yet).\n"
+                );
+            }
+            None => println!("(No LAN address found — offline, or no network interface.)\n"),
         }
     }
 
