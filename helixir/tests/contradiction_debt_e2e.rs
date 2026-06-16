@@ -51,6 +51,8 @@ async fn reconcile_drains_preference_keeps_factual() {
     let m2 = first_id(&client, &format!("The debt{run}b harvest festival is held in October."), &user).await;
     let m3 = first_id(&client, &format!("Planet debt{run}c orbits a red dwarf star."), &user).await;
     let m4 = first_id(&client, &format!("Chef debt{run}d perfected a rye sourdough recipe."), &user).await;
+    let m5 = first_id(&client, &format!("Volcano debt{run}e last erupted in the Pleistocene."), &user).await;
+    let m6 = first_id(&client, &format!("Violinist debt{run}f tuned to baroque pitch."), &user).await;
 
     // Seed two open disputes on SEPARATE from-memories so grouping is clean:
     // m1→m2 a preference (drainable), m3→m4 a factual claim (kept).
@@ -62,6 +64,16 @@ async fn reconcile_drains_preference_keeps_factual() {
         .record_contradiction(&m3, &m4, "cross_user_factual")
         .await
         .expect("seed factual");
+    // m5→m6 a factual dispute, but m6 is SUPERSEDED (m1 supersedes it) → the
+    // dispute is moot and should drain toward the live side (#45 increment 2).
+    tooling
+        .record_contradiction(&m5, &m6, "cross_user_factual")
+        .await
+        .expect("seed superseded-factual");
+    tooling
+        .record_supersession(&m1, &m6, "newer fact wins")
+        .await
+        .expect("seed supersession");
 
     // Both surface as open debt.
     let open = tooling
@@ -77,13 +89,14 @@ async fn reconcile_drains_preference_keeps_factual() {
         "factual dispute m3→m4 must be open: {open:?}"
     );
 
-    // Reconcile: preference retired, factual kept.
+    // Reconcile: preference retired, superseded-factual retired, live factual kept.
     let s = client.atropos().reconcile(&user, 500).await.expect("reconcile");
-    assert!(s.scanned >= 2, "should scan both seeded disputes: {s:?}");
+    assert!(s.scanned >= 3, "should scan all three seeded disputes: {s:?}");
     assert!(s.drained_preference >= 1, "preference must drain: {s:?}");
-    assert!(s.kept_live >= 1, "factual must be kept live: {s:?}");
+    assert!(s.drained_superseded >= 1, "superseded-factual must drain: {s:?}");
+    assert!(s.kept_live >= 1, "live factual must be kept: {s:?}");
 
-    // The preference is gone from the worklist; the factual remains open.
+    // Drained disputes leave the worklist; the live factual one remains open.
     let after = tooling
         .gather_open_contradictions(&user, 500)
         .await
@@ -93,8 +106,12 @@ async fn reconcile_drains_preference_keeps_factual() {
         "preference m1→m2 must be drained after reconcile: {after:?}"
     );
     assert!(
+        !after.iter().any(|o| o.from_id == m5),
+        "superseded m5→m6 must be drained after reconcile: {after:?}"
+    );
+    assert!(
         after.iter().any(|o| o.from_id == m3),
-        "factual m3→m4 must still be open: {after:?}"
+        "live factual m3→m4 must still be open: {after:?}"
     );
 
     // Idempotent: a second pass drains nothing new (no live preference left).
@@ -103,7 +120,7 @@ async fn reconcile_drains_preference_keeps_factual() {
 
     println!("\n==== contradiction_debt_e2e ====");
     println!(
-        "scanned {}, drained {} preference, kept {} live; after: {} open dispute(s)",
-        s.scanned, s.drained_preference, s.kept_live, after.len()
+        "scanned {}, drained {} preference + {} superseded, kept {} live; after: {} open dispute(s)",
+        s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, after.len()
     );
 }

@@ -110,18 +110,6 @@ impl DebtSummary {
     }
 }
 
-fn to_dispute(oc: &OpenContradiction) -> OpenDispute {
-    OpenDispute {
-        from_id: oc.from_id.clone(),
-        to_id: oc.to_id.clone(),
-        resolution_strategy: oc.resolution_strategy.clone(),
-        // Temporal/decay signals are increment 2; until then a factual dispute
-        // is conservatively kept (never auto-retired without evidence).
-        to_superseded: false,
-        from_superseded: false,
-    }
-}
-
 impl Atropos<'_> {
     /// The Cutter's hygiene pass (#45): drain dead cross-user disputes for a user
     /// so `resolved=0` debt does not grow unboundedly as the collective scales.
@@ -143,14 +131,20 @@ impl Atropos<'_> {
 
         let mut summary = DebtSummary::default();
         for (from_id, group) in by_from {
-            let decided: Vec<(OpenDispute, DrainVerdict)> = group
-                .iter()
-                .map(|oc| {
-                    let d = to_dispute(oc);
-                    let v = drain_decision(&d);
-                    (d, v)
-                })
-                .collect();
+            let mut decided: Vec<(OpenDispute, DrainVerdict)> = Vec::new();
+            for oc in &group {
+                let d = OpenDispute {
+                    from_id: oc.from_id.clone(),
+                    to_id: oc.to_id.clone(),
+                    resolution_strategy: oc.resolution_strategy.clone(),
+                    // Temporal signal: a superseded side makes a factual dispute
+                    // moot → the policy retires it toward the live side.
+                    to_superseded: self.tooling.is_superseded(&oc.to_id).await,
+                    from_superseded: self.tooling.is_superseded(&oc.from_id).await,
+                };
+                let v = drain_decision(&d);
+                decided.push((d, v));
+            }
 
             let all_resolve = decided.iter().all(|(_, v)| v.is_resolve());
             if all_resolve {

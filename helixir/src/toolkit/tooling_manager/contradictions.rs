@@ -71,6 +71,50 @@ impl ToolingManager {
         Ok(open)
     }
 
+    /// True if `memory_id` has been superseded — something points a SUPERSEDES
+    /// edge AT it (`In<SUPERSEDES>` non-empty). The temporal signal the drain
+    /// policy uses to retire a moot factual dispute toward the live side (#45).
+    pub async fn is_superseded(&self, memory_id: &str) -> bool {
+        #[derive(Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            superseding: Vec<serde_json::Value>,
+        }
+        let resp: Resp = self
+            .db
+            .execute_query(
+                "getSupersedingMemory",
+                &serde_json::json!({ "memory_id": memory_id }),
+            )
+            .await
+            .unwrap_or_default();
+        !resp.superseding.is_empty()
+    }
+
+    /// Record a SUPERSEDES edge (`new_id` supersedes `old_id`). Exposed for
+    /// seeding/repair and deterministic testing of the temporal drain.
+    pub async fn record_supersession(
+        &self,
+        new_id: &str,
+        old_id: &str,
+        reason: &str,
+    ) -> Result<(), ToolingError> {
+        self.db
+            .execute_query::<serde_json::Value, _>(
+                "addMemorySupersession",
+                &serde_json::json!({
+                    "new_id": new_id,
+                    "old_id": old_id,
+                    "reason": reason,
+                    "superseded_at": chrono::Utc::now().to_rfc3339(),
+                    "is_contradiction": 0,
+                }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     /// Record a `resolved=0` CONTRADICTS edge between two memories with a
     /// strategy label. The live cross-user path writes the same edge; exposed
     /// here for seeding/repair and deterministic reconcile testing.
