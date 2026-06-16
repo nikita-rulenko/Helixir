@@ -12,10 +12,12 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use helixir::agents::atropos::Insight;
+use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 use tracing_subscriber::EnvFilter;
@@ -76,6 +78,21 @@ enum Cmd {
     Pipeline {
         #[arg(long)]
         user: String,
+        #[arg(long, default_value_t = 0.62)]
+        threshold: f64,
+        #[arg(long = "max-seeds", default_value_t = 24)]
+        max_seeds: usize,
+        #[arg(long = "max-hops", default_value_t = 5)]
+        max_hops: usize,
+    },
+    /// Run the Moira daemon: schedule full passes (continuous vs --once).
+    Daemon {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 300)]
+        interval: u64,
+        #[arg(long)]
+        once: bool,
         #[arg(long, default_value_t = 0.62)]
         threshold: f64,
         #[arg(long = "max-seeds", default_value_t = 24)]
@@ -189,7 +206,62 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
+        Cmd::Daemon {
+            user,
+            interval,
+            once,
+            threshold,
+            max_seeds,
+            max_hops,
+        } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn daemon_run(
+    client: &HelixirClient,
+    user: String,
+    interval: u64,
+    once: bool,
+    threshold: f64,
+    max_seeds: usize,
+    max_hops: usize,
+) -> Result<()> {
+    let cfg = DaemonConfig {
+        user: user.clone(),
+        interval: Duration::from_secs(interval),
+        once,
+        pass: PassConfig {
+            grow_threshold: threshold,
+            max_seeds,
+            max_hops,
+            ..PassConfig::default()
+        },
+    };
+    client
+        .daemon()
+        .run(cfg, |pass, run| {
+            for ins in &run.insights {
+                write_insight(ins);
+            }
+            println!(
+                "[daemon] pass {pass} for '{user}': Clotho minted={} reused={}; Atropos {} insights",
+                run.grow.minted,
+                run.grow.reused_mint,
+                run.insights.len()
+            );
+            journal(
+                "daemon",
+                "pass",
+                &format!(
+                    "user={user} pass={pass} minted={} insights={}",
+                    run.grow.minted,
+                    run.insights.len()
+                ),
+            );
+        })
+        .await?;
     Ok(())
 }
 

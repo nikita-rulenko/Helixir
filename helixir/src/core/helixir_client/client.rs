@@ -165,6 +165,12 @@ impl HelixirClient {
     pub fn orchestrator(&self) -> crate::agents::orchestrator::Orchestrator<'_> {
         crate::agents::orchestrator::Orchestrator::new(self.tooling())
     }
+
+    /// The Moira daemon (#42) — schedules orchestrator passes (continuous vs
+    /// on-call). Borrows the toolkit.
+    pub fn daemon(&self) -> crate::agents::daemon::Daemon<'_> {
+        crate::agents::daemon::Daemon::new(self.tooling())
+    }
 }
 
 impl Drop for HelixirClient {
