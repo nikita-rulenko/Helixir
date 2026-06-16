@@ -649,6 +649,17 @@ QUERY getMemoryAgent(memory_id: String) =>
   agent <- memory::In<AGENT_CREATED>
   RETURN agent
 
+// Swarm rendezvous (#39): presence lives in the shared graph, so agents on any
+// host see each other through the one DB — no CLI-to-CLI coordination.
+QUERY heartbeatAgent(agent_id: String, host: String, last_seen: String, status: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  updated <- agent::UPDATE({ host: host, last_seen: last_seen, status: status })
+  RETURN updated
+
+QUERY listAgents() =>
+  agents <- N<Agent>
+  RETURN agents
+
 QUERY addConceptIsA(child_id: String, parent_id: String, inheritance_type: String) =>
   child <- N<Concept>::WHERE(_::{concept_id}::EQ(child_id))::FIRST
   parent <- N<Concept>::WHERE(_::{concept_id}::EQ(parent_id))::FIRST

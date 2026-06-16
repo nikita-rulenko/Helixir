@@ -19,7 +19,10 @@ N::Agent {
   role: String,
   capabilities: String,
   agent_version: String,
-  created_at: String
+  created_at: String,
+  host: String DEFAULT "",
+  last_seen: String DEFAULT "",
+  status: String DEFAULT "idle"
 }
 E::IN_SESSION {
   From: User,

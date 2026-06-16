@@ -23,6 +23,7 @@ use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
+use helixir::HelixClient;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -87,6 +88,25 @@ enum Cmd {
         max_seeds: usize,
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
+    },
+    /// Swarm roster — every agent the collective knows, live ones first (#39).
+    /// The rendezvous is the shared DB, not CLI-to-CLI: any host's agents appear.
+    Swarm {
+        /// Heartbeats within this many seconds count as active.
+        #[arg(long, default_value_t = 90)]
+        window: u64,
+    },
+    /// Announce this agent's presence to the collective (one heartbeat).
+    Heartbeat {
+        #[arg(long)]
+        agent: String,
+        #[arg(long, default_value = "developer")]
+        role: String,
+        /// Host label; blank → $HELIXIR_HOST_LABEL / $HOSTNAME / $HOST / "unknown".
+        #[arg(long, default_value = "")]
+        host: String,
+        #[arg(long, default_value = "idle")]
+        status: String,
     },
     /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
@@ -225,7 +245,7 @@ async fn main() -> Result<()> {
         target,
     } = &cli.cmd
     {
-        return setup_run(!non_interactive, *dry_run, target.clone());
+        return setup_run(!non_interactive, *dry_run, target.clone()).await;
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
@@ -277,6 +297,13 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
+        Cmd::Swarm { window } => swarm(&client, window).await?,
+        Cmd::Heartbeat {
+            agent,
+            role,
+            host,
+            status,
+        } => heartbeat(&client, &agent, &role, &host, &status).await?,
         Cmd::Daemon { cmd } => match cmd {
             DaemonCmd::Run {
                 user,
@@ -307,6 +334,7 @@ async fn daemon_run(
         user: user.clone(),
         interval: Duration::from_secs(interval),
         once,
+        host: machine_host(""),
         pass: PassConfig {
             grow_threshold: threshold,
             max_seeds,
@@ -633,7 +661,7 @@ fn default_mcp_bin() -> String {
         .unwrap_or_else(|| "helixir-mcp".to_string())
 }
 
-fn gather_config(interactive: bool) -> Result<SetupConfig> {
+fn gather_config(interactive: bool, discovered: Option<(String, u16)>) -> Result<SetupConfig> {
     let e = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let mut c = SetupConfig {
         host: e("HELIX_HOST", "localhost"),
@@ -647,6 +675,16 @@ fn gather_config(interactive: bool) -> Result<SetupConfig> {
         emb_url: e("HELIX_EMBEDDING_URL", "http://localhost:11434"),
         mcp_bin: default_mcp_bin(),
     };
+    // A discovered backend pre-fills host/port — but only where the user has not
+    // explicitly pinned them via env, so a scripted run with HELIX_* still wins.
+    if let Some((h, p)) = discovered {
+        if std::env::var("HELIX_HOST").is_err() {
+            c.host = h;
+        }
+        if std::env::var("HELIX_PORT").is_err() {
+            c.port = p.to_string();
+        }
+    }
     if interactive {
         let ask = |prompt: &str, def: &str| -> Result<String> {
             Ok(Input::<String>::new()
@@ -741,9 +779,102 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
     Ok(())
 }
 
-fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
+/// Probe one `host:port` for a live HelixDB via the real client health check,
+/// bounded so a filtered port cannot hang the wizard.
+async fn probe_backend(host: &str, port: u16) -> bool {
+    let Ok(client) = HelixClient::new(host, port) else {
+        return false;
+    };
+    let probe = async {
+        let _ = client.connect().await;
+        client.health_check().await
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_millis(1500), probe).await,
+        Ok(Ok(()))
+    )
+}
+
+/// Probe the local machine for a live HelixDB so a second client connects to the
+/// existing backend instead of standing up a duplicate (the singleton rule). The
+/// env-pinned port is tried first, then the common Helix ports.
+async fn discover_backends() -> Vec<(String, u16)> {
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let env_port: Option<u16> = std::env::var("HELIX_PORT").ok().and_then(|p| p.parse().ok());
+    let mut ports: Vec<u16> = Vec::new();
+    for p in env_port.into_iter().chain([6970u16, 6969]) {
+        if !ports.contains(&p) {
+            ports.push(p);
+        }
+    }
+    let mut live = Vec::new();
+    for port in ports {
+        if probe_backend(&host, port).await {
+            live.push((host.clone(), port));
+        }
+    }
+    live
+}
+
+/// The honest "it works" gate: prove the configured backend actually answers a
+/// health check before we tell the user their clients are wired.
+async fn verify_backend(cfg: &SetupConfig) -> Result<()> {
+    let port: u16 = cfg.port.parse().context("HelixDB port must be a number")?;
+    let client = HelixClient::new(&cfg.host, port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let probe = async {
+        let _ = client.connect().await;
+        client
+            .health_check()
+            .await
+            .map_err(|e| anyhow::anyhow!("health check failed: {e}"))
+    };
+    match tokio::time::timeout(Duration::from_secs(5), probe).await {
+        Ok(inner) => inner,
+        Err(_) => anyhow::bail!(
+            "timed out after 5s — no HelixDB answering at {}:{}",
+            cfg.host,
+            port
+        ),
+    }
+}
+
+async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
     println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
-    let cfg = gather_config(interactive && target.is_none())?;
+
+    // 1. Discover — a HelixDB is a singleton; find an existing one so we connect
+    //    rather than provision a second store nobody shares.
+    println!("Looking for a live HelixDB on this machine…");
+    let found = discover_backends().await;
+    match found.first() {
+        // Informational — the actual target is decided by config (env/prompt) and
+        // shown by the verify line below; if you see a live one here but verify
+        // points elsewhere, your HELIX_* env is pinned to a different port.
+        Some((h, p)) => println!("  ✓ a live HelixDB is answering at {h}:{p}.\n"),
+        None => println!("  · none found on the usual ports — set a host/port below.\n"),
+    }
+
+    let cfg = gather_config(interactive && target.is_none(), found.into_iter().next())?;
+
+    // 2. Verify — prove the backend answers before claiming success. On failure,
+    //    let the user wire anyway (interactive) or abort with the error.
+    print!("Verifying {}:{} … ", cfg.host, cfg.port);
+    std::io::stdout().flush().ok();
+    match verify_backend(&cfg).await {
+        Ok(()) => println!("ok — HelixDB is reachable.\n"),
+        Err(e) => {
+            println!("FAILED\n  {e}\n");
+            if interactive
+                && !Confirm::new()
+                    .with_prompt("Backend did not verify — wire the client(s) anyway?")
+                    .default(false)
+                    .interact()?
+            {
+                println!("Aborted — fix the host/port or deploy HelixDB, then re-run.");
+                return Ok(());
+            }
+        }
+    }
+
     let entry = mcp_entry(&cfg);
 
     // An explicit --target wires exactly that file; otherwise detect clients.
@@ -795,6 +926,97 @@ fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result
         println!("\n(dry-run — nothing was written.)");
     } else {
         println!("\nDone. Restart the client(s) to pick up the helixir-local MCP server.");
+    }
+    Ok(())
+}
+
+// --- swarm rendezvous (#39): presence in the shared graph ---
+
+/// Resolve a host label: explicit arg wins, else env hints, else "unknown".
+fn machine_host(explicit: &str) -> String {
+    if !explicit.is_empty() {
+        return explicit.to_string();
+    }
+    std::env::var("HELIXIR_HOST_LABEL")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn human_age(secs: i64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86_400),
+    }
+}
+
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
+    }
+}
+
+async fn heartbeat(
+    client: &HelixirClient,
+    agent: &str,
+    role: &str,
+    host: &str,
+    status: &str,
+) -> Result<()> {
+    let host = machine_host(host);
+    client
+        .tooling()
+        .register_or_heartbeat(agent, role, &host, status)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("✓ heartbeat: {agent} ({role}) on {host} — {status}");
+    journal("swarm", "heartbeat", &format!("{agent}@{host}:{status}"));
+    Ok(())
+}
+
+async fn swarm(client: &HelixirClient, window: u64) -> Result<()> {
+    let now = chrono::Utc::now();
+    let mut roster = client
+        .tooling()
+        .list_swarm()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if roster.is_empty() {
+        println!("No agents registered in the collective yet.");
+        println!("(Run `helixir heartbeat --agent <id>` or start the daemon to announce one.)");
+        return Ok(());
+    }
+    // Freshest first; never-seen sink to the bottom.
+    roster.sort_by_key(|a| a.age_seconds(now).unwrap_or(i64::MAX));
+
+    let win = window as i64;
+    let active = roster.iter().filter(|a| a.is_active(now, win)).count();
+    println!(
+        "Swarm roster — {} agent(s), {active} active (heartbeat ≤{window}s)\n",
+        roster.len()
+    );
+    println!(
+        "     {:<22} {:<11} {:<16} {:<7} {}",
+        "agent", "role", "host", "age", "status"
+    );
+    for a in &roster {
+        let dot = if a.is_active(now, win) { "●" } else { "·" };
+        let age = match a.age_seconds(now) {
+            Some(s) if s >= 0 => human_age(s),
+            _ => "never".to_string(),
+        };
+        println!(
+            "  {dot}  {:<22} {:<11} {:<16} {:<7} {}",
+            trunc(&a.agent_id, 22),
+            trunc(&a.role, 11),
+            trunc(&a.host, 16),
+            age,
+            a.status
+        );
     }
     Ok(())
 }

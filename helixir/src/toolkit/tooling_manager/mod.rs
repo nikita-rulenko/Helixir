@@ -9,6 +9,7 @@ pub mod ingest_buffer;
 mod reasoning;
 mod search;
 pub mod seeds;
+pub mod swarm;
 pub mod types;
 
 pub use types::*;

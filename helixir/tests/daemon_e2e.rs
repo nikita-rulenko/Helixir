@@ -40,6 +40,7 @@ async fn daemon_on_call_runs_exactly_one_pass() {
         user: user.clone(),
         interval: Duration::from_secs(1),
         once: true,
+        host: "test-host".to_string(),
         pass: PassConfig {
             max_seeds: 4,
             max_hops: 3,

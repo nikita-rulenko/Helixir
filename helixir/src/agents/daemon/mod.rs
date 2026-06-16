@@ -25,6 +25,8 @@ pub struct DaemonConfig {
     pub interval: Duration,
     /// On-call: run a single pass and stop.
     pub once: bool,
+    /// Host label stamped on this daemon's swarm presence (#39).
+    pub host: String,
     pub pass: PassConfig,
 }
 
@@ -56,9 +58,20 @@ impl<'a> Daemon<'a> {
             cfg.user
         );
 
+        // The daemon is an agent in the swarm — it announces presence in the
+        // shared graph each pass so any host's roster (`helixir swarm`) sees it.
+        let agent_id = format!("daemon:{}", cfg.user);
+
         let mut pass = 0u64;
         loop {
             pass += 1;
+            if let Err(e) = self
+                .tooling
+                .register_or_heartbeat(&agent_id, "daemon", &cfg.host, "working")
+                .await
+            {
+                warn!("daemon: heartbeat failed (pass {pass}): {e}");
+            }
             match orchestrator.full_pass(&cfg.user, &cfg.pass).await {
                 Ok(run) => on_pass(pass, &run),
                 Err(e) => warn!("daemon: pass {pass} failed: {e}"),
@@ -67,6 +80,12 @@ impl<'a> Daemon<'a> {
             if cfg.once {
                 break;
             }
+            // Idle heartbeat before sleeping — the roster shows live-but-idle
+            // rather than going stale the instant a pass finishes.
+            let _ = self
+                .tooling
+                .register_or_heartbeat(&agent_id, "daemon", &cfg.host, "idle")
+                .await;
             tokio::select! {
                 _ = tokio::time::sleep(cfg.interval) => {}
                 _ = tokio::signal::ctrl_c() => {
