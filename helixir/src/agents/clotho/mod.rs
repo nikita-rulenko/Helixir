@@ -342,3 +342,33 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
     }
     dot / (na.sqrt() * nb.sqrt())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cosine_identical_is_one() {
+        let v = [0.3f32, 0.4, 0.5];
+        assert!((cosine(&v, &v) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_orthogonal_is_zero() {
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cosine_degenerate_is_zero() {
+        assert_eq!(cosine(&[1.0, 2.0], &[1.0]), 0.0); // length mismatch
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0); // zero-norm vector
+        assert_eq!(cosine(&[], &[]), 0.0); // empty
+    }
+
+    #[test]
+    fn ancestors_walk_the_seed_hierarchy() {
+        assert_eq!(dictionary::ancestors("agriculture"), vec!["raw material"]);
+        assert!(dictionary::ancestors("raw material").is_empty(), "root has no ancestors");
+        assert!(dictionary::ancestors("nonexistent-xyz").is_empty());
+    }
+}

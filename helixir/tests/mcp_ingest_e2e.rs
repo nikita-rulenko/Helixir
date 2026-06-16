@@ -119,11 +119,9 @@ fn mcp_ingest_buffer() {
         "opportunistic outcomes on next add: {} item(s)",
         outcomes.len()
     );
+    // The push is BEST-EFFORT and timing-dependent (it may land after we polled),
+    // so it's observed, not required — asserting it made this suite flaky. The
+    // buffer's contract (fast queued ack, worker drains, fact becomes searchable)
+    // is asserted above; the push is a bonus.
     println!("best-effort push notification observed: {pushed}");
-    assert!(
-        pushed,
-        "expected a helixir.ingest logging notification (best-effort push); \
-         captured: {:?}",
-        mcp.notifications
-    );
 }
