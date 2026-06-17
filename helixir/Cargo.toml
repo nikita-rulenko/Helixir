@@ -63,6 +63,7 @@ axum = "0.8"
 
 # Config
 config = "0.14"
+toml = "0.8"
 
 # Caching
 lru = "0.12"
