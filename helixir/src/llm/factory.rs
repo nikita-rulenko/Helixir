@@ -14,6 +14,7 @@ impl LlmProviderFactory {
         api_key: Option<&str>,
         base_url: Option<&str>,
         temperature: f64,
+        request_timeout_secs: u64,
     ) -> Box<dyn LlmProvider> {
         match provider {
             "cerebras" => Box::new(CerebrasProvider::new(
@@ -21,10 +22,11 @@ impl LlmProviderFactory {
                 model.to_string(),
                 temperature,
             )),
-            "ollama" => Box::new(OllamaProvider::new(
+            "ollama" => Box::new(OllamaProvider::with_timeout(
                 base_url.unwrap_or(DEFAULT_OLLAMA_URL).to_string(),
                 model.to_string(),
                 temperature,
+                request_timeout_secs,
             )),
             _ => panic!("Unknown provider: {provider}. Supported: cerebras, ollama"),
         }
@@ -60,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_create_ollama_provider() {
-        let provider = LlmProviderFactory::create("ollama", "llama3.1:8b", None, None, 0.7);
+        let provider = LlmProviderFactory::create("ollama", "llama3.1:8b", None, None, 0.7, 600);
         assert_eq!(provider.provider_name(), "ollama");
         assert_eq!(provider.model_name(), "llama3.1:8b");
     }
@@ -73,6 +75,7 @@ mod tests {
             None,
             Some("http://192.168.1.100:11434"),
             0.5,
+            600,
         );
         assert_eq!(provider.provider_name(), "ollama");
         assert_eq!(provider.model_name(), "gemma2:9b");
@@ -81,13 +84,13 @@ mod tests {
     #[test]
     fn test_create_cerebras_provider() {
         let provider =
-            LlmProviderFactory::create("cerebras", "llama-3.3-70b", Some("test-key"), None, 0.3);
+            LlmProviderFactory::create("cerebras", "llama-3.3-70b", Some("test-key"), None, 0.3, 600);
         assert_eq!(provider.provider_name(), "cerebras");
     }
 
     #[test]
     #[should_panic(expected = "Unknown provider")]
     fn test_unknown_provider_panics() {
-        let _ = LlmProviderFactory::create("unknown", "model", None, None, 0.5);
+        let _ = LlmProviderFactory::create("unknown", "model", None, None, 0.5, 600);
     }
 }

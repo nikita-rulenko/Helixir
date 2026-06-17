@@ -39,8 +39,8 @@ impl HelixirClient {
             model: config.embedding_model.clone(),
             api_key: config.embedding_api_key.clone(),
             timeout_secs: config.timeout,
-            cache_size: crate::DEFAULT_CACHE_SIZE,
-            cache_ttl: crate::DEFAULT_CACHE_TTL,
+            cache_size: config.llm_runtime.embedding_cache_size,
+            cache_ttl: config.llm_runtime.embedding_cache_ttl_secs,
             fallback_enabled: config.embedding_fallback_enabled,
             fallback_url: config.embedding_fallback_url.clone(),
             fallback_model: config.embedding_fallback_model.clone(),
@@ -52,6 +52,7 @@ impl HelixirClient {
             config.llm_api_key.as_deref(),
             config.llm_base_url.as_deref(),
             f64::from(config.llm_temperature),
+            config.llm_runtime.request_timeout_secs,
         )
         .into();
 

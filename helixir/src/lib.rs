@@ -24,3 +24,6 @@ pub const DEFAULT_LLM_FALLBACK_MODEL: &str = "llama3.2";
 pub const DEFAULT_HELIX_PORT: u16 = 6969;
 pub const DEFAULT_CACHE_SIZE: usize = 1000;
 pub const DEFAULT_CACHE_TTL: u64 = 300;
+/// Ollama HTTP request timeout (seconds). Generous by default so weak hardware
+/// running a large local model doesn't trip the client before the model replies.
+pub const DEFAULT_LLM_REQUEST_TIMEOUT_SECS: u64 = 600;

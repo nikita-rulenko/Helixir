@@ -466,6 +466,28 @@ impl Default for GatewayConfig {
     }
 }
 
+/// LLM/embedding runtime knobs that were previously hardcoded at provider
+/// construction (ollama request timeout, embedding cache sizing).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmRuntimeConfig {
+    /// Ollama HTTP request timeout (seconds).
+    pub request_timeout_secs: u64,
+    /// Embedding cache capacity (entries).
+    pub embedding_cache_size: usize,
+    /// Embedding cache entry TTL (seconds).
+    pub embedding_cache_ttl_secs: u64,
+}
+impl Default for LlmRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: crate::DEFAULT_LLM_REQUEST_TIMEOUT_SECS,
+            embedding_cache_size: crate::DEFAULT_CACHE_SIZE,
+            embedding_cache_ttl_secs: crate::DEFAULT_CACHE_TTL,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HelixirConfig {
@@ -526,6 +548,8 @@ pub struct HelixirConfig {
     pub swarm: SwarmConfig,
     #[serde(default)]
     pub gateway: GatewayConfig,
+    #[serde(default)]
+    pub llm_runtime: LlmRuntimeConfig,
 }
 
 impl HelixirConfig {
@@ -578,6 +602,7 @@ impl HelixirConfig {
             ingest: IngestConfig::default(),
             swarm: SwarmConfig::default(),
             gateway: GatewayConfig::default(),
+            llm_runtime: LlmRuntimeConfig::default(),
         }
     }
 
