@@ -44,7 +44,9 @@ fn mcp_write_e2e() {
         "This suite validates the algo_opt write path"
     );
 
-    let (mut mcp, _boot) = McpClient::spawn();
+    // This suite exercises Phase 2 cross-user (Hive) linking, which is opt-in:
+    // it only runs under HELIXIR_MODE=collective (default solo skips it).
+    let (mut mcp, _boot) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
     let run = token();
 
     // ---------- 1. multi-fact add goes through the batch path ----------

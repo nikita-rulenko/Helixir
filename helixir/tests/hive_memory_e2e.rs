@@ -38,6 +38,8 @@ async fn hive_cross_user_collective_link_e2e() {
     let user_a = format!("e2e_hive_{token}_a");
     let user_b = format!("e2e_hive_{token}_b");
 
+    // Hive (cross-user collective linking) is opt-in — enable it for this suite.
+    unsafe { std::env::set_var("HELIXIR_MODE", "collective"); }
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
     client
         .initialize()
