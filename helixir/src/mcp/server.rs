@@ -124,10 +124,11 @@ pub async fn run_gateway(bind: &str) -> anyhow::Result<()> {
     let client = HelixirClient::new(config)?;
     client.initialize().await?;
     info!(
-        "✅ Gateway ready — HelixDB {}:{}, instance {}",
+        "✅ Gateway ready — HelixDB {}:{}, instance {}, tier {}",
         client.config().host,
         client.config().port,
-        client.config().instance
+        client.config().instance,
+        client.config().mode.label()
     );
 
     // One handler instance shared across sessions (the client is Arc'd); the

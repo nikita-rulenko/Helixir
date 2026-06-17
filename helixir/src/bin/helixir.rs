@@ -149,7 +149,13 @@ enum Cmd {
         /// Clients then carry no HELIX_* env — just the gateway URL.
         #[arg(long)]
         gateway: Option<String>,
+        /// Privilege tier to write (solo | collective | insights). Default solo:
+        /// private memory, no cross-user behavior, no generative pipeline.
+        #[arg(long)]
+        mode: Option<String>,
     },
+    /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
+    Mode,
 }
 
 #[derive(Subcommand)]
@@ -298,6 +304,27 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
     }
 }
 
+/// Print the effective privilege tier and what it permits.
+fn print_mode() -> Result<()> {
+    let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+    let on = |b: bool| if b { "ON" } else { "off" };
+    println!("Privilege tier: {} (HELIXIR_MODE)", mode.label());
+    println!(
+        "  cross-user collective (link / contradict / collective reads): {}",
+        on(mode.collective_enabled())
+    );
+    println!(
+        "  generative insights (Clotho/Lachesis/Atropos, daemon):        {}",
+        on(mode.insights_enabled())
+    );
+    if !mode.insights_enabled() {
+        println!(
+            "\nRaise it: HELIXIR_MODE=collective|insights, or `helixir setup --mode <tier>`."
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -346,15 +373,28 @@ async fn main() -> Result<()> {
         };
     }
 
+    // `mode` just reports the effective tier — no DB needed.
+    if matches!(&cli.cmd, Cmd::Mode) {
+        return print_mode();
+    }
+
     // Setup configures files + client configs; no DB connection needed.
     if let Cmd::Setup {
         non_interactive,
         dry_run,
         gateway,
         target,
+        mode,
     } = &cli.cmd
     {
-        return setup_run(!non_interactive, *dry_run, target.clone(), gateway.clone()).await;
+        return setup_run(
+            !non_interactive,
+            *dry_run,
+            target.clone(),
+            gateway.clone(),
+            mode.clone(),
+        )
+        .await;
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
@@ -432,6 +472,7 @@ async fn main() -> Result<()> {
         },
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
+        Cmd::Mode => unreachable!("mode handled before client init"),
     }
     Ok(())
 }
@@ -767,6 +808,8 @@ struct SetupConfig {
     emb_model: String,
     emb_url: String,
     mcp_bin: String,
+    /// Privilege tier written as HELIXIR_MODE (default solo).
+    mode: String,
 }
 
 fn default_mcp_bin() -> String {
@@ -790,6 +833,7 @@ fn gather_config(interactive: bool, discovered: Option<(String, u16)>) -> Result
         emb_model: e("HELIX_EMBEDDING_MODEL", "nomic-embed-text"),
         emb_url: e("HELIX_EMBEDDING_URL", "http://localhost:11434"),
         mcp_bin: default_mcp_bin(),
+        mode: e("HELIXIR_MODE", "solo"),
     };
     // A discovered backend pre-fills host/port — but only where the user has not
     // explicitly pinned them via env, so a scripted run with HELIX_* still wins.
@@ -837,6 +881,7 @@ fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
             "HELIX_EMBEDDING_MODEL": c.emb_model,
             "HELIX_EMBEDDING_URL": c.emb_url,
             "HELIXIR_RETRIEVAL_PROFILE": "algo_opt",
+            "HELIXIR_MODE": c.mode,
         }
     })
 }
@@ -992,8 +1037,17 @@ async fn setup_run(
     dry_run: bool,
     target: Option<String>,
     gateway: Option<String>,
+    mode: Option<String>,
 ) -> Result<()> {
     println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
+    // Effective tier: --mode wins, else HELIXIR_MODE env, else solo. Normalized
+    // to a canonical label so the written env is clean; never silently escalates.
+    let effective_mode = match &mode {
+        Some(m) => MemoryMode::parse(m),
+        None => MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default()),
+    };
+    let mode_label = effective_mode.label();
+    println!("Privilege tier: {mode_label} (HELIXIR_MODE) — collective/insights are opt-in.\n");
 
     // Gateway mode short-circuits DB discovery: clients talk to the per-host
     // gateway over HTTP, which holds the HELIX_* config — they carry none.
@@ -1001,7 +1055,8 @@ async fn setup_run(
         let url = normalize_gateway_url(&gw);
         println!("Gateway mode — wiring clients to {url}");
         println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
-        println!("  (Make sure a gateway is running there: `helixir gateway start`.)\n");
+        println!("  The privilege tier lives on the GATEWAY process — start it with");
+        println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
         let entry = mcp_entry_gateway(&url);
         return wire_entry_to_clients(entry, target, interactive, dry_run, &format!("gateway {url}"));
     }
@@ -1023,7 +1078,8 @@ async fn setup_run(
         }
     }
 
-    let cfg = gather_config(interactive && target.is_none(), found.into_iter().next())?;
+    let mut cfg = gather_config(interactive && target.is_none(), found.into_iter().next())?;
+    cfg.mode = mode_label.to_string();
 
     // 2. Verify — prove the backend answers before claiming success. On failure,
     //    let the user wire anyway (interactive) or abort with the error.
