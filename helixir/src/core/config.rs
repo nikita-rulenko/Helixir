@@ -99,7 +99,7 @@ impl Default for RetryConfig {
 }
 
 /// Per-family structural edge weights for graph ranking.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EdgeWeights {
     pub because: f64,
@@ -125,7 +125,7 @@ impl Default for EdgeWeights {
 }
 
 /// Incoming-edge dampeners (directional reasoning bias).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EdgeDamping {
     pub implies_in: f64,

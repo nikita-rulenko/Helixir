@@ -199,7 +199,12 @@ impl ToolingManager {
         let seeds_a = seed_sets.pop().unwrap_or_default();
 
         crate::toolkit::mind_toolbox::search::smart_traversal_v2::connect::connect(
-            &self.db, &seeds_a, &seeds_b, max_depth,
+            &self.db,
+            &seeds_a,
+            &seeds_b,
+            max_depth,
+            self.config.retrieval.graph.edge_weights,
+            self.config.retrieval.graph.edge_damping,
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
@@ -238,7 +243,11 @@ impl ToolingManager {
             .collect();
 
         crate::toolkit::mind_toolbox::search::smart_traversal_v2::longest_chain::longest_chain(
-            &self.db, &seeds, max_hops,
+            &self.db,
+            &seeds,
+            max_hops,
+            self.config.retrieval.graph.edge_weights,
+            self.config.retrieval.graph.edge_damping,
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))

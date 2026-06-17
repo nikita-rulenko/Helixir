@@ -69,6 +69,8 @@ pub async fn longest_chain(
     client: &HelixClient,
     seed_ids: &[(String, String)],
     max_hops: usize,
+    ew: crate::core::config::EdgeWeights,
+    ed: crate::core::config::EdgeDamping,
 ) -> Result<Option<ChainNarrative>, TraversalError> {
     if seed_ids.is_empty() {
         return Ok(None);
@@ -91,7 +93,7 @@ pub async fn longest_chain(
             break;
         }
         let ids: Vec<&str> = frontier.iter().map(String::as_str).collect();
-        let fetch = fetch_level(client, &ids).await?;
+        let fetch = fetch_level(client, &ids, ew, ed).await?;
 
         let uuid_to_mid: HashMap<&str, &str> = fetch
             .nodes_by_uuid

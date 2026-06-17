@@ -98,6 +98,8 @@ pub async fn connect(
     seeds_a: &[(String, String)],
     seeds_b: &[(String, String)],
     max_depth: usize,
+    ew: crate::core::config::EdgeWeights,
+    ed: crate::core::config::EdgeDamping,
 ) -> Result<Option<ConnectionPath>, TraversalError> {
     if seeds_a.is_empty() || seeds_b.is_empty() {
         return Ok(None);
@@ -137,7 +139,7 @@ pub async fn connect(
         }
 
         let ids: Vec<&str> = wave.frontier.iter().map(String::as_str).collect();
-        let fetch = fetch_level(client, &ids).await?;
+        let fetch = fetch_level(client, &ids, ew, ed).await?;
 
         let uuid_to_mid: HashMap<&str, &str> = fetch
             .nodes_by_uuid

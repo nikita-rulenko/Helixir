@@ -8,7 +8,6 @@ pub mod rrf;
 pub mod scoring;
 pub mod traversal;
 
-pub use models::edge_weights;
 pub use models::{SearchConfig, SearchResult, TraversalStats};
 
 pub use scoring::{

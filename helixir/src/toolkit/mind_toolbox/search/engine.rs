@@ -103,6 +103,8 @@ impl SearchEngine {
             ppr_iterations: self.config.retrieval.ppr.max_iterations,
             rank_base: self.config.retrieval.rank_base,
             rank_decay: self.config.retrieval.rank_decay,
+            edge_weights: self.config.retrieval.graph.edge_weights,
+            edge_damping: self.config.retrieval.graph.edge_damping,
         }
     }
 
