@@ -80,7 +80,8 @@ impl<'a> Daemon<'a> {
 
             // Drain contradiction debt each pass — keep resolved=0 cross-user
             // disputes from piling up as the collective grows (#45).
-            match Atropos::new(self.tooling).reconcile(&cfg.user, 500).await {
+            let debt_limit = self.tooling.config.moira.daemon.reconcile_limit;
+            match Atropos::new(self.tooling).reconcile(&cfg.user, debt_limit).await {
                 Ok(s) if s.scanned > 0 => info!(
                     "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
                     s.drained_preference, s.drained_superseded, s.kept_live, s.notified

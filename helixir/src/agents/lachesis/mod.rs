@@ -30,10 +30,8 @@ use crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath;
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::ToolingError;
 
-/// Per-hop coherence a chain must clear (geometric mean of edge weights).
-const COHERENCE_BAR: f64 = 0.5;
-/// A chain must be at least half typed reasoning, not bare association.
-const MIN_REASONING_SUPPORT: f64 = 0.5;
+// The coherence bar, min-reasoning-support, and subset-PMI bar now live in
+// config.moira.lachesis (coherence_bar / min_reasoning_support / subset_pmi_bar).
 
 /// One hop of a candidate chain — the edge family and its weight.
 pub struct ChainEdge<'a> {
@@ -74,7 +72,11 @@ fn is_reasoning(edge_type: &str) -> bool {
 
 /// The apophenia gate: score a candidate chain and label it. Pure — no DB — so
 /// the policy is unit-testable in isolation. An empty chain is rejected.
-pub fn assess(edges: &[ChainEdge]) -> CoherenceVerdict {
+pub fn assess(
+    edges: &[ChainEdge],
+    coherence_bar: f64,
+    min_reasoning_support: f64,
+) -> CoherenceVerdict {
     if edges.is_empty() {
         return CoherenceVerdict {
             coherence: 0.0,
@@ -98,17 +100,17 @@ pub fn assess(edges: &[ChainEdge]) -> CoherenceVerdict {
     let reasoning_hops = edges.iter().filter(|e| is_reasoning(e.edge_type)).count() as f64;
     let reasoning_support = reasoning_hops / n;
 
-    let passes = coherence >= COHERENCE_BAR && reasoning_support >= MIN_REASONING_SUPPORT;
+    let passes = coherence >= coherence_bar && reasoning_support >= min_reasoning_support;
     let (label, reason) = if passes {
         (
             EpistemicLabel::PlausibleHypothesis,
             format!(
-                "per-hop coherence {coherence:.2} ≥ {COHERENCE_BAR:.2} and {:.0}% reasoning-backed \
+                "per-hop coherence {coherence:.2} ≥ {coherence_bar:.2} and {:.0}% reasoning-backed \
                  — a plausible connection, requires verification",
                 reasoning_support * 100.0
             ),
         )
-    } else if reasoning_support < MIN_REASONING_SUPPORT {
+    } else if reasoning_support < min_reasoning_support {
         (
             EpistemicLabel::LikelyApophenia,
             format!(
@@ -119,7 +121,7 @@ pub fn assess(edges: &[ChainEdge]) -> CoherenceVerdict {
     } else {
         (
             EpistemicLabel::LikelyApophenia,
-            format!("per-hop coherence {coherence:.2} below the {COHERENCE_BAR:.2} bar"),
+            format!("per-hop coherence {coherence:.2} below the {coherence_bar:.2} bar"),
         )
     };
 
@@ -148,9 +150,6 @@ pub fn pmi(count_a: usize, count_b: usize, count_ab: usize, total: usize) -> f64
     }
     ((count_ab as f64 * total as f64) / (count_a as f64 * count_b as f64)).ln()
 }
-
-/// PMI a subset link must clear to be a chain hop (above-chance co-occurrence).
-const SUBSET_PMI_BAR: f64 = 0.5;
 
 /// A memory that witnesses a chain hop — tagged with BOTH the categories whose
 /// overlap forms the link. The provenance that makes a hypothesis verifiable.
@@ -269,7 +268,8 @@ impl<'a> Lachesis<'a> {
                 weight: e.weight,
             })
             .collect();
-        let verdict = assess(&edges);
+        let lc = &self.tooling.config.moira.lachesis;
+        let verdict = assess(&edges, lc.coherence_bar, lc.min_reasoning_support);
         Ok(Some(GatedHypothesis { path, verdict }))
     }
 
@@ -307,6 +307,7 @@ impl<'a> Lachesis<'a> {
         universe: usize,
         max_hops: usize,
     ) -> Result<Option<SubsetHypothesis>, ToolingError> {
+        let lc = self.tooling.config.moira.lachesis.clone();
         // Unique candidate ids (+ names), seed included.
         let mut name_of: HashMap<String, String> = HashMap::new();
         for (id, name) in candidates {
@@ -332,7 +333,7 @@ impl<'a> Lachesis<'a> {
                 let mb = &members[b];
                 let overlap = ma.iter().filter(|m| mb.contains(*m)).count();
                 let p = pmi(ma.len(), mb.len(), overlap, universe);
-                if p >= SUBSET_PMI_BAR {
+                if p >= lc.subset_pmi_bar {
                     adj.entry(a.clone()).or_default().push((b.clone(), p));
                     adj.entry(b.clone()).or_default().push((a.clone(), p));
                 }
@@ -345,7 +346,7 @@ impl<'a> Lachesis<'a> {
         let mut on_path: HashSet<String> = HashSet::new();
         on_path.insert(seed_category_id.to_string());
         let mut cur: Vec<(String, f64)> = vec![(seed_category_id.to_string(), 0.0)];
-        let mut budget: u64 = 200_000;
+        let mut budget: u64 = lc.dfs_budget as u64;
         subset_dfs(
             seed_category_id,
             &adj,
@@ -381,13 +382,13 @@ impl<'a> Lachesis<'a> {
                 let prev = &best[i - 1].0;
                 if let (Some(ma), Some(mb)) = (members.get(prev), members.get(id)) {
                     let overlap: Vec<String> =
-                        ma.iter().filter(|m| mb.contains(*m)).take(3).cloned().collect();
+                        ma.iter().filter(|m| mb.contains(*m)).take(lc.witnesses_per_hop).cloned().collect();
                     for mid in overlap {
                         let snippet = self
                             .tooling
                             .memory_content(&mid)
                             .await?
-                            .map(|c| c.chars().take(110).collect())
+                            .map(|c| c.chars().take(lc.snippet_len).collect())
                             .unwrap_or_default();
                         witnesses.push(SubsetWitness {
                             memory_id: mid,
@@ -426,7 +427,7 @@ mod tests {
 
     #[test]
     fn reasoning_backed_chain_is_a_hypothesis() {
-        let v = assess(&[e("IMPLIES", 0.72), e("BECAUSE", 0.70)]);
+        let v = assess(&[e("IMPLIES", 0.72), e("BECAUSE", 0.70)], 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
         assert!(v.requires_verification, "a hypothesis is never asserted as truth");
         assert!(v.coherence > 0.7 && v.coherence <= 0.72, "geomean ~0.71, got {}", v.coherence);
@@ -436,7 +437,7 @@ mod tests {
     #[test]
     fn bare_association_chain_is_apophenia() {
         // Two memories linked only by shared tags — the canonical apophenia case.
-        let v = assess(&[e("VIA_CATEGORY", 0.5), e("VIA_CATEGORY", 0.5)]);
+        let v = assess(&[e("VIA_CATEGORY", 0.5), e("VIA_CATEGORY", 0.5)], 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::LikelyApophenia);
         assert!(!v.requires_verification);
         assert_eq!(v.reasoning_support, 0.0);
@@ -445,9 +446,9 @@ mod tests {
     #[test]
     fn weak_reasoning_chain_is_apophenia() {
         // Reasoning-typed but the per-hop confidence is too low to trust.
-        let v = assess(&[e("MEMORY_RELATION", 0.30), e("IMPLIES", 0.35)]);
+        let v = assess(&[e("MEMORY_RELATION", 0.30), e("IMPLIES", 0.35)], 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::LikelyApophenia);
-        assert!(v.coherence < COHERENCE_BAR);
+        assert!(v.coherence < 0.5);
     }
 
     #[test]
@@ -455,7 +456,7 @@ mod tests {
         // A long, firmly-reasoned chain must not be rejected just for being long
         // (a raw weight product would underflow the bar).
         let long: Vec<ChainEdge> = (0..8).map(|_| e("IMPLIES", 0.7)).collect();
-        let v = assess(&long);
+        let v = assess(&long, 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
         assert!((v.coherence - 0.7).abs() < 1e-9, "geomean of all-0.7 is 0.7, got {}", v.coherence);
     }
@@ -463,14 +464,14 @@ mod tests {
     #[test]
     fn mixed_chain_keeps_a_reasoning_majority() {
         // One associative bridge among reasoning hops still passes the support bar.
-        let v = assess(&[e("IMPLIES", 0.7), e("VIA_CATEGORY", 0.6), e("BECAUSE", 0.7)]);
-        assert!(v.reasoning_support >= MIN_REASONING_SUPPORT);
+        let v = assess(&[e("IMPLIES", 0.7), e("VIA_CATEGORY", 0.6), e("BECAUSE", 0.7)], 0.5, 0.5);
+        assert!(v.reasoning_support >= 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
     }
 
     #[test]
     fn empty_is_not_a_chain() {
-        assert_eq!(assess(&[]).label, EpistemicLabel::LikelyApophenia);
+        assert_eq!(assess(&[], 0.5, 0.5).label, EpistemicLabel::LikelyApophenia);
     }
 
     // --- PMI subset-overlap routing (the cross-domain apophenia guard) ---

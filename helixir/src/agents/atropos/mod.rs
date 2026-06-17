@@ -22,10 +22,6 @@ use crate::agents::lachesis::{Lachesis, SubsetHypothesis};
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::ToolingError;
 
-/// A thread must hold this weakest-link PMI and span ≥2 hops to be journaled.
-const QUALITY_PMI_BAR: f64 = 1.0;
-const MIN_HOPS: usize = 2;
-
 /// A memory that witnesses one link of an insight's chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsightWitness {
@@ -77,7 +73,8 @@ impl<'a> Atropos<'a> {
                 hyps.push(h);
             }
         }
-        let insights = curate_hypotheses(hyps);
+        let a = &self.tooling.config.moira.atropos;
+        let insights = curate_hypotheses(hyps, a.quality_pmi_bar, a.min_hops);
         info!(
             "atropos.curate: {} insights from {} seeds",
             insights.len(),
@@ -89,10 +86,14 @@ impl<'a> Atropos<'a> {
 
 /// The pure curation policy: quality bar → build → dedup (a thread subsumes any
 /// sub-thread of it) → rank by value. No DB, so it's unit-testable in isolation.
-pub fn curate_hypotheses(hyps: Vec<SubsetHypothesis>) -> Vec<Insight> {
+pub fn curate_hypotheses(
+    hyps: Vec<SubsetHypothesis>,
+    quality_pmi_bar: f64,
+    min_hops: usize,
+) -> Vec<Insight> {
     let mut insights: Vec<Insight> = hyps
         .iter()
-        .filter(|h| h.hops >= MIN_HOPS && h.min_pmi >= QUALITY_PMI_BAR)
+        .filter(|h| h.hops >= min_hops && h.min_pmi >= quality_pmi_bar)
         .map(build_insight)
         .collect();
 
@@ -177,14 +178,14 @@ mod tests {
         // Below the PMI bar, and a single-hop link.
         let weak = hyp(&[("a", 0.0), ("b", 0.5)]);
         let short = hyp(&[("a", 0.0)]);
-        assert!(curate_hypotheses(vec![weak, short]).is_empty());
+        assert!(curate_hypotheses(vec![weak, short], 1.0, 2).is_empty());
     }
 
     #[test]
     fn ranks_by_value_and_carries_provenance() {
         let small = hyp(&[("a", 0.0), ("b", 1.2), ("c", 1.2)]); // 2 hops × 1.2 = 2.4
         let big = hyp(&[("x", 0.0), ("y", 2.0), ("z", 2.0)]); // 2 hops × 2.0 = 4.0
-        let out = curate_hypotheses(vec![small, big]);
+        let out = curate_hypotheses(vec![small, big], 1.0, 2);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].category_path, vec!["x", "y", "z"], "highest value first");
         assert!(out[0].requires_verification, "an insight is a hypothesis");
@@ -196,7 +197,7 @@ mod tests {
     fn dedups_subthreads_into_the_longest() {
         let full = hyp(&[("a", 0.0), ("b", 2.0), ("c", 2.0)]); // value 4.0
         let sub = hyp(&[("a", 0.0), ("b", 1.5)]); // {a,b} ⊂ {a,b,c} → dropped
-        let out = curate_hypotheses(vec![sub, full]);
+        let out = curate_hypotheses(vec![sub, full], 1.0, 2);
         assert_eq!(out.len(), 1, "the sub-thread is subsumed");
         assert_eq!(out[0].hops, 2);
     }
