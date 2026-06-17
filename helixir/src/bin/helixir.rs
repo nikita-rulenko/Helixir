@@ -143,6 +143,11 @@ enum Cmd {
         /// Wire this exact config file instead of auto-detecting clients.
         #[arg(long)]
         target: Option<String>,
+        /// Wire clients to a per-host GATEWAY over HTTP instead of spawning a
+        /// stdio helixir-mcp. Accepts a URL or host:port (→ http://host:port/mcp).
+        /// Clients then carry no HELIX_* env — just the gateway URL.
+        #[arg(long)]
+        gateway: Option<String>,
     },
 }
 
@@ -289,10 +294,11 @@ async fn main() -> Result<()> {
     if let Cmd::Setup {
         non_interactive,
         dry_run,
+        gateway,
         target,
     } = &cli.cmd
     {
-        return setup_run(!non_interactive, *dry_run, target.clone()).await;
+        return setup_run(!non_interactive, *dry_run, target.clone(), gateway.clone()).await;
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
@@ -778,6 +784,30 @@ fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
     })
 }
 
+/// Normalize a gateway arg (URL or `host:port`) to a full streamable-http URL.
+fn normalize_gateway_url(raw: &str) -> String {
+    let s = raw.trim();
+    let with_scheme = if s.starts_with("http://") || s.starts_with("https://") {
+        s.to_string()
+    } else {
+        format!("http://{s}")
+    };
+    if with_scheme.trim_end_matches('/').ends_with("/mcp") {
+        with_scheme
+    } else {
+        format!("{}/mcp", with_scheme.trim_end_matches('/'))
+    }
+}
+
+/// Client entry for a remote gateway: HTTP transport, no command, no env — the
+/// gateway holds all the HELIX_* config.
+fn mcp_entry_gateway(url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "http",
+        "url": url,
+    })
+}
+
 fn client_targets() -> Vec<(String, PathBuf)> {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
     let desktop = if cfg!(target_os = "macos") {
@@ -900,8 +930,24 @@ fn lan_ip() -> Option<std::net::IpAddr> {
     (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
-async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
+async fn setup_run(
+    interactive: bool,
+    dry_run: bool,
+    target: Option<String>,
+    gateway: Option<String>,
+) -> Result<()> {
     println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
+
+    // Gateway mode short-circuits DB discovery: clients talk to the per-host
+    // gateway over HTTP, which holds the HELIX_* config — they carry none.
+    if let Some(gw) = gateway {
+        let url = normalize_gateway_url(&gw);
+        println!("Gateway mode — wiring clients to {url}");
+        println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
+        println!("  (Make sure a gateway is running there: `helixir gateway start`.)\n");
+        let entry = mcp_entry_gateway(&url);
+        return wire_entry_to_clients(entry, target, interactive, dry_run, &format!("gateway {url}"));
+    }
 
     // 1. Discover — a HelixDB is a singleton; find an existing one so we connect
     //    rather than provision a second store nobody shares.
@@ -965,11 +1011,23 @@ async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> 
     }
 
     let entry = mcp_entry(&cfg);
+    let source = format!("helixir-mcp at {}", cfg.mcp_bin);
+    wire_entry_to_clients(entry, target, interactive, dry_run, &source)
+}
 
-    // An explicit --target wires exactly that file; otherwise detect clients.
+/// Wire a prepared MCP entry into clients: an explicit `--target` file, else the
+/// detected clients (multi-select when interactive). `source` labels what is
+/// being wired (a stdio binary path or a gateway URL) in the output.
+fn wire_entry_to_clients(
+    entry: serde_json::Value,
+    target: Option<String>,
+    interactive: bool,
+    dry_run: bool,
+    source: &str,
+) -> Result<()> {
     if let Some(t) = target {
         let path = PathBuf::from(&t);
-        println!("Wiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+        println!("Wiring helixir-local ({source}):");
         wire_client("target", &path, &entry, dry_run)?;
         println!("{}", if dry_run { "\n(dry-run — nothing was written.)" } else { "\nDone." });
         return Ok(());
@@ -1005,7 +1063,7 @@ async fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> 
         return Ok(());
     }
 
-    println!("\nWiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+    println!("\nWiring helixir-local ({source}):");
     for (name, path) in &selected {
         if let Err(e) = wire_client(name, path, &entry, dry_run) {
             println!("  ✗ {name}: {e}");
