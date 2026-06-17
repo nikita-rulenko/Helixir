@@ -12,3 +12,7 @@ __pycache__/
 # Private design docs (Moira / generative-memory vision) — not for public exposure yet
 *.private.md
 helixir/doc/private/
+
+# Runtime agent journals (per-machine activity/insight logs, not source)
+helixir-agent-activity.jsonl
+helixir-insights.jsonl
