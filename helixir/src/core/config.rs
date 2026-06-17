@@ -498,23 +498,23 @@ impl HelixirConfig {
             max_retries: 3,
 
             llm_provider: "cerebras".to_string(),
-            llm_model: "llama-3.3-70b".to_string(),
+            llm_model: crate::DEFAULT_LLM_MODEL.to_string(),
             llm_api_key: None,
             llm_base_url: None,
             llm_temperature: 0.3,
 
             llm_fallback_enabled: true,
-            llm_fallback_url: "http://localhost:11434".to_string(),
-            llm_fallback_model: "llama3.2".to_string(),
+            llm_fallback_url: crate::DEFAULT_OLLAMA_URL.to_string(),
+            llm_fallback_model: crate::DEFAULT_LLM_FALLBACK_MODEL.to_string(),
 
             embedding_provider: "ollama".to_string(),
-            embedding_model: "nomic-embed-text".to_string(),
-            embedding_url: "http://localhost:11434".to_string(),
+            embedding_model: crate::DEFAULT_EMBEDDING_MODEL.to_string(),
+            embedding_url: crate::DEFAULT_OLLAMA_URL.to_string(),
             embedding_api_key: None,
 
             embedding_fallback_enabled: true,
-            embedding_fallback_url: "http://localhost:11434".to_string(),
-            embedding_fallback_model: "nomic-embed-text".to_string(),
+            embedding_fallback_url: crate::DEFAULT_OLLAMA_URL.to_string(),
+            embedding_fallback_model: crate::DEFAULT_EMBEDDING_MODEL.to_string(),
 
             default_certainty: 80,
             default_importance: 50,
@@ -644,7 +644,7 @@ impl HelixirConfig {
 
 impl Default for HelixirConfig {
     fn default() -> Self {
-        Self::new("localhost", 6969)
+        Self::new("localhost", crate::DEFAULT_HELIX_PORT)
     }
 }
 
