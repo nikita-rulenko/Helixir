@@ -10,6 +10,7 @@ use super::super::ToolingManager;
 
 impl ToolingManager {
     pub(super) fn prepare_memories_for_storage(
+        &self,
         memories: Vec<ExtractedMemory>,
         message: &str,
     ) -> Vec<ExtractedMemory> {
@@ -18,8 +19,8 @@ impl ToolingManager {
             return vec![ExtractedMemory {
                 text: message.to_string(),
                 memory_type: "fact".to_string(),
-                certainty: 50,
-                importance: 50,
+                certainty: self.config.write.fallback_certainty as i32,
+                importance: self.config.write.fallback_importance as i32,
                 entities: vec![],
                 context: None,
             }];

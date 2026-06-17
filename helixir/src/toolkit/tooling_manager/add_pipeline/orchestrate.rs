@@ -52,7 +52,7 @@ impl ToolingManager {
         let mut relations_created = 0usize;
         let mut chunks_created = 0usize;
 
-        let memories_to_store = Self::prepare_memories_for_storage(extraction.memories, message);
+        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
 
         debug!(
             "Batch-generating embeddings for {} memories",
