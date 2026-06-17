@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Input, MultiSelect};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
@@ -150,8 +150,10 @@ enum Cmd {
         /// Clients then carry no HELIX_* env — just the gateway URL.
         #[arg(long)]
         gateway: Option<String>,
-        /// Privilege tier to write (solo | collective | insights). Default solo:
-        /// private memory, no cross-user behavior, no generative pipeline.
+        /// Privilege tier to write (solo | collective | insights). When omitted,
+        /// setup recommends `collective` (shared memory — the point of the tool);
+        /// pass `--mode solo` for private, single-user memory. The silent library
+        /// default (no setup) stays solo.
         #[arg(long)]
         mode: Option<String>,
     },
@@ -1033,6 +1035,25 @@ fn lan_ip() -> Option<std::net::IpAddr> {
     (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
+/// Interactive privilege-tier picker for `helixir setup` when no tier was
+/// stated via `--mode` or HELIXIR_MODE. Collective is the recommended default
+/// (index 0): a person running the wizard is consciously joining the shared
+/// memory, which is the point of the tool. Solo and Insights stay one keystroke
+/// away, and the silent library default (HelixirConfig::new) remains Solo.
+fn prompt_mode_recommendation() -> Result<MemoryMode> {
+    let options = [
+        "collective — shared memory across your agents (recommended)",
+        "solo — private, single user, no cross-user behaviour",
+        "insights — collective + the generative Moirai (advanced)",
+    ];
+    let idx = Select::new()
+        .with_prompt("Privilege tier")
+        .default(0)
+        .items(&options)
+        .interact()?;
+    Ok([MemoryMode::Collective, MemoryMode::Solo, MemoryMode::Insights][idx])
+}
+
 async fn setup_run(
     interactive: bool,
     dry_run: bool,
@@ -1041,14 +1062,22 @@ async fn setup_run(
     mode: Option<String>,
 ) -> Result<()> {
     println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
-    // Effective tier: --mode wins, else HELIXIR_MODE env, else solo. Normalized
-    // to a canonical label so the written env is clean; never silently escalates.
+    // Effective tier resolution. Explicit choice always wins (`--mode`, then
+    // HELIXIR_MODE env) — we never override what the operator stated, including
+    // an explicit `solo`. Only when nothing is stated does setup *recommend*:
+    // a human running the wizard is consciously joining, so the collective (the
+    // whole point of the tool) is the recommended pick. The silent library
+    // default stays Solo (HelixirConfig::new) — embedded/non-onboarded callers
+    // never get escalated without a person choosing it here.
+    let env_mode = std::env::var("HELIXIR_MODE").unwrap_or_default();
     let effective_mode = match &mode {
         Some(m) => MemoryMode::parse(m),
-        None => MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default()),
+        None if !env_mode.is_empty() => MemoryMode::parse(&env_mode),
+        None if interactive => prompt_mode_recommendation()?,
+        None => MemoryMode::Collective, // non-interactive setup → the recommendation
     };
     let mode_label = effective_mode.label();
-    println!("Privilege tier: {mode_label} (HELIXIR_MODE) — collective/insights are opt-in.\n");
+    println!("Privilege tier: {mode_label} (HELIXIR_MODE).\n");
 
     // Gateway mode short-circuits DB discovery: clients talk to the per-host
     // gateway over HTTP, which holds the HELIX_* config — they carry none.
