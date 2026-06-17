@@ -75,7 +75,7 @@ impl ToolingManager {
                     &memory.text,
                     vector,
                     user_id,
-                    5,
+                    self.config.write.recall_top_k,
                     "contextual",
                     None,
                     None,
@@ -248,12 +248,12 @@ impl ToolingManager {
             )
             .await?;
 
-        if message.len() > 100 && added_ids.len() > 1 {
+        if message.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1 {
             let raw_mem = ExtractedMemory {
                 text: message.to_string(),
                 memory_type: "fact".to_string(),
-                certainty: 70,
-                importance: 40,
+                certainty: self.config.write.raw_source_certainty as i32,
+                importance: self.config.write.raw_source_importance as i32,
                 entities: vec![],
                 context: None,
             };

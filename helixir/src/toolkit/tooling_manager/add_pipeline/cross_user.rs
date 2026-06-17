@@ -32,7 +32,7 @@ impl ToolingManager {
         );
         let global_results = self
             .search_engine
-            .search_for_dedup(&memory.text, vector, user_id, 5)
+            .search_for_dedup(&memory.text, vector, user_id, self.config.write.cross_user_dedup_top_k)
             .await
             .unwrap_or_default();
 

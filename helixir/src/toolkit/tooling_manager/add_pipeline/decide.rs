@@ -138,7 +138,13 @@ impl ToolingManager {
                     debug!("CONTRADICT: {} contradicts {}", new_id, contra_id);
                     let _ = self
                         .reasoning_engine
-                        .add_relation(&new_id, contra_id, ReasoningType::Contradicts, 80, None)
+                        .add_relation(
+                            &new_id,
+                            contra_id,
+                            ReasoningType::Contradicts,
+                            self.config.write.contradict_edge_strength as i32,
+                            None,
+                        )
                         .await;
                 }
                 added_ids.push(new_id.clone());

@@ -46,7 +46,7 @@ impl ToolingManager {
         if should_infer {
             let context_pairs: Vec<(String, String)> = similar_memories
                 .iter()
-                .take(5)
+                .take(self.config.write.relation_inference_context_k)
                 .map(|s| (s.id.clone(), s.content.clone()))
                 .collect();
 
@@ -107,8 +107,8 @@ impl ToolingManager {
                                 &db_entity.entity_id,
                                 memory_id,
                                 EntityEdgeType::ExtractedEntity,
-                                80,
-                                50,
+                                self.config.write.entity_link_strength as i32,
+                                self.config.write.entity_link_confidence as i32,
                                 "neutral",
                             )
                             .await
