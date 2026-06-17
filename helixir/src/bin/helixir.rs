@@ -118,6 +118,15 @@ enum Cmd {
         #[arg(long, default_value = "idle")]
         status: String,
     },
+    /// Run the per-host MCP gateway (#42): serve the same memory tools over HTTP
+    /// (streamable-http) so many clients share one process — they point at the
+    /// gateway URL instead of each spawning a stdio helixir-mcp. Full network
+    /// trust for v1 (no auth token).
+    Gateway {
+        /// Address to bind. 0.0.0.0 accepts other hosts on the LAN.
+        #[arg(long, default_value = "0.0.0.0:8765")]
+        bind: String,
+    },
     /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
         #[command(subcommand)]
@@ -248,6 +257,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Gateway initializes its own client (mcp-style) and serves over HTTP.
+    if let Cmd::Gateway { bind } = &cli.cmd {
+        return helixir::mcp::run_gateway(bind).await;
+    }
+
     // Setup configures files + client configs; no DB connection needed.
     if let Cmd::Setup {
         non_interactive,
@@ -331,6 +345,7 @@ async fn main() -> Result<()> {
             _ => unreachable!("daemon start/stop/status handled before client init"),
         },
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
+        Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
     }
     Ok(())
 }

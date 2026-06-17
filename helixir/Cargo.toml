@@ -50,7 +50,16 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 strum = { version = "0.26", features = ["derive"] }
 
 # MCP Server (Model Context Protocol)
-rmcp = { version = "0.8", features = ["macros", "server", "transport-io"] }
+# transport-io = stdio (per-client); transport-streamable-http-server = the
+# network gateway (#42, one process per host serving many clients over HTTP).
+rmcp = { version = "0.8", features = [
+    "macros",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+# HTTP host for the gateway's StreamableHttpService (rmcp pins axum 0.8).
+axum = "0.8"
 
 # Config
 config = "0.14"
