@@ -160,14 +160,6 @@ pub fn buffer_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn poll_interval() -> Duration {
-    let ms = std::env::var("HELIXIR_INGEST_POLL_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(500);
-    Duration::from_millis(ms.clamp(50, 60_000))
-}
-
 impl ToolingManager {
     /// Persist a raw input to the queue and return its id immediately.
     pub async fn enqueue_input(
@@ -501,7 +493,8 @@ impl ToolingManager {
 /// Drains `pending` items oldest-first, one at a time — serialization is the
 /// whole point (dedup-race closure), so this never parallelizes.
 pub async fn run_ingest_worker(tm: Arc<ToolingManager>) {
-    let interval = poll_interval();
+    let interval =
+        Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
     info!(
         "Ingest worker started (poll {}ms); add_memory now returns pending_id",
         interval.as_millis()

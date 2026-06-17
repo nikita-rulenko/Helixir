@@ -439,6 +439,23 @@ impl Default for IngestConfig {
     }
 }
 
+/// Text chunking (long inputs are split before embedding/storage).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChunkingConfig {
+    /// Inputs longer than this many characters are chunked.
+    pub threshold: usize,
+    /// Target chunk size (characters).
+    pub chunk_size: usize,
+    /// Embed each chunk on write.
+    pub enable_embeddings: bool,
+}
+impl Default for ChunkingConfig {
+    fn default() -> Self {
+        Self { threshold: 500, chunk_size: 512, enable_embeddings: true }
+    }
+}
+
 /// Swarm rendezvous (#39) presence defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -553,6 +570,8 @@ pub struct HelixirConfig {
     #[serde(default)]
     pub ingest: IngestConfig,
     #[serde(default)]
+    pub chunking: ChunkingConfig,
+    #[serde(default)]
     pub swarm: SwarmConfig,
     #[serde(default)]
     pub gateway: GatewayConfig,
@@ -610,6 +629,7 @@ impl HelixirConfig {
             moira: MoiraConfig::default(),
             write: WriteConfig::default(),
             ingest: IngestConfig::default(),
+            chunking: ChunkingConfig::default(),
             swarm: SwarmConfig::default(),
             gateway: GatewayConfig::default(),
             llm_runtime: LlmRuntimeConfig::default(),

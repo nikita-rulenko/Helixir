@@ -64,7 +64,13 @@ impl ToolingManager {
             thresholds.similarity_threshold,
             thresholds.exact_duplicate_score,
         );
-        let chunking_manager = ChunkingManager::new(Arc::clone(&db), Some(Arc::clone(&embedder)));
+        let chunking_manager = ChunkingManager::with_config(
+            Arc::clone(&db),
+            Some(Arc::clone(&embedder)),
+            config.chunking.threshold,
+            config.chunking.chunk_size,
+            config.chunking.enable_embeddings,
+        );
         let entity_manager = EntityManager::new(Arc::clone(&db), config.entity_cache_size);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));
         let reasoning_engine =
