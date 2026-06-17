@@ -118,14 +118,13 @@ enum Cmd {
         #[arg(long, default_value = "idle")]
         status: String,
     },
-    /// Run the per-host MCP gateway (#42): serve the same memory tools over HTTP
+    /// The per-host MCP gateway (#42): serve the same memory tools over HTTP
     /// (streamable-http) so many clients share one process — they point at the
-    /// gateway URL instead of each spawning a stdio helixir-mcp. Full network
-    /// trust for v1 (no auth token).
+    /// gateway URL instead of each spawning a stdio helixir-mcp. Foreground or
+    /// background. Full network trust for v1 (no auth token).
     Gateway {
-        /// Address to bind. 0.0.0.0 accepts other hosts on the LAN.
-        #[arg(long, default_value = "0.0.0.0:8765")]
-        bind: String,
+        #[command(subcommand)]
+        cmd: GatewayCmd,
     },
     /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
@@ -181,6 +180,24 @@ enum DaemonCmd {
     /// Stop the background daemon.
     Stop,
     /// Show the background daemon's status.
+    Status,
+}
+
+#[derive(Subcommand)]
+enum GatewayCmd {
+    /// Run in the FOREGROUND (serve until Ctrl-C).
+    Run {
+        #[arg(long, default_value = "0.0.0.0:8765")]
+        bind: String,
+    },
+    /// Start a DETACHED background gateway. Writes a PID file; `stop` ends it.
+    Start {
+        #[arg(long, default_value = "0.0.0.0:8765")]
+        bind: String,
+    },
+    /// Stop the background gateway.
+    Stop,
+    /// Show the background gateway's status.
     Status,
 }
 
@@ -257,9 +274,15 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Gateway initializes its own client (mcp-style) and serves over HTTP.
-    if let Cmd::Gateway { bind } = &cli.cmd {
-        return helixir::mcp::run_gateway(bind).await;
+    // Gateway: Run serves over HTTP (its own mcp-style client init); Start/Stop/
+    // Status are process management (no DB) — all handled before the shared init.
+    if let Cmd::Gateway { cmd } = &cli.cmd {
+        return match cmd {
+            GatewayCmd::Run { bind } => helixir::mcp::run_gateway(bind).await,
+            GatewayCmd::Start { bind } => gateway_start(bind),
+            GatewayCmd::Stop => stop_process("gateway"),
+            GatewayCmd::Status => gateway_status(),
+        };
     }
 
     // Setup configures files + client configs; no DB connection needed.
@@ -1159,18 +1182,77 @@ fn helixir_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn pid_file() -> Result<PathBuf> {
-    Ok(helixir_dir()?.join("daemon.pid"))
+fn pid_file(name: &str) -> Result<PathBuf> {
+    Ok(helixir_dir()?.join(format!("{name}.pid")))
 }
 
-fn read_pid_state() -> Option<serde_json::Value> {
-    let body = std::fs::read_to_string(pid_file().ok()?).ok()?;
+fn read_pid_state(name: &str) -> Option<serde_json::Value> {
+    let body = std::fs::read_to_string(pid_file(name).ok()?).ok()?;
     serde_json::from_str(&body).ok()
 }
 
 /// Signal 0 probes a pid's existence without delivering anything.
 fn is_alive(pid: i32) -> bool {
     pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Spawn `helixir <args>` as a detached background process (setsid), logging to
+/// `~/.helixir/<name>.log` and recording a `<name>.pid` state file. Shared by
+/// the daemon (#43) and the gateway (#42). Returns the child pid.
+fn spawn_detached(name: &str, args: &[&str], extra: serde_json::Value) -> Result<(u32, PathBuf)> {
+    if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
+        if is_alive(pid as i32) {
+            anyhow::bail!("{name} already running (pid {pid}); `helixir {name} stop` first");
+        }
+    }
+    let exe = std::env::current_exe().context("current_exe")?;
+    let log = helixir_dir()?.join(format!("{name}.log"));
+    let out = OpenOptions::new().create(true).append(true).open(&log)?;
+    let err = out.try_clone()?;
+
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err));
+    // Detach from the controlling terminal so it survives the shell closing.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let pid = cmd.spawn().context("spawn detached process")?.id();
+
+    let mut state = serde_json::json!({
+        "pid": pid,
+        "started_at": chrono::Utc::now().to_rfc3339(),
+        "log": log.display().to_string(),
+    });
+    if let (Some(obj), Some(more)) = (state.as_object_mut(), extra.as_object()) {
+        for (k, v) in more {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    std::fs::write(pid_file(name)?, serde_json::to_string_pretty(&state)?)?;
+    Ok((pid, log))
+}
+
+/// SIGTERM the named background process and clean up its pid file.
+fn stop_process(name: &str) -> Result<()> {
+    let Some(state) = read_pid_state(name) else {
+        println!("{name} not running (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
+    if is_alive(pid) {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        println!("{name} stopped (pid {pid})");
+    } else {
+        println!("{name} already gone (stale pid {pid}); cleaned up");
+    }
+    std::fs::remove_file(pid_file(name)?).ok();
+    Ok(())
 }
 
 fn daemon_start(
@@ -1180,72 +1262,37 @@ fn daemon_start(
     max_seeds: usize,
     max_hops: usize,
 ) -> Result<()> {
-    if let Some(pid) = read_pid_state().and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
-        if is_alive(pid as i32) {
-            anyhow::bail!("daemon already running (pid {pid}); `helixir daemon stop` first");
-        }
-    }
-
-    let exe = std::env::current_exe().context("current_exe")?;
-    let log = helixir_dir()?.join("daemon.log");
-    let out = OpenOptions::new().create(true).append(true).open(&log)?;
-    let err = out.try_clone()?;
-
-    let mut cmd = Command::new(exe);
-    cmd.args([
+    let (pid, log) = spawn_detached(
         "daemon",
-        "run",
-        "--user",
-        user,
-        "--interval",
-        &interval.to_string(),
-        "--threshold",
-        &threshold.to_string(),
-        "--max-seeds",
-        &max_seeds.to_string(),
-        "--max-hops",
-        &max_hops.to_string(),
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::from(out))
-    .stderr(Stdio::from(err));
-    // Detach from the controlling terminal so it survives the shell closing.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
-    let pid = cmd.spawn().context("spawn detached daemon")?.id();
-
-    let state = serde_json::json!({
-        "pid": pid, "user": user, "interval": interval, "threshold": threshold,
-        "max_seeds": max_seeds, "max_hops": max_hops,
-        "started_at": chrono::Utc::now().to_rfc3339(), "log": log.display().to_string(),
-    });
-    std::fs::write(pid_file()?, serde_json::to_string_pretty(&state)?)?;
+        &[
+            "daemon",
+            "run",
+            "--user",
+            user,
+            "--interval",
+            &interval.to_string(),
+            "--threshold",
+            &threshold.to_string(),
+            "--max-seeds",
+            &max_seeds.to_string(),
+            "--max-hops",
+            &max_hops.to_string(),
+        ],
+        serde_json::json!({
+            "user": user, "interval": interval, "threshold": threshold,
+            "max_seeds": max_seeds, "max_hops": max_hops,
+        }),
+    )?;
     println!("daemon started (pid {pid}) for '{user}', every {interval}s; log: {}", log.display());
     Ok(())
 }
 
 fn daemon_stop() -> Result<()> {
-    let Some(state) = read_pid_state() else {
-        println!("daemon not running (no pid file)");
-        return Ok(());
-    };
-    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
-    if is_alive(pid) {
-        unsafe { libc::kill(pid, libc::SIGTERM) };
-        println!("daemon stopped (pid {pid})");
-    } else {
-        println!("daemon already gone (stale pid {pid}); cleaned up");
-    }
-    std::fs::remove_file(pid_file()?).ok();
-    Ok(())
+    stop_process("daemon")
 }
 
 fn daemon_status() -> Result<()> {
-    let Some(state) = read_pid_state() else {
+    let Some(state) = read_pid_state("daemon") else {
         println!("daemon: stopped (no pid file)");
         return Ok(());
     };
@@ -1270,6 +1317,34 @@ fn daemon_status() -> Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+fn gateway_start(bind: &str) -> Result<()> {
+    let (pid, log) = spawn_detached(
+        "gateway",
+        &["gateway", "run", "--bind", bind],
+        serde_json::json!({ "bind": bind }),
+    )?;
+    println!("gateway started (pid {pid}) at http://{bind}/mcp; log: {}", log.display());
+    Ok(())
+}
+
+fn gateway_status() -> Result<()> {
+    let Some(state) = read_pid_state("gateway") else {
+        println!("gateway: stopped (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let bind = state.get("bind").and_then(|v| v.as_str()).unwrap_or("?");
+    println!(
+        "gateway: {}  pid={pid} url=http://{bind}/mcp started={}",
+        if is_alive(pid) { "running" } else { "STALE (process gone)" },
+        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+    );
+    if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
+        println!("  log: {l}");
     }
     Ok(())
 }
