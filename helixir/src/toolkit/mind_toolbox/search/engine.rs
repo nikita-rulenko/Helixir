@@ -99,6 +99,10 @@ impl SearchEngine {
             graph_graph_weight: t.graph_graph_weight,
             graph_temporal_weight: t.graph_temporal_weight,
             temporal_decay_days: t.default_temporal_days,
+            ppr_alpha: self.config.retrieval.ppr.alpha,
+            ppr_iterations: self.config.retrieval.ppr.max_iterations,
+            rank_base: self.config.retrieval.rank_base,
+            rank_decay: self.config.retrieval.rank_decay,
         }
     }
 

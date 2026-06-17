@@ -172,6 +172,13 @@ pub struct SearchConfig {
     pub graph_graph_weight: f64,
     pub graph_temporal_weight: f64,
     pub temporal_decay_days: f64,
+
+    // Ranking knobs sourced from config.retrieval (was hardcoded in ppr.rs /
+    // phases.rs). Defaults here mirror those consts.
+    pub ppr_alpha: f64,
+    pub ppr_iterations: usize,
+    pub rank_base: f64,
+    pub rank_decay: f64,
 }
 
 impl Default for SearchConfig {
@@ -192,6 +199,10 @@ impl Default for SearchConfig {
             graph_graph_weight: 0.5,
             graph_temporal_weight: 0.2,
             temporal_decay_days: 30.0,
+            ppr_alpha: 0.6,
+            ppr_iterations: 20,
+            rank_base: 0.95,
+            rank_decay: 0.92,
         }
     }
 }

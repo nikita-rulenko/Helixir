@@ -23,11 +23,8 @@ pub struct PprEdge {
     pub weight: f64,
 }
 
-/// Restart probability: (1 - ALPHA) of the mass teleports back to the seeds
-/// each step. 0.6 keeps scores anchored near the query while still letting
-/// mass travel several hops along coherent paths.
-const ALPHA: f64 = 0.6;
-const ITERATIONS: usize = 20;
+// Restart probability `alpha` (1 - alpha of the mass teleports back to seeds
+// each step) and the iteration count are passed in from config.retrieval.ppr.
 const CONVERGENCE_EPS: f64 = 1e-9;
 
 /// Runs PPR and returns scores normalized to `[0, 1]` (max node = 1).
@@ -38,6 +35,8 @@ const CONVERGENCE_EPS: f64 = 1e-9;
 pub fn personalized_pagerank(
     edges: &[PprEdge],
     personalization: &HashMap<String, f64>,
+    alpha: f64,
+    iterations: usize,
 ) -> HashMap<String, f64> {
     // Index node ids (all &str borrow from `edges` / `personalization`).
     let mut index: HashMap<&str, usize> = HashMap::new();
@@ -95,7 +94,7 @@ pub fn personalized_pagerank(
 
     // Power iteration. Dangling mass (nodes without out-edges) teleports home.
     let mut p = restart.clone();
-    for _ in 0..ITERATIONS {
+    for _ in 0..iterations {
         let mut next = vec![0.0f64; n];
         let mut dangling = 0.0f64;
         for (i, mass) in p.iter().enumerate() {
@@ -112,7 +111,7 @@ pub fn personalized_pagerank(
         }
         let mut delta = 0.0f64;
         for i in 0..n {
-            let value = (1.0 - ALPHA) * restart[i] + ALPHA * (next[i] + dangling * restart[i]);
+            let value = (1.0 - alpha) * restart[i] + alpha * (next[i] + dangling * restart[i]);
             delta += (value - p[i]).abs();
             p[i] = value;
         }
@@ -146,7 +145,7 @@ mod tests {
     #[test]
     fn seed_gets_top_score() {
         let edges = vec![edge("s", "a", 1.0), edge("a", "b", 1.0)];
-        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]));
+        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
         assert!((scores["s"] - 1.0).abs() < 1e-9, "seed must be the maximum");
         assert!(scores["a"] > scores["b"], "mass decays along a single path");
     }
@@ -162,7 +161,7 @@ mod tests {
             edge("s1", "e", 1.0),
         ];
         let p = HashMap::from([("s1".to_string(), 1.0), ("s2".to_string(), 1.0)]);
-        let scores = personalized_pagerank(&edges, &p);
+        let scores = personalized_pagerank(&edges, &p, 0.6, 20);
         assert!(
             scores["d"] > scores["e"],
             "a node on two coherent paths must outrank a single-path one: {scores:?}"
@@ -180,7 +179,7 @@ mod tests {
             edge("n3", "n4", 1.0),
             edge("n4", "n5", 1.0),
         ];
-        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]));
+        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
         assert!(
             scores["n5"] > 0.01,
             "far end of a coherent chain must stay visible: {scores:?}"
@@ -189,8 +188,8 @@ mod tests {
 
     #[test]
     fn empty_inputs_are_safe() {
-        assert!(personalized_pagerank(&[], &HashMap::new()).is_empty());
-        let scores = personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]));
+        assert!(personalized_pagerank(&[], &HashMap::new(), 0.6, 20).is_empty());
+        let scores = personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]), 0.6, 20);
         assert!((scores["only"] - 1.0).abs() < 1e-9);
     }
 }

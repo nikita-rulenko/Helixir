@@ -74,6 +74,7 @@ impl ToolingManager {
             Arc::clone(&embedder),
             SearchEngineConfig {
                 search_thresholds: config.search_thresholds.clone(),
+                retrieval: config.retrieval.clone(),
                 ..SearchEngineConfig::default()
             },
         );

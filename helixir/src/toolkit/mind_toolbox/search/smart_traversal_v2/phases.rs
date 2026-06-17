@@ -213,9 +213,6 @@ pub async fn vector_search_phase(
     let mut seen_ids = HashSet::new();
     let mut accepted_rank: usize = 0;
 
-    const RANK_BASE: f64 = 0.95;
-    const RANK_DECAY: f64 = 0.92;
-
     for memory_id in visit_order {
         let Some(memory) = memory_by_id.get(&memory_id) else {
             continue;
@@ -247,7 +244,7 @@ pub async fn vector_search_phase(
             }
         }
 
-        let vector_score = RANK_BASE * RANK_DECAY.powi(accepted_rank as i32);
+        let vector_score = config.rank_base * config.rank_decay.powi(accepted_rank as i32);
         accepted_rank += 1;
 
         let temporal_score =
