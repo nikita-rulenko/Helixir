@@ -195,6 +195,7 @@ pub struct RetrievalConfig {
     pub collective_user_count_boost: f64,
     pub cross_user_cache_capacity: u64,
     pub cross_user_cache_ttl_secs: u64,
+    pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
     fn default() -> Self {
@@ -210,6 +211,47 @@ impl Default for RetrievalConfig {
             collective_user_count_boost: 0.1,
             cross_user_cache_capacity: 1000,
             cross_user_cache_ttl_secs: 60,
+            search_modes: SearchModesConfig::default(),
+        }
+    }
+}
+
+/// Per-mode search presets (`recent`/`contextual`/`deep`/`full`). The default
+/// values are the canonical match in [`crate::core::search_modes::SearchMode::get_defaults`];
+/// this surface makes them TOML/env-overridable. Override a mode by supplying
+/// its full block (all fields) — partial per-mode overrides are not merged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchModesConfig {
+    pub recent: crate::core::search_modes::SearchModeDefaults,
+    pub contextual: crate::core::search_modes::SearchModeDefaults,
+    pub deep: crate::core::search_modes::SearchModeDefaults,
+    pub full: crate::core::search_modes::SearchModeDefaults,
+}
+impl Default for SearchModesConfig {
+    fn default() -> Self {
+        use crate::core::search_modes::SearchMode;
+        Self {
+            recent: SearchMode::Recent.get_defaults(),
+            contextual: SearchMode::Contextual.get_defaults(),
+            deep: SearchMode::Deep.get_defaults(),
+            full: SearchMode::Full.get_defaults(),
+        }
+    }
+}
+impl SearchModesConfig {
+    /// Resolve the preset for a parsed [`SearchMode`].
+    #[must_use]
+    pub fn for_mode(
+        &self,
+        mode: crate::core::search_modes::SearchMode,
+    ) -> &crate::core::search_modes::SearchModeDefaults {
+        use crate::core::search_modes::SearchMode;
+        match mode {
+            SearchMode::Recent => &self.recent,
+            SearchMode::Contextual => &self.contextual,
+            SearchMode::Deep => &self.deep,
+            SearchMode::Full => &self.full,
         }
     }
 }

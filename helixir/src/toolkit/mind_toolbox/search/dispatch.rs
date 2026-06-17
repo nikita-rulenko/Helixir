@@ -27,7 +27,7 @@ impl SearchEngine {
         let query_preview: String = query.chars().take(30).collect();
 
         let search_mode = SearchMode::parse_mode(mode);
-        let mode_defaults = search_mode.get_defaults();
+        let mode_defaults = self.config.retrieval.search_modes.for_mode(search_mode);
         let effective_temporal_days = temporal_days.or(mode_defaults.temporal_days);
 
         let temporal_cutoff: Option<DateTime<Utc>> = effective_temporal_days.map(|days| {
