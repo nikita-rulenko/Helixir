@@ -390,6 +390,8 @@ pub struct WriteConfig {
     pub fallback_certainty: u8,
     pub fallback_importance: u8,
     pub context_link_priority: i64,
+    /// Charter C5: confidence below which a rewrite is escalated to the human.
+    pub charter_low_confidence: u8,
 }
 impl Default for WriteConfig {
     fn default() -> Self {
@@ -408,6 +410,7 @@ impl Default for WriteConfig {
             fallback_certainty: 50,
             fallback_importance: 50,
             context_link_priority: 50,
+            charter_low_confidence: 70,
         }
     }
 }
@@ -532,6 +535,11 @@ pub struct HelixirConfig {
 
     pub max_facts_per_call: usize,
 
+    /// Entity-resolution LRU cache capacity (EntityManager).
+    pub entity_cache_size: usize,
+    /// Max memories pulled as context when reconstructing reasoning chains.
+    pub reasoning_context_limit: usize,
+
     // Nested groups (externalized hardcode). Serde-default so a partial
     // helixir.toml need only mention what it overrides.
     #[serde(default)]
@@ -594,6 +602,8 @@ impl HelixirConfig {
             search_thresholds: SearchThresholds::default(),
 
             max_facts_per_call: 15,
+            entity_cache_size: 1000,
+            reasoning_context_limit: 500,
 
             retry: RetryConfig::default(),
             retrieval: RetrievalConfig::default(),

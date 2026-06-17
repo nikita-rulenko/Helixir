@@ -30,7 +30,8 @@ impl HelixirClient {
     pub fn new(config: HelixirConfig) -> Result<Self, HelixirClientError> {
         let db = Arc::new(
             HelixClient::new(&config.host, config.port)
-                .map_err(|e| HelixirClientError::Database(e.to_string()))?,
+                .map_err(|e| HelixirClientError::Database(e.to_string()))?
+                .with_retry(config.retry.clone()),
         );
 
         let embedder = Arc::new(EmbeddingGenerator::new(crate::llm::EmbeddingConfig {

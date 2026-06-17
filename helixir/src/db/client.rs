@@ -5,11 +5,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info};
 
-const MAX_RETRIES: u32 = 3;
-
-const INITIAL_RETRY_DELAY_MS: u64 = 100;
-
-const MAX_RETRY_DELAY_MS: u64 = 10000;
+use crate::core::config::RetryConfig;
 
 #[derive(Debug, Error)]
 pub enum HelixClientError {
@@ -33,6 +29,8 @@ pub struct HelixClient {
     is_connected: AtomicBool,
 
     base_url: String,
+
+    retry: RetryConfig,
 }
 
 impl HelixClient {
@@ -48,7 +46,15 @@ impl HelixClient {
             inner,
             is_connected: AtomicBool::new(false),
             base_url,
+            retry: RetryConfig::default(),
         })
+    }
+
+    /// Override the query retry policy (defaults to [`RetryConfig::default`]).
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
     }
 
     pub fn from_env() -> Result<Self, HelixClientError> {
@@ -81,9 +87,10 @@ impl HelixClient {
         P: Serialize + Sync,
     {
         let mut last_error = None;
-        let mut delay = Duration::from_millis(INITIAL_RETRY_DELAY_MS);
+        let mut delay = Duration::from_millis(self.retry.initial_delay_ms);
+        let max_retries = self.retry.max;
 
-        for attempt in 1..=MAX_RETRIES {
+        for attempt in 1..=max_retries {
             debug!("Executing query: {} (attempt {})", query_name, attempt);
 
             match self.inner.query::<P, T>(query_name, params).await {
@@ -115,17 +122,18 @@ impl HelixClient {
                     }
                     last_error = Some(err_str);
 
-                    if attempt < MAX_RETRIES {
+                    if attempt < max_retries {
                         tokio::time::sleep(delay).await;
 
-                        delay = (delay * 2).min(Duration::from_millis(MAX_RETRY_DELAY_MS));
+                        delay = (delay * self.retry.backoff_factor as u32)
+                            .min(Duration::from_millis(self.retry.max_delay_ms));
                     }
                 }
             }
         }
 
         Err(HelixClientError::RetryExhausted(
-            MAX_RETRIES,
+            max_retries,
             last_error.unwrap_or_else(|| "Unknown error".to_string()),
         ))
     }

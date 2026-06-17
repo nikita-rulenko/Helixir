@@ -180,7 +180,12 @@ impl ToolingManager {
                     .and_then(|m| m.memory_type.as_deref())
             });
             if let Some(conflict_type) =
-                crate::core::charter::escalation_reason(&decision, &memory.memory_type, target_type)
+                crate::core::charter::escalation_reason(
+                    &decision,
+                    &memory.memory_type,
+                    target_type,
+                    self.config.write.charter_low_confidence,
+                )
             {
                 let existing_content = decision.target_memory_id.as_deref().and_then(|tid| {
                     similar_memories
