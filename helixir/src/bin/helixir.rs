@@ -104,8 +104,9 @@ enum Cmd {
     /// The rendezvous is the shared DB, not CLI-to-CLI: any host's agents appear.
     Swarm {
         /// Heartbeats within this many seconds count as active.
-        #[arg(long, default_value_t = 90)]
-        window: u64,
+        /// Defaults to `swarm.active_window_secs` from config.
+        #[arg(long)]
+        window: Option<u64>,
     },
     /// Announce this agent's presence to the collective (one heartbeat).
     Heartbeat {
@@ -1301,7 +1302,8 @@ async fn heartbeat(
     Ok(())
 }
 
-async fn swarm(client: &HelixirClient, window: u64) -> Result<()> {
+async fn swarm(client: &HelixirClient, window: Option<u64>) -> Result<()> {
+    let window = window.unwrap_or(client.config().swarm.active_window_secs);
     let now = chrono::Utc::now();
     let mut roster = client
         .tooling()

@@ -114,8 +114,13 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mode = params.mode.unwrap_or_else(|| "recent".to_string());
+        let mode = params
+            .mode
+            .unwrap_or_else(|| self.client.config().default_search_mode.clone());
         let limit = params.limit.map(|l| l as usize);
+        // Default scope is intentionally personal (GH #40): collective memory
+        // stays hidden unless explicitly requested, so weak models aren't
+        // flooded with other users' facts. Not a config knob — a safety default.
         let requested_scope = params.scope.unwrap_or_else(|| "personal".to_string());
         // Solo mode answers only from the user's own memory — a collective/all
         // request is downgraded to personal rather than leaking other users'.
