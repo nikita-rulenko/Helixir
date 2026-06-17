@@ -34,7 +34,7 @@ impl ToolingManager {
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
         let graph_depth = graph_depth.map(|d| d as u32);
-        let effective_limit = limit.unwrap_or(10);
+        let effective_limit = limit.unwrap_or(self.config.default_search_limit);
 
         let results = match scope {
             "collective" | "all" => {
@@ -105,6 +105,7 @@ impl ToolingManager {
             .collect();
 
         if scope == "collective" || scope == "all" {
+            let boost = self.config.retrieval.collective_user_count_boost;
             search_results.sort_by(|a, b| {
                 let a_uc = a
                     .metadata
@@ -116,8 +117,8 @@ impl ToolingManager {
                     .get("user_count")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1);
-                let a_combined = a.score * (1.0 + (a_uc as f64 - 1.0) * 0.1);
-                let b_combined = b.score * (1.0 + (b_uc as f64 - 1.0) * 0.1);
+                let a_combined = a.score * (1.0 + (a_uc as f64 - 1.0) * boost);
+                let b_combined = b.score * (1.0 + (b_uc as f64 - 1.0) * boost);
                 b_combined
                     .partial_cmp(&a_combined)
                     .unwrap_or(std::cmp::Ordering::Equal)
