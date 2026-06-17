@@ -203,8 +203,7 @@ impl ToolingManager {
             &seeds_a,
             &seeds_b,
             max_depth,
-            self.config.retrieval.graph.edge_weights,
-            self.config.retrieval.graph.edge_damping,
+            &self.config.retrieval.graph,
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
@@ -246,8 +245,7 @@ impl ToolingManager {
             &self.db,
             &seeds,
             max_hops,
-            self.config.retrieval.graph.edge_weights,
-            self.config.retrieval.graph.edge_damping,
+            &self.config.retrieval.graph,
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
