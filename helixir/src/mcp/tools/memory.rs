@@ -116,7 +116,14 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let mode = params.mode.unwrap_or_else(|| "recent".to_string());
         let limit = params.limit.map(|l| l as usize);
-        let scope = params.scope.unwrap_or_else(|| "personal".to_string());
+        let requested_scope = params.scope.unwrap_or_else(|| "personal".to_string());
+        // Solo mode answers only from the user's own memory — a collective/all
+        // request is downgraded to personal rather than leaking other users'.
+        let scope = if self.client.config().mode.collective_enabled() {
+            requested_scope
+        } else {
+            "personal".to_string()
+        };
 
         let query_preview: String = params.query.chars().take(50).collect();
         info!(

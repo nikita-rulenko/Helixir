@@ -216,7 +216,11 @@ impl ToolingManager {
                     .await;
 
                 let exact_thr = self.config.search_thresholds.exact_duplicate_score;
-                if phase1_similar.iter().any(|m| m.score >= exact_thr) {
+                if !self.config.mode.collective_enabled() {
+                    // Solo mode: never reach across users. The memory stays the
+                    // writer's own — no linking, no cross-user contradictions.
+                    debug!("Skipping Phase 2: solo mode (no cross-user behavior)");
+                } else if phase1_similar.iter().any(|m| m.score >= exact_thr) {
                     let max_score = phase1_similar
                         .iter()
                         .map(|m| m.score)

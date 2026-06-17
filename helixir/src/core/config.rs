@@ -35,8 +35,52 @@ impl Default for SearchThresholds {
     }
 }
 
+/// What Helixir is allowed to do — set explicitly, never inferred. Default is
+/// `Solo`: a private memory for one user, with no cross-user behavior and no
+/// generative insights. Collective and insights are strict opt-in (HELIXIR_MODE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryMode {
+    /// Personal memory only. No cross-user linking/contradictions; reads stay
+    /// personal even if a collective scope is requested. The default.
+    Solo,
+    /// Shared collective: cross-user linking + contradictions on, collective
+    /// reads allowed — but no generative pipeline.
+    Collective,
+    /// Collective + the generative Moirai (insights, daemon, pipeline).
+    Insights,
+}
+
+impl MemoryMode {
+    /// Lenient parse — anything unrecognized (including empty) falls back to the
+    /// safe default, `Solo`. We never silently escalate privilege.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "collective" | "hive" | "shared" => Self::Collective,
+            "insights" | "collective+insights" | "full" => Self::Insights,
+            _ => Self::Solo,
+        }
+    }
+    /// Cross-user behavior (linking, contradictions, collective reads) allowed.
+    pub fn collective_enabled(self) -> bool {
+        !matches!(self, Self::Solo)
+    }
+    /// Generative Moirai (Clotho/Lachesis/Atropos, daemon, pipeline) allowed.
+    pub fn insights_enabled(self) -> bool {
+        matches!(self, Self::Insights)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Solo => "solo",
+            Self::Collective => "collective",
+            Self::Insights => "collective+insights",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixirConfig {
+    /// Privilege tier — what the tool is allowed to do (default Solo).
+    pub mode: MemoryMode,
     pub host: String,
     pub port: u16,
     pub instance: String,
@@ -80,6 +124,7 @@ pub struct HelixirConfig {
 impl HelixirConfig {
     pub fn new(host: &str, port: u16) -> Self {
         Self {
+            mode: MemoryMode::Solo,
             host: host.to_string(),
             port,
             instance: "dev".to_string(),
@@ -134,6 +179,10 @@ impl HelixirConfig {
                 .unwrap_or(6969),
         );
 
+        // Privilege tier — opt-in only; unset/unknown stays Solo.
+        if let Ok(m) = std::env::var("HELIXIR_MODE") {
+            config.mode = MemoryMode::parse(&m);
+        }
         if let Ok(instance) = std::env::var("HELIX_INSTANCE") {
             config.instance = instance;
         }
@@ -179,7 +228,7 @@ impl Default for HelixirConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::HelixirConfig;
+    use super::{HelixirConfig, MemoryMode};
 
     #[test]
     fn test_from_env_reads_llm_base_url() {
@@ -218,5 +267,27 @@ mod tests {
         unsafe {
             std::env::remove_var("HELIX_EMBEDDING_URL");
         }
+    }
+
+    #[test]
+    fn memory_mode_defaults_to_solo_and_never_silently_escalates() {
+        assert_eq!(HelixirConfig::default().mode, MemoryMode::Solo);
+        assert_eq!(MemoryMode::parse(""), MemoryMode::Solo);
+        assert_eq!(MemoryMode::parse("nonsense"), MemoryMode::Solo);
+        assert_eq!(MemoryMode::parse("personal"), MemoryMode::Solo);
+        assert_eq!(MemoryMode::parse("Collective"), MemoryMode::Collective);
+        assert_eq!(MemoryMode::parse("hive"), MemoryMode::Collective);
+        assert_eq!(MemoryMode::parse("insights"), MemoryMode::Insights);
+        assert_eq!(MemoryMode::parse(" FULL "), MemoryMode::Insights);
+    }
+
+    #[test]
+    fn memory_mode_capabilities_are_tiered() {
+        assert!(!MemoryMode::Solo.collective_enabled());
+        assert!(!MemoryMode::Solo.insights_enabled());
+        assert!(MemoryMode::Collective.collective_enabled());
+        assert!(!MemoryMode::Collective.insights_enabled());
+        assert!(MemoryMode::Insights.collective_enabled());
+        assert!(MemoryMode::Insights.insights_enabled());
     }
 }

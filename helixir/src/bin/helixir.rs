@@ -22,6 +22,7 @@ use dialoguer::{Confirm, Input, MultiSelect};
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
+use helixir::core::config::MemoryMode;
 use helixir::core::HelixirClient;
 use helixir::HelixClient;
 use tracing_subscriber::EnvFilter;
@@ -253,6 +254,50 @@ enum LachesisCmd {
     },
 }
 
+/// Refuse commands the current privilege tier doesn't permit. Generative
+/// commands need `insights`; collective-surface commands need `collective`.
+/// Reads, lifecycle, setup, and the journal views are always allowed.
+fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
+    let needs_insights = matches!(
+        cmd,
+        Cmd::Clotho { .. }
+            | Cmd::Lachesis { .. }
+            | Cmd::Atropos { .. }
+            | Cmd::Pipeline { .. }
+            | Cmd::Daemon { cmd: DaemonCmd::Run { .. } }
+    );
+    let needs_collective = matches!(cmd, Cmd::Swarm { .. } | Cmd::Heartbeat { .. } | Cmd::Debt { .. });
+    if needs_insights && !mode.insights_enabled() {
+        anyhow::bail!(
+            "`{}` needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
+            cmd_name(cmd),
+            mode.label()
+        );
+    }
+    if needs_collective && !mode.collective_enabled() {
+        anyhow::bail!(
+            "`{}` needs HELIXIR_MODE=collective or insights (current: {}); cross-user features are off by default",
+            cmd_name(cmd),
+            mode.label()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_name(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Clotho { .. } => "clotho",
+        Cmd::Lachesis { .. } => "lachesis",
+        Cmd::Atropos { .. } => "atropos",
+        Cmd::Pipeline { .. } => "pipeline",
+        Cmd::Daemon { .. } => "daemon run",
+        Cmd::Swarm { .. } => "swarm",
+        Cmd::Heartbeat { .. } => "heartbeat",
+        Cmd::Debt { .. } => "debt",
+        _ => "command",
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -272,7 +317,18 @@ async fn main() -> Result<()> {
                 threshold,
                 max_seeds,
                 max_hops,
-            } => return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops),
+            } => {
+                // The background daemon is generative — gate it on insights mode
+                // before spawning (the child would otherwise fail in the dark).
+                let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+                if !mode.insights_enabled() {
+                    anyhow::bail!(
+                        "daemon needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
+                        mode.label()
+                    );
+                }
+                return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops);
+            }
             DaemonCmd::Stop => return daemon_stop(),
             DaemonCmd::Status => return daemon_status(),
             DaemonCmd::Run { .. } => {} // needs the client — fall through
@@ -302,6 +358,7 @@ async fn main() -> Result<()> {
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
+    mode_gate(&cli.cmd, client.config().mode)?;
     client.initialize().await.context("initialize")?;
 
     match cli.cmd {
