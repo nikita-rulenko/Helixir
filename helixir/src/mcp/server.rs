@@ -29,7 +29,7 @@ impl HelixirMcpServer {
         let client_arc = Arc::new(client);
         let fast_think = Arc::new(FastThinkManager::new(
             client_arc.clone(),
-            FastThinkLimits::mcp(),
+            FastThinkLimits::from_config(&client_arc.config().fast_think),
         ));
 
         Self {

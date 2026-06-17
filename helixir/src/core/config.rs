@@ -508,6 +508,33 @@ impl Default for LlmRuntimeConfig {
     }
 }
 
+/// FastThink (think_* tools) session limits. Defaults match the MCP preset
+/// (`FastThinkLimits::mcp`) — the profile the live server runs with.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FastThinkConfig {
+    pub max_thoughts: usize,
+    pub max_entities: usize,
+    pub max_concepts: usize,
+    pub max_depth: usize,
+    pub thinking_timeout_secs: u64,
+    pub session_ttl_secs: u64,
+    pub max_recall_results: usize,
+}
+impl Default for FastThinkConfig {
+    fn default() -> Self {
+        Self {
+            max_thoughts: 150,
+            max_entities: 80,
+            max_concepts: 40,
+            max_depth: 12,
+            thinking_timeout_secs: 90,
+            session_ttl_secs: 600,
+            max_recall_results: 8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HelixirConfig {
@@ -577,6 +604,8 @@ pub struct HelixirConfig {
     pub gateway: GatewayConfig,
     #[serde(default)]
     pub llm_runtime: LlmRuntimeConfig,
+    #[serde(default)]
+    pub fast_think: FastThinkConfig,
 }
 
 impl HelixirConfig {
@@ -633,6 +662,7 @@ impl HelixirConfig {
             swarm: SwarmConfig::default(),
             gateway: GatewayConfig::default(),
             llm_runtime: LlmRuntimeConfig::default(),
+            fast_think: FastThinkConfig::default(),
         }
     }
 
