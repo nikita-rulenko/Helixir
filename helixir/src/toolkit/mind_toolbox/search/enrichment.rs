@@ -61,8 +61,9 @@ impl SearchEngine {
     ) -> Result<u32, SearchError> {
         #[derive(serde::Deserialize)]
         struct MemNode {
+            // Legacy nodes return JSON null here — Option absorbs null and "".
             #[serde(default)]
-            content_key: String,
+            content_key: Option<String>,
         }
         #[derive(serde::Deserialize)]
         struct MemResult {
@@ -77,7 +78,7 @@ impl SearchEngine {
             .await
             .ok()
             .and_then(|r| r.memory)
-            .map(|m| m.content_key)
+            .and_then(|m| m.content_key)
             .unwrap_or_default();
 
         if !content_key.is_empty() {

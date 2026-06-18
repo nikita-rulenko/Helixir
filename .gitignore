@@ -16,3 +16,6 @@ helixir/doc/private/
 # Runtime agent journals (per-machine activity/insight logs, not source)
 helixir-agent-activity.jsonl
 helixir-insights.jsonl
+
+# Generated architecture visualization site (local browsing only)
+/architecture-site/

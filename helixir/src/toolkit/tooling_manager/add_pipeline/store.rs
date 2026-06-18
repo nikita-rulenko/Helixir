@@ -230,8 +230,10 @@ impl ToolingManager {
             memory_type: String,
             #[serde(default)]
             source: String,
+            // Legacy rows that predate the field come back as JSON null, which
+            // does not deserialize into String — Option absorbs both null and "".
             #[serde(default)]
-            content_key: String,
+            content_key: Option<String>,
         }
         #[derive(serde::Deserialize)]
         struct Resp {
@@ -248,7 +250,8 @@ impl ToolingManager {
         let scanned = resp.memories.len();
         let mut updated = 0usize;
         for m in resp.memories {
-            if !m.content_key.is_empty() || m.memory_id.is_empty() {
+            let already_keyed = !m.content_key.as_deref().unwrap_or("").is_empty();
+            if already_keyed || m.memory_id.is_empty() {
                 continue;
             }
             let type_component = if m.source == "raw_input" {
