@@ -17,9 +17,12 @@ pub use llm::embeddings::EmbeddingGenerator;
 // config.rs (and providers) reference them instead of re-hardcoding.
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 pub const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
-/// The primary LLM model default — kept in sync with `HelixirConfig` (was
-/// previously a stale "llama3.1:8b" that diverged from the cerebras default).
-pub const DEFAULT_LLM_MODEL: &str = "llama-3.3-70b";
+/// The primary LLM model default. llama-3.3-70b was retired from the Cerebras
+/// account (404 → fresh installs couldn't extract), so the default is now an
+/// available model. NOTE: a fully-local default (ollama/specialist pipeline, #56)
+/// is the intended direction — this Cerebras id is a stopgap so a no-env install
+/// works out of the box.
+pub const DEFAULT_LLM_MODEL: &str = "gpt-oss-120b";
 pub const DEFAULT_LLM_FALLBACK_MODEL: &str = "llama3.2";
 pub const DEFAULT_HELIX_PORT: u16 = 6969;
 pub const DEFAULT_CACHE_SIZE: usize = 1000;
