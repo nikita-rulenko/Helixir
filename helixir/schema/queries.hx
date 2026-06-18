@@ -16,6 +16,25 @@ QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type
 QUERY addMemoryWithValidFrom(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// #43: atomic content-keyed dedup. UpsertN collapses concurrent identical
+// writes onto ONE canonical Memory (keyed by the INDEX'd content_key), so the
+// read-after-write snapshot lag can't fork it into duplicates; UpsertE makes the
+// per-user HAS_MEMORY link idempotent so the derived user_count stays correct.
+// memory_id must be deterministic (= a function of content_key) so the upsert's
+// update branch is a no-op on identity.
+QUERY addOrLinkMemoryByContentKey(content_key: String, memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String, stance: String, linked_at: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  existing_mem <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  memory <- existing_mem::UpsertN({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
+  existing_link <- E<HAS_MEMORY>
+  link <- existing_link::UpsertE({ context: context_tags, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
+  RETURN memory
+// #54: derive user_count from the live HAS_MEMORY edge set instead of the
+// read-then-write scalar (a lost-update under concurrent linkers).
+QUERY getMemoryUserCount(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  count <- memory::In<HAS_MEMORY>::COUNT
+  RETURN count
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
