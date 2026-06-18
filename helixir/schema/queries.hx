@@ -52,6 +52,12 @@ QUERY getContentKeyGroupUserCount(content_key: String) =>
 QUERY getMemoriesByContentKey(content_key: String) =>
   memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
   RETURN memories
+// Backfill: stamp a content_key fingerprint onto an existing node (hash is
+// computed in Rust; HelixDB only stores it).
+QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ content_key: content_key })
+  RETURN updated
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory

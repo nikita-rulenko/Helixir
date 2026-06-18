@@ -214,6 +214,64 @@ impl ToolingManager {
         Ok((memory_id, chunk_count))
     }
 
+    /// One-shot migration (#43): stamp a content_key fingerprint onto existing
+    /// memories that predate the field, so old facts also group. Idempotent —
+    /// already-keyed nodes are skipped, so it is safe to re-run. Returns
+    /// (scanned, updated). The hash matches the write path exactly (raw sources
+    /// keyed by "raw_input", others by their memory_type).
+    pub async fn backfill_content_keys(&self, limit: i64) -> Result<(usize, usize), ToolingError> {
+        #[derive(serde::Deserialize)]
+        struct Mem {
+            #[serde(default)]
+            memory_id: String,
+            #[serde(default)]
+            content: String,
+            #[serde(default)]
+            memory_type: String,
+            #[serde(default)]
+            source: String,
+            #[serde(default)]
+            content_key: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            memories: Vec<Mem>,
+        }
+
+        let resp: Resp = self
+            .db
+            .execute_query("getRecentMemories", &serde_json::json!({ "limit": limit }))
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+
+        let scanned = resp.memories.len();
+        let mut updated = 0usize;
+        for m in resp.memories {
+            if !m.content_key.is_empty() || m.memory_id.is_empty() {
+                continue;
+            }
+            let type_component = if m.source == "raw_input" {
+                "raw_input"
+            } else {
+                m.memory_type.as_str()
+            };
+            let key = content_key(&m.content, type_component);
+            if self
+                .db
+                .execute_query::<serde_json::Value, _>(
+                    "setMemoryContentKey",
+                    &serde_json::json!({ "memory_id": m.memory_id, "content_key": key }),
+                )
+                .await
+                .is_ok()
+            {
+                updated += 1;
+            }
+        }
+        Ok((scanned, updated))
+    }
+
     pub(super) async fn store_raw_source(
         &self,
         memory: &ExtractedMemory,

@@ -89,6 +89,12 @@ enum Cmd {
         #[arg(long)]
         reconcile: bool,
     },
+    /// Backfill content_key fingerprints onto existing memories (#43 migration).
+    /// Idempotent — already-keyed nodes are skipped, safe to re-run.
+    Backfill {
+        #[arg(long, default_value_t = 100000)]
+        limit: i64,
+    },
     /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
     Pipeline {
         #[arg(long)]
@@ -455,6 +461,7 @@ async fn main() -> Result<()> {
             limit,
             reconcile,
         } => debt(&client, &user, limit, reconcile).await?,
+        Cmd::Backfill { limit } => backfill(&client, limit).await?,
         Cmd::Swarm { window } => swarm(&client, window).await?,
         Cmd::Heartbeat {
             agent,
@@ -1221,6 +1228,19 @@ fn wire_entry_to_clients(
 }
 
 // --- contradiction debt (#45): the Cutter's hygiene dashboard ---
+
+async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
+    println!("Backfilling content_key fingerprints (#43 migration)…");
+    let (scanned, updated) = client
+        .tooling()
+        .backfill_content_keys(limit)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!(
+        "Scanned {scanned} memories — stamped {updated} new fingerprints (the rest were already keyed)."
+    );
+    Ok(())
+}
 
 async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -> Result<()> {
     use helixir::agents::atropos::reconcile::{classify, DisputeKind};
