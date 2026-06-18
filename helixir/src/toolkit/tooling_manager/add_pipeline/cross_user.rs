@@ -98,12 +98,17 @@ impl ToolingManager {
 
             match cross_decision.operation {
                 MemoryOperation::LinkExisting => {
+                    // #43: duplicate consolidation is now handled by the content_key
+                    // fingerprint group — the writer already has their own personal
+                    // node carrying the shared fingerprint, and collective user_count
+                    // counts the group. Cross-linking the writer onto another user's
+                    // node here would double-count the group AND reopen the snapshot-
+                    // lag race this fix removes. So a cross-user duplicate is a no-op.
                     if let Some(link_id) = &cross_decision.link_to_memory_id {
-                        info!(
-                            "Phase 2 bg: LINK_EXISTING user {} → memory {}",
+                        debug!(
+                            "Phase 2 bg: LINK_EXISTING {} → {} is a no-op (fingerprint group handles consensus)",
                             user_id_owned, link_id
                         );
-                        link_user_to_memory_bg(&db, &user_id_owned, link_id).await;
                     }
                 }
                 MemoryOperation::CrossContradict => {
@@ -136,12 +141,14 @@ impl ToolingManager {
                     }
                 }
                 MemoryOperation::Noop => {
+                    // #43: same as LinkExisting — the fingerprint group already
+                    // captures this writer as a holder via their own node; no
+                    // cross-link (it would double-count and race).
                     if let Some(existing) = cross_user_similar.first() {
-                        info!(
-                            "Phase 2 bg: NOOP→link user {} → memory {}",
+                        debug!(
+                            "Phase 2 bg: NOOP for {} vs {} (fingerprint group handles consensus)",
                             user_id_owned, existing.id
                         );
-                        link_user_to_memory_bg(&db, &user_id_owned, &existing.id).await;
                     }
                 }
                 _ => {
@@ -152,10 +159,6 @@ impl ToolingManager {
 
         Ok(())
     }
-}
-
-async fn link_user_to_memory_bg(db: &crate::db::HelixClient, user_id: &str, memory_id: &str) {
-    link_user_to_memory_with_stance_bg(db, user_id, memory_id, "confirms", 80).await
 }
 
 /// Cognitive layer (#33): the HAS_MEMORY edge carries the user's RELATION to
