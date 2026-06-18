@@ -95,6 +95,9 @@ enum Cmd {
         #[arg(long, default_value_t = 100000)]
         limit: i64,
     },
+    /// Liveness + readiness check for the local NLI judge (#55): loads the model
+    /// and classifies canonical pairs, proving same/contradiction detection works.
+    NliCheck,
     /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
     Pipeline {
         #[arg(long)]
@@ -387,6 +390,11 @@ async fn main() -> Result<()> {
         return print_mode();
     }
 
+    // `nli-check` runs the local NLI model — no DB needed.
+    if matches!(&cli.cmd, Cmd::NliCheck) {
+        return nli_check();
+    }
+
     // Setup configures files + client configs; no DB connection needed.
     if let Cmd::Setup {
         non_interactive,
@@ -483,6 +491,7 @@ async fn main() -> Result<()> {
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
         Cmd::Mode => unreachable!("mode handled before client init"),
+        Cmd::NliCheck => unreachable!("nli-check handled before client init"),
     }
     Ok(())
 }
@@ -1228,6 +1237,71 @@ fn wire_entry_to_clients(
 }
 
 // --- contradiction debt (#45): the Cutter's hygiene dashboard ---
+
+fn nli_check() -> Result<()> {
+    use helixir::llm::nli::{NliJudge, NliLabel};
+
+    let dir = NliJudge::default_dir();
+    println!("Local NLI judge — liveness + readiness check");
+    println!("Loading from {} …\n", dir.display());
+    let mut judge = NliJudge::load(&dir)
+        .context("load NLI model (collective/insights setup downloads it to ~/.helixir/models/nli)")?;
+    // Introspected, not assumed — this is what bit us before.
+    println!("  model inputs : {:?}", judge.input_names());
+    println!("  model outputs: {:?}\n", judge.output_names());
+
+    let cases: &[(&str, &str)] = &[
+        (
+            "I prefer the dark theme in every editor.",
+            "I prefer the light theme in every editor.",
+        ),
+        ("I love pizza.", "Pizza is my favourite food."),
+        (
+            "The deploy region is eu-west-3.",
+            "The on-call rotation is weekly.",
+        ),
+    ];
+    for (a, b) in cases {
+        let (lab, sc) = judge.classify(a, b)?;
+        let same = judge.is_same_fact(a, b)?;
+        println!(
+            "  [{:>13}]  same_fact={:<5}  c={:.2} e={:.2} n={:.2}",
+            lab.as_str(),
+            same,
+            sc[0],
+            sc[1],
+            sc[2]
+        );
+        println!("      A: {a}");
+        println!("      B: {b}");
+    }
+
+    // The two safety-critical invariants.
+    let opposite_is_contra = judge.classify(cases[0].0, cases[0].1)?.0 == NliLabel::Contradiction;
+    let opposite_not_merged = !judge.is_same_fact(cases[0].0, cases[0].1)?;
+    let paraphrase_is_same = judge.is_same_fact(cases[1].0, cases[1].1)?;
+
+    println!();
+    println!(
+        "  CRITICAL  opposite preference → contradiction : {}",
+        if opposite_is_contra { "PASS" } else { "FAIL" }
+    );
+    println!(
+        "  CRITICAL  opposite preference NOT merged      : {}",
+        if opposite_not_merged { "PASS" } else { "FAIL" }
+    );
+    println!(
+        "  CRITICAL  paraphrase → same fact              : {}",
+        if paraphrase_is_same { "PASS" } else { "FAIL" }
+    );
+
+    if opposite_is_contra && opposite_not_merged && paraphrase_is_same {
+        println!("\n✓ NLI judge READY — contradiction-safe, paraphrase-aware.");
+        Ok(())
+    } else {
+        anyhow::bail!("NLI readiness check FAILED — model would be unsafe for paraphrase merges");
+    }
+}
 
 async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
     println!("Backfilling content_key fingerprints (#43 migration)…");

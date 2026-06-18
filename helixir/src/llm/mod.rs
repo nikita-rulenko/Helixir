@@ -3,6 +3,7 @@ pub mod decision;
 pub mod embeddings;
 pub mod extractor;
 pub mod factory;
+pub mod nli;
 pub mod providers;
 
 pub use decision::{LLMDecisionEngine, MemoryDecision, MemoryOperation, SimilarMemory};
