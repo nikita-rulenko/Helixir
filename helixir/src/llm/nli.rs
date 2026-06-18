@@ -9,7 +9,8 @@
 //! downloaded only for the collective/insights tiers. Label order is fixed by
 //! the model config: 0=contradiction, 1=entailment, 2=neutral.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ort::session::Session;
@@ -138,8 +139,161 @@ fn argmax3(x: &[f32; 3]) -> usize {
     best
 }
 
-fn dirs_home() -> std::path::PathBuf {
+fn dirs_home() -> PathBuf {
     std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variant_is_an_onnx_path() {
+        assert!(pick_onnx_variant().ends_with(".onnx"));
+        assert!(pick_onnx_variant().starts_with("onnx/"));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn aarch64_picks_arm64_variant() {
+        assert_eq!(pick_onnx_variant(), "onnx/model_qint8_arm64.onnx");
+    }
+
+    // The safety-critical behaviour, gated on the model being downloaded.
+    // Run with: `helixir model download` then `cargo test nli -- --ignored`.
+    #[test]
+    #[ignore = "needs the downloaded NLI model (run `helixir model download`)"]
+    fn nli_is_contradiction_safe() {
+        let mut j = NliJudge::load(&NliJudge::default_dir()).expect("load NLI model");
+        let dark = "I prefer the dark theme in every editor.";
+        let light = "I prefer the light theme in every editor.";
+        assert_eq!(
+            j.classify(dark, light).unwrap().0,
+            NliLabel::Contradiction,
+            "opposite preferences must be a contradiction"
+        );
+        assert!(
+            !j.is_same_fact(dark, light).unwrap(),
+            "opposites must never merge"
+        );
+        assert!(
+            j.is_same_fact("I love pizza.", "Pizza is my favourite food.")
+                .unwrap(),
+            "paraphrases must be the same fact"
+        );
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Model acquisition. The repo ships the DOWNLOADER, never the weights: it picks
+// the ONNX quantization variant matching the host arch/CPU and fetches it from
+// HuggingFace into ~/.helixir/models/nli. All variants are the same 70M model;
+// only the quantization target differs. fp32 `model.onnx` is the universal
+// fallback that runs anywhere.
+// ----------------------------------------------------------------------------
+
+const NLI_REPO: &str = "cross-encoder/nli-deberta-v3-xsmall";
+const HF_BASE: &str = "https://huggingface.co";
+
+/// The remote ONNX path best matching this machine's arch / CPU features.
+#[must_use]
+pub fn pick_onnx_variant() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" | "arm" => "onnx/model_qint8_arm64.onnx",
+        "x86_64" => x86_variant(),
+        // Anything exotic: the portable fp32 graph.
+        _ => "onnx/model.onnx",
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn x86_variant() -> &'static str {
+    if std::arch::is_x86_feature_detected!("avx512vnni") {
+        "onnx/model_qint8_avx512_vnni.onnx"
+    } else if std::arch::is_x86_feature_detected!("avx512f") {
+        "onnx/model_qint8_avx512.onnx"
+    } else if std::arch::is_x86_feature_detected!("avx2") {
+        "onnx/model_quint8_avx2.onnx"
+    } else {
+        "onnx/model.onnx"
+    }
+}
+#[cfg(not(target_arch = "x86_64"))]
+fn x86_variant() -> &'static str {
+    "onnx/model.onnx"
+}
+
+/// Human label of the host (e.g. "aarch64/macos") for status output.
+#[must_use]
+pub fn host_label() -> String {
+    format!("{}/{}", std::env::consts::ARCH, std::env::consts::OS)
+}
+
+pub struct ModelStatus {
+    pub dir: PathBuf,
+    pub installed: bool,
+    pub onnx_bytes: u64,
+    pub variant_for_host: &'static str,
+    pub host: String,
+}
+
+/// Inspect what's installed on disk for this host.
+#[must_use]
+pub fn status() -> ModelStatus {
+    let dir = NliJudge::default_dir();
+    let onnx = dir.join("model.onnx");
+    let tok = dir.join("tokenizer.json");
+    let onnx_bytes = std::fs::metadata(&onnx).map(|m| m.len()).unwrap_or(0);
+    ModelStatus {
+        installed: onnx.exists() && tok.exists(),
+        onnx_bytes,
+        variant_for_host: pick_onnx_variant(),
+        host: host_label(),
+        dir,
+    }
+}
+
+/// Download the host-appropriate ONNX variant + tokenizer + config into the
+/// model dir. Skips files already present unless `force`. Returns bytes fetched.
+/// The platform-specific ONNX is always saved locally as `model.onnx` so the
+/// loader path is uniform.
+pub async fn download(force: bool) -> Result<u64> {
+    let dir = NliJudge::default_dir();
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let variant = pick_onnx_variant();
+    // (remote path on HF, local filename)
+    let files = [
+        (variant, "model.onnx"),
+        ("tokenizer.json", "tokenizer.json"),
+        ("config.json", "config.json"),
+    ];
+    // Async client — the CLI runs inside a tokio runtime, so reqwest::blocking
+    // would panic ("cannot drop a runtime in an async context").
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()
+        .context("http client")?;
+    let mut total = 0u64;
+    for (remote, local) in files {
+        let dest = dir.join(local);
+        if dest.exists() && !force {
+            continue;
+        }
+        let url = format!("{HF_BASE}/{NLI_REPO}/resolve/main/{remote}");
+        let bytes = client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?
+            .error_for_status()
+            .with_context(|| format!("download {remote}"))?
+            .bytes()
+            .await
+            .context("read body")?;
+        std::fs::write(&dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+        total += bytes.len() as u64;
+    }
+    Ok(total)
 }

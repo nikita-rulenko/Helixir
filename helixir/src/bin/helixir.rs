@@ -95,9 +95,14 @@ enum Cmd {
         #[arg(long, default_value_t = 100000)]
         limit: i64,
     },
-    /// Liveness + readiness check for the local NLI judge (#55): loads the model
-    /// and classifies canonical pairs, proving same/contradiction detection works.
-    NliCheck,
+    /// Manage the local NLI model (#55) — the contradiction-safe judge for
+    /// paraphrase merging. The repo ships only the downloader; it fetches the
+    /// ONNX variant matching your CPU/OS on demand (~90 MB). Used by the
+    /// collective/insights tiers.
+    Model {
+        #[command(subcommand)]
+        sub: ModelCmd,
+    },
     /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
     Pipeline {
         #[arg(long)]
@@ -168,6 +173,24 @@ enum Cmd {
     },
     /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
     Mode,
+}
+
+#[derive(Subcommand)]
+enum ModelCmd {
+    /// Download the NLI model variant for THIS machine (arch/CPU-aware), ~90 MB,
+    /// into ~/.helixir/models/nli. Skips files already present unless --force.
+    Download {
+        /// Re-download even if the files are already present.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show what's installed and which variant fits this host.
+    Status,
+    /// Liveness + readiness check: load the model and classify canonical pairs,
+    /// proving it detects contradictions (never merges opposites) and paraphrases.
+    Check,
+    /// Print which ONNX variant would be downloaded for this host (no download).
+    Which,
 }
 
 #[derive(Subcommand)]
@@ -390,9 +413,9 @@ async fn main() -> Result<()> {
         return print_mode();
     }
 
-    // `nli-check` runs the local NLI model — no DB needed.
-    if matches!(&cli.cmd, Cmd::NliCheck) {
-        return nli_check();
+    // `model` manages the local NLI model — no DB needed.
+    if let Cmd::Model { sub } = &cli.cmd {
+        return model_cmd(sub).await;
     }
 
     // Setup configures files + client configs; no DB connection needed.
@@ -491,7 +514,7 @@ async fn main() -> Result<()> {
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
         Cmd::Mode => unreachable!("mode handled before client init"),
-        Cmd::NliCheck => unreachable!("nli-check handled before client init"),
+        Cmd::Model { .. } => unreachable!("model handled before client init"),
     }
     Ok(())
 }
@@ -1237,6 +1260,47 @@ fn wire_entry_to_clients(
 }
 
 // --- contradiction debt (#45): the Cutter's hygiene dashboard ---
+
+async fn model_cmd(sub: &ModelCmd) -> Result<()> {
+    use helixir::llm::nli;
+    match sub {
+        ModelCmd::Which => {
+            println!("host:                  {}", nli::host_label());
+            println!("variant for this host: {}", nli::pick_onnx_variant());
+            Ok(())
+        }
+        ModelCmd::Status => {
+            let s = nli::status();
+            println!("NLI model — host {}", s.host);
+            println!("  dir:              {}", s.dir.display());
+            println!("  installed:        {}", s.installed);
+            if s.installed {
+                println!("  model.onnx:       {:.1} MB", s.onnx_bytes as f64 / 1e6);
+            }
+            println!("  variant for host: {}", s.variant_for_host);
+            if !s.installed {
+                println!("\nRun `helixir model download` to fetch it (~90 MB).");
+            }
+            Ok(())
+        }
+        ModelCmd::Download { force } => {
+            println!(
+                "Downloading NLI model for {} (variant: {}) …",
+                nli::host_label(),
+                nli::pick_onnx_variant()
+            );
+            let bytes = nli::download(*force).await?;
+            println!(
+                "Fetched {:.1} MB into {}.\n",
+                bytes as f64 / 1e6,
+                nli::NliJudge::default_dir().display()
+            );
+            // Readiness immediately after install (agreed flow).
+            nli_check()
+        }
+        ModelCmd::Check => nli_check(),
+    }
+}
 
 fn nli_check() -> Result<()> {
     use helixir::llm::nli::{NliJudge, NliLabel};
