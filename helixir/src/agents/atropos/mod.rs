@@ -12,6 +12,7 @@
 //! is JSONL written by the CLL (deploy-free). Persisting `Insight` nodes to the
 //! graph and ranking by novelty-vs-journal-history are later steps.
 
+pub mod merge;
 pub mod reconcile;
 
 use serde::{Deserialize, Serialize};

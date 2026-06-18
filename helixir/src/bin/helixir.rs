@@ -95,6 +95,16 @@ enum Cmd {
         #[arg(long, default_value_t = 100000)]
         limit: i64,
     },
+    /// Paraphrase backstop (#43/#55): merge facts that mean the same but are
+    /// worded differently by unifying their fingerprint. NLI-gated — never merges
+    /// contradictions. Needs the local NLI model (`helixir model download`).
+    Merge {
+        #[arg(long, default_value_t = 500)]
+        limit: i64,
+        /// Cosine pre-filter; pairs below this aren't even shown to the judge.
+        #[arg(long, default_value_t = 0.85)]
+        threshold: f64,
+    },
     /// Manage the local NLI model (#55) — the contradiction-safe judge for
     /// paraphrase merging. The repo ships only the downloader; it fetches the
     /// ONNX variant matching your CPU/OS on demand (~90 MB). Used by the
@@ -493,6 +503,7 @@ async fn main() -> Result<()> {
             reconcile,
         } => debt(&client, &user, limit, reconcile).await?,
         Cmd::Backfill { limit } => backfill(&client, limit).await?,
+        Cmd::Merge { limit, threshold } => merge_run(&client, limit, threshold).await?,
         Cmd::Swarm { window } => swarm(&client, window).await?,
         Cmd::Heartbeat {
             agent,
@@ -1416,6 +1427,23 @@ fn nli_check() -> Result<()> {
     } else {
         anyhow::bail!("NLI readiness check FAILED — model would be unsafe for paraphrase merges");
     }
+}
+
+async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result<()> {
+    use helixir::agents::atropos::Atropos;
+    println!("Paraphrase backstop (#43/#55) — collective scan (cosine ≥ {threshold}) …");
+    let atropos = Atropos::new(client.tooling());
+    let s = atropos.merge_paraphrases(limit, threshold).await?;
+    println!(
+        "  scanned {} memories, {} candidate pairs above threshold",
+        s.scanned, s.candidates
+    );
+    println!(
+        "  merged {} fingerprint group(s) — {} node(s) re-stamped",
+        s.merged_groups, s.nodes_restamped
+    );
+    println!("  contradictions blocked from merging: {}", s.contradictions_blocked);
+    Ok(())
 }
 
 async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
