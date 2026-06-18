@@ -6,7 +6,9 @@ target/
 /scripts/
 .helix-archives/
 .DS_Store
-Cargo.lock
+# Cargo.lock IS committed (helixir/Cargo.lock) — Helixir ships binaries, so a
+# locked dep graph = reproducible builds, critical with pinned ort/onnxruntime/
+# tokenizers. Do not ignore it. (#11)
 __pycache__/
 
 # Private design docs (Moira / generative-memory vision) — not for public exposure yet
