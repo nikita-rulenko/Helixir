@@ -35,6 +35,23 @@ QUERY getMemoryUserCount(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   count <- memory::In<HAS_MEMORY>::COUNT
   RETURN count
+// #43 (personal-node + subscribe-by-fingerprint model): each user keeps their own
+// Memory node; identical facts share a content_key. Collective consensus is the
+// count of users holding any node in the content_key group — derived on read, so
+// there is no shared node to race on. Additive: addMemoryWithValidFrom stays.
+QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
+// Consensus over a fingerprint group: how many distinct holders across all
+// personal nodes that share this content_key.
+QUERY getContentKeyGroupUserCount(content_key: String) =>
+  holders <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))::In<HAS_MEMORY>
+  count <- holders::COUNT
+  RETURN count
+// All personal nodes for a fingerprint group (collective view groups by these).
+QUERY getMemoriesByContentKey(content_key: String) =>
+  memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  RETURN memories
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
