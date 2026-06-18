@@ -1093,6 +1093,53 @@ fn prompt_mode_recommendation() -> Result<MemoryMode> {
     Ok([MemoryMode::Collective, MemoryMode::Solo, MemoryMode::Insights][idx])
 }
 
+/// During setup, for the collective/insights tiers, surface and optionally fetch
+/// the local NLI model (the paraphrase-merge judge). Solo skips it entirely.
+async fn maybe_setup_nli_model(
+    mode: MemoryMode,
+    interactive: bool,
+    dry_run: bool,
+) -> Result<()> {
+    use helixir::llm::nli;
+    if !mode.collective_enabled() {
+        return Ok(());
+    }
+    let s = nli::status();
+    println!(
+        "Paraphrase merging ({}) uses a local NLI model — variant {} for {}.",
+        mode.label(),
+        s.variant_for_host,
+        s.host
+    );
+    if s.installed {
+        println!(
+            "  ✓ already installed ({:.0} MB at {}).\n",
+            s.onnx_bytes as f64 / 1e6,
+            s.dir.display()
+        );
+        return Ok(());
+    }
+    if dry_run {
+        println!("  (dry-run: would download ~90 MB)\n");
+        return Ok(());
+    }
+    let go = interactive
+        && Confirm::new()
+            .with_prompt("Download the NLI model now (~90 MB)?")
+            .default(true)
+            .interact()?;
+    if go {
+        let bytes = nli::download(false).await?;
+        match nli::NliJudge::load(&nli::NliJudge::default_dir()) {
+            Ok(_) => println!("  ✓ fetched {:.0} MB — NLI model ready.\n", bytes as f64 / 1e6),
+            Err(e) => println!("  ⚠ downloaded but failed to load: {e}\n"),
+        }
+    } else {
+        println!("  skipped — run `helixir model download` when ready.\n");
+    }
+    Ok(())
+}
+
 async fn setup_run(
     interactive: bool,
     dry_run: bool,
@@ -1117,6 +1164,10 @@ async fn setup_run(
     };
     let mode_label = effective_mode.label();
     println!("Privilege tier: {mode_label} (HELIXIR_MODE).\n");
+
+    // Collective/insights use a local NLI model for contradiction-safe paraphrase
+    // merging — offer to fetch it now (solo never needs it).
+    maybe_setup_nli_model(effective_mode, interactive, dry_run).await?;
 
     // Gateway mode short-circuits DB discovery: clients talk to the per-host
     // gateway over HTTP, which holds the HELIX_* config — they carry none.
