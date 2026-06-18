@@ -45,6 +45,7 @@ impl ToolingManager {
 
         let mut added_ids = Vec::new();
         let mut updated_ids = Vec::new();
+        let mut deduped_ids = Vec::new();
         let mut stored_memory_ids: HashMap<usize, String> = HashMap::new();
         let mut skipped = 0usize;
         let mut entities_linked = 0usize;
@@ -219,6 +220,7 @@ impl ToolingManager {
                     &similar_memories,
                     &mut added_ids,
                     &mut updated_ids,
+                    &mut deduped_ids,
                     &mut skipped,
                     &mut chunks_created,
                     &mut relations_created,
@@ -306,6 +308,7 @@ impl ToolingManager {
             added: added_ids,
             updated: updated_ids,
             deleted: vec![],
+            deduped: deduped_ids,
             skipped,
             entities_extracted: entities_linked,
             reasoning_relations_created: relations_created,

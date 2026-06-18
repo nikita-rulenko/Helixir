@@ -39,6 +39,7 @@ impl HelixirClient {
         Ok(AddMemoryResult {
             memories_added: result.added.len(),
             memory_ids: result.added,
+            deduped: result.deduped,
             chunks_created: result.chunks_created,
             entities_extracted: result.entities_extracted,
             relations_created: result.reasoning_relations_created,

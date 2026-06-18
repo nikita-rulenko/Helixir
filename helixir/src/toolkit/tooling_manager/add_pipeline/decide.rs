@@ -26,15 +26,19 @@ impl ToolingManager {
         phase1_similar: &[SimilarMemory],
         added_ids: &mut Vec<String>,
         updated_ids: &mut Vec<String>,
+        deduped_ids: &mut Vec<String>,
         skipped: &mut usize,
         chunks_created: &mut usize,
         relations_created: &mut usize,
     ) -> Result<Option<String>, ToolingError> {
         let memory_id = match decision.operation {
             MemoryOperation::Noop => {
-                debug!("NOOP: skipping duplicate memory");
+                debug!("NOOP: duplicate memory");
                 *skipped += 1;
                 if let Some(target_id) = &decision.target_memory_id {
+                    // #44: surface the existing memory the write deduped to, so the
+                    // agent sees "linked to X" rather than an empty/silent result.
+                    deduped_ids.push(target_id.clone());
                     self.emit_memory_deduplicated(target_id, user_id).await;
                 }
                 return Ok(None);
