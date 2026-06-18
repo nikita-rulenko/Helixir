@@ -90,6 +90,22 @@ impl<'a> Daemon<'a> {
                 Err(e) => warn!("daemon: reconcile failed: {e}"),
             }
 
+            // Paraphrase backstop (#43/#55) — merge same-meaning facts into one
+            // fingerprint group, NLI-gated (never merges a contradiction). Runs
+            // every pass when the local NLI model is installed (collective/insights).
+            if crate::llm::nli::status().installed {
+                let mlim = self.tooling.config.moira.daemon.merge_limit;
+                let mcos = self.tooling.config.moira.daemon.merge_cosine_threshold;
+                match Atropos::new(self.tooling).merge_paraphrases(mlim, mcos).await {
+                    Ok(s) if s.merged_groups > 0 => info!(
+                        "daemon: merged {} paraphrase group(s) ({} nodes); {} contradictions blocked",
+                        s.merged_groups, s.nodes_restamped, s.contradictions_blocked
+                    ),
+                    Ok(_) => {}
+                    Err(e) => warn!("daemon: paraphrase merge failed: {e}"),
+                }
+            }
+
             if cfg.once {
                 break;
             }

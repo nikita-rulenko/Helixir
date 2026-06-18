@@ -354,10 +354,19 @@ impl Default for OrchestratorConfig {
 pub struct MoiraDaemonConfig {
     pub interval_secs: u64,
     pub reconcile_limit: i64,
+    /// Per-pass scan budget for the paraphrase-merge backstop (#43/#55).
+    pub merge_limit: i64,
+    /// Cosine pre-filter for the merge backstop (the NLI judge is the real gate).
+    pub merge_cosine_threshold: f64,
 }
 impl Default for MoiraDaemonConfig {
     fn default() -> Self {
-        Self { interval_secs: 300, reconcile_limit: 500 }
+        Self {
+            interval_secs: 300,
+            reconcile_limit: 500,
+            merge_limit: 500,
+            merge_cosine_threshold: 0.82,
+        }
     }
 }
 
