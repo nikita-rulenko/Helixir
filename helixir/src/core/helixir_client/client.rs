@@ -47,7 +47,7 @@ impl HelixirClient {
             fallback_model: config.embedding_fallback_model.clone(),
         }));
 
-        let llm_provider: Arc<dyn LlmProvider> = LlmProviderFactory::create(
+        let primary_llm: Arc<dyn LlmProvider> = LlmProviderFactory::create(
             &config.llm_provider,
             &config.llm_model,
             config.llm_api_key.as_deref(),
@@ -56,6 +56,25 @@ impl HelixirClient {
             config.llm_runtime.request_timeout_secs,
         )
         .into();
+
+        // External→local fallback: if the primary provider (Cerebras or any
+        // remote) errors, transparently retry the same prompt against local
+        // Ollama. Skipped when the primary is already Ollama (nothing to fall
+        // back to) — mirrors the embedding pipeline's fallback gate. The
+        // mechanism existed but was never wired; without this the config
+        // fields llm_fallback_* were dead and a remote outage failed the write.
+        let llm_provider: Arc<dyn LlmProvider> =
+            if config.llm_fallback_enabled && config.llm_provider != "ollama" {
+                Arc::new(LlmProviderFactory::create_with_fallback(
+                    primary_llm,
+                    config.llm_fallback_enabled,
+                    Some(&config.llm_fallback_url),
+                    &config.llm_fallback_model,
+                    f64::from(config.llm_temperature),
+                ))
+            } else {
+                primary_llm
+            };
 
         let tooling_manager = Arc::new(ToolingManager::new(
             Arc::clone(&db),
