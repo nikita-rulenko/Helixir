@@ -109,7 +109,7 @@ impl ToolingManager {
                 &ValidInParams {
                     memory_id: memory_id.to_string(),
                     context_id: resolved_id.clone(),
-                    priority: 50,
+                    priority: self.config.write.context_link_priority,
                     exclusive: 0,
                 },
             )

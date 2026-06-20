@@ -66,8 +66,8 @@ pub const STATUS_FAILED: &str = "failed";
 
 /// Server-side auto-retry budget for a queued write (#25). The agent never
 /// sees these — write-failure handling is entirely internal.
-const INGEST_MAX_RETRIES: u32 = 5;
-const INGEST_DEADLINE: Duration = Duration::from_secs(60);
+// Ingest retry budget + deadline now live in config.ingest
+// (max_retries / deadline_secs / retry_backoff_ms).
 
 /// Returned to the agent when the buffer accepts an input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,14 +160,6 @@ pub fn buffer_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn poll_interval() -> Duration {
-    let ms = std::env::var("HELIXIR_INGEST_POLL_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(500);
-    Duration::from_millis(ms.clamp(50, 60_000))
-}
-
 impl ToolingManager {
     /// Persist a raw input to the queue and return its id immediately.
     pub async fn enqueue_input(
@@ -254,7 +246,10 @@ impl ToolingManager {
     /// Reset items stuck in `processing` (a worker process died mid-flight)
     /// back to `pending` so the next drain retries them.
     async fn recover_stuck_processing(&self) {
-        let params = serde_json::json!({ "status": STATUS_PROCESSING, "limit": 256 });
+        let params = serde_json::json!({
+            "status": STATUS_PROCESSING,
+            "limit": self.config.ingest.drain_batch_size,
+        });
         let stuck: PendingList = match self
             .db
             .execute_query("getPendingInputsByStatus", &params)
@@ -316,7 +311,10 @@ impl ToolingManager {
         let agent = (!node.agent_id.is_empty()).then_some(node.agent_id.as_str());
         let tags = (!node.context_tags.is_empty()).then_some(node.context_tags.as_str());
 
-        let deadline = std::time::Instant::now() + INGEST_DEADLINE;
+        let max_retries = self.config.ingest.max_retries;
+        let deadline = std::time::Instant::now()
+            + Duration::from_secs(self.config.ingest.deadline_secs);
+        let backoff_ms = self.config.ingest.retry_backoff_ms;
         let mut last_err = String::new();
         let mut attempt = 0u32;
         let outcome = loop {
@@ -329,13 +327,13 @@ impl ToolingManager {
                 Err(e) => {
                     last_err = e.to_string();
                     warn!(
-                        "Ingest worker: {} attempt {attempt}/{INGEST_MAX_RETRIES} failed: {last_err}",
+                        "Ingest worker: {} attempt {attempt}/{max_retries} failed: {last_err}",
                         node.pending_id
                     );
-                    if attempt >= INGEST_MAX_RETRIES || std::time::Instant::now() >= deadline {
+                    if attempt >= max_retries || std::time::Instant::now() >= deadline {
                         break None;
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 }
             }
         };
@@ -374,7 +372,7 @@ impl ToolingManager {
             }
             None => {
                 error!(
-                    "Ingest worker: {} failed after {INGEST_MAX_RETRIES} attempts: {last_err}",
+                    "Ingest worker: {} failed after {max_retries} attempts: {last_err}",
                     node.pending_id
                 );
                 let _ = self
@@ -495,7 +493,8 @@ impl ToolingManager {
 /// Drains `pending` items oldest-first, one at a time — serialization is the
 /// whole point (dedup-race closure), so this never parallelizes.
 pub async fn run_ingest_worker(tm: Arc<ToolingManager>) {
-    let interval = poll_interval();
+    let interval =
+        Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
     info!(
         "Ingest worker started (poll {}ms); add_memory now returns pending_id",
         interval.as_millis()

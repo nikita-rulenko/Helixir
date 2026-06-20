@@ -61,8 +61,10 @@ impl ToolingManager {
         let params = UpdateByIdParams {
             id: internal_id.clone(),
             content: new_content.to_string(),
-            certainty: 80,
-            importance: 50,
+            // Read the configured defaults (was hardcoded 80/50 — a latent bug:
+            // it diverged silently from config.default_* if those changed).
+            certainty: self.config.default_certainty as i64,
+            importance: self.config.default_importance as i64,
             updated_at: now.clone(),
         };
 

@@ -16,14 +16,8 @@ use tracing::{debug, info};
 
 use super::batch_expansion::fetch_level;
 use super::phases::TraversalError;
+use crate::core::config::GraphConfig;
 use crate::db::HelixClient;
-
-/// Cap on category-bridge neighbours fetched per frontier memory — bounds the
-/// jump through a "thick" category (a broad axis like raw-material touches many).
-const CATEGORY_BRIDGE_CAP: i64 = 25;
-/// Weight of a category jump — below a stated reasoning edge (1.0): it is an
-/// inferred bridge, not an asserted relation. Specificity-weighting is Lachesis.
-const CATEGORY_BRIDGE_WEIGHT: f64 = 0.5;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PathNode {
@@ -98,7 +92,10 @@ pub async fn connect(
     seeds_a: &[(String, String)],
     seeds_b: &[(String, String)],
     max_depth: usize,
+    graph: &GraphConfig,
 ) -> Result<Option<ConnectionPath>, TraversalError> {
+    let ew = graph.edge_weights;
+    let ed = graph.edge_damping;
     if seeds_a.is_empty() || seeds_b.is_empty() {
         return Ok(None);
     }
@@ -137,7 +134,7 @@ pub async fn connect(
         }
 
         let ids: Vec<&str> = wave.frontier.iter().map(String::as_str).collect();
-        let fetch = fetch_level(client, &ids).await?;
+        let fetch = fetch_level(client, &ids, ew, ed).await?;
 
         let uuid_to_mid: HashMap<&str, &str> = fetch
             .nodes_by_uuid
@@ -190,7 +187,8 @@ pub async fn connect(
         if meeting.is_none() {
             for parent_mid in wave.frontier.clone() {
                 let neighbours =
-                    fetch_category_neighbours(client, &parent_mid, CATEGORY_BRIDGE_CAP).await?;
+                    fetch_category_neighbours(client, &parent_mid, graph.connect_bridge_cap as i64)
+                        .await?;
                 for (child_mid, content) in neighbours {
                     content_by_id.entry(child_mid.clone()).or_insert(content);
                     if wave.parents.contains_key(&child_mid) {
@@ -198,7 +196,7 @@ pub async fn connect(
                     }
                     wave.parents.insert(
                         child_mid.clone(),
-                        Some((parent_mid.clone(), "VIA_CATEGORY", CATEGORY_BRIDGE_WEIGHT)),
+                        Some((parent_mid.clone(), "VIA_CATEGORY", graph.connect_bridge_weight)),
                     );
                     if other.parents.contains_key(&child_mid) && meeting.is_none() {
                         meeting = Some(child_mid.clone());

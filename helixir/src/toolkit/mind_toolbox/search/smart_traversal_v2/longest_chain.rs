@@ -22,15 +22,8 @@ use tracing::{debug, info};
 
 use super::batch_expansion::fetch_level;
 use super::phases::TraversalError;
+use crate::core::config::GraphConfig;
 use crate::db::HelixClient;
-
-/// Cap on ego-network size. Longest simple path is exponential, so we bound the
-/// region we search; reasoning ego-networks are small, this is a safety rail.
-const MAX_EGO_NODES: usize = 120;
-
-/// Hard ceiling on DFS expansions — guarantees termination even on a dense,
-/// cyclic ego-network. Returns the best path found so far if hit.
-const MAX_DFS_STEPS: u64 = 500_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainStep {
@@ -69,7 +62,11 @@ pub async fn longest_chain(
     client: &HelixClient,
     seed_ids: &[(String, String)],
     max_hops: usize,
+    graph: &GraphConfig,
 ) -> Result<Option<ChainNarrative>, TraversalError> {
+    let ew = graph.edge_weights;
+    let ed = graph.edge_damping;
+    let max_ego_nodes = graph.longest_chain_max_ego_nodes;
     if seed_ids.is_empty() {
         return Ok(None);
     }
@@ -87,11 +84,11 @@ pub async fn longest_chain(
     let mut seen_edges: HashSet<(String, String, &'static str)> = HashSet::new();
 
     for _ in 0..max_hops {
-        if frontier.is_empty() || visited.len() >= MAX_EGO_NODES {
+        if frontier.is_empty() || visited.len() >= max_ego_nodes {
             break;
         }
         let ids: Vec<&str> = frontier.iter().map(String::as_str).collect();
-        let fetch = fetch_level(client, &ids).await?;
+        let fetch = fetch_level(client, &ids, ew, ed).await?;
 
         let uuid_to_mid: HashMap<&str, &str> = fetch
             .nodes_by_uuid
@@ -126,7 +123,7 @@ pub async fn longest_chain(
                 edge_type: e.edge_type,
                 weight: e.weight * e.strength_norm,
             });
-            if visited.len() < MAX_EGO_NODES && visited.insert((*child).to_string()) {
+            if visited.len() < max_ego_nodes && visited.insert((*child).to_string()) {
                 next.push((*child).to_string());
             }
         }
@@ -136,7 +133,7 @@ pub async fn longest_chain(
     // 2) Longest simple path: DFS from every node, cycle-guarded, budget-capped.
     let mut best: Vec<(String, Option<(&'static str, f64)>)> = Vec::new();
     let mut best_key = (0usize, 0.0f64); // (hops+1 = nodes, confidence)
-    let mut budget = MAX_DFS_STEPS;
+    let mut budget = graph.longest_chain_max_dfs_steps as u64;
 
     let starts: Vec<String> = visited.iter().cloned().collect();
     for start in &starts {

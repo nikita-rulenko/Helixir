@@ -26,6 +26,19 @@ impl Default for FastThinkLimits {
 }
 
 impl FastThinkLimits {
+    /// Build from the layered [`crate::core::config::FastThinkConfig`].
+    pub fn from_config(c: &crate::core::config::FastThinkConfig) -> Self {
+        Self {
+            max_thoughts: c.max_thoughts,
+            max_entities: c.max_entities,
+            max_concepts: c.max_concepts,
+            max_depth: c.max_depth,
+            thinking_timeout: Duration::from_secs(c.thinking_timeout_secs),
+            session_ttl: Duration::from_secs(c.session_ttl_secs),
+            max_recall_results: c.max_recall_results,
+        }
+    }
+
     pub fn relaxed() -> Self {
         Self {
             max_thoughts: 200,

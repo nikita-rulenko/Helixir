@@ -50,16 +50,60 @@ impl SearchEngine {
         Ok(distribution)
     }
 
+    /// Collective consensus count (#43): the number of distinct holders across
+    /// the whole fingerprint group, not just this one personal node. Each user
+    /// keeps their own node; identical facts share a `content_key`, so we resolve
+    /// the node's fingerprint and count the group. Legacy nodes (empty
+    /// content_key) fall back to the per-node holder count.
     pub(super) async fn fetch_memory_user_count_static(
         client: &HelixClient,
         memory_id: &str,
     ) -> Result<u32, SearchError> {
         #[derive(serde::Deserialize)]
+        struct MemNode {
+            // Legacy nodes return JSON null here — Option absorbs null and "".
+            #[serde(default)]
+            content_key: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct MemResult {
+            #[serde(default)]
+            memory: Option<MemNode>,
+        }
+        let content_key = client
+            .execute_query::<MemResult, _>(
+                "getMemory",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.memory)
+            .and_then(|m| m.content_key)
+            .unwrap_or_default();
+
+        if !content_key.is_empty() {
+            #[derive(serde::Deserialize)]
+            struct CountResult {
+                #[serde(default)]
+                count: i64,
+            }
+            if let Ok(r) = client
+                .execute_query::<CountResult, _>(
+                    "getContentKeyGroupUserCount",
+                    &serde_json::json!({"content_key": content_key}),
+                )
+                .await
+            {
+                return Ok((r.count.max(1)) as u32);
+            }
+        }
+
+        // Fallback for legacy/empty content_key: holders of this node only.
+        #[derive(serde::Deserialize)]
         struct UsersResult {
             #[serde(default)]
             users: Vec<serde_json::Value>,
         }
-
         let result: UsersResult = client
             .execute_query(
                 "getMemoryUsers",
@@ -67,7 +111,6 @@ impl SearchEngine {
             )
             .await
             .map_err(|e| SearchError::InvalidMode(e.to_string()))?;
-
         Ok(result.users.len().max(1) as u32)
     }
 

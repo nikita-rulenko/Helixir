@@ -18,11 +18,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Input, MultiSelect};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
+use helixir::core::config::MemoryMode;
 use helixir::core::HelixirClient;
+use helixir::HelixClient;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -77,6 +79,40 @@ enum Cmd {
         #[arg(long, default_value_t = 15)]
         tail: usize,
     },
+    /// Contradiction debt — open cross-user disputes; `--reconcile` drains the
+    /// dead ones (preferences coexist; live factual disputes are kept) (#45).
+    Debt {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 500)]
+        limit: i64,
+        #[arg(long)]
+        reconcile: bool,
+    },
+    /// Backfill content_key fingerprints onto existing memories (#43 migration).
+    /// Idempotent — already-keyed nodes are skipped, safe to re-run.
+    Backfill {
+        #[arg(long, default_value_t = 100000)]
+        limit: i64,
+    },
+    /// Paraphrase backstop (#43/#55): merge facts that mean the same but are
+    /// worded differently by unifying their fingerprint. NLI-gated — never merges
+    /// contradictions. Needs the local NLI model (`helixir model download`).
+    Merge {
+        #[arg(long, default_value_t = 500)]
+        limit: i64,
+        /// Cosine pre-filter; pairs below this aren't even shown to the judge.
+        #[arg(long, default_value_t = 0.85)]
+        threshold: f64,
+    },
+    /// Manage the local NLI model (#55) — the contradiction-safe judge for
+    /// paraphrase merging. The repo ships only the downloader; it fetches the
+    /// ONNX variant matching your CPU/OS on demand (~90 MB). Used by the
+    /// collective/insights tiers.
+    Model {
+        #[command(subcommand)]
+        sub: ModelCmd,
+    },
     /// Run the full orchestrated pass over a user: Clotho → Lachesis → Atropos.
     Pipeline {
         #[arg(long)]
@@ -87,6 +123,34 @@ enum Cmd {
         max_seeds: usize,
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
+    },
+    /// Swarm roster — every agent the collective knows, live ones first (#39).
+    /// The rendezvous is the shared DB, not CLI-to-CLI: any host's agents appear.
+    Swarm {
+        /// Heartbeats within this many seconds count as active.
+        /// Defaults to `swarm.active_window_secs` from config.
+        #[arg(long)]
+        window: Option<u64>,
+    },
+    /// Announce this agent's presence to the collective (one heartbeat).
+    Heartbeat {
+        #[arg(long)]
+        agent: String,
+        #[arg(long, default_value = "developer")]
+        role: String,
+        /// Host label; blank → $HELIXIR_HOST_LABEL / $HOSTNAME / $HOST / "unknown".
+        #[arg(long, default_value = "")]
+        host: String,
+        #[arg(long, default_value = "idle")]
+        status: String,
+    },
+    /// The per-host MCP gateway (#42): serve the same memory tools over HTTP
+    /// (streamable-http) so many clients share one process — they point at the
+    /// gateway URL instead of each spawning a stdio helixir-mcp. Foreground or
+    /// background. Full network trust for v1 (no auth token).
+    Gateway {
+        #[command(subcommand)]
+        cmd: GatewayCmd,
     },
     /// The Moira daemon — schedule full passes (foreground or background).
     Daemon {
@@ -105,7 +169,38 @@ enum Cmd {
         /// Wire this exact config file instead of auto-detecting clients.
         #[arg(long)]
         target: Option<String>,
+        /// Wire clients to a per-host GATEWAY over HTTP instead of spawning a
+        /// stdio helixir-mcp. Accepts a URL or host:port (→ http://host:port/mcp).
+        /// Clients then carry no HELIX_* env — just the gateway URL.
+        #[arg(long)]
+        gateway: Option<String>,
+        /// Privilege tier to write (solo | collective | insights). When omitted,
+        /// setup recommends `collective` (shared memory — the point of the tool);
+        /// pass `--mode solo` for private, single-user memory. The silent library
+        /// default (no setup) stays solo.
+        #[arg(long)]
+        mode: Option<String>,
     },
+    /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
+    Mode,
+}
+
+#[derive(Subcommand)]
+enum ModelCmd {
+    /// Download the NLI model variant for THIS machine (arch/CPU-aware), ~90 MB,
+    /// into ~/.helixir/models/nli. Skips files already present unless --force.
+    Download {
+        /// Re-download even if the files are already present.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show what's installed and which variant fits this host.
+    Status,
+    /// Liveness + readiness check: load the model and classify canonical pairs,
+    /// proving it detects contradictions (never merges opposites) and paraphrases.
+    Check,
+    /// Print which ONNX variant would be downloaded for this host (no download).
+    Which,
 }
 
 #[derive(Subcommand)]
@@ -142,6 +237,24 @@ enum DaemonCmd {
     /// Stop the background daemon.
     Stop,
     /// Show the background daemon's status.
+    Status,
+}
+
+#[derive(Subcommand)]
+enum GatewayCmd {
+    /// Run in the FOREGROUND (serve until Ctrl-C).
+    Run {
+        #[arg(long, default_value = "0.0.0.0:8765")]
+        bind: String,
+    },
+    /// Start a DETACHED background gateway. Writes a PID file; `stop` ends it.
+    Start {
+        #[arg(long, default_value = "0.0.0.0:8765")]
+        bind: String,
+    },
+    /// Stop the background gateway.
+    Stop,
+    /// Show the background gateway's status.
     Status,
 }
 
@@ -192,6 +305,71 @@ enum LachesisCmd {
     },
 }
 
+/// Refuse commands the current privilege tier doesn't permit. Generative
+/// commands need `insights`; collective-surface commands need `collective`.
+/// Reads, lifecycle, setup, and the journal views are always allowed.
+fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
+    let needs_insights = matches!(
+        cmd,
+        Cmd::Clotho { .. }
+            | Cmd::Lachesis { .. }
+            | Cmd::Atropos { .. }
+            | Cmd::Pipeline { .. }
+            | Cmd::Daemon { cmd: DaemonCmd::Run { .. } }
+    );
+    let needs_collective = matches!(cmd, Cmd::Swarm { .. } | Cmd::Heartbeat { .. } | Cmd::Debt { .. });
+    if needs_insights && !mode.insights_enabled() {
+        anyhow::bail!(
+            "`{}` needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
+            cmd_name(cmd),
+            mode.label()
+        );
+    }
+    if needs_collective && !mode.collective_enabled() {
+        anyhow::bail!(
+            "`{}` needs HELIXIR_MODE=collective or insights (current: {}); cross-user features are off by default",
+            cmd_name(cmd),
+            mode.label()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_name(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Clotho { .. } => "clotho",
+        Cmd::Lachesis { .. } => "lachesis",
+        Cmd::Atropos { .. } => "atropos",
+        Cmd::Pipeline { .. } => "pipeline",
+        Cmd::Daemon { .. } => "daemon run",
+        Cmd::Swarm { .. } => "swarm",
+        Cmd::Heartbeat { .. } => "heartbeat",
+        Cmd::Debt { .. } => "debt",
+        _ => "command",
+    }
+}
+
+/// Print the effective privilege tier and what it permits.
+fn print_mode() -> Result<()> {
+    let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+    let on = |b: bool| if b { "ON" } else { "off" };
+    println!("Privilege tier: {} (HELIXIR_MODE)", mode.label());
+    println!(
+        "  cross-user collective (link / contradict / collective reads): {}",
+        on(mode.collective_enabled())
+    );
+    println!(
+        "  generative insights (Clotho/Lachesis/Atropos, daemon):        {}",
+        on(mode.insights_enabled())
+    );
+    if !mode.insights_enabled() {
+        println!(
+            "\nRaise it: HELIXIR_MODE=collective|insights, or `helixir setup --mode <tier>`."
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -211,24 +389,66 @@ async fn main() -> Result<()> {
                 threshold,
                 max_seeds,
                 max_hops,
-            } => return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops),
+            } => {
+                // The background daemon is generative — gate it on insights mode
+                // before spawning (the child would otherwise fail in the dark).
+                let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+                if !mode.insights_enabled() {
+                    anyhow::bail!(
+                        "daemon needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
+                        mode.label()
+                    );
+                }
+                return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops);
+            }
             DaemonCmd::Stop => return daemon_stop(),
             DaemonCmd::Status => return daemon_status(),
             DaemonCmd::Run { .. } => {} // needs the client — fall through
         }
     }
 
+    // Gateway: Run serves over HTTP (its own mcp-style client init); Start/Stop/
+    // Status are process management (no DB) — all handled before the shared init.
+    if let Cmd::Gateway { cmd } = &cli.cmd {
+        return match cmd {
+            GatewayCmd::Run { bind } => helixir::mcp::run_gateway(bind).await,
+            GatewayCmd::Start { bind } => gateway_start(bind),
+            GatewayCmd::Stop => stop_process("gateway"),
+            GatewayCmd::Status => gateway_status(),
+        };
+    }
+
+    // `mode` just reports the effective tier — no DB needed.
+    if matches!(&cli.cmd, Cmd::Mode) {
+        return print_mode();
+    }
+
+    // `model` manages the local NLI model — no DB needed.
+    if let Cmd::Model { sub } = &cli.cmd {
+        return model_cmd(sub).await;
+    }
+
     // Setup configures files + client configs; no DB connection needed.
     if let Cmd::Setup {
         non_interactive,
         dry_run,
+        gateway,
         target,
+        mode,
     } = &cli.cmd
     {
-        return setup_run(!non_interactive, *dry_run, target.clone());
+        return setup_run(
+            !non_interactive,
+            *dry_run,
+            target.clone(),
+            gateway.clone(),
+            mode.clone(),
+        )
+        .await;
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
+    mode_gate(&cli.cmd, client.config().mode)?;
     client.initialize().await.context("initialize")?;
 
     match cli.cmd {
@@ -277,6 +497,20 @@ async fn main() -> Result<()> {
             max_seeds,
             max_hops,
         } => pipeline_run(&client, &user, threshold, max_seeds, max_hops).await?,
+        Cmd::Debt {
+            user,
+            limit,
+            reconcile,
+        } => debt(&client, &user, limit, reconcile).await?,
+        Cmd::Backfill { limit } => backfill(&client, limit).await?,
+        Cmd::Merge { limit, threshold } => merge_run(&client, limit, threshold).await?,
+        Cmd::Swarm { window } => swarm(&client, window).await?,
+        Cmd::Heartbeat {
+            agent,
+            role,
+            host,
+            status,
+        } => heartbeat(&client, &agent, &role, &host, &status).await?,
         Cmd::Daemon { cmd } => match cmd {
             DaemonCmd::Run {
                 user,
@@ -289,6 +523,9 @@ async fn main() -> Result<()> {
             _ => unreachable!("daemon start/stop/status handled before client init"),
         },
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
+        Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
+        Cmd::Mode => unreachable!("mode handled before client init"),
+        Cmd::Model { .. } => unreachable!("model handled before client init"),
     }
     Ok(())
 }
@@ -307,6 +544,7 @@ async fn daemon_run(
         user: user.clone(),
         interval: Duration::from_secs(interval),
         once,
+        host: machine_host(""),
         pass: PassConfig {
             grow_threshold: threshold,
             max_seeds,
@@ -623,6 +861,8 @@ struct SetupConfig {
     emb_model: String,
     emb_url: String,
     mcp_bin: String,
+    /// Privilege tier written as HELIXIR_MODE (default solo).
+    mode: String,
 }
 
 fn default_mcp_bin() -> String {
@@ -633,7 +873,7 @@ fn default_mcp_bin() -> String {
         .unwrap_or_else(|| "helixir-mcp".to_string())
 }
 
-fn gather_config(interactive: bool) -> Result<SetupConfig> {
+fn gather_config(interactive: bool, discovered: Option<(String, u16)>) -> Result<SetupConfig> {
     let e = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let mut c = SetupConfig {
         host: e("HELIX_HOST", "localhost"),
@@ -646,7 +886,18 @@ fn gather_config(interactive: bool) -> Result<SetupConfig> {
         emb_model: e("HELIX_EMBEDDING_MODEL", "nomic-embed-text"),
         emb_url: e("HELIX_EMBEDDING_URL", "http://localhost:11434"),
         mcp_bin: default_mcp_bin(),
+        mode: e("HELIXIR_MODE", "solo"),
     };
+    // A discovered backend pre-fills host/port — but only where the user has not
+    // explicitly pinned them via env, so a scripted run with HELIX_* still wins.
+    if let Some((h, p)) = discovered {
+        if std::env::var("HELIX_HOST").is_err() {
+            c.host = h;
+        }
+        if std::env::var("HELIX_PORT").is_err() {
+            c.port = p.to_string();
+        }
+    }
     if interactive {
         let ask = |prompt: &str, def: &str| -> Result<String> {
             Ok(Input::<String>::new()
@@ -683,7 +934,32 @@ fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
             "HELIX_EMBEDDING_MODEL": c.emb_model,
             "HELIX_EMBEDDING_URL": c.emb_url,
             "HELIXIR_RETRIEVAL_PROFILE": "algo_opt",
+            "HELIXIR_MODE": c.mode,
         }
+    })
+}
+
+/// Normalize a gateway arg (URL or `host:port`) to a full streamable-http URL.
+fn normalize_gateway_url(raw: &str) -> String {
+    let s = raw.trim();
+    let with_scheme = if s.starts_with("http://") || s.starts_with("https://") {
+        s.to_string()
+    } else {
+        format!("http://{s}")
+    };
+    if with_scheme.trim_end_matches('/').ends_with("/mcp") {
+        with_scheme
+    } else {
+        format!("{}/mcp", with_scheme.trim_end_matches('/'))
+    }
+}
+
+/// Client entry for a remote gateway: HTTP transport, no command, no env — the
+/// gateway holds all the HELIX_* config.
+fn mcp_entry_gateway(url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "http",
+        "url": url,
     })
 }
 
@@ -741,15 +1017,261 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
     Ok(())
 }
 
-fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result<()> {
-    println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
-    let cfg = gather_config(interactive && target.is_none())?;
-    let entry = mcp_entry(&cfg);
+/// Probe one `host:port` for a live HelixDB via the real client health check,
+/// bounded so a filtered port cannot hang the wizard.
+async fn probe_backend(host: &str, port: u16) -> bool {
+    let Ok(client) = HelixClient::new(host, port) else {
+        return false;
+    };
+    let probe = async {
+        let _ = client.connect().await;
+        client.health_check().await
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_millis(1500), probe).await,
+        Ok(Ok(()))
+    )
+}
 
-    // An explicit --target wires exactly that file; otherwise detect clients.
+/// Probe the local machine for a live HelixDB so a second client connects to the
+/// existing backend instead of standing up a duplicate (the singleton rule). The
+/// env-pinned port is tried first, then the common Helix ports.
+async fn discover_backends() -> Vec<(String, u16)> {
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let env_port: Option<u16> = std::env::var("HELIX_PORT").ok().and_then(|p| p.parse().ok());
+    let mut ports: Vec<u16> = Vec::new();
+    for p in env_port.into_iter().chain([6970u16, 6969]) {
+        if !ports.contains(&p) {
+            ports.push(p);
+        }
+    }
+    let mut live = Vec::new();
+    for port in ports {
+        if probe_backend(&host, port).await {
+            live.push((host.clone(), port));
+        }
+    }
+    live
+}
+
+/// The honest "it works" gate: prove the configured backend actually answers a
+/// health check before we tell the user their clients are wired.
+async fn verify_backend(cfg: &SetupConfig) -> Result<()> {
+    let port: u16 = cfg.port.parse().context("HelixDB port must be a number")?;
+    let client = HelixClient::new(&cfg.host, port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let probe = async {
+        let _ = client.connect().await;
+        client
+            .health_check()
+            .await
+            .map_err(|e| anyhow::anyhow!("health check failed: {e}"))
+    };
+    match tokio::time::timeout(Duration::from_secs(5), probe).await {
+        Ok(inner) => inner,
+        Err(_) => anyhow::bail!(
+            "timed out after 5s — no HelixDB answering at {}:{}",
+            cfg.host,
+            port
+        ),
+    }
+}
+
+/// Best-effort primary LAN IP: open a UDP socket "toward" a public address and
+/// read which local interface the OS would route through. Sends no packet.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+}
+
+/// Interactive privilege-tier picker for `helixir setup` when no tier was
+/// stated via `--mode` or HELIXIR_MODE. Collective is the recommended default
+/// (index 0): a person running the wizard is consciously joining the shared
+/// memory, which is the point of the tool. Solo and Insights stay one keystroke
+/// away, and the silent library default (HelixirConfig::new) remains Solo.
+fn prompt_mode_recommendation() -> Result<MemoryMode> {
+    let options = [
+        "collective — shared memory across your agents (recommended)",
+        "solo — private, single user, no cross-user behaviour",
+        "insights — collective + the generative Moirai (advanced)",
+    ];
+    let idx = Select::new()
+        .with_prompt("Privilege tier")
+        .default(0)
+        .items(&options)
+        .interact()?;
+    Ok([MemoryMode::Collective, MemoryMode::Solo, MemoryMode::Insights][idx])
+}
+
+/// During setup, for the collective/insights tiers, surface and optionally fetch
+/// the local NLI model (the paraphrase-merge judge). Solo skips it entirely.
+async fn maybe_setup_nli_model(
+    mode: MemoryMode,
+    interactive: bool,
+    dry_run: bool,
+) -> Result<()> {
+    use helixir::llm::nli;
+    if !mode.collective_enabled() {
+        return Ok(());
+    }
+    let s = nli::status();
+    println!(
+        "Paraphrase merging ({}) uses a local NLI model — variant {} for {}.",
+        mode.label(),
+        s.variant_for_host,
+        s.host
+    );
+    if s.installed {
+        println!(
+            "  ✓ already installed ({:.0} MB at {}).\n",
+            s.onnx_bytes as f64 / 1e6,
+            s.dir.display()
+        );
+        return Ok(());
+    }
+    if dry_run {
+        println!("  (dry-run: would download ~90 MB)\n");
+        return Ok(());
+    }
+    let go = interactive
+        && Confirm::new()
+            .with_prompt("Download the NLI model now (~90 MB)?")
+            .default(true)
+            .interact()?;
+    if go {
+        let bytes = nli::download(false).await?;
+        match nli::NliJudge::load(&nli::NliJudge::default_dir()) {
+            Ok(_) => println!("  ✓ fetched {:.0} MB — NLI model ready.\n", bytes as f64 / 1e6),
+            Err(e) => println!("  ⚠ downloaded but failed to load: {e}\n"),
+        }
+    } else {
+        println!("  skipped — run `helixir model download` when ready.\n");
+    }
+    Ok(())
+}
+
+async fn setup_run(
+    interactive: bool,
+    dry_run: bool,
+    target: Option<String>,
+    gateway: Option<String>,
+    mode: Option<String>,
+) -> Result<()> {
+    println!("Helixir setup — configure + wire its MCP server into your agent clients\n");
+    // Effective tier resolution. Explicit choice always wins (`--mode`, then
+    // HELIXIR_MODE env) — we never override what the operator stated, including
+    // an explicit `solo`. Only when nothing is stated does setup *recommend*:
+    // a human running the wizard is consciously joining, so the collective (the
+    // whole point of the tool) is the recommended pick. The silent library
+    // default stays Solo (HelixirConfig::new) — embedded/non-onboarded callers
+    // never get escalated without a person choosing it here.
+    let env_mode = std::env::var("HELIXIR_MODE").unwrap_or_default();
+    let effective_mode = match &mode {
+        Some(m) => MemoryMode::parse(m),
+        None if !env_mode.is_empty() => MemoryMode::parse(&env_mode),
+        None if interactive => prompt_mode_recommendation()?,
+        None => MemoryMode::Collective, // non-interactive setup → the recommendation
+    };
+    let mode_label = effective_mode.label();
+    println!("Privilege tier: {mode_label} (HELIXIR_MODE).\n");
+
+    // Collective/insights use a local NLI model for contradiction-safe paraphrase
+    // merging — offer to fetch it now (solo never needs it).
+    maybe_setup_nli_model(effective_mode, interactive, dry_run).await?;
+
+    // Gateway mode short-circuits DB discovery: clients talk to the per-host
+    // gateway over HTTP, which holds the HELIX_* config — they carry none.
+    if let Some(gw) = gateway {
+        let url = normalize_gateway_url(&gw);
+        println!("Gateway mode — wiring clients to {url}");
+        println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
+        println!("  The privilege tier lives on the GATEWAY process — start it with");
+        println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
+        let entry = mcp_entry_gateway(&url);
+        return wire_entry_to_clients(entry, target, interactive, dry_run, &format!("gateway {url}"));
+    }
+
+    // 1. Discover — a HelixDB is a singleton; find an existing one so we connect
+    //    rather than provision a second store nobody shares.
+    println!("Looking for a live HelixDB on this machine…");
+    let found = discover_backends().await;
+    match found.first() {
+        // Informational — the actual target is decided by config (env/prompt) and
+        // shown by the verify line below; if you see a live one here but verify
+        // points elsewhere, your HELIX_* env is pinned to a different port.
+        Some((h, p)) => println!("  ✓ a live HelixDB is answering at {h}:{p}.\n"),
+        None => {
+            println!("  · none found on the usual ports.");
+            println!("    → join an existing collective: set the host/port below to a reachable");
+            println!("      HelixDB (e.g. another machine that ran setup → its LAN address).");
+            println!("    → or deploy one here: `helix push` in a HelixDB project, then re-run.\n");
+        }
+    }
+
+    let mut cfg = gather_config(interactive && target.is_none(), found.into_iter().next())?;
+    cfg.mode = mode_label.to_string();
+
+    // 2. Verify — prove the backend answers before claiming success. On failure,
+    //    let the user wire anyway (interactive) or abort with the error.
+    print!("Verifying {}:{} … ", cfg.host, cfg.port);
+    std::io::stdout().flush().ok();
+    match verify_backend(&cfg).await {
+        Ok(()) => println!("ok — HelixDB is reachable.\n"),
+        Err(e) => {
+            println!("FAILED\n  {e}\n");
+            if interactive
+                && !Confirm::new()
+                    .with_prompt("Backend did not verify — wire the client(s) anyway?")
+                    .default(false)
+                    .interact()?
+            {
+                println!("Aborted — fix the host/port or deploy HelixDB, then re-run.");
+                return Ok(());
+            }
+        }
+    }
+
+    // 3. Multi-host — if this machine hosts the (local) DB, surface the LAN
+    //    address other hosts point their client at to join the same collective.
+    //    That is the rendezvous (#39) in practice: one shared DB, many hosts.
+    let host_is_local = matches!(
+        cfg.host.as_str(),
+        "localhost" | "127.0.0.1" | "0.0.0.0" | "::1"
+    );
+    if host_is_local {
+        match lan_ip() {
+            Some(ip) => {
+                println!("This machine's LAN address: {ip}:{}", cfg.port);
+                println!(
+                    "  Other hosts join the same collective by setting their client's"
+                );
+                println!(
+                    "  HELIX_HOST={ip} (full network trust assumed — no auth token yet).\n"
+                );
+            }
+            None => println!("(No LAN address found — offline, or no network interface.)\n"),
+        }
+    }
+
+    let entry = mcp_entry(&cfg);
+    let source = format!("helixir-mcp at {}", cfg.mcp_bin);
+    wire_entry_to_clients(entry, target, interactive, dry_run, &source)
+}
+
+/// Wire a prepared MCP entry into clients: an explicit `--target` file, else the
+/// detected clients (multi-select when interactive). `source` labels what is
+/// being wired (a stdio binary path or a gateway URL) in the output.
+fn wire_entry_to_clients(
+    entry: serde_json::Value,
+    target: Option<String>,
+    interactive: bool,
+    dry_run: bool,
+    source: &str,
+) -> Result<()> {
     if let Some(t) = target {
         let path = PathBuf::from(&t);
-        println!("Wiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+        println!("Wiring helixir-local ({source}):");
         wire_client("target", &path, &entry, dry_run)?;
         println!("{}", if dry_run { "\n(dry-run — nothing was written.)" } else { "\nDone." });
         return Ok(());
@@ -785,7 +1307,7 @@ fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result
         return Ok(());
     }
 
-    println!("\nWiring helixir-local (helixir-mcp at {}):", cfg.mcp_bin);
+    println!("\nWiring helixir-local ({source}):");
     for (name, path) in &selected {
         if let Err(e) = wire_client(name, path, &entry, dry_run) {
             println!("  ✗ {name}: {e}");
@@ -799,6 +1321,297 @@ fn setup_run(interactive: bool, dry_run: bool, target: Option<String>) -> Result
     Ok(())
 }
 
+// --- contradiction debt (#45): the Cutter's hygiene dashboard ---
+
+async fn model_cmd(sub: &ModelCmd) -> Result<()> {
+    use helixir::llm::nli;
+    match sub {
+        ModelCmd::Which => {
+            println!("host:                  {}", nli::host_label());
+            println!("variant for this host: {}", nli::pick_onnx_variant());
+            Ok(())
+        }
+        ModelCmd::Status => {
+            let s = nli::status();
+            println!("NLI model — host {}", s.host);
+            println!("  dir:              {}", s.dir.display());
+            println!("  installed:        {}", s.installed);
+            if s.installed {
+                println!("  model.onnx:       {:.1} MB", s.onnx_bytes as f64 / 1e6);
+            }
+            println!("  variant for host: {}", s.variant_for_host);
+            if !s.installed {
+                println!("\nRun `helixir model download` to fetch it (~90 MB).");
+            }
+            Ok(())
+        }
+        ModelCmd::Download { force } => {
+            println!(
+                "Downloading NLI model for {} (variant: {}) …",
+                nli::host_label(),
+                nli::pick_onnx_variant()
+            );
+            let bytes = nli::download(*force).await?;
+            println!(
+                "Fetched {:.1} MB into {}.\n",
+                bytes as f64 / 1e6,
+                nli::NliJudge::default_dir().display()
+            );
+            // Readiness immediately after install (agreed flow).
+            nli_check()
+        }
+        ModelCmd::Check => nli_check(),
+    }
+}
+
+fn nli_check() -> Result<()> {
+    use helixir::llm::nli::{NliJudge, NliLabel};
+
+    let dir = NliJudge::default_dir();
+    println!("Local NLI judge — liveness + readiness check");
+    println!("Loading from {} …\n", dir.display());
+    let mut judge = NliJudge::load(&dir)
+        .context("load NLI model (collective/insights setup downloads it to ~/.helixir/models/nli)")?;
+    // Introspected, not assumed — this is what bit us before.
+    println!("  model inputs : {:?}", judge.input_names());
+    println!("  model outputs: {:?}\n", judge.output_names());
+
+    let cases: &[(&str, &str)] = &[
+        (
+            "I prefer the dark theme in every editor.",
+            "I prefer the light theme in every editor.",
+        ),
+        ("I love pizza.", "Pizza is my favourite food."),
+        (
+            "The deploy region is eu-west-3.",
+            "The on-call rotation is weekly.",
+        ),
+    ];
+    for (a, b) in cases {
+        let (lab, sc) = judge.classify(a, b)?;
+        let same = judge.is_same_fact(a, b)?;
+        println!(
+            "  [{:>13}]  same_fact={:<5}  c={:.2} e={:.2} n={:.2}",
+            lab.as_str(),
+            same,
+            sc[0],
+            sc[1],
+            sc[2]
+        );
+        println!("      A: {a}");
+        println!("      B: {b}");
+    }
+
+    // The two safety-critical invariants.
+    let opposite_is_contra = judge.classify(cases[0].0, cases[0].1)?.0 == NliLabel::Contradiction;
+    let opposite_not_merged = !judge.is_same_fact(cases[0].0, cases[0].1)?;
+    let paraphrase_is_same = judge.is_same_fact(cases[1].0, cases[1].1)?;
+
+    println!();
+    println!(
+        "  CRITICAL  opposite preference → contradiction : {}",
+        if opposite_is_contra { "PASS" } else { "FAIL" }
+    );
+    println!(
+        "  CRITICAL  opposite preference NOT merged      : {}",
+        if opposite_not_merged { "PASS" } else { "FAIL" }
+    );
+    println!(
+        "  CRITICAL  paraphrase → same fact              : {}",
+        if paraphrase_is_same { "PASS" } else { "FAIL" }
+    );
+
+    if opposite_is_contra && opposite_not_merged && paraphrase_is_same {
+        println!("\n✓ NLI judge READY — contradiction-safe, paraphrase-aware.");
+        Ok(())
+    } else {
+        anyhow::bail!("NLI readiness check FAILED — model would be unsafe for paraphrase merges");
+    }
+}
+
+async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result<()> {
+    use helixir::agents::atropos::Atropos;
+    println!("Paraphrase backstop (#43/#55) — collective scan (cosine ≥ {threshold}) …");
+    let atropos = Atropos::new(client.tooling());
+    let s = atropos.merge_paraphrases(limit, threshold).await?;
+    println!(
+        "  scanned {} memories, {} candidate pairs above threshold",
+        s.scanned, s.candidates
+    );
+    println!(
+        "  merged {} fingerprint group(s) — {} node(s) re-stamped",
+        s.merged_groups, s.nodes_restamped
+    );
+    println!("  contradictions blocked from merging: {}", s.contradictions_blocked);
+    Ok(())
+}
+
+async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
+    println!("Backfilling content_key fingerprints (#43 migration)…");
+    let (scanned, updated) = client
+        .tooling()
+        .backfill_content_keys(limit)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!(
+        "Scanned {scanned} memories — stamped {updated} new fingerprints (the rest were already keyed)."
+    );
+    Ok(())
+}
+
+async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -> Result<()> {
+    use helixir::agents::atropos::reconcile::{classify, DisputeKind};
+
+    if reconcile {
+        let s = client
+            .atropos()
+            .reconcile(user, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!(
+            "Reconciled '{user}': scanned {}, drained {} preference + {} superseded, {} live kept, {} surfaced to owners",
+            s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, s.notified
+        );
+        journal(
+            "atropos",
+            "reconcile",
+            &format!(
+                "user={user} drained={} kept={}",
+                s.drained_preference + s.drained_superseded,
+                s.kept_live
+            ),
+        );
+        return Ok(());
+    }
+
+    let open = client
+        .tooling()
+        .gather_open_contradictions(user, limit)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if open.is_empty() {
+        println!("No open contradiction debt for '{user}'.");
+        return Ok(());
+    }
+    let (mut pref, mut live) = (0u32, 0u32);
+    println!("Open contradiction debt for '{user}' — {} dispute(s):\n", open.len());
+    for oc in &open {
+        let tag = match classify(&oc.resolution_strategy) {
+            DisputeKind::Preference => {
+                pref += 1;
+                "preference"
+            }
+            DisputeKind::Factual => {
+                live += 1;
+                "factual"
+            }
+        };
+        println!(
+            "  {} ⇄ {}  [{tag}]  {}",
+            trunc(&oc.from_id, 16),
+            trunc(&oc.to_id, 16),
+            oc.resolution_strategy
+        );
+    }
+    println!(
+        "\n  {pref} preference (drainable as coexist) · {live} factual (live — need an owner)"
+    );
+    println!("  Run with --reconcile to retire the drainable ones.");
+    Ok(())
+}
+
+// --- swarm rendezvous (#39): presence in the shared graph ---
+
+/// Resolve a host label: explicit arg wins, else env hints, else "unknown".
+fn machine_host(explicit: &str) -> String {
+    if !explicit.is_empty() {
+        return explicit.to_string();
+    }
+    std::env::var("HELIXIR_HOST_LABEL")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn human_age(secs: i64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86_400),
+    }
+}
+
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
+    }
+}
+
+async fn heartbeat(
+    client: &HelixirClient,
+    agent: &str,
+    role: &str,
+    host: &str,
+    status: &str,
+) -> Result<()> {
+    let host = machine_host(host);
+    client
+        .tooling()
+        .register_or_heartbeat(agent, role, &host, status)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("✓ heartbeat: {agent} ({role}) on {host} — {status}");
+    journal("swarm", "heartbeat", &format!("{agent}@{host}:{status}"));
+    Ok(())
+}
+
+async fn swarm(client: &HelixirClient, window: Option<u64>) -> Result<()> {
+    let window = window.unwrap_or(client.config().swarm.active_window_secs);
+    let now = chrono::Utc::now();
+    let mut roster = client
+        .tooling()
+        .list_swarm()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if roster.is_empty() {
+        println!("No agents registered in the collective yet.");
+        println!("(Run `helixir heartbeat --agent <id>` or start the daemon to announce one.)");
+        return Ok(());
+    }
+    // Freshest first; never-seen sink to the bottom.
+    roster.sort_by_key(|a| a.age_seconds(now).unwrap_or(i64::MAX));
+
+    let win = window as i64;
+    let active = roster.iter().filter(|a| a.is_active(now, win)).count();
+    println!(
+        "Swarm roster — {} agent(s), {active} active (heartbeat ≤{window}s)\n",
+        roster.len()
+    );
+    println!(
+        "     {:<22} {:<11} {:<16} {:<7} {}",
+        "agent", "role", "host", "age", "status"
+    );
+    for a in &roster {
+        let dot = if a.is_active(now, win) { "●" } else { "·" };
+        let age = match a.age_seconds(now) {
+            Some(s) if s >= 0 => human_age(s),
+            _ => "never".to_string(),
+        };
+        println!(
+            "  {dot}  {:<22} {:<11} {:<16} {:<7} {}",
+            trunc(&a.agent_id, 22),
+            trunc(&a.role, 11),
+            trunc(&a.host, 16),
+            age,
+            a.status
+        );
+    }
+    Ok(())
+}
+
 // --- daemon background lifecycle (PID file in ~/.helixir) ---
 
 fn helixir_dir() -> Result<PathBuf> {
@@ -808,18 +1621,77 @@ fn helixir_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn pid_file() -> Result<PathBuf> {
-    Ok(helixir_dir()?.join("daemon.pid"))
+fn pid_file(name: &str) -> Result<PathBuf> {
+    Ok(helixir_dir()?.join(format!("{name}.pid")))
 }
 
-fn read_pid_state() -> Option<serde_json::Value> {
-    let body = std::fs::read_to_string(pid_file().ok()?).ok()?;
+fn read_pid_state(name: &str) -> Option<serde_json::Value> {
+    let body = std::fs::read_to_string(pid_file(name).ok()?).ok()?;
     serde_json::from_str(&body).ok()
 }
 
 /// Signal 0 probes a pid's existence without delivering anything.
 fn is_alive(pid: i32) -> bool {
     pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Spawn `helixir <args>` as a detached background process (setsid), logging to
+/// `~/.helixir/<name>.log` and recording a `<name>.pid` state file. Shared by
+/// the daemon (#43) and the gateway (#42). Returns the child pid.
+fn spawn_detached(name: &str, args: &[&str], extra: serde_json::Value) -> Result<(u32, PathBuf)> {
+    if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
+        if is_alive(pid as i32) {
+            anyhow::bail!("{name} already running (pid {pid}); `helixir {name} stop` first");
+        }
+    }
+    let exe = std::env::current_exe().context("current_exe")?;
+    let log = helixir_dir()?.join(format!("{name}.log"));
+    let out = OpenOptions::new().create(true).append(true).open(&log)?;
+    let err = out.try_clone()?;
+
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err));
+    // Detach from the controlling terminal so it survives the shell closing.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let pid = cmd.spawn().context("spawn detached process")?.id();
+
+    let mut state = serde_json::json!({
+        "pid": pid,
+        "started_at": chrono::Utc::now().to_rfc3339(),
+        "log": log.display().to_string(),
+    });
+    if let (Some(obj), Some(more)) = (state.as_object_mut(), extra.as_object()) {
+        for (k, v) in more {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    std::fs::write(pid_file(name)?, serde_json::to_string_pretty(&state)?)?;
+    Ok((pid, log))
+}
+
+/// SIGTERM the named background process and clean up its pid file.
+fn stop_process(name: &str) -> Result<()> {
+    let Some(state) = read_pid_state(name) else {
+        println!("{name} not running (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
+    if is_alive(pid) {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        println!("{name} stopped (pid {pid})");
+    } else {
+        println!("{name} already gone (stale pid {pid}); cleaned up");
+    }
+    std::fs::remove_file(pid_file(name)?).ok();
+    Ok(())
 }
 
 fn daemon_start(
@@ -829,72 +1701,37 @@ fn daemon_start(
     max_seeds: usize,
     max_hops: usize,
 ) -> Result<()> {
-    if let Some(pid) = read_pid_state().and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
-        if is_alive(pid as i32) {
-            anyhow::bail!("daemon already running (pid {pid}); `helixir daemon stop` first");
-        }
-    }
-
-    let exe = std::env::current_exe().context("current_exe")?;
-    let log = helixir_dir()?.join("daemon.log");
-    let out = OpenOptions::new().create(true).append(true).open(&log)?;
-    let err = out.try_clone()?;
-
-    let mut cmd = Command::new(exe);
-    cmd.args([
+    let (pid, log) = spawn_detached(
         "daemon",
-        "run",
-        "--user",
-        user,
-        "--interval",
-        &interval.to_string(),
-        "--threshold",
-        &threshold.to_string(),
-        "--max-seeds",
-        &max_seeds.to_string(),
-        "--max-hops",
-        &max_hops.to_string(),
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::from(out))
-    .stderr(Stdio::from(err));
-    // Detach from the controlling terminal so it survives the shell closing.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
-    let pid = cmd.spawn().context("spawn detached daemon")?.id();
-
-    let state = serde_json::json!({
-        "pid": pid, "user": user, "interval": interval, "threshold": threshold,
-        "max_seeds": max_seeds, "max_hops": max_hops,
-        "started_at": chrono::Utc::now().to_rfc3339(), "log": log.display().to_string(),
-    });
-    std::fs::write(pid_file()?, serde_json::to_string_pretty(&state)?)?;
+        &[
+            "daemon",
+            "run",
+            "--user",
+            user,
+            "--interval",
+            &interval.to_string(),
+            "--threshold",
+            &threshold.to_string(),
+            "--max-seeds",
+            &max_seeds.to_string(),
+            "--max-hops",
+            &max_hops.to_string(),
+        ],
+        serde_json::json!({
+            "user": user, "interval": interval, "threshold": threshold,
+            "max_seeds": max_seeds, "max_hops": max_hops,
+        }),
+    )?;
     println!("daemon started (pid {pid}) for '{user}', every {interval}s; log: {}", log.display());
     Ok(())
 }
 
 fn daemon_stop() -> Result<()> {
-    let Some(state) = read_pid_state() else {
-        println!("daemon not running (no pid file)");
-        return Ok(());
-    };
-    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
-    if is_alive(pid) {
-        unsafe { libc::kill(pid, libc::SIGTERM) };
-        println!("daemon stopped (pid {pid})");
-    } else {
-        println!("daemon already gone (stale pid {pid}); cleaned up");
-    }
-    std::fs::remove_file(pid_file()?).ok();
-    Ok(())
+    stop_process("daemon")
 }
 
 fn daemon_status() -> Result<()> {
-    let Some(state) = read_pid_state() else {
+    let Some(state) = read_pid_state("daemon") else {
         println!("daemon: stopped (no pid file)");
         return Ok(());
     };
@@ -919,6 +1756,34 @@ fn daemon_status() -> Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+fn gateway_start(bind: &str) -> Result<()> {
+    let (pid, log) = spawn_detached(
+        "gateway",
+        &["gateway", "run", "--bind", bind],
+        serde_json::json!({ "bind": bind }),
+    )?;
+    println!("gateway started (pid {pid}) at http://{bind}/mcp; log: {}", log.display());
+    Ok(())
+}
+
+fn gateway_status() -> Result<()> {
+    let Some(state) = read_pid_state("gateway") else {
+        println!("gateway: stopped (no pid file)");
+        return Ok(());
+    };
+    let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let bind = state.get("bind").and_then(|v| v.as_str()).unwrap_or("?");
+    println!(
+        "gateway: {}  pid={pid} url=http://{bind}/mcp started={}",
+        if is_alive(pid) { "running" } else { "STALE (process gone)" },
+        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+    );
+    if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
+        println!("  log: {l}");
     }
     Ok(())
 }

@@ -12,6 +12,11 @@ use std::collections::HashMap;
 pub struct AddMemoryResult {
     pub memories_added: usize,
     pub memory_ids: Vec<String>,
+    /// #44: existing memory_ids this write deduped to (already known, not newly
+    /// stored). Empty when everything was a fresh add. Lets the agent distinguish
+    /// saved-new from linked-to-existing instead of seeing an empty memory_ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deduped: Vec<String>,
     pub chunks_created: usize,
     pub entities_extracted: usize,
     pub relations_created: usize,

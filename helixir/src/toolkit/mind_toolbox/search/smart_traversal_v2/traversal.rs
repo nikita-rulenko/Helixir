@@ -207,7 +207,12 @@ impl SmartTraversalV2 {
                 .iter()
                 .map(|h| (h.memory_id.clone(), h.combined_score.max(0.01)))
                 .collect();
-            let ppr_scores = personalized_pagerank(&ego_edges, &personalization);
+            let ppr_scores = personalized_pagerank(
+                &ego_edges,
+                &personalization,
+                config.ppr_alpha,
+                config.ppr_iterations,
+            );
             let mut rescored = 0usize;
             for result in vector_hits.iter_mut().chain(graph_results.iter_mut()) {
                 let Some(ppr) = ppr_scores.get(&result.memory_id) else {

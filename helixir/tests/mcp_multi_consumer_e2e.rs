@@ -126,7 +126,7 @@ fn multi_consumer_collective_invariants() {
     // removes snapshot-lag as a variable and tests the dedup logic itself:
     // given visibility, three identical writes must consolidate.
     for user in &users {
-        let (mut mcp, _) = McpClient::spawn();
+        let (mut mcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
         mcp.call_tool("add_memory", json!({ "message": fact, "user_id": user }));
         let visible = wait_collective(&mut mcp, &fact, &svc, 20);
         assert!(
@@ -138,7 +138,7 @@ fn multi_consumer_collective_invariants() {
 
     // A fourth, fresh consumer that never wrote the fact.
     let reader = format!("mc_reader_{run}");
-    let (mut rmcp, _) = McpClient::spawn();
+    let (mut rmcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
 
     // Highest user_count among results that actually mention our unique service.
     let token_user_count = |arr: &[Value]| -> Option<u64> {
@@ -201,7 +201,7 @@ fn multi_consumer_collective_invariants() {
 fn multi_consumer_buffer_invariants() {
     require_e2e();
     let run = token();
-    let buf = [("HELIXIR_INGEST_BUFFER", "1")];
+    let buf = [("HELIXIR_INGEST_BUFFER", "1"), ("HELIXIR_MODE", "collective")];
 
     // --- Invariant 5: several buffered producers, none lost ---------------
     // Keep all producer processes alive (their workers drain the shared queue)

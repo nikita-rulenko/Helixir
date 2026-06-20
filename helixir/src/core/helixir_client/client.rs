@@ -30,7 +30,8 @@ impl HelixirClient {
     pub fn new(config: HelixirConfig) -> Result<Self, HelixirClientError> {
         let db = Arc::new(
             HelixClient::new(&config.host, config.port)
-                .map_err(|e| HelixirClientError::Database(e.to_string()))?,
+                .map_err(|e| HelixirClientError::Database(e.to_string()))?
+                .with_retry(config.retry.clone()),
         );
 
         let embedder = Arc::new(EmbeddingGenerator::new(crate::llm::EmbeddingConfig {
@@ -39,21 +40,41 @@ impl HelixirClient {
             model: config.embedding_model.clone(),
             api_key: config.embedding_api_key.clone(),
             timeout_secs: config.timeout,
-            cache_size: 1000,
-            cache_ttl: 300,
+            cache_size: config.llm_runtime.embedding_cache_size,
+            cache_ttl: config.llm_runtime.embedding_cache_ttl_secs,
             fallback_enabled: config.embedding_fallback_enabled,
             fallback_url: config.embedding_fallback_url.clone(),
             fallback_model: config.embedding_fallback_model.clone(),
         }));
 
-        let llm_provider: Arc<dyn LlmProvider> = LlmProviderFactory::create(
+        let primary_llm: Arc<dyn LlmProvider> = LlmProviderFactory::create(
             &config.llm_provider,
             &config.llm_model,
             config.llm_api_key.as_deref(),
             config.llm_base_url.as_deref(),
             f64::from(config.llm_temperature),
+            config.llm_runtime.request_timeout_secs,
         )
         .into();
+
+        // External→local fallback: if the primary provider (Cerebras or any
+        // remote) errors, transparently retry the same prompt against local
+        // Ollama. Skipped when the primary is already Ollama (nothing to fall
+        // back to) — mirrors the embedding pipeline's fallback gate. The
+        // mechanism existed but was never wired; without this the config
+        // fields llm_fallback_* were dead and a remote outage failed the write.
+        let llm_provider: Arc<dyn LlmProvider> =
+            if config.llm_fallback_enabled && config.llm_provider != "ollama" {
+                Arc::new(LlmProviderFactory::create_with_fallback(
+                    primary_llm,
+                    config.llm_fallback_enabled,
+                    Some(&config.llm_fallback_url),
+                    &config.llm_fallback_model,
+                    f64::from(config.llm_temperature),
+                ))
+            } else {
+                primary_llm
+            };
 
         let tooling_manager = Arc::new(ToolingManager::new(
             Arc::clone(&db),

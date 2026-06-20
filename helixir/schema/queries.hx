@@ -16,6 +16,48 @@ QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type
 QUERY addMemoryWithValidFrom(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// #43: atomic content-keyed dedup. UpsertN collapses concurrent identical
+// writes onto ONE canonical Memory (keyed by the INDEX'd content_key), so the
+// read-after-write snapshot lag can't fork it into duplicates; UpsertE makes the
+// per-user HAS_MEMORY link idempotent so the derived user_count stays correct.
+// memory_id must be deterministic (= a function of content_key) so the upsert's
+// update branch is a no-op on identity.
+QUERY addOrLinkMemoryByContentKey(content_key: String, memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String, stance: String, linked_at: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  existing_mem <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  memory <- existing_mem::UpsertN({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
+  existing_link <- E<HAS_MEMORY>
+  link <- existing_link::UpsertE({ context: context_tags, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
+  RETURN memory
+// #54: derive user_count from the live HAS_MEMORY edge set instead of the
+// read-then-write scalar (a lost-update under concurrent linkers).
+QUERY getMemoryUserCount(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  count <- memory::In<HAS_MEMORY>::COUNT
+  RETURN count
+// #43 (personal-node + subscribe-by-fingerprint model): each user keeps their own
+// Memory node; identical facts share a content_key. Collective consensus is the
+// count of users holding any node in the content_key group — derived on read, so
+// there is no shared node to race on. Additive: addMemoryWithValidFrom stays.
+QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
+// Consensus over a fingerprint group: how many distinct holders across all
+// personal nodes that share this content_key.
+QUERY getContentKeyGroupUserCount(content_key: String) =>
+  holders <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))::In<HAS_MEMORY>
+  count <- holders::COUNT
+  RETURN count
+// All personal nodes for a fingerprint group (collective view groups by these).
+QUERY getMemoriesByContentKey(content_key: String) =>
+  memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  RETURN memories
+// Backfill: stamp a content_key fingerprint onto an existing node (hash is
+// computed in Rust; HelixDB only stores it).
+QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ content_key: content_key })
+  RETURN updated
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
@@ -73,6 +115,21 @@ QUERY addMemoryContradiction(from_id: String, to_id: String, resolution: String,
   to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
   contradiction <- AddE<CONTRADICTS>({ resolution: resolution, resolved: resolved, resolution_strategy: resolution_strategy })::From(from_memory)::To(to_memory)
   RETURN contradiction
+
+// Contradiction-debt reconciliation (#45): enumerate a memory's outgoing
+// disputes (edges + their targets, parallel order) so the Cutter can drain the
+// dead ones; and retire the open ones from a memory with a strategy label.
+QUERY getMemoryContradictionsFull(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  out_edges <- memory::OutE<CONTRADICTS>
+  out_targets <- memory::Out<CONTRADICTS>
+  RETURN out_edges, out_targets
+
+QUERY resolveMemoryContradictions(memory_id: String, strategy: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  edges <- memory::OutE<CONTRADICTS>::WHERE(_::{resolved}::EQ(0))
+  updated <- edges::UPDATE({ resolved: 1, resolution_strategy: strategy })
+  RETURN updated
 QUERY addMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
   new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
   old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::FIRST
@@ -648,6 +705,17 @@ QUERY getMemoryAgent(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   agent <- memory::In<AGENT_CREATED>
   RETURN agent
+
+// Swarm rendezvous (#39): presence lives in the shared graph, so agents on any
+// host see each other through the one DB — no CLI-to-CLI coordination.
+QUERY heartbeatAgent(agent_id: String, host: String, last_seen: String, status: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  updated <- agent::UPDATE({ host: host, last_seen: last_seen, status: status })
+  RETURN updated
+
+QUERY listAgents() =>
+  agents <- N<Agent>
+  RETURN agents
 
 QUERY addConceptIsA(child_id: String, parent_id: String, inheritance_type: String) =>
   child <- N<Concept>::WHERE(_::{concept_id}::EQ(child_id))::FIRST

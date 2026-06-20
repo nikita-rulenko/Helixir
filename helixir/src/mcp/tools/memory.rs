@@ -16,7 +16,7 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 #[tool_router(router = memory_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, entities, relations, memory_ids, chunks_created, stats}. IMPORTANT: if the response contains a needs_clarification array, the memory charter blocked silent resolution of a conflict — read each entry and ask the user its suggested_question (or apply a standing rule), then add the answer as a new memory."
+        description = "Add memory with LLM-powered extraction. Extracts atomic facts (max 15 per call), generates embeddings, creates graph relations. For large texts (>15 facts expected), split into smaller chunks before calling. Returns: {memories_added, memory_ids, deduped, entities, relations, chunks_created, stats}. The 'deduped' array holds existing memory_ids this input was already-known-and-linked-to (not newly stored) — so memories_added=0 with a non-empty deduped means 'already saved', not a failure. IMPORTANT: if the response contains a needs_clarification array, the memory charter blocked silent resolution of a conflict — read each entry and ask the user its suggested_question (or apply a standing rule), then add the answer as a new memory."
     )]
     async fn add_memory(
         &self,
@@ -114,9 +114,21 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mode = params.mode.unwrap_or_else(|| "recent".to_string());
+        let mode = params
+            .mode
+            .unwrap_or_else(|| self.client.config().default_search_mode.clone());
         let limit = params.limit.map(|l| l as usize);
-        let scope = params.scope.unwrap_or_else(|| "personal".to_string());
+        // Default scope is intentionally personal (GH #40): collective memory
+        // stays hidden unless explicitly requested, so weak models aren't
+        // flooded with other users' facts. Not a config knob — a safety default.
+        let requested_scope = params.scope.unwrap_or_else(|| "personal".to_string());
+        // Solo mode answers only from the user's own memory — a collective/all
+        // request is downgraded to personal rather than leaking other users'.
+        let scope = if self.client.config().mode.collective_enabled() {
+            requested_scope
+        } else {
+            "personal".to_string()
+        };
 
         let query_preview: String = params.query.chars().take(50).collect();
         info!(

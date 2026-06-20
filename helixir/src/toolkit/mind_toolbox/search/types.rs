@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::core::config::SearchThresholds;
+use crate::core::config::{RetrievalConfig, SearchThresholds};
 
 use super::hybrid::HybridSearchError;
 use super::vector::VectorSearchError;
@@ -26,6 +26,7 @@ pub struct SearchEngineConfig {
     pub vector_weight: f64,
     pub bm25_weight: f64,
     pub search_thresholds: SearchThresholds,
+    pub retrieval: RetrievalConfig,
 }
 
 impl Default for SearchEngineConfig {
@@ -37,6 +38,7 @@ impl Default for SearchEngineConfig {
             vector_weight: 0.6,
             bm25_weight: 0.4,
             search_thresholds: SearchThresholds::default(),
+            retrieval: RetrievalConfig::default(),
         }
     }
 }

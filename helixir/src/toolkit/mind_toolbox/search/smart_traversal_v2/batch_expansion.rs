@@ -22,7 +22,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tracing::{debug, info};
 
-use super::models::{SearchConfig, SearchResult, edge_weights};
+use super::models::{SearchConfig, SearchResult};
 use super::phases::TraversalError;
 use super::ppr::PprEdge;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
@@ -112,62 +112,31 @@ struct LevelBatchResponse {
 }
 
 /// `(edges, neighbour nodes, edge label, weight, incoming?)` per family.
-fn families(r: &LevelBatchResponse) -> [(&[BatchEdge], &[BatchNode], &'static str, f64, bool); 8] {
+/// Weights + incoming dampeners come from config (passed in by the caller).
+fn families<'a>(
+    r: &'a LevelBatchResponse,
+    ew: crate::core::config::EdgeWeights,
+    ed: crate::core::config::EdgeDamping,
+) -> [(&'a [BatchEdge], &'a [BatchNode], &'static str, f64, bool); 8] {
     [
-        (
-            &r.implies_out_e,
-            &r.implies_out_n,
-            "IMPLIES",
-            edge_weights::IMPLIES,
-            false,
-        ),
-        (
-            &r.because_out_e,
-            &r.because_out_n,
-            "BECAUSE",
-            edge_weights::BECAUSE,
-            false,
-        ),
-        (
-            &r.contradicts_out_e,
-            &r.contradicts_out_n,
-            "CONTRADICTS",
-            edge_weights::CONTRADICTS,
-            false,
-        ),
-        (
-            &r.relation_out_e,
-            &r.relation_out_n,
-            "MEMORY_RELATION",
-            edge_weights::MEMORY_RELATION,
-            false,
-        ),
-        (
-            &r.implies_in_e,
-            &r.implies_in_n,
-            "IMPLIES_IN",
-            edge_weights::IMPLIES * 0.9,
-            true,
-        ),
-        (
-            &r.because_in_e,
-            &r.because_in_n,
-            "BECAUSE_IN",
-            edge_weights::BECAUSE * 0.85,
-            true,
-        ),
+        (&r.implies_out_e, &r.implies_out_n, "IMPLIES", ew.implies, false),
+        (&r.because_out_e, &r.because_out_n, "BECAUSE", ew.because, false),
+        (&r.contradicts_out_e, &r.contradicts_out_n, "CONTRADICTS", ew.contradicts, false),
+        (&r.relation_out_e, &r.relation_out_n, "MEMORY_RELATION", ew.memory_relation, false),
+        (&r.implies_in_e, &r.implies_in_n, "IMPLIES_IN", ew.implies * ed.implies_in, true),
+        (&r.because_in_e, &r.because_in_n, "BECAUSE_IN", ew.because * ed.because_in, true),
         (
             &r.contradicts_in_e,
             &r.contradicts_in_n,
             "CONTRADICTS_IN",
-            edge_weights::CONTRADICTS * 0.8,
+            ew.contradicts * ed.contradicts_in,
             true,
         ),
         (
             &r.relation_in_e,
             &r.relation_in_n,
             "MEMORY_RELATION_IN",
-            edge_weights::MEMORY_RELATION * 0.6,
+            ew.memory_relation * ed.relation_in,
             true,
         ),
     ]
@@ -198,6 +167,8 @@ pub(crate) struct LevelFetch {
 pub(crate) async fn fetch_level(
     client: &HelixClient,
     memory_ids: &[&str],
+    ew: crate::core::config::EdgeWeights,
+    ed: crate::core::config::EdgeDamping,
 ) -> Result<LevelFetch, TraversalError> {
     let params = serde_json::json!({ "memory_ids": memory_ids });
     let response: LevelBatchResponse = client
@@ -209,7 +180,7 @@ pub(crate) async fn fetch_level(
     for m in &response.memories {
         nodes_by_uuid.insert(m.id.clone(), m.clone());
     }
-    let fams = families(&response);
+    let fams = families(&response, ew, ed);
     for (_, nodes, _, _, _) in &fams {
         for n in *nodes {
             nodes_by_uuid.insert(n.id.clone(), n.clone());
@@ -286,7 +257,7 @@ pub async fn graph_expansion_phase_batched(
                 parent_score_by_uuid.insert(m.id.as_str(), *score);
             }
         }
-        let fams = families(&response);
+        let fams = families(&response, config.edge_weights, config.edge_damping);
         for (_, nodes, _, _, _) in &fams {
             for n in *nodes {
                 node_by_uuid.insert(n.id.as_str(), n);

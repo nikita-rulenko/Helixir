@@ -30,11 +30,20 @@ pub struct PassConfig {
 
 impl Default for PassConfig {
     fn default() -> Self {
+        // Single source of truth — the orchestrator defaults live in config.
+        Self::from_config(&crate::core::config::HelixirConfig::default())
+    }
+}
+
+impl PassConfig {
+    /// Source the pass tunables from config (respects helixir.toml / env).
+    pub fn from_config(c: &crate::core::config::HelixirConfig) -> Self {
+        let o = &c.moira.orchestrator;
         Self {
-            corpus_limit: 500,
-            grow_threshold: 0.62,
-            max_seeds: 24,
-            max_hops: 5,
+            corpus_limit: o.corpus_limit as i64,
+            grow_threshold: o.grow_threshold,
+            max_seeds: o.max_seeds,
+            max_hops: o.max_hops,
         }
     }
 }
@@ -68,8 +77,13 @@ impl<'a> Orchestrator<'a> {
         let grow = clotho.grow_pass(&mems, cfg.grow_threshold).await?;
 
         // 2) Atropos — curate the woven subsets (Lachesis routes & gates within).
-        let candidates = self.tooling.list_categories(500).await?;
-        let universe = self.tooling.total_memory_count(1_000_000).await?.max(1);
+        let orch = &self.tooling.config.moira.orchestrator;
+        let candidates = self.tooling.list_categories(orch.candidate_cap).await?;
+        let universe = self
+            .tooling
+            .total_memory_count(orch.universe_cap)
+            .await?
+            .max(1);
         let seeds: Vec<(String, String)> =
             candidates.iter().take(cfg.max_seeds).cloned().collect();
         let atropos = Atropos::new(self.tooling);

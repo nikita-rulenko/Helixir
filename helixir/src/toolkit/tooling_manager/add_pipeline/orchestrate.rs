@@ -45,6 +45,7 @@ impl ToolingManager {
 
         let mut added_ids = Vec::new();
         let mut updated_ids = Vec::new();
+        let mut deduped_ids = Vec::new();
         let mut stored_memory_ids: HashMap<usize, String> = HashMap::new();
         let mut skipped = 0usize;
         let mut entities_linked = 0usize;
@@ -52,7 +53,7 @@ impl ToolingManager {
         let mut relations_created = 0usize;
         let mut chunks_created = 0usize;
 
-        let memories_to_store = Self::prepare_memories_for_storage(extraction.memories, message);
+        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
 
         debug!(
             "Batch-generating embeddings for {} memories",
@@ -75,7 +76,7 @@ impl ToolingManager {
                     &memory.text,
                     vector,
                     user_id,
-                    5,
+                    self.config.write.recall_top_k,
                     "contextual",
                     None,
                     None,
@@ -180,7 +181,12 @@ impl ToolingManager {
                     .and_then(|m| m.memory_type.as_deref())
             });
             if let Some(conflict_type) =
-                crate::core::charter::escalation_reason(&decision, &memory.memory_type, target_type)
+                crate::core::charter::escalation_reason(
+                    &decision,
+                    &memory.memory_type,
+                    target_type,
+                    self.config.write.charter_low_confidence,
+                )
             {
                 let existing_content = decision.target_memory_id.as_deref().and_then(|tid| {
                     similar_memories
@@ -214,6 +220,7 @@ impl ToolingManager {
                     &similar_memories,
                     &mut added_ids,
                     &mut updated_ids,
+                    &mut deduped_ids,
                     &mut skipped,
                     &mut chunks_created,
                     &mut relations_created,
@@ -248,12 +255,12 @@ impl ToolingManager {
             )
             .await?;
 
-        if message.len() > 100 && added_ids.len() > 1 {
+        if message.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1 {
             let raw_mem = ExtractedMemory {
                 text: message.to_string(),
                 memory_type: "fact".to_string(),
-                certainty: 70,
-                importance: 40,
+                certainty: self.config.write.raw_source_certainty as i32,
+                importance: self.config.write.raw_source_importance as i32,
                 entities: vec![],
                 context: None,
             };
@@ -301,6 +308,7 @@ impl ToolingManager {
             added: added_ids,
             updated: updated_ids,
             deleted: vec![],
+            deduped: deduped_ids,
             skipped,
             entities_extracted: entities_linked,
             reasoning_relations_created: relations_created,

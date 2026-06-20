@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
 description = "Ontological memory for LLMs - Rust implementation"
@@ -50,10 +50,20 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 strum = { version = "0.26", features = ["derive"] }
 
 # MCP Server (Model Context Protocol)
-rmcp = { version = "0.8", features = ["macros", "server", "transport-io"] }
+# transport-io = stdio (per-client); transport-streamable-http-server = the
+# network gateway (#42, one process per host serving many clients over HTTP).
+rmcp = { version = "0.8", features = [
+    "macros",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+# HTTP host for the gateway's StreamableHttpService (rmcp pins axum 0.8).
+axum = "0.8"
 
 # Config
 config = "0.14"
+toml = "0.8"
 
 # Caching
 lru = "0.12"
@@ -80,6 +90,8 @@ petgraph = "0.8"
 # JSON Schema (for MCP tool parameters)
 schemars = "1.0"
 moka = { version = "0.12.15", features = ["future"] }
+ort = "2.0.0-rc.12"
+tokenizers = { version = "0.23.1", default-features = false, features = ["onig"] }
 
 # MCP (Model Context Protocol)
 # TODO: Add mcp-rust-sdk when available or implement manually

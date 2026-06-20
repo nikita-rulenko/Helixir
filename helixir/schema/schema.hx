@@ -19,7 +19,10 @@ N::Agent {
   role: String,
   capabilities: String,
   agent_version: String,
-  created_at: String
+  created_at: String,
+  host: String DEFAULT "",
+  last_seen: String DEFAULT "",
+  status: String DEFAULT "idle"
 }
 E::IN_SESSION {
   From: User,
@@ -30,6 +33,7 @@ E::IN_SESSION {
 }
 N::Memory {
   memory_id: String,
+  INDEX content_key: String DEFAULT "",
   user_id: String DEFAULT "",
   content: String,
   memory_type: String DEFAULT "fact",

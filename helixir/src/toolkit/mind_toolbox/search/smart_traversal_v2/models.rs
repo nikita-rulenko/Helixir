@@ -1,28 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub mod edge_weights {
-    pub const BECAUSE: f64 = 1.0;
-    pub const IMPLIES: f64 = 0.9;
-    pub const SIMILAR_TO: f64 = 0.75;
-    pub const MEMORY_RELATION: f64 = 0.7;
-    pub const EXTRACTED_ENTITY: f64 = 0.6;
-    pub const CONTRADICTS: f64 = 0.4;
-    pub const DEFAULT: f64 = 0.5;
-
-    pub fn get_weight(edge_type: &str) -> f64 {
-        match edge_type.to_uppercase().as_str() {
-            "BECAUSE" => BECAUSE,
-            "IMPLIES" => IMPLIES,
-            "SIMILAR_TO" => SIMILAR_TO,
-            "MEMORY_RELATION" => MEMORY_RELATION,
-            "EXTRACTED_ENTITY" => EXTRACTED_ENTITY,
-            "CONTRADICTS" => CONTRADICTS,
-            _ => DEFAULT,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub memory_id: String,
@@ -172,6 +150,15 @@ pub struct SearchConfig {
     pub graph_graph_weight: f64,
     pub graph_temporal_weight: f64,
     pub temporal_decay_days: f64,
+
+    // Ranking knobs sourced from config.retrieval (was hardcoded in ppr.rs /
+    // phases.rs). Defaults here mirror those consts.
+    pub ppr_alpha: f64,
+    pub ppr_iterations: usize,
+    pub rank_base: f64,
+    pub rank_decay: f64,
+    pub edge_weights: crate::core::config::EdgeWeights,
+    pub edge_damping: crate::core::config::EdgeDamping,
 }
 
 impl Default for SearchConfig {
@@ -192,6 +179,12 @@ impl Default for SearchConfig {
             graph_graph_weight: 0.5,
             graph_temporal_weight: 0.2,
             temporal_decay_days: 30.0,
+            ppr_alpha: 0.6,
+            ppr_iterations: 20,
+            rank_base: 0.95,
+            rank_decay: 0.92,
+            edge_weights: crate::core::config::EdgeWeights::default(),
+            edge_damping: crate::core::config::EdgeDamping::default(),
         }
     }
 }

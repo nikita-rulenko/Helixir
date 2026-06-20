@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use tracing::{info, warn};
 
+use crate::agents::atropos::Atropos;
 use crate::agents::orchestrator::{Orchestrator, PassConfig, PipelineRun};
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::ToolingError;
@@ -25,6 +26,8 @@ pub struct DaemonConfig {
     pub interval: Duration,
     /// On-call: run a single pass and stop.
     pub once: bool,
+    /// Host label stamped on this daemon's swarm presence (#39).
+    pub host: String,
     pub pass: PassConfig,
 }
 
@@ -56,17 +59,62 @@ impl<'a> Daemon<'a> {
             cfg.user
         );
 
+        // The daemon is an agent in the swarm — it announces presence in the
+        // shared graph each pass so any host's roster (`helixir swarm`) sees it.
+        let agent_id = format!("daemon:{}", cfg.user);
+
         let mut pass = 0u64;
         loop {
             pass += 1;
+            if let Err(e) = self
+                .tooling
+                .register_or_heartbeat(&agent_id, "daemon", &cfg.host, "working")
+                .await
+            {
+                warn!("daemon: heartbeat failed (pass {pass}): {e}");
+            }
             match orchestrator.full_pass(&cfg.user, &cfg.pass).await {
                 Ok(run) => on_pass(pass, &run),
                 Err(e) => warn!("daemon: pass {pass} failed: {e}"),
             }
 
+            // Drain contradiction debt each pass — keep resolved=0 cross-user
+            // disputes from piling up as the collective grows (#45).
+            let debt_limit = self.tooling.config.moira.daemon.reconcile_limit;
+            match Atropos::new(self.tooling).reconcile(&cfg.user, debt_limit).await {
+                Ok(s) if s.scanned > 0 => info!(
+                    "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
+                    s.drained_preference, s.drained_superseded, s.kept_live, s.notified
+                ),
+                Ok(_) => {}
+                Err(e) => warn!("daemon: reconcile failed: {e}"),
+            }
+
+            // Paraphrase backstop (#43/#55) — merge same-meaning facts into one
+            // fingerprint group, NLI-gated (never merges a contradiction). Runs
+            // every pass when the local NLI model is installed (collective/insights).
+            if crate::llm::nli::status().installed {
+                let mlim = self.tooling.config.moira.daemon.merge_limit;
+                let mcos = self.tooling.config.moira.daemon.merge_cosine_threshold;
+                match Atropos::new(self.tooling).merge_paraphrases(mlim, mcos).await {
+                    Ok(s) if s.merged_groups > 0 => info!(
+                        "daemon: merged {} paraphrase group(s) ({} nodes); {} contradictions blocked",
+                        s.merged_groups, s.nodes_restamped, s.contradictions_blocked
+                    ),
+                    Ok(_) => {}
+                    Err(e) => warn!("daemon: paraphrase merge failed: {e}"),
+                }
+            }
+
             if cfg.once {
                 break;
             }
+            // Idle heartbeat before sleeping — the roster shows live-but-idle
+            // rather than going stale the instant a pass finishes.
+            let _ = self
+                .tooling
+                .register_or_heartbeat(&agent_id, "daemon", &cfg.host, "idle")
+                .await;
             tokio::select! {
                 _ = tokio::time::sleep(cfg.interval) => {}
                 _ = tokio::signal::ctrl_c() => {

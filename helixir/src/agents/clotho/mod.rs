@@ -16,12 +16,9 @@ use crate::llm::providers::base::LlmProvider;
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::{Clarification, ToolingError};
 
-/// Dominance margin for grow-pass tagging: tag only categories within this much
-/// of the best match. nomic on-target cosine is ~0.70–0.74 and the noise floor
-/// ~0.45–0.57, a ~0.13+ gap, so this keeps the top domain(s) and drops the
-/// noise-floor smear that wove spurious cross-domain bridges (the provenance
-/// drill exposed exactly this).
-const DOMINANCE_MARGIN: f64 = 0.07;
+// Dominance margin (grow-pass: tag only categories within this much of the best
+// match — keeps the top domain(s), drops the noise-floor smear that wove
+// spurious cross-domain bridges) now lives in config.moira.clotho.dominance_margin.
 
 /// One category an auto-tag pass attached to a memory.
 #[derive(Debug, Clone)]
@@ -195,12 +192,13 @@ impl<'a> Clotho<'a> {
         threshold: f64,
     ) -> Result<GrowStats, ToolingError> {
         let mut stats = GrowStats::default();
+        let cc = self.tooling.config.moira.clotho.clone();
 
         // Load the live dictionary and embed it once (name: description). This
         // is what lets minted categories be reused: their name+description
         // persist, and the next pass re-embeds them (DB vectors aren't readable).
         let mut dict: Vec<(String, String, Vec<f32>)> = Vec::new();
-        for (id, name, desc) in self.tooling.list_categories_full(2000).await? {
+        for (id, name, desc) in self.tooling.list_categories_full(cc.dict_load_cap).await? {
             let text = if desc.trim().is_empty() {
                 name.clone()
             } else {
@@ -234,7 +232,7 @@ impl<'a> Clotho<'a> {
             let best = scored.iter().map(|(_, s)| *s).fold(f64::MIN, f64::max);
             let matches: Vec<(String, i64)> = scored
                 .iter()
-                .filter(|(_, s)| *s >= threshold && *s >= best - DOMINANCE_MARGIN)
+                .filter(|(_, s)| *s >= threshold && *s >= best - cc.dominance_margin)
                 .map(|(cid, s)| ((*cid).clone(), (s.clamp(0.0, 1.0) * 100.0).round() as i64))
                 .collect();
 
@@ -254,7 +252,7 @@ impl<'a> Clotho<'a> {
                 Ok(Some((cid, name, emb))) => {
                     let _ = self
                         .tooling
-                        .tag_memory(mem_id, &cid, 70, "clotho-llm-mint")
+                        .tag_memory(mem_id, &cid, cc.mint_confidence, "clotho-llm-mint")
                         .await;
                     if dict.iter().any(|(id, _, _)| id == &cid) {
                         stats.reused_mint += 1;
