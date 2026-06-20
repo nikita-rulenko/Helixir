@@ -109,8 +109,8 @@ make config         # Print MCP config to paste into your IDE
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
-  - [OpenAI](https://platform.openai.com/api-keys)
-  - [Ollama](https://ollama.com) (local, no key needed)
+  - [DeepSeek](https://platform.deepseek.com) (cheap, ~$0.14/$0.28 per 1M tok)
+  - [Ollama](https://ollama.com) (local, no key needed — auto-fallback when a remote provider is down)
 
 ---
 
@@ -446,13 +446,19 @@ All settings are passed as environment variables.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `openai`, `ollama` |
+| `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
 | `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name |
-| `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama) |
+| `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
 | `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
 | `RUST_LOG` | `helixir=warn` | Log level |
+
+> **Automatic local fallback.** When the remote LLM provider (Cerebras /
+> DeepSeek) is unreachable, Helixir transparently retries the same request
+> against a local Ollama model (`qwen2.5:7b` by default) so a write never
+> fails on a remote outage. Enabled by default; tune via the `llm_fallback_*`
+> keys in `helixir.toml`.
 
 ### Provider presets
 
@@ -473,15 +479,31 @@ HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
 </details>
 
 <details>
+<summary><b>DeepSeek + OpenRouter</b> (cheapest remote — ~$0.0001 per write)</summary>
+
+```bash
+HELIX_LLM_PROVIDER=deepseek
+HELIX_LLM_MODEL=deepseek-v4-flash   # non-thinking mode is selected automatically
+HELIX_LLM_API_KEY=sk-xxx            # https://platform.deepseek.com
+
+HELIX_EMBEDDING_PROVIDER=openai
+HELIX_EMBEDDING_URL=https://openrouter.ai/api/v1
+HELIX_EMBEDDING_MODEL=nomic-embed-text-v1.5
+HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
+```
+
+</details>
+
+<details>
 <summary><b>Fully local with Ollama</b> (no API keys, fully private)</summary>
 
 ```bash
 # Install Ollama: https://ollama.com
-ollama pull llama3:8b
+ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 
 HELIX_LLM_PROVIDER=ollama
-HELIX_LLM_MODEL=llama3:8b
+HELIX_LLM_MODEL=qwen2.5:7b
 HELIX_LLM_BASE_URL=http://localhost:11434
 
 HELIX_EMBEDDING_PROVIDER=ollama
