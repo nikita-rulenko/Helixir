@@ -102,7 +102,7 @@ fn mcp_full_surface_liveness() {
         })
         .expect("need a memory_id to exercise update_memory");
 
-    let (_updated, _) = mcp.call_tool(
+    let (updated, _) = mcp.call_tool(
         "update_memory",
         json!({
             "memory_id": mem_id,
@@ -111,31 +111,76 @@ fn mcp_full_surface_liveness() {
         }),
     );
     exercised.push("update_memory");
+    assert_eq!(
+        updated["updated"].as_bool(),
+        Some(true),
+        "update_memory must report updated=true: {updated}"
+    );
+    // Read-back: the new content must be retrievable (the update actually landed).
+    let (after_update, _) = mcp.call_tool(
+        "search_memory",
+        json!({"query": format!("Oracle {run} verified buildkite"), "user_id": user, "mode": "full", "limit": 5}),
+    );
+    assert!(
+        after_update
+            .as_array()
+            .map(|a| a.iter().any(|r| r["content"].as_str().unwrap_or("").contains("verified")))
+            .unwrap_or(false),
+        "the updated content must be searchable after update_memory: {after_update}"
+    );
 
     // ---- the rest of the read surface --------------------------------------
-    mcp.call_tool("get_memory_graph", json!({"user_id": user}));
+    let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
     exercised.push("get_memory_graph");
+    assert!(
+        graph["nodes"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        "get_memory_graph must return the user's node(s): {graph}"
+    );
 
-    mcp.call_tool(
+    let (by_concept, _) = mcp.call_tool(
         "search_by_concept",
         json!({"query": fact, "user_id": user, "concept_type": "fact"}),
     );
     exercised.push("search_by_concept");
+    assert!(
+        by_concept.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        "search_by_concept must find the just-added fact: {by_concept}"
+    );
 
-    mcp.call_tool(
+    let (chain, _) = mcp.call_tool(
         "search_reasoning_chain",
         json!({"query": fact, "user_id": user}),
     );
     exercised.push("search_reasoning_chain");
+    assert!(
+        chain["chains"].is_array() && chain["total_memories"].is_number(),
+        "search_reasoning_chain must return a well-formed chain envelope: {chain}"
+    );
 
-    mcp.call_tool(
+    let (connected, _) = mcp.call_tool(
         "connect_memories",
         json!({"query_a": "CI runner zeta", "query_b": "buildkite arm64", "user_id": user}),
     );
     exercised.push("connect_memories");
+    // This oracle user has a single unconnected memory, so there is no PATH to
+    // find (found=false is correct). The surface guard here is well-formedness:
+    // the tool must compute and return a complete envelope, not error or return
+    // garbage. Deterministic path DISCOVERY (found=true, hops>=1) is asserted in
+    // cross_domain_bridge_e2e over a seeded connected graph.
+    assert!(
+        connected["found"].is_boolean()
+            && connected["hops"].is_number()
+            && connected["nodes"].is_array()
+            && connected["edges"].is_array(),
+        "connect_memories must return a well-formed path envelope: {connected}"
+    );
 
-    mcp.call_tool("search_incomplete_thoughts", json!({"limit": 3}));
+    let (incomplete, _) = mcp.call_tool("search_incomplete_thoughts", json!({"limit": 3}));
     exercised.push("search_incomplete_thoughts");
+    assert!(
+        incomplete["found"].is_number() || incomplete.is_array(),
+        "search_incomplete_thoughts must return a well-formed result: {incomplete}"
+    );
 
     // get_add_status on a non-existent id must report not_found (buffer off).
     let (status, _) = mcp.call_tool(
@@ -180,13 +225,17 @@ fn mcp_full_surface_liveness() {
         "think_status must reflect root + added thought: {tstatus}"
     );
 
-    mcp.call_tool(
+    let (recalled, _) = mcp.call_tool(
         "think_recall",
         json!({"session_id": s, "query": format!("nimbus_{run} backup"), "parent_idx": root_idx, "user_id": user}),
     );
     exercised.push("think_recall");
+    assert!(
+        recalled["recalled_count"].is_number() && recalled["thought_indices"].is_array(),
+        "think_recall must report what it pulled into the session: {recalled}"
+    );
 
-    mcp.call_tool(
+    let (concluded, _) = mcp.call_tool(
         "think_conclude",
         json!({
             "session_id": s,
@@ -195,6 +244,11 @@ fn mcp_full_surface_liveness() {
         }),
     );
     exercised.push("think_conclude");
+    assert_eq!(
+        concluded["status"].as_str(),
+        Some("decided"),
+        "think_conclude must move the session to 'decided': {concluded}"
+    );
 
     let (committed, _) = mcp.call_tool("think_commit", json!({"session_id": s, "user_id": user}));
     exercised.push("think_commit");
@@ -212,8 +266,18 @@ fn mcp_full_surface_liveness() {
         "think_start",
         json!({"session_id": s2, "initial_thought": "a throwaway line of reasoning"}),
     );
-    mcp.call_tool("think_discard", json!({"session_id": s2}));
+    let (discarded, _) = mcp.call_tool("think_discard", json!({"session_id": s2}));
     exercised.push("think_discard");
+    assert!(
+        discarded["discarded_thoughts"].as_u64().unwrap_or(0) >= 1,
+        "think_discard must drop the started session's thought(s): {discarded}"
+    );
+    // The discarded session must be gone: status on it should no longer be active.
+    let gone = mcp.call_tool_expect_error("think_status", json!({"session_id": s2}));
+    assert!(
+        !gone.is_empty(),
+        "think_status on a discarded session should report it no longer exists"
+    );
 
     // ---- report -------------------------------------------------------------
     const ALL: [&str; 17] = [

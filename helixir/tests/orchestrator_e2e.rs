@@ -61,7 +61,18 @@ async fn full_pass_runs_the_whole_choreography() {
         g.tagged_by_match + g.minted + g.reused_mint + g.failed <= g.scanned,
         "grow buckets cannot exceed the scan"
     );
-    // Choreography reached Atropos (insights is a real Vec, possibly empty on a
-    // tiny corpus — the point is it ran end to end without error).
-    let _ = &result.insights;
+    // The grow stage must have actually CATEGORISED at least one memory. The
+    // old test only checked `scanned>=1` and ignored `insights` entirely, so a
+    // pass that scanned but tagged nothing (broken Clotho / empty category
+    // dictionary / dead embedding tagger) passed silently. The four deployment
+    // notes must earn at least one category between them.
+    let categorised = g.tagged_by_match + g.minted + g.reused_mint;
+    assert!(
+        categorised >= 1,
+        "the choreography must categorise ≥1 memory (scanned={}, failed={}, insights={}): \
+         a scan that tags nothing means Clotho silently did no work",
+        g.scanned,
+        g.failed,
+        result.insights.len()
+    );
 }
