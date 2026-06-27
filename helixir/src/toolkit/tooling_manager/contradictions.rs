@@ -235,6 +235,31 @@ impl ToolingManager {
         Ok(())
     }
 
+    /// Record a BECAUSE (causation) reasoning edge between two memories via the
+    /// existing `addMemoryCausation` query. The live extraction path writes the
+    /// same edge from "X because Y" statements; exposed here for deterministic
+    /// seeding of reasoning-routed chains in tests (no LLM in the loop).
+    pub async fn record_causation(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        strength: i64,
+    ) -> Result<(), ToolingError> {
+        self.db
+            .execute_query::<serde_json::Value, _>(
+                "addMemoryCausation",
+                &serde_json::json!({
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "strength": strength,
+                    "reasoning_id": "seeded",
+                }),
+            )
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     /// Retire every open outgoing contradiction from `memory_id`, stamping the
     /// drain `strategy` (e.g. `coexist_preference`). Non-destructive: the edge
     /// stays, only `resolved` flips to 1 — the dispute's history is preserved.

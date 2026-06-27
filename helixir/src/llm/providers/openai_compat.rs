@@ -110,30 +110,28 @@ impl OpenAiCompatProvider {
             client,
         }
     }
-}
 
-#[async_trait]
-impl LlmProvider for OpenAiCompatProvider {
-    async fn generate(
+    /// Build the request body. Split out from `generate` so the wire shape —
+    /// especially the `thinking: {type: disabled}` knob that differs per
+    /// provider — is unit-testable without an HTTP round-trip.
+    fn build_request(
         &self,
         system_prompt: &str,
         user_prompt: &str,
         response_format: Option<&str>,
-    ) -> Result<(String, LlmMetadata), LlmProviderError> {
-        let messages = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system_prompt.to_string(),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: user_prompt.to_string(),
-            },
-        ];
-
-        let request = ChatRequest {
+    ) -> ChatRequest {
+        ChatRequest {
             model: self.model.clone(),
-            messages,
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: user_prompt.to_string(),
+                },
+            ],
             temperature: self.temperature,
             response_format: response_format.map(|f| ResponseFormat {
                 r#type: f.to_string(),
@@ -141,20 +139,15 @@ impl LlmProvider for OpenAiCompatProvider {
             thinking: self.disable_thinking.then(|| ThinkingOptions {
                 r#type: "disabled".to_string(),
             }),
-        };
+        }
+    }
 
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&request)
-            .send()
-            .await?
-            .error_for_status()
-            .map_err(LlmProviderError::Http)?
-            .json::<ChatResponse>()
-            .await?;
-
+    /// Extract content + token metadata from a decoded response. Split out so
+    /// the empty-`choices` error path is unit-testable without a live server.
+    fn parse_response(
+        &self,
+        response: ChatResponse,
+    ) -> Result<(String, LlmMetadata), LlmProviderError> {
         let content = response
             .choices
             .first()
@@ -178,6 +171,32 @@ impl LlmProvider for OpenAiCompatProvider {
 
         Ok((content, metadata))
     }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiCompatProvider {
+    async fn generate(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        response_format: Option<&str>,
+    ) -> Result<(String, LlmMetadata), LlmProviderError> {
+        let request = self.build_request(system_prompt, user_prompt, response_format);
+
+        let response = self
+            .client
+            .post(&self.endpoint)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await?
+            .error_for_status()
+            .map_err(LlmProviderError::Http)?
+            .json::<ChatResponse>()
+            .await?;
+
+        self.parse_response(response)
+    }
 
     fn provider_name(&self) -> &str {
         &self.name
@@ -185,5 +204,77 @@ impl LlmProvider for OpenAiCompatProvider {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deepseek() -> OpenAiCompatProvider {
+        OpenAiCompatProvider::new(
+            "deepseek",
+            "https://api.deepseek.com/chat/completions",
+            "k",
+            "deepseek-v4-flash",
+            0.1,
+            60,
+            true, // disable_thinking
+        )
+    }
+    fn cerebras() -> OpenAiCompatProvider {
+        OpenAiCompatProvider::new(
+            "cerebras",
+            "https://api.cerebras.ai/v1/chat/completions",
+            "k",
+            "gpt-oss-120b",
+            0.3,
+            60,
+            false,
+        )
+    }
+
+    #[test]
+    fn deepseek_request_disables_thinking() {
+        let req = deepseek().build_request("sys", "usr", Some("json_object"));
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["model"], "deepseek-v4-flash");
+        assert_eq!(v["thinking"]["type"], "disabled");
+        assert_eq!(v["response_format"]["type"], "json_object");
+        assert_eq!(v["messages"][0]["role"], "system");
+        assert_eq!(v["messages"][1]["content"], "usr");
+    }
+
+    #[test]
+    fn cerebras_request_omits_thinking_and_format() {
+        // Cerebras must NOT receive the DeepSeek-specific `thinking` field, and
+        // `response_format` is omitted when not requested.
+        let req = cerebras().build_request("sys", "usr", None);
+        let v = serde_json::to_value(&req).unwrap();
+        assert!(v.get("thinking").is_none(), "cerebras must not send thinking");
+        assert!(v.get("response_format").is_none());
+        assert_eq!(v["temperature"], 0.3);
+    }
+
+    #[test]
+    fn parse_response_extracts_content_and_usage() {
+        let resp: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"hello"}}],
+                "usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#,
+        )
+        .unwrap();
+        let (content, meta) = cerebras().parse_response(resp).unwrap();
+        assert_eq!(content, "hello");
+        assert_eq!(meta.provider, "cerebras");
+        assert_eq!(meta.model, "gpt-oss-120b");
+        assert_eq!(meta.tokens_total, Some(8));
+    }
+
+    #[test]
+    fn parse_response_empty_choices_is_clean_error() {
+        let resp: ChatResponse = serde_json::from_str(r#"{"choices":[]}"#).unwrap();
+        let err = cerebras().parse_response(resp).unwrap_err();
+        // must be a structured provider error, never a panic
+        assert!(matches!(err, LlmProviderError::Provider(_)));
     }
 }

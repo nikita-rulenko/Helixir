@@ -161,11 +161,17 @@ mod tests {
         assert_eq!(pick_onnx_variant(), "onnx/model_qint8_arm64.onnx");
     }
 
-    // The safety-critical behaviour, gated on the model being downloaded.
-    // Run with: `helixir model download` then `cargo test nli -- --ignored`.
+    // Safety-critical: the paraphrase backstop must NEVER merge opposite
+    // preferences ("prefer dark" vs "prefer light"). This used to be `#[ignore]`
+    // and so never ran; now it runs whenever the model is present (CI installs
+    // it, or a dev ran `helixir model download`) and skips cleanly otherwise —
+    // a catastrophic-case guard that no longer silently sits dormant.
     #[test]
-    #[ignore = "needs the downloaded NLI model (run `helixir model download`)"]
     fn nli_is_contradiction_safe() {
+        if !status().installed {
+            eprintln!("SKIP nli_is_contradiction_safe: NLI model not downloaded");
+            return;
+        }
         let mut j = NliJudge::load(&NliJudge::default_dir()).expect("load NLI model");
         let dark = "I prefer the dark theme in every editor.";
         let light = "I prefer the light theme in every editor.";
