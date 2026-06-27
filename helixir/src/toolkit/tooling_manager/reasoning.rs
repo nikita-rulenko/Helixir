@@ -6,6 +6,13 @@ use super::types::{
 };
 use crate::safe_truncate;
 
+/// True if a `connect_memories` / `route` anchor argument is itself a memory id
+/// (`mem_…` / `raw_…`) rather than a free-text query — in which case it anchors
+/// directly instead of going through best-effort search (#59).
+fn looks_like_memory_id(q: &str) -> bool {
+    (q.starts_with("mem_") || q.starts_with("raw_")) && !q.chars().any(char::is_whitespace)
+}
+
 impl ToolingManager {
     pub async fn search_reasoning_chain(
         &self,
@@ -179,20 +186,28 @@ impl ToolingManager {
 
         let mut seed_sets = Vec::with_capacity(2);
         for query in [query_a, query_b] {
-            let embedding = self
-                .embedder
-                .generate(query, true)
-                .await
-                .map_err(|e| ToolingError::Embedding(e.to_string()))?;
-            let seeds: Vec<(String, String)> = self
-                .search_engine
-                .search(
-                    query, &embedding, user_id, 3, "full", None, None, "personal",
-                )
-                .await?
-                .into_iter()
-                .map(|r| (r.memory_id, r.content))
-                .collect();
+            // #59: a query that IS a memory id anchors directly — no embedding,
+            // no search. The search-based resolution is best-effort (top-3,
+            // personal) and races the index on freshly-written memories, so a
+            // caller that already knows the memory (a test, or an agent that
+            // just stored it) can connect it deterministically by id.
+            let seeds: Vec<(String, String)> = if looks_like_memory_id(query) {
+                vec![(query.to_string(), String::new())]
+            } else {
+                let embedding = self
+                    .embedder
+                    .generate(query, true)
+                    .await
+                    .map_err(|e| ToolingError::Embedding(e.to_string()))?;
+                self.search_engine
+                    .search(
+                        query, &embedding, user_id, 3, "full", None, None, "personal",
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|r| (r.memory_id, r.content))
+                    .collect()
+            };
             seed_sets.push(seeds);
         }
         let seeds_b = seed_sets.pop().unwrap_or_default();
@@ -249,5 +264,21 @@ impl ToolingManager {
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_memory_id;
+
+    #[test]
+    fn detects_memory_ids_but_not_queries() {
+        assert!(looks_like_memory_id("mem_d48a6f6875ae"));
+        assert!(looks_like_memory_id("raw_2b25ce44754d"));
+        // free-text queries (the common case) must NOT be treated as ids
+        assert!(!looks_like_memory_id("Rajasthan monsoon grain harvest"));
+        assert!(!looks_like_memory_id("mem ory leak in the server")); // has a space
+        assert!(!looks_like_memory_id("memory of a fact"));
+        assert!(!looks_like_memory_id(""));
     }
 }

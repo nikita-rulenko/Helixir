@@ -59,7 +59,11 @@ impl McpClient {
         (client, boot_ms)
     }
 
-    pub fn request(&mut self, method: &str, params: Value) -> Value {
+    /// Send a request and return the FULL JSON-RPC envelope (result OR error),
+    /// asserting nothing about success. The shared basis for the happy-path
+    /// [`Self::request`] and the negative-path `*_expect_error` helpers — so
+    /// "this call SHOULD fail" is expressible, not structurally impossible.
+    pub fn request_raw(&mut self, method: &str, params: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
         let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -78,11 +82,7 @@ impl McpClient {
                 continue;
             };
             if value.get("id").and_then(Value::as_u64) == Some(id) {
-                assert!(
-                    value.get("error").is_none(),
-                    "{method} returned error: {value}"
-                );
-                return value["result"].clone();
+                return value;
             }
             // Server-initiated notification (no matching id): capture it so
             // tests can assert on best-effort pushes, then keep waiting.
@@ -90,6 +90,47 @@ impl McpClient {
                 self.notifications.push(value);
             }
         }
+    }
+
+    pub fn request(&mut self, method: &str, params: Value) -> Value {
+        let value = self.request_raw(method, params);
+        assert!(
+            value.get("error").is_none(),
+            "{method} returned error: {value}"
+        );
+        value["result"].clone()
+    }
+
+    /// Assert the request fails at the JSON-RPC layer; return the `error` object.
+    pub fn request_expect_error(&mut self, method: &str, params: Value) -> Value {
+        let value = self.request_raw(method, params);
+        assert!(
+            value.get("error").is_some(),
+            "{method} was expected to error but succeeded: {value}"
+        );
+        value["error"].clone()
+    }
+
+    /// Call a tool expecting failure — either a JSON-RPC error or a tool result
+    /// flagged `isError`. Returns the error text so the test can assert on it.
+    pub fn call_tool_expect_error(&mut self, name: &str, arguments: Value) -> String {
+        let value = self.request_raw("tools/call", json!({"name": name, "arguments": arguments}));
+        if let Some(err) = value.get("error") {
+            return err.to_string();
+        }
+        let result = &value["result"];
+        let is_error = result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(
+            is_error,
+            "{name} was expected to error but returned ok: {result}"
+        );
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
     }
 
     pub fn notify(&mut self, method: &str, params: Value) {

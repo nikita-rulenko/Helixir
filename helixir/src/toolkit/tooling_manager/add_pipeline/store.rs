@@ -381,3 +381,40 @@ impl ToolingManager {
         Ok(memory_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::content_key;
+
+    #[test]
+    fn content_key_is_deterministic() {
+        assert_eq!(
+            content_key("the staging server runs on port 8443", "fact"),
+            content_key("the staging server runs on port 8443", "fact"),
+        );
+    }
+
+    #[test]
+    fn content_key_normalizes_whitespace_and_case() {
+        // The fingerprint groups trivially-different renderings of one fact, so
+        // case and whitespace must not change the key (this is what makes the
+        // exact-dedup / consensus grouping work across users).
+        let base = content_key("Dark Theme everywhere", "preference");
+        assert_eq!(base, content_key("dark theme everywhere", "preference"));
+        assert_eq!(base, content_key("  dark   theme\teverywhere  ", "preference"));
+    }
+
+    #[test]
+    fn content_key_distinguishes_type_and_content() {
+        let a = content_key("backups run weekly", "fact");
+        assert_ne!(a, content_key("backups run weekly", "preference"), "type must matter");
+        assert_ne!(a, content_key("backups run daily", "fact"), "content must matter");
+    }
+
+    #[test]
+    fn content_key_separator_prevents_boundary_collision() {
+        // Without the NUL separator, type="ab"+text="c" and type="a"+text="bc"
+        // would hash the same concatenation. They must not collide.
+        assert_ne!(content_key("c", "ab"), content_key("bc", "a"));
+    }
+}

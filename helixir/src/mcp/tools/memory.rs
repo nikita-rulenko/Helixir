@@ -340,7 +340,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Discover how two concepts are related through the memory graph: bidirectional path search between anchors A and B. Returns the connecting chain with edge types (IMPLIES/BECAUSE/...) and cumulative confidence. The elder-brain primitive: sees connections that are several logical hops apart."
+        description = "Discover how two concepts are related through the memory graph: bidirectional path search between anchors A and B. Each anchor may be a free-text query OR an exact memory_id (mem_… / raw_…) — pass an id to connect a memory you already know precisely, bypassing the search step. Returns the connecting chain with edge types (IMPLIES/BECAUSE/...) and cumulative confidence. The elder-brain primitive: sees connections that are several logical hops apart."
     )]
     async fn connect_memories(
         &self,

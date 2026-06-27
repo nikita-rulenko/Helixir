@@ -73,13 +73,11 @@ async fn cross_domain_bridge_via_category() {
             .expect("tag_memory");
     }
 
+    // Connect by memory id (#59) so the test asserts the ROUTING, not the
+    // search-anchor lottery: both endpoints are known, the only question is
+    // whether the shared Category bridges them.
     let res = client
-        .connect_memories(
-            "Rajasthan monsoon grain harvest yield",
-            "shale fracking fluid additive well-completion cost",
-            &user,
-            Some(4),
-        )
+        .connect_memories(&a.memory_ids[0], &b.memory_ids[0], &user, Some(4))
         .await
         .expect("connect_memories");
 

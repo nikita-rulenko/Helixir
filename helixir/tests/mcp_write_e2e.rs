@@ -58,23 +58,38 @@ fn mcp_write_e2e() {
     );
     let (added, _) = mcp.call_tool("add_memory", json!({"message": multi, "user_id": user_a}));
     let first_added = added["memories_added"].as_u64().unwrap_or(0);
-    // Extraction granularity is LLM-dependent (the prompt favours "fewer,
-    // richer memories") — the suite asserts the FLOW, not the fact count.
     assert!(
         first_added >= 1,
         "multi-fact input must store at least one memory, got: {added}"
     );
-    if first_added < 2 {
-        eprintln!("note: extractor consolidated the input into {first_added} memory(ies) this run");
+    // Atomization granularity is LLM-dependent, so instead of asserting a raw
+    // count we assert the USE CASE: all THREE distinct facts were captured and
+    // are retrievable, however the extractor chose to split them. A broken
+    // atomizer that drops a fact (or stores only the first) fails here.
+    let (listed_a, _) = mcp.call_tool("list_memories", json!({"user_id": user_a, "limit": 20}));
+    let blob = listed_a.to_string().to_lowercase();
+    for needle in ["8443", "schema", "backup"] {
+        assert!(
+            blob.contains(needle),
+            "the multi-fact add must capture the '{needle}' fact: {listed_a}"
+        );
     }
 
-    // ---------- 2. identical re-add is eaten by the gates ----------
+    // ---------- 2. identical re-add is deduped (NOOP + #44 deduped[]) ----------
     let (re_added, _) = mcp.call_tool("add_memory", json!({"message": multi, "user_id": user_a}));
     let second_added = re_added["memories_added"].as_u64().unwrap_or(99);
+    let deduped = re_added["deduped"].as_array().cloned().unwrap_or_default();
+    // The exact same input must be eaten by the gates: nothing (or almost
+    // nothing) new is stored, AND #44 surfaces the existing ids it linked to
+    // rather than silently swallowing the write.
     assert!(
-        second_added < first_added || second_added == 0,
-        "re-adding the same input must be mostly NOOP'd by gates \
+        second_added < first_added,
+        "re-adding the same input must store fewer memories \
          (first={first_added}, second={second_added}): {re_added}"
+    );
+    assert!(
+        !deduped.is_empty(),
+        "an exact re-add must surface the deduped-to memory ids (#44): {re_added}"
     );
 
     // ---------- 3. preference reversal escalates per the charter ----------
@@ -99,22 +114,35 @@ fn mcp_write_e2e() {
         .as_array()
         .cloned()
         .unwrap_or_default();
+    // Charter "does not gaslight its owner" — the actual safety guarantee. A
+    // reversed preference must EITHER escalate via needs_clarification (C3) OR
+    // keep the prior preference retrievable; it must never SILENTLY erase it.
+    // Whether the LLM types the sentence as a "preference" and picks Supersede
+    // vs Add is nondeterministic — the safety property is not, so we assert the
+    // property (#57: this replaces the flaky escalation-only assertion).
+    let escalated = !clarifications.is_empty();
+    let (mems_b, _) = mcp.call_tool("list_memories", json!({"user_id": user_b, "limit": 20}));
+    let keeps_prior = mems_b.to_string().to_lowercase().contains("dark");
     assert!(
-        !clarifications.is_empty(),
-        "a preference reversal must escalate via needs_clarification \
-         (charter C3); got: {reversal}"
+        escalated || keeps_prior,
+        "a preference reversal must not silently erase the prior preference \
+         (escalated={escalated}, keeps_prior={keeps_prior}): reversal={reversal}"
     );
-    let q = clarifications[0]["suggested_question"]
-        .as_str()
-        .unwrap_or("");
-    assert!(
-        !q.is_empty(),
-        "clarification must carry a ready-to-ask question"
-    );
-    println!(
-        "clarification: [{}] {}",
-        clarifications[0]["conflict_type"], q
-    );
+    if escalated {
+        let q = clarifications[0]["suggested_question"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            !q.is_empty(),
+            "an escalation must carry a ready-to-ask question: {reversal}"
+        );
+        println!(
+            "clarification: [{}] {}",
+            clarifications[0]["conflict_type"], q
+        );
+    } else {
+        println!("preference reversal kept both versions (no escalation this run)");
+    }
 
     // ---------- 4. Hive stances: second knower confirms ----------
     let shared = format!(

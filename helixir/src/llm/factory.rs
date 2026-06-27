@@ -57,13 +57,15 @@ impl LlmProviderFactory {
         fallback_model: &str,
         fallback_temperature: f64,
     ) -> LlmProviderWithFallback {
-        LlmProviderWithFallback::new(
-            primary,
-            fallback_enabled,
-            fallback_url.map(String::from),
-            Some(fallback_model.to_string()),
+        // The local fallback is always Ollama in production; the wrapper takes
+        // it as an injected `LlmProvider` so the failover decision is unit-
+        // testable with mocks (see fallback.rs tests).
+        let fallback: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(OllamaProvider::new(
+            fallback_url.unwrap_or(DEFAULT_OLLAMA_URL).to_string(),
+            fallback_model.to_string(),
             fallback_temperature,
-        )
+        ));
+        LlmProviderWithFallback::new(primary, fallback_enabled, fallback)
     }
 }
 

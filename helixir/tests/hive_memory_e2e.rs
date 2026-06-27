@@ -31,9 +31,12 @@ async fn hive_cross_user_collective_link_e2e() {
             .expect("clock")
             .as_nanos()
     );
-    let message = format!(
-        "E2E Hive shared fact token {token}: the canonical test statement is that Helixir Hive links duplicate cross-user facts to one memory node."
-    );
+    // A SHORT, atomic, hard-to-rephrase fact with the token embedded in a
+    // proper noun: both users' extractions land on the same text → the same
+    // content_key → a real consensus group. A long/abstract sentence (the old
+    // message) atomized differently per call, yielding mismatched content_keys
+    // and the spurious flakiness — the extractor variance, not the Hive logic.
+    let message = format!("Project kappa{token} runs PostgreSQL 16 in production.");
 
     let user_a = format!("e2e_hive_{token}_a");
     let user_b = format!("e2e_hive_{token}_b");
@@ -61,38 +64,21 @@ async fn hive_cross_user_collective_link_e2e() {
         .await
         .expect("user_b add_memory");
 
-    let results = client
-        .search(
-            &token,
-            &user_b,
-            Some(20),
-            Some("full"),
-            None,
-            None,
-            Some("collective"),
-        )
-        .await
-        .expect("collective search");
+    let _ = (&mem_a, &r_b); // ids kept for clarity; consensus is checked by token below
 
-    let matched: Vec<_> = results
-        .iter()
-        .filter(|r| r.id == mem_a)
-        .map(|r| {
-            let uc = r
-                .metadata
-                .get("user_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            (r.id.as_str(), uc, r.content.as_str())
-        })
-        .collect();
-
-    // The Hive invariant is "one fact, many knowers" — which NODE becomes
-    // canonical may legitimately vary (since the W2 gates, byte-nearest
-    // candidates such as the raw_input twin can win the link). Accept any
-    // memory from THIS run (token in content) reaching user_count >= 2.
-    let ok = matched.iter().any(|(_, uc, _)| *uc >= 2)
-        || results.iter().any(|r| {
+    // Cross-user consensus settles ASYNCHRONOUSLY (Phase 2 link + content_key
+    // grouping), so a single immediate read races it. Poll the collective view
+    // until SOME memory from this run (token in content) reaches user_count >= 2
+    // — the "one fact, many knowers" invariant. (The previous version read once
+    // and so flaked on timing; #43 makes the grouping itself deterministic.)
+    let mut ok = false;
+    let mut last5: Vec<(String, u64, String)> = vec![];
+    for _ in 0..15 {
+        let results = client
+            .search(&token, &user_b, Some(20), Some("full"), None, None, Some("collective"))
+            .await
+            .expect("collective search");
+        ok = results.iter().any(|r| {
             r.content.contains(&token)
                 && r.metadata
                     .get("user_count")
@@ -100,29 +86,27 @@ async fn hive_cross_user_collective_link_e2e() {
                     .unwrap_or(0)
                     >= 2
         });
-
-    if !ok {
-        eprintln!("E2E Hive assertion failed.");
-        eprintln!("  token: {token}");
-        eprintln!("  mem_a (user_a first id): {mem_a}");
-        eprintln!("  user_a memory_ids: {:?}", r_a.memory_ids);
-        eprintln!("  user_b memory_ids: {:?}", r_b.memory_ids);
-        eprintln!("  collective search hits for mem_a: {matched:?}");
-        eprintln!("  first 5 collective results (id, user_count, content preview):");
-        for r in results.iter().take(5) {
-            let uc = r
-                .metadata
-                .get("user_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let prev: String = r.content.chars().take(80).collect();
-            eprintln!("    {} user_count={} {}", r.id, uc, prev);
+        if ok {
+            break;
         }
+        last5 = results
+            .iter()
+            .take(5)
+            .map(|r| {
+                let uc = r
+                    .metadata
+                    .get("user_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                (r.id.clone(), uc, r.content.chars().take(80).collect())
+            })
+            .collect();
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 
     assert!(
         ok,
-        "expected SOME memory from this run to reach user_count >= 2 after the \
-         cross-user link; see stderr for diagnostics (LLM may have chosen ADD)"
+        "expected a memory from this run to reach user_count >= 2 within the \
+         polling window (cross-user 'one fact, many knowers'); last 5: {last5:?}"
     );
 }
