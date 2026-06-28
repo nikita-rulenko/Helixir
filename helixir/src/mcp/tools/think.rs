@@ -17,7 +17,7 @@ use crate::toolkit::fast_think::{FastThinkError, ThoughtType};
 #[tool_router(router = think_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Start a FastThink session for reasoning. Creates an isolated working memory graph. Returns: {session_id, root_thought_idx}"
+        description = "Begin a FastThink session — an isolated scratchpad for MULTI-STEP reasoning that you commit as ONE coherent memory at the end (not many tiny add_memory calls). Use it for non-trivial analysis or decisions; for a single fact just use add_memory. Workflow: think_start → think_add (build the reasoning tree) → optional think_recall (pull facts from main memory) → think_conclude (mark the answer) → think_commit (persist) OR think_discard (throw away). YOU choose the session_id and reuse it on every think_* call. Returns {session_id, root_thought_idx}."
     )]
     async fn think_start(
         &self,
@@ -39,16 +39,16 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Add a thought to an active FastThink session. Returns: {thought_idx, thought_count, depth}"
+        description = "Add a thought node to an active FastThink session (from think_start). Attach it under parent_idx (a previous thought's index) to build a reasoning tree, or omit to attach to the root. thought_type defaults to 'reasoning'. Returns {thought_idx, thought_count, depth} — keep thought_idx to use as a parent for later thoughts."
     )]
     async fn think_add(
         &self,
         Parameters(params): Parameters<AddThoughtParams>,
     ) -> Result<CallToolResult, McpError> {
-        let thought_type = match params.thought_type.as_deref() {
-            Some("hypothesis") => ThoughtType::Hypothesis,
-            Some("observation") => ThoughtType::Observation,
-            Some("question") => ThoughtType::Question,
+        let thought_type = match params.thought_type {
+            Some(ThoughtTypeArg::Hypothesis) => ThoughtType::Hypothesis,
+            Some(ThoughtTypeArg::Observation) => ThoughtType::Observation,
+            Some(ThoughtTypeArg::Question) => ThoughtType::Question,
             _ => ThoughtType::Reasoning,
         };
 
@@ -106,7 +106,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Recall facts from main memory into FastThink session. READ-ONLY access to main memory. Returns: {recalled_count, thought_indices}"
+        description = "Pull relevant facts from MAIN memory into the current FastThink session as child thoughts under parent_idx. READ-ONLY — it never modifies main memory. Use it to ground the session's reasoning in what is already known. Returns {recalled_count, thought_indices}."
     )]
     async fn think_recall(
         &self,
@@ -135,7 +135,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Mark a conclusion in FastThink session. Required before commit. Returns: {conclusion_idx, status}"
+        description = "Record the conclusion of a FastThink session — REQUIRED before think_commit. Pass supporting_idx with the thought indices the conclusion rests on. Returns {conclusion_idx, status:'decided'}."
     )]
     async fn think_conclude(
         &self,
@@ -163,7 +163,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Commit FastThink session to main memory. Writes conclusion with supporting evidence. Returns: {memory_id, thoughts_processed, elapsed_ms}"
+        description = "Persist a concluded FastThink session into main memory, storing the conclusion with its supporting evidence. Call think_conclude first. NOTE: this is the HEAVY tool — it synthesizes the whole reasoning tree via an LLM and can take tens of seconds (longer for big sessions); call it ONCE at the end, not repeatedly. Returns {memory_id, thoughts_processed, elapsed_ms}."
     )]
     async fn think_commit(
         &self,
@@ -193,7 +193,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Discard FastThink session without saving. Clears working memory. Returns: {discarded_thoughts, elapsed_ms}"
+        description = "Throw away a FastThink session without persisting anything (clears the scratchpad). Use when the reasoning led nowhere or shouldn't be remembered. After this the session_id no longer exists. Returns {discarded_thoughts, elapsed_ms}."
     )]
     async fn think_discard(
         &self,
@@ -214,7 +214,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Get status of a FastThink session. Returns: {status, thought_count, depth, has_conclusion, elapsed_ms}"
+        description = "Inspect a FastThink session without changing it — useful to check progress or whether a conclusion exists yet. Returns {status, thought_count, depth, has_conclusion, elapsed_ms}. Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
     )]
     async fn think_status(
         &self,
