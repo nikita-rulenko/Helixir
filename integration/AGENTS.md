@@ -1,0 +1,53 @@
+# AGENTS.md — Helixir memory
+
+> Template. Copy to your project root as `AGENTS.md` (or merge this section into
+> your existing one). Replace `claude` with your agent's stable `user_id`.
+> Requires the `helixir-local` MCP server wired into your agent — see
+> `integration/README.md`.
+
+## You have persistent memory (use it every session)
+
+This project is backed by **Helixir**, a reasoning-aware memory exposed as MCP
+tools (`mcp__helixir-local__*`). You are NOT stateless: treat it as your own
+long-term knowledge and keep it current. Always pass a **consistent `user_id`**
+(here: `claude`) so the memory stays coherent and personal search is scoped.
+
+Helixir stores typed facts in a knowledge graph with causal edges, so it returns
+*why* things are true — not just similar text. The read path makes no LLM calls
+and is fast; search liberally instead of guessing or asking the user to repeat.
+
+### 1. Recall first — before answering any non-trivial request
+Call `search_memory(query="<the user's topic>", user_id="claude")`. If it
+returns nothing for your user_id, retry once with `scope="collective"`. Build on
+what you find rather than re-deriving known decisions.
+
+### 2. Capture durable facts — proactively, as you work
+When the user states or you establish a **decision, preference, goal,
+constraint, outcome, or gotcha**, store it:
+`add_memory(message="<one plain sentence>", user_id="claude")`.
+- `needs_clarification` in the result → the charter blocked a silent conflict
+  (e.g. a reversed preference). **Ask** the `suggested_question` or apply a
+  standing rule; never overwrite silently.
+- `deduped` set with `memories_added=0` → already known (success, not failure).
+- `{pending_id, queued}` → async write; `get_add_status(pending_id)` to confirm.
+- Don't store ephemeral chatter, secrets, or anything derivable from code/git.
+
+### 3. Record outcomes at the end of each meaningful step
+After a fix, decision, or milestone, write what was decided/done so the next
+session inherits it.
+
+### 4. Reason with FastThink for multi-step analysis
+For non-trivial analysis/planning/decisions, use the scratchpad rather than many
+small writes: `think_start → think_add (build the tree) → think_recall
+(optional) → think_conclude (required before commit) → think_commit (persists;
+heavy, call once)`. Reuse one `session_id`; `think_discard` if it led nowhere.
+
+### Pick the right retrieval tool
+- WHY / rationale → `search_reasoning_chain` (`chain_mode="causal"`).
+- How are A and B related → `connect_memories` (anchors = query or `memory_id`).
+- Only goals / one ontology type → `search_by_concept` (`concept_type`).
+- General recall → `search_memory`; bulk/audit → `list_memories`.
+
+**Principle:** the memory does not gaslight its owner — surface
+`needs_clarification`, never silently overwrite a conflicting fact. Recall before
+you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
