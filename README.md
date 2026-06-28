@@ -105,7 +105,7 @@ make config         # Print MCP config to paste into your IDE
 
 ### Prerequisites
 
-- **Rust 1.85+** — [rustup.rs](https://rustup.rs)
+- **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
@@ -247,7 +247,7 @@ The hierarchy enables traversal: searching for "Attribute" returns all facts, pr
 
 ## Graph Schema
 
-Helixir stores everything as a typed graph: **15 node types** connected by **33 edge types** — plus the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) for the generative layer.
+Helixir stores everything as a typed graph: **18 node types** (+ 5 vector-index types) connected by **37 edge types** — including the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) for the generative layer.
 
 ### Node types
 
@@ -323,12 +323,14 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Charter conflicts come back in `needs_clarification` |
-| `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal modes: `recent` (4h), `contextual` (30d), `deep` (90d), `full`. Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
-| `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts, with edge types and cumulative confidence |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Returns the synchronous result or, under the ingest buffer, a `pending_id`. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped` |
+| `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
+| `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
+| `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
 | `search_by_concept` | Filter by ontology type: skill, preference, goal, fact, opinion, experience, achievement, action |
 | `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS — LLM-free |
 | `get_memory_graph` | Return memory as a graph of nodes and edges |
+| `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
 
@@ -359,6 +361,9 @@ Beyond the MCP server, the `helixir` binary drives and monitors the generative a
 ```bash
 helixir setup                          # interactive: configure + wire the MCP server into
                                        #   Claude Code / Claude Desktop / Cursor / Gemini CLI
+helixir mode                           # show the privilege tier (solo | collective | insights)
+helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
+helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
 helixir categories                     # the category dictionary + member counts (coverage)
 helixir clotho grow --user <id>        # tag a user's memories, growing the dictionary on misses
 helixir lachesis route --seed <cat>    # route a cross-domain subset thread (with witnesses)
@@ -366,6 +371,7 @@ helixir atropos                        # curate threads into ranked, journaled i
 helixir pipeline --user <id>           # one orchestrated pass: Clotho → Lachesis → Atropos
 helixir daemon start --user <id> --interval 600   # run passes in the background
 helixir daemon status | stop           # inspect / stop the background daemon
+helixir merge --limit <n>              # run the NLI paraphrase backstop once (collective)
 helixir journal | insights             # activity + insight journals (with provenance)
 ```
 
@@ -446,6 +452,7 @@ All settings are passed as environment variables.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
+| `HELIXIR_MODE` | `solo` | Privilege tier: `solo` (private, no cross-user), `collective` (shared consensus), `insights` (+ generative Moirai) |
 | `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
 | `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name |
 | `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
@@ -513,21 +520,6 @@ HELIX_EMBEDDING_MODEL=nomic-embed-text
 
 </details>
 
-<details>
-<summary><b>OpenAI only</b> (simple, one API key)</summary>
-
-```bash
-HELIX_LLM_PROVIDER=openai
-HELIX_LLM_MODEL=gpt-4o-mini
-HELIX_LLM_API_KEY=sk-xxx
-
-HELIX_EMBEDDING_PROVIDER=openai
-HELIX_EMBEDDING_MODEL=text-embedding-3-small
-HELIX_EMBEDDING_API_KEY=sk-xxx
-```
-
-</details>
-
 ---
 
 ## Development
@@ -573,7 +565,7 @@ helixir-rs/
         mind_toolbox/           # Search engine, entity, ontology, reasoning
         fast_think/             # Working memory (petgraph-based)
     schema/
-      schema.hx                 # Node/edge definitions (15 nodes, 33 edges)
+      schema.hx                 # Node/edge definitions (18 nodes + 5 vectors, 37 edges)
       queries.hx                # HQL queries (120)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
