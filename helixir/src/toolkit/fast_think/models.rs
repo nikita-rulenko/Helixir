@@ -231,7 +231,11 @@ pub enum FastThinkError {
 impl std::fmt::Display for FastThinkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FastThinkError::SessionNotFound => write!(f, "Session not found"),
+            FastThinkError::SessionNotFound => write!(
+                f,
+                "Session not found — call think_start with this session_id first \
+                 (or it was already committed/discarded, which ends the session)"
+            ),
             FastThinkError::SessionAlreadyExists => write!(f, "Session already exists"),
             FastThinkError::Timeout => write!(f, "Thinking timeout exceeded"),
             FastThinkError::TooManyThoughts => write!(f, "Too many thoughts in session"),

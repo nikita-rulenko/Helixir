@@ -124,7 +124,9 @@ fn mcp_full_surface_liveness() {
     assert!(
         after_update
             .as_array()
-            .map(|a| a.iter().any(|r| r["content"].as_str().unwrap_or("").contains("verified")))
+            .map(|a| a
+                .iter()
+                .any(|r| r["content"].as_str().unwrap_or("").contains("verified")))
             .unwrap_or(false),
         "the updated content must be searchable after update_memory: {after_update}"
     );
@@ -133,7 +135,10 @@ fn mcp_full_surface_liveness() {
     let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
     exercised.push("get_memory_graph");
     assert!(
-        graph["nodes"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        graph["nodes"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "get_memory_graph must return the user's node(s): {graph}"
     );
 
@@ -143,7 +148,10 @@ fn mcp_full_surface_liveness() {
     );
     exercised.push("search_by_concept");
     assert!(
-        by_concept.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        by_concept
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "search_by_concept must find the just-added fact: {by_concept}"
     );
 

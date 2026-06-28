@@ -102,8 +102,14 @@ mod tests {
 
     #[test]
     fn test_create_cerebras_provider() {
-        let provider =
-            LlmProviderFactory::create("cerebras", "llama-3.3-70b", Some("test-key"), None, 0.3, 600);
+        let provider = LlmProviderFactory::create(
+            "cerebras",
+            "llama-3.3-70b",
+            Some("test-key"),
+            None,
+            0.3,
+            600,
+        );
         assert_eq!(provider.provider_name(), "cerebras");
     }
 

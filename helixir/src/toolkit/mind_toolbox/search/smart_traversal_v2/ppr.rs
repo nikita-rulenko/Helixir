@@ -145,7 +145,8 @@ mod tests {
     #[test]
     fn seed_gets_top_score() {
         let edges = vec![edge("s", "a", 1.0), edge("a", "b", 1.0)];
-        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
+        let scores =
+            personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
         assert!((scores["s"] - 1.0).abs() < 1e-9, "seed must be the maximum");
         assert!(scores["a"] > scores["b"], "mass decays along a single path");
     }
@@ -179,7 +180,8 @@ mod tests {
             edge("n3", "n4", 1.0),
             edge("n4", "n5", 1.0),
         ];
-        let scores = personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
+        let scores =
+            personalized_pagerank(&edges, &HashMap::from([("s".to_string(), 1.0)]), 0.6, 20);
         assert!(
             scores["n5"] > 0.01,
             "far end of a coherent chain must stay visible: {scores:?}"
@@ -189,7 +191,8 @@ mod tests {
     #[test]
     fn empty_inputs_are_safe() {
         assert!(personalized_pagerank(&[], &HashMap::new(), 0.6, 20).is_empty());
-        let scores = personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]), 0.6, 20);
+        let scores =
+            personalized_pagerank(&[], &HashMap::from([("only".to_string(), 1.0)]), 0.6, 20);
         assert!((scores["only"] - 1.0).abs() < 1e-9);
     }
 }

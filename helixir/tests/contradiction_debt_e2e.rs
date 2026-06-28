@@ -17,7 +17,10 @@ use helixir::core::HelixirClient;
 fn token() -> String {
     format!(
         "{:x}",
-        SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
     )
 }
 
@@ -47,12 +50,42 @@ async fn reconcile_drains_preference_keeps_factual() {
     // Four mutually DISSIMILAR facts (distinct domains) so none dedups against
     // another (the W2 cosine gate NOOPs near-duplicates). The dispute content is
     // irrelevant — reconcile keys off the edge's strategy, which we seed below.
-    let m1 = first_id(&client, &format!("Service debt{run}a uses LRU cache eviction."), &user).await;
-    let m2 = first_id(&client, &format!("The debt{run}b harvest festival is held in October."), &user).await;
-    let m3 = first_id(&client, &format!("Planet debt{run}c orbits a red dwarf star."), &user).await;
-    let m4 = first_id(&client, &format!("Chef debt{run}d perfected a rye sourdough recipe."), &user).await;
-    let m5 = first_id(&client, &format!("Volcano debt{run}e last erupted in the Pleistocene."), &user).await;
-    let m6 = first_id(&client, &format!("Violinist debt{run}f tuned to baroque pitch."), &user).await;
+    let m1 = first_id(
+        &client,
+        &format!("Service debt{run}a uses LRU cache eviction."),
+        &user,
+    )
+    .await;
+    let m2 = first_id(
+        &client,
+        &format!("The debt{run}b harvest festival is held in October."),
+        &user,
+    )
+    .await;
+    let m3 = first_id(
+        &client,
+        &format!("Planet debt{run}c orbits a red dwarf star."),
+        &user,
+    )
+    .await;
+    let m4 = first_id(
+        &client,
+        &format!("Chef debt{run}d perfected a rye sourdough recipe."),
+        &user,
+    )
+    .await;
+    let m5 = first_id(
+        &client,
+        &format!("Volcano debt{run}e last erupted in the Pleistocene."),
+        &user,
+    )
+    .await;
+    let m6 = first_id(
+        &client,
+        &format!("Violinist debt{run}f tuned to baroque pitch."),
+        &user,
+    )
+    .await;
 
     // Seed two open disputes on SEPARATE from-memories so grouping is clean:
     // m1→m2 a preference (drainable), m3→m4 a factual claim (kept).
@@ -90,13 +123,26 @@ async fn reconcile_drains_preference_keeps_factual() {
     );
 
     // Reconcile: preference retired, superseded-factual retired, live factual kept.
-    let s = client.atropos().reconcile(&user, 500).await.expect("reconcile");
-    assert!(s.scanned >= 3, "should scan all three seeded disputes: {s:?}");
+    let s = client
+        .atropos()
+        .reconcile(&user, 500)
+        .await
+        .expect("reconcile");
+    assert!(
+        s.scanned >= 3,
+        "should scan all three seeded disputes: {s:?}"
+    );
     assert!(s.drained_preference >= 1, "preference must drain: {s:?}");
-    assert!(s.drained_superseded >= 1, "superseded-factual must drain: {s:?}");
+    assert!(
+        s.drained_superseded >= 1,
+        "superseded-factual must drain: {s:?}"
+    );
     assert!(s.kept_live >= 1, "live factual must be kept: {s:?}");
     // The kept live dispute is surfaced to its owner's outbox — never silent.
-    assert!(s.notified >= 1, "a live dispute must be surfaced to an owner: {s:?}");
+    assert!(
+        s.notified >= 1,
+        "a live dispute must be surfaced to an owner: {s:?}"
+    );
 
     // Drained disputes leave the worklist; the live factual one remains open.
     let after = tooling
@@ -118,13 +164,25 @@ async fn reconcile_drains_preference_keeps_factual() {
 
     // Idempotent: a second pass drains nothing new and re-surfaces nothing
     // (the outbox notice is already pending → deduped).
-    let s2 = client.atropos().reconcile(&user, 500).await.expect("reconcile 2");
+    let s2 = client
+        .atropos()
+        .reconcile(&user, 500)
+        .await
+        .expect("reconcile 2");
     assert_eq!(s2.drained_preference, 0, "nothing new to drain: {s2:?}");
-    assert_eq!(s2.notified, 0, "live dispute already surfaced — must dedup: {s2:?}");
+    assert_eq!(
+        s2.notified, 0,
+        "live dispute already surfaced — must dedup: {s2:?}"
+    );
 
     println!("\n==== contradiction_debt_e2e ====");
     println!(
         "scanned {}, drained {} preference + {} superseded, kept {} live, surfaced {}; after: {} open dispute(s)",
-        s.scanned, s.drained_preference, s.drained_superseded, s.kept_live, s.notified, after.len()
+        s.scanned,
+        s.drained_preference,
+        s.drained_superseded,
+        s.kept_live,
+        s.notified,
+        after.len()
     );
 }

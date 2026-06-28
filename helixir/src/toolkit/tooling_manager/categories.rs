@@ -315,7 +315,10 @@ impl ToolingManager {
         }
         let resp: Resp = self
             .db
-            .execute_query("getRecentMemories", &serde_json::json!({ "limit": scan_limit }))
+            .execute_query(
+                "getRecentMemories",
+                &serde_json::json!({ "limit": scan_limit }),
+            )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
         Ok(resp.memories.len())

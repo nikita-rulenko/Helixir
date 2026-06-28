@@ -17,7 +17,10 @@ use helixir::core::HelixirClient;
 fn token() -> String {
     format!(
         "{:x}",
-        SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
     )
 }
 
@@ -52,7 +55,12 @@ async fn full_pass_runs_the_whole_choreography() {
     let g = &result.grow;
     println!(
         "\n==== orchestrator_e2e ====\nscanned={} matched={} minted={} reused={} failed={} insights={}",
-        g.scanned, g.tagged_by_match, g.minted, g.reused_mint, g.failed, result.insights.len()
+        g.scanned,
+        g.tagged_by_match,
+        g.minted,
+        g.reused_mint,
+        g.failed,
+        result.insights.len()
     );
 
     // The pass scanned the user's corpus and accounted for every memory.

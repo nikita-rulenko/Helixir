@@ -85,7 +85,10 @@ fn reasoning_edge_created_on_fresh_write() {
         json!({"query": format!("why was kappa_{run} migrated to Postgres"), "user_id": user}),
     );
     assert!(
-        chain["chains"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        chain["chains"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "the freshly-created reasoning edge must surface in search_reasoning_chain: {chain}"
     );
 

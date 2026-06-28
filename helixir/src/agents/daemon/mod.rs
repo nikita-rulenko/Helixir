@@ -81,7 +81,10 @@ impl<'a> Daemon<'a> {
             // Drain contradiction debt each pass — keep resolved=0 cross-user
             // disputes from piling up as the collective grows (#45).
             let debt_limit = self.tooling.config.moira.daemon.reconcile_limit;
-            match Atropos::new(self.tooling).reconcile(&cfg.user, debt_limit).await {
+            match Atropos::new(self.tooling)
+                .reconcile(&cfg.user, debt_limit)
+                .await
+            {
                 Ok(s) if s.scanned > 0 => info!(
                     "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
                     s.drained_preference, s.drained_superseded, s.kept_live, s.notified
@@ -93,10 +96,15 @@ impl<'a> Daemon<'a> {
             // Paraphrase backstop (#43/#55) — merge same-meaning facts into one
             // fingerprint group, NLI-gated (never merges a contradiction). Runs
             // every pass when the local NLI model is installed (collective/insights).
+            // Compiled out entirely without the `nli` feature.
+            #[cfg(feature = "nli")]
             if crate::llm::nli::status().installed {
                 let mlim = self.tooling.config.moira.daemon.merge_limit;
                 let mcos = self.tooling.config.moira.daemon.merge_cosine_threshold;
-                match Atropos::new(self.tooling).merge_paraphrases(mlim, mcos).await {
+                match Atropos::new(self.tooling)
+                    .merge_paraphrases(mlim, mcos)
+                    .await
+                {
                     Ok(s) if s.merged_groups > 0 => info!(
                         "daemon: merged {} paraphrase group(s) ({} nodes); {} contradictions blocked",
                         s.merged_groups, s.nodes_restamped, s.contradictions_blocked

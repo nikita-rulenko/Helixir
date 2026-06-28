@@ -90,11 +90,22 @@ petgraph = "0.8"
 # JSON Schema (for MCP tool parameters)
 schemars = "1.0"
 moka = { version = "0.12.15", features = ["future"] }
-ort = "2.0.0-rc.12"
-tokenizers = { version = "0.23.1", default-features = false, features = ["onig"] }
+
+# Local NLI judge (#55) — the ONNX runtime + tokenizer. Optional behind the
+# `nli` feature: it pulls a heavy native dependency (`ort` needs rustc 1.88 and
+# its download-binaries step doesn't link on every CI runner), and NLI is itself
+# opt-in (collective/insights tier). Default builds include it; `--no-default-
+# features` gives a lean core that still compiles on 1.85 and everywhere.
+ort = { version = "2.0.0-rc.12", optional = true }
+tokenizers = { version = "0.23.1", default-features = false, features = ["onig"], optional = true }
 
 # MCP (Model Context Protocol)
 # TODO: Add mcp-rust-sdk when available or implement manually
+
+[features]
+default = ["nli"]
+# Local contradiction-safe paraphrase backstop (DeBERTa NLI via ONNX).
+nli = ["dep:ort", "dep:tokenizers"]
 
 [dev-dependencies]
 tokio-test = "0.4"

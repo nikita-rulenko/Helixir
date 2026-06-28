@@ -42,7 +42,9 @@ async fn hive_cross_user_collective_link_e2e() {
     let user_b = format!("e2e_hive_{token}_b");
 
     // Hive (cross-user collective linking) is opt-in — enable it for this suite.
-    unsafe { std::env::set_var("HELIXIR_MODE", "collective"); }
+    unsafe {
+        std::env::set_var("HELIXIR_MODE", "collective");
+    }
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
     client
         .initialize()
@@ -75,7 +77,15 @@ async fn hive_cross_user_collective_link_e2e() {
     let mut last5: Vec<(String, u64, String)> = vec![];
     for _ in 0..15 {
         let results = client
-            .search(&token, &user_b, Some(20), Some("full"), None, None, Some("collective"))
+            .search(
+                &token,
+                &user_b,
+                Some(20),
+                Some("full"),
+                None,
+                None,
+                Some("collective"),
+            )
             .await
             .expect("collective search");
         ok = results.iter().any(|r| {

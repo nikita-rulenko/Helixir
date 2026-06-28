@@ -84,8 +84,7 @@ impl<'a> Orchestrator<'a> {
             .total_memory_count(orch.universe_cap)
             .await?
             .max(1);
-        let seeds: Vec<(String, String)> =
-            candidates.iter().take(cfg.max_seeds).cloned().collect();
+        let seeds: Vec<(String, String)> = candidates.iter().take(cfg.max_seeds).cloned().collect();
         let atropos = Atropos::new(self.tooling);
         let insights = atropos
             .curate(&seeds, &candidates, universe, cfg.max_hops)

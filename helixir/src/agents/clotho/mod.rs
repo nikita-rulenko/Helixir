@@ -158,7 +158,9 @@ impl<'a> Clotho<'a> {
 
         for (name, score) in plan {
             let Some(category_id) = self.tooling.get_category_id(&name).await? else {
-                warn!("clotho.auto_tag: matched category '{name}' has no node (dictionary unseeded?)");
+                warn!(
+                    "clotho.auto_tag: matched category '{name}' has no node (dictionary unseeded?)"
+                );
                 continue;
             };
             let confidence = (score.clamp(0.0, 1.0) * 100.0).round() as i64;
@@ -170,7 +172,11 @@ impl<'a> Clotho<'a> {
                 warn!("clotho.auto_tag: tag_memory failed for {memory_id} -> {name}: {e}");
                 continue;
             }
-            outcome.tagged.push(AutoTagHit { category_id, name, score });
+            outcome.tagged.push(AutoTagHit {
+                category_id,
+                name,
+                score,
+            });
         }
 
         info!(
@@ -227,8 +233,10 @@ impl<'a> Clotho<'a> {
             // genuine multi-domain membership (the overlaps Lachesis routes
             // over), but NOT everything that merely grazes the threshold — that
             // noise-floor smear is what wove the spurious cross-domain bridges.
-            let scored: Vec<(&String, f64)> =
-                dict.iter().map(|(cid, _, ev)| (cid, cosine(&cv, ev))).collect();
+            let scored: Vec<(&String, f64)> = dict
+                .iter()
+                .map(|(cid, _, ev)| (cid, cosine(&cv, ev)))
+                .collect();
             let best = scored.iter().map(|(_, s)| *s).fold(f64::MIN, f64::max);
             let matches: Vec<(String, i64)> = scored
                 .iter()
@@ -311,7 +319,10 @@ impl<'a> Clotho<'a> {
             .unwrap_or("")
             .trim()
             .to_string();
-        let cid = self.tooling.ensure_category(&name, "concept", &desc).await?;
+        let cid = self
+            .tooling
+            .ensure_category(&name, "concept", &desc)
+            .await?;
         let text = if desc.is_empty() {
             name.clone()
         } else {
@@ -366,7 +377,10 @@ mod tests {
     #[test]
     fn ancestors_walk_the_seed_hierarchy() {
         assert_eq!(dictionary::ancestors("agriculture"), vec!["raw material"]);
-        assert!(dictionary::ancestors("raw material").is_empty(), "root has no ancestors");
+        assert!(
+            dictionary::ancestors("raw material").is_empty(),
+            "root has no ancestors"
+        );
         assert!(dictionary::ancestors("nonexistent-xyz").is_empty());
     }
 }

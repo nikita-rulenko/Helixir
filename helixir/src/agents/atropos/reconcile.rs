@@ -158,7 +158,11 @@ impl Atropos<'_> {
             }
             for (d, v) in &decided {
                 // If the group is mixed, nothing was retired — record as kept.
-                let applied = if all_resolve { v.clone() } else { DrainVerdict::Keep };
+                let applied = if all_resolve {
+                    v.clone()
+                } else {
+                    DrainVerdict::Keep
+                };
                 // A kept live dispute is surfaced to the owner's outbox (deduped)
                 // — never silently left, never silently resolved.
                 if matches!(applied, DrainVerdict::Keep) {

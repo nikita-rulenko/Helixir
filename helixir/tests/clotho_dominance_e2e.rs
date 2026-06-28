@@ -43,7 +43,8 @@ async fn dominance_gate_keeps_domains_disjoint() {
     let run = token();
     let user = format!("dom_{run}");
 
-    let sw = "The repository layer dispatches HTTP handlers through the Chi router in the Go service.";
+    let sw =
+        "The repository layer dispatches HTTP handlers through the Chi router in the Go service.";
     let ag = "Farmers harvested a record grain crop this season after the strong monsoon rains.";
     let s = client.add(sw, &user, None, None).await.expect("add sw");
     let a = client.add(ag, &user, None, None).await.expect("add ag");
@@ -54,7 +55,10 @@ async fn dominance_gate_keeps_domains_disjoint() {
     let stats = client
         .clotho()
         .grow_pass(
-            &[(s_id.clone(), sw.to_string()), (a_id.clone(), ag.to_string())],
+            &[
+                (s_id.clone(), sw.to_string()),
+                (a_id.clone(), ag.to_string()),
+            ],
             0.62,
         )
         .await

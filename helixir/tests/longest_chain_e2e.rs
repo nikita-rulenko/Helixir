@@ -52,16 +52,28 @@ async fn longest_chain_reconstructs_a_thread() {
 
     // The thread must be ordered: exactly one edge between consecutive steps,
     // and only the first step lacks an incoming edge.
-    assert!(narrative.hops >= 3, "expected a multi-hop thread, got {}", narrative.hops);
+    assert!(
+        narrative.hops >= 3,
+        "expected a multi-hop thread, got {}",
+        narrative.hops
+    );
     assert_eq!(narrative.steps.len(), narrative.hops + 1);
-    assert!(narrative.steps[0].edge_type.is_none(), "first step has no incoming edge");
+    assert!(
+        narrative.steps[0].edge_type.is_none(),
+        "first step has no incoming edge"
+    );
     assert!(
         narrative.steps[1..].iter().all(|s| s.edge_type.is_some()),
         "every step after the first carries the edge it arrived by"
     );
     // No memory repeats — it's a simple path.
-    let unique: std::collections::HashSet<_> = narrative.steps.iter().map(|s| &s.memory_id).collect();
-    assert_eq!(unique.len(), narrative.steps.len(), "thread must be a simple path");
+    let unique: std::collections::HashSet<_> =
+        narrative.steps.iter().map(|s| &s.memory_id).collect();
+    assert_eq!(
+        unique.len(),
+        narrative.steps.len(),
+        "thread must be a simple path"
+    );
     // Confidence is a real product of weights in (0, 1].
     assert!(
         narrative.confidence > 0.0 && narrative.confidence <= 1.0,
