@@ -447,6 +447,13 @@ pub struct IngestConfig {
     pub drain_batch_size: usize,
     pub retry_backoff_ms: u64,
     pub worker_batch_size: usize,
+    /// Confirm-or-promise window (#63). When the buffer is on, `add_memory`
+    /// waits up to this long for THIS write to finish so the agent gets a real
+    /// result with memory_ids instead of a bare "pending" it misreads as
+    /// failure. On timeout it returns an explicit "accepted" success ack.
+    pub ack_wait_ms: u64,
+    /// Poll cadence for the confirm-or-promise wait above.
+    pub ack_poll_ms: u64,
 }
 impl Default for IngestConfig {
     fn default() -> Self {
@@ -457,6 +464,8 @@ impl Default for IngestConfig {
             drain_batch_size: 256,
             retry_backoff_ms: 500,
             worker_batch_size: 32,
+            ack_wait_ms: 8000,
+            ack_poll_ms: 150,
         }
     }
 }

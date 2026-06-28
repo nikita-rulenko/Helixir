@@ -17,7 +17,7 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 impl HelixirMcpServer {
     #[tool(
         description = "Store something in long-term memory. Pass raw natural-language text; an LLM extracts it into atomic typed facts (max 15 per call), embeds them, and links them into the reasoning graph. Use this whenever the user states a fact, decision, preference, or outcome worth remembering across sessions; for >15 facts, split across calls. \
-        \nReturns one of two shapes. (1) Synchronous: {memories_added, memory_ids, deduped, entities, relations, chunks_created, stats}. 'deduped' holds existing memory_ids this input was already-known-and-linked-to (not newly stored) — so memories_added=0 with a non-empty deduped means 'already saved', NOT a failure. (2) Buffered (when the server runs the ingest buffer): {pending_id, queued:true, status:'pending', pending_outcomes} — the write is processing in the background; poll get_add_status(pending_id) for the result, or read pending_outcomes (results of EARLIER buffered adds delivered opportunistically). \
+        \nEvery result carries a top-level boolean 'ok': ok:true means your write was accepted and stored (or will be) — treat it as SUCCESS and do NOT retry. The fields: {ok, memories_added, memory_ids, deduped, saved, status?, pending_id?, pending_outcomes?}. 'deduped' holds existing memory_ids this input was already-known-and-linked-to (not newly stored), and 'saved' = memories_added + deduped — so memories_added=0 with a non-empty deduped (saved>0) means 'already saved', NOT a failure. When the server runs the ingest buffer the write is processed by a background worker; the call waits briefly and returns the finished result with memory_ids when it completes in time. If it is still processing you get {ok:true, status:'accepted', pending_id} — also SUCCESS, searchable within seconds; optionally confirm with get_add_status(pending_id). Only ok:false (status:'failed') is a real failure. 'pending_outcomes' carries results of EARLIER buffered adds delivered opportunistically. \
         \nIMPORTANT: if the result contains a non-empty needs_clarification array, the memory charter refused to silently resolve a conflict (e.g. a reversed preference). Read each entry and ask the user its suggested_question (or apply a standing rule), then add the answer as a new memory — do not ignore it."
     )]
     async fn add_memory(
@@ -26,11 +26,14 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         info!("🧠 Adding memory for user={}", params.user_id);
 
-        // Ingest buffer (#25): when HELIXIR_INGEST_BUFFER=1, persist the raw
-        // input and return a pending_id instantly; a serial worker processes
-        // it and posts the result to the outbox (check_inbox). Synchronous
-        // path (below) stays the default — backward compatible.
+        // Ingest buffer (#25): when HELIXIR_INGEST_BUFFER=1, the raw input is
+        // persisted to a queue drained by ONE serial worker, so parallel
+        // writers can't race the dedup check. Confirm-or-promise (#63): we then
+        // briefly wait for THIS write to finish and return its real result, so
+        // the agent gets memory_ids it can trust — never a bare "pending" it
+        // misreads as failure (which made swarm agents retry or defect).
         if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
+            use crate::toolkit::tooling_manager::ingest_buffer::{STATUS_DONE, STATUS_FAILED};
             let enq = self
                 .client
                 .add_buffered(
@@ -42,20 +45,57 @@ impl HelixirMcpServer {
                 .await
                 .map_err(Self::convert_error)?;
             info!("📥 Queued {} for background processing", enq.pending_id);
-            // Opportunistic outbox delivery: ride prior write outcomes back on
-            // this ack so the agent learns them without polling or check_inbox.
+
+            // Opportunistic outbox delivery FIRST: ride EARLIER write outcomes
+            // back so the agent learns them without polling. Drain before the
+            // await so we don't consume (and prune) THIS item's own outcome —
+            // it is delivered inline below, and its tombstone stays pollable.
             let outcomes = self
                 .client
                 .drain_notices(&params.user_id, 20)
                 .await
                 .unwrap_or_default();
-            let json = Self::result_to_json(&serde_json::json!({
-                "pending_id": enq.pending_id,
-                "status": enq.status,
-                "queued": enq.queued,
-                "pending_outcomes": outcomes,
-            }))?;
-            return Ok(CallToolResult::success(vec![Content::text(json)]));
+
+            // Wait (bounded, configurable) for the serial worker to finish this
+            // exact item. Waiting does not parallelize processing, so the
+            // dedup-race protection the buffer exists for is preserved.
+            let ingest = &self.client.config().ingest;
+            let confirmed = self
+                .client
+                .await_add(&enq.pending_id, ingest.ack_wait_ms, ingest.ack_poll_ms)
+                .await;
+
+            let mut json = match confirmed {
+                // Finished in time → return the real result, framed as success.
+                Some(st) if st.status == STATUS_DONE => {
+                    let mut v = st.result.unwrap_or_else(|| json!({}));
+                    if !v.is_object() {
+                        v = json!({ "result": v });
+                    }
+                    v["ok"] = json!(true);
+                    v
+                }
+                // Genuinely failed → say so honestly; never fake success.
+                Some(st) => json!({
+                    "ok": false,
+                    "status": STATUS_FAILED,
+                    "error": st.error.unwrap_or_else(|| "write failed".to_string()),
+                }),
+                // Still processing → explicit ACCEPTED promise, never bare "pending".
+                None => json!({
+                    "ok": true,
+                    "accepted": true,
+                    "status": "accepted",
+                    "message": "Saved to memory; still processing in the background and \
+                                searchable within a few seconds. This is SUCCESS — do NOT retry. \
+                                Optionally confirm later with get_add_status(pending_id).",
+                }),
+            };
+            json["pending_id"] = json!(enq.pending_id);
+            if !outcomes.is_empty() {
+                json["pending_outcomes"] = serde_json::to_value(&outcomes).unwrap_or_default();
+            }
+            return Ok(CallToolResult::success(vec![Content::text(json.to_string())]));
         }
 
         let result = self
@@ -74,23 +114,14 @@ impl HelixirMcpServer {
             result.memories_added, result.chunks_created
         );
 
-        if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
-            let outcomes = self
-                .client
-                .drain_notices(&params.user_id, 20)
-                .await
-                .unwrap_or_default();
-            if !outcomes.is_empty() {
-                let mut json = Self::result_to_value(&result)?;
-                json["pending_outcomes"] = serde_json::to_value(&outcomes).unwrap_or_default();
-                return Ok(CallToolResult::success(vec![Content::text(
-                    json.to_string(),
-                )]));
-            }
-        }
-
-        let json = Self::result_to_json(&result)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        // Frame the synchronous result as an unambiguous success too (#63): a
+        // dedup (memories_added=0 with a non-empty `deduped`) is "already
+        // saved", not a failure — `ok:true` and a `saved` count say so plainly
+        // so agents don't misread a no-op dedup as a failed write.
+        let mut json = Self::result_to_value(&result)?;
+        json["ok"] = json!(true);
+        json["saved"] = json!(result.memories_added + result.deduped.len());
+        Ok(CallToolResult::success(vec![Content::text(json.to_string())]))
     }
 
     #[tool(

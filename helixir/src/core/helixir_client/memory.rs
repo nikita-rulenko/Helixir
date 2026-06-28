@@ -79,6 +79,39 @@ impl HelixirClient {
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
 
+    /// Confirm-or-promise (#63): poll a queued input until it reaches a
+    /// terminal state (done/failed) or the wait budget runs out. Returns the
+    /// terminal [`PendingStatus`], or `None` if it is still processing when the
+    /// budget ends (the caller then returns an explicit "accepted" ack).
+    ///
+    /// This only *waits* — the serial worker still processes the queue one item
+    /// at a time, so the buffer's parallel-write dedup-race protection is
+    /// preserved. We just hand the caller a trustworthy result instead of a
+    /// bare "pending" it would misread as failure.
+    pub async fn await_add(
+        &self,
+        pending_id: &str,
+        max_wait_ms: u64,
+        poll_ms: u64,
+    ) -> Option<crate::toolkit::tooling_manager::ingest_buffer::PendingStatus> {
+        use crate::toolkit::tooling_manager::ingest_buffer::{STATUS_DONE, STATUS_FAILED};
+        let poll = poll_ms.max(20);
+        let mut waited = 0u64;
+        loop {
+            if let Ok(st) = self.add_status(pending_id).await {
+                if st.status == STATUS_DONE || st.status == STATUS_FAILED {
+                    return Some(st);
+                }
+            }
+            if waited >= max_wait_ms {
+                return None;
+            }
+            let step = poll.min(max_wait_ms - waited);
+            tokio::time::sleep(std::time::Duration::from_millis(step)).await;
+            waited += step;
+        }
+    }
+
     /// Drain the user's outbox (прихожая): completed adds and escalations
     /// that landed while the agent was away. Marks them delivered and prunes
     /// their queue tombstones. The session-start counterpart to the buffer.

@@ -19,13 +19,17 @@ and personal search is scoped to you.
 
 ## The core loop: recall → work → capture
 
-### 1. Recall first (start of any non-trivial request)
+### 1. Recall first (start of any non-trivial request — and after a summary)
 ```
 search_memory(query="<the user's topic, in your own words>", user_id="claude")
 ```
 If it returns `[]` for your user_id, retry once with `scope="collective"`. Read
 the provenance (`origin`, `edge`, `ppr`) — graph-pulled results are related
 context, not noise.
+
+**After a context summary / compaction**, treat it as a fresh start: your first
+action is to `search_memory` the topic and refresh from Helixir before
+continuing. The summary is lossy; the memory is the ground truth.
 
 ### 2. Capture durable facts (proactively, as you work)
 When the user states or you establish a **decision, preference, goal,
@@ -37,8 +41,10 @@ add_memory(message="<one plain natural-language sentence>", user_id="claude")
 - **`needs_clarification`** → the charter refused to silently resolve a conflict.
   Ask the user the `suggested_question` (or apply a standing rule); never
   overwrite silently.
-- **`deduped` set, `memories_added=0`** → already known (success).
-- **`{pending_id, queued}`** → async write; `get_add_status(pending_id)` to confirm.
+- **`ok:true`** → success, never retry. **`deduped` set with `memories_added=0`**
+  (`saved>0`) → already known (success).
+- **`{ok:true, status:"accepted", pending_id}`** → buffered write finishing;
+  success, searchable in seconds. Only **`ok:false`** is a real failure.
 - **Don't store** ephemeral chatter, secrets, or facts derivable from code/git.
 
 ### 3. Capture at the end of each meaningful step

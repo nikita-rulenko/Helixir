@@ -16,10 +16,12 @@ Helixir stores typed facts in a knowledge graph with causal edges, so it returns
 *why* things are true — not just similar text. The read path makes no LLM calls
 and is fast; search liberally instead of guessing or asking the user to repeat.
 
-### 1. Recall first — before answering any non-trivial request
+### 1. Recall first — before answering any non-trivial request (and after a summary)
 Call `search_memory(query="<the user's topic>", user_id="claude")`. If it
 returns nothing for your user_id, retry once with `scope="collective"`. Build on
-what you find rather than re-deriving known decisions.
+what you find rather than re-deriving known decisions. **After a context
+summary / compaction, recall first too** — the summary is lossy, the memory is
+the ground truth; refresh from Helixir before continuing.
 
 ### 2. Capture durable facts — proactively, as you work
 When the user states or you establish a **decision, preference, goal,
@@ -28,8 +30,10 @@ constraint, outcome, or gotcha**, store it:
 - `needs_clarification` in the result → the charter blocked a silent conflict
   (e.g. a reversed preference). **Ask** the `suggested_question` or apply a
   standing rule; never overwrite silently.
-- `deduped` set with `memories_added=0` → already known (success, not failure).
-- `{pending_id, queued}` → async write; `get_add_status(pending_id)` to confirm.
+- `ok:true` → success, never retry. `deduped` set with `memories_added=0`
+  (`saved>0`) → already known (success, not failure).
+- `{ok:true, status:"accepted", pending_id}` → buffered write still finishing;
+  success, searchable in seconds. Only `ok:false` (`status:"failed"`) is a failure.
 - Don't store ephemeral chatter, secrets, or anything derivable from code/git.
 
 ### 3. Record outcomes at the end of each meaningful step
