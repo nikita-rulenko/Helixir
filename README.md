@@ -381,6 +381,8 @@ helixir journal | insights             # activity + insight journals (with prove
 
 > The quickest path is **`helixir setup`** (above) — it detects your clients and writes the config for you. The manual JSON below is for reference or custom setups.
 
+> **Make your agents *use* the memory well.** Wiring the MCP server is step one; the [`integration/`](integration/) templates (a drop-in `AGENTS.md` and a Claude `SKILLS.md`) encode how an agent should recall before answering, capture durable facts, and reason with FastThink — the same rules the maintainers run, so your agents get the same quality.
+
 ### Cursor
 
 Add to `~/.cursor/mcp.json`:
