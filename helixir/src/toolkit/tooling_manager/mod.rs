@@ -74,12 +74,11 @@ impl ToolingManager {
         );
         let entity_manager = EntityManager::new(Arc::clone(&db), config.entity_cache_size);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));
-        let reasoning_engine =
-            ReasoningEngine::new(
-                Arc::clone(&db),
-                Some(Arc::clone(&llm_provider)),
-                config.reasoning_context_limit,
-            );
+        let reasoning_engine = ReasoningEngine::new(
+            Arc::clone(&db),
+            Some(Arc::clone(&llm_provider)),
+            config.reasoning_context_limit,
+        );
         let search_engine = SearchEngine::new(
             Arc::clone(&db),
             Arc::clone(&embedder),

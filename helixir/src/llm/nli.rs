@@ -60,12 +60,20 @@ impl NliJudge {
 
     /// The model's actual input tensor names (introspected, not assumed).
     pub fn input_names(&self) -> Vec<String> {
-        self.session.inputs().iter().map(|o| o.name().to_string()).collect()
+        self.session
+            .inputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect()
     }
 
     /// The model's actual output tensor names.
     pub fn output_names(&self) -> Vec<String> {
-        self.session.outputs().iter().map(|o| o.name().to_string()).collect()
+        self.session
+            .outputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect()
     }
 
     /// Classify the (premise, hypothesis) pair. Returns the winning label and the
@@ -77,7 +85,11 @@ impl NliJudge {
             .map_err(|e| anyhow::anyhow!("encode: {e}"))?;
         let len = enc.get_ids().len();
         let ids: Vec<i64> = enc.get_ids().iter().map(|&x| i64::from(x)).collect();
-        let mask: Vec<i64> = enc.get_attention_mask().iter().map(|&x| i64::from(x)).collect();
+        let mask: Vec<i64> = enc
+            .get_attention_mask()
+            .iter()
+            .map(|&x| i64::from(x))
+            .collect();
 
         // This model's graph declares exactly input_ids + attention_mask (no
         // token_type_ids) and a single `logits` output of shape [1, 3] — verified
@@ -120,11 +132,7 @@ impl NliJudge {
 
 fn softmax3(x: [f32; 3]) -> [f32; 3] {
     let m = x.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let e = [
-        (x[0] - m).exp(),
-        (x[1] - m).exp(),
-        (x[2] - m).exp(),
-    ];
+    let e = [(x[0] - m).exp(), (x[1] - m).exp(), (x[2] - m).exp()];
     let s = e[0] + e[1] + e[2];
     [e[0] / s, e[1] / s, e[2] / s]
 }

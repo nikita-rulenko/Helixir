@@ -192,9 +192,13 @@ mod tests {
 
     #[test]
     fn has_agent_id_handles_both_shapes() {
-        assert!(has_agent_id(&serde_json::json!({"agent": {"agent_id": "x"}})));
+        assert!(has_agent_id(
+            &serde_json::json!({"agent": {"agent_id": "x"}})
+        ));
         assert!(has_agent_id(&serde_json::json!({"agent_id": "x"})));
-        assert!(!has_agent_id(&serde_json::json!({"agent": {"agent_id": ""}})));
+        assert!(!has_agent_id(
+            &serde_json::json!({"agent": {"agent_id": ""}})
+        ));
         assert!(!has_agent_id(&serde_json::json!({"agent": null})));
         assert!(!has_agent_id(&serde_json::json!({})));
     }

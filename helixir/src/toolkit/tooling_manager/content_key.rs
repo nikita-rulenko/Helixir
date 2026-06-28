@@ -65,7 +65,11 @@ impl ToolingManager {
     }
 
     /// Stamp a fingerprint onto a memory (used by backfill + unify).
-    pub async fn set_content_key(&self, memory_id: &str, content_key: &str) -> Result<(), ToolingError> {
+    pub async fn set_content_key(
+        &self,
+        memory_id: &str,
+        content_key: &str,
+    ) -> Result<(), ToolingError> {
         self.db
             .execute_query::<serde_json::Value, _>(
                 "setMemoryContentKey",
@@ -119,10 +123,7 @@ impl ToolingManager {
             memories: Vec<Node>,
         }
         self.db
-            .execute_query::<Resp, _>(
-                "getRecentMemories",
-                &serde_json::json!({ "limit": limit }),
-            )
+            .execute_query::<Resp, _>("getRecentMemories", &serde_json::json!({ "limit": limit }))
             .await
             .map(|r| {
                 r.memories

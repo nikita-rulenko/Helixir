@@ -196,7 +196,11 @@ pub async fn connect(
                     }
                     wave.parents.insert(
                         child_mid.clone(),
-                        Some((parent_mid.clone(), "VIA_CATEGORY", graph.connect_bridge_weight)),
+                        Some((
+                            parent_mid.clone(),
+                            "VIA_CATEGORY",
+                            graph.connect_bridge_weight,
+                        )),
                     );
                     if other.parents.contains_key(&child_mid) && meeting.is_none() {
                         meeting = Some(child_mid.clone());
@@ -279,7 +283,10 @@ async fn fetch_category_neighbours(
         {
             Ok(m) => m,
             Err(e) => {
-                debug!("connect: getMemoriesByCategory failed for {}: {e}", cat.category_id);
+                debug!(
+                    "connect: getMemoriesByCategory failed for {}: {e}",
+                    cat.category_id
+                );
                 continue;
             }
         };

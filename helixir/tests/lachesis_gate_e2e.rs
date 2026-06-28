@@ -103,7 +103,10 @@ async fn lachesis_gates_a_routed_chain() {
 
     // Structural invariants of the verdict.
     assert!((0.0..=1.0).contains(&v.coherence), "coherence in [0,1]");
-    assert!((0.0..=1.0).contains(&v.reasoning_support), "support in [0,1]");
+    assert!(
+        (0.0..=1.0).contains(&v.reasoning_support),
+        "support in [0,1]"
+    );
     assert_eq!(
         v.requires_verification,
         v.label == EpistemicLabel::PlausibleHypothesis,

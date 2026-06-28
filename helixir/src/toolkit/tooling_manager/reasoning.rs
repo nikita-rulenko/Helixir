@@ -250,7 +250,9 @@ impl ToolingManager {
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
         let seeds: Vec<(String, String)> = self
             .search_engine
-            .search(topic, &embedding, user_id, 5, "full", None, None, "personal")
+            .search(
+                topic, &embedding, user_id, 5, "full", None, None, "personal",
+            )
             .await?
             .into_iter()
             .map(|r| (r.memory_id, r.content))

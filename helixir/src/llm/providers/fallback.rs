@@ -268,7 +268,10 @@ mod tests {
             StubProvider::always_ok("ollama", "qwen2.5:7b", "FALLBACK"),
         );
         let r = w.generate("s", "u", None).await;
-        assert!(r.is_err(), "disabled fallback must surface the primary error");
+        assert!(
+            r.is_err(),
+            "disabled fallback must surface the primary error"
+        );
         assert!(!w.is_using_fallback());
         assert_eq!(w.fallback_count(), 0);
         assert_eq!(w.primary_failures(), 1);

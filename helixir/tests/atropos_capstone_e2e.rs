@@ -66,7 +66,13 @@ async fn atropos_surfaces_the_one_real_thread() {
     let cat = |n: &str| format!("{n}-{run}");
     let ens = |name: String| {
         let client = &client;
-        async move { client.tooling().ensure_category(&name, "domain", "").await.expect("cat") }
+        async move {
+            client
+                .tooling()
+                .ensure_category(&name, "domain", "")
+                .await
+                .expect("cat")
+        }
     };
     let weather = ens(cat("weather")).await;
     let crop = ens(cat("crop")).await;
@@ -78,7 +84,13 @@ async fn atropos_surfaces_the_one_real_thread() {
     let tag = |mid: &str, cid: &str| {
         let client = &client;
         let (mid, cid) = (mid.to_string(), cid.to_string());
-        async move { client.tooling().tag_memory(&mid, &cid, 90, "test").await.expect("tag") }
+        async move {
+            client
+                .tooling()
+                .tag_memory(&mid, &cid, 90, "test")
+                .await
+                .expect("tag")
+        }
     };
     tag(&m[0], &weather).await;
     tag(&m[0], &crop).await; // monsoon ⋂ crop
@@ -121,15 +133,32 @@ async fn atropos_surfaces_the_one_real_thread() {
     }
 
     // Exactly one insight: the sub-threads are subsumed into the full chain.
-    assert_eq!(insights.len(), 1, "the one real thread, deduped; got {}", insights.len());
+    assert_eq!(
+        insights.len(),
+        1,
+        "the one real thread, deduped; got {}",
+        insights.len()
+    );
     let top = &insights[0];
-    assert_eq!(top.hops, 4, "weather→crop→thickener→fracking→price is 4 hops");
+    assert_eq!(
+        top.hops, 4,
+        "weather→crop→thickener→fracking→price is 4 hops"
+    );
     let got: std::collections::HashSet<&str> =
         top.category_path.iter().map(String::as_str).collect();
     let want: std::collections::HashSet<&str> =
-        ["weather", "crop", "thickener", "fracking", "price"].into_iter().collect();
-    assert_eq!(got, want, "the thread spans exactly the guar chain; got {:?}", top.category_path);
-    assert!(top.requires_verification, "an insight is a hypothesis, never a verdict");
+        ["weather", "crop", "thickener", "fracking", "price"]
+            .into_iter()
+            .collect();
+    assert_eq!(
+        got, want,
+        "the thread spans exactly the guar chain; got {:?}",
+        top.category_path
+    );
+    assert!(
+        top.requires_verification,
+        "an insight is a hypothesis, never a verdict"
+    );
     assert_eq!(top.status, "proposed");
     // Provenance is real: every hop is witnessed by a spanning memory.
     assert_eq!(top.witnesses.len(), 4, "one witness bridging each hop");

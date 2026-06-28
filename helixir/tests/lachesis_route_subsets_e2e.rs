@@ -68,7 +68,13 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
     let cat = |n: &str| format!("{n}-{run}");
     let ens = |name: String| {
         let client = &client;
-        async move { client.tooling().ensure_category(&name, "test", "").await.expect("ensure") }
+        async move {
+            client
+                .tooling()
+                .ensure_category(&name, "test", "")
+                .await
+                .expect("ensure")
+        }
     };
     let x = ens(cat("catX")).await;
     let y = ens(cat("catY")).await;
@@ -80,7 +86,13 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
         let client = &client;
         let id = id.to_string();
         let cat = cat.to_string();
-        async move { client.tooling().tag_memory(&id, &cat, 90, "test").await.expect("tag") }
+        async move {
+            client
+                .tooling()
+                .tag_memory(&id, &cat, 90, "test")
+                .await
+                .expect("tag")
+        }
     };
     tag(&m[0], &x).await;
     tag(&m[1], &x).await;
@@ -107,17 +119,44 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
         .expect("a cross-domain subset thread should route from catX");
 
     println!("\n==== lachesis_route_subsets_e2e ====");
-    println!("universe N={universe}  hops={}  min_pmi={:.4}", hypo.hops, hypo.min_pmi);
+    println!(
+        "universe N={universe}  hops={}  min_pmi={:.4}",
+        hypo.hops, hypo.min_pmi
+    );
     for (i, s) in hypo.steps.iter().enumerate() {
-        println!("  {i}. {} (pmi_from_prev={:.3})", s.category_name, s.pmi_from_prev);
+        println!(
+            "  {i}. {} (pmi_from_prev={:.3})",
+            s.category_name, s.pmi_from_prev
+        );
     }
 
-    let names: Vec<&str> = hypo.steps.iter().map(|s| s.category_name.as_str()).collect();
+    let names: Vec<&str> = hypo
+        .steps
+        .iter()
+        .map(|s| s.category_name.as_str())
+        .collect();
     // The thread is the high-PMI chain; the thick axis never carries the route.
-    assert!(hypo.hops >= 2, "expected a multi-hop subset thread, got {}", hypo.hops);
+    assert!(
+        hypo.hops >= 2,
+        "expected a multi-hop subset thread, got {}",
+        hypo.hops
+    );
     assert_eq!(names.first(), Some(&"catX"), "thread starts at the seed");
-    assert!(names.contains(&"catY") && names.contains(&"catZ"), "chain runs X→Y→Z; got {names:?}");
-    assert!(!names.contains(&"thick"), "the thick axis must be gated out; got {names:?}");
-    assert!(hypo.min_pmi > 0.5, "every hop beats chance, weakest={}", hypo.min_pmi);
-    assert!(hypo.requires_verification, "a generated connection is a hypothesis, never a verdict");
+    assert!(
+        names.contains(&"catY") && names.contains(&"catZ"),
+        "chain runs X→Y→Z; got {names:?}"
+    );
+    assert!(
+        !names.contains(&"thick"),
+        "the thick axis must be gated out; got {names:?}"
+    );
+    assert!(
+        hypo.min_pmi > 0.5,
+        "every hop beats chance, weakest={}",
+        hypo.min_pmi
+    );
+    assert!(
+        hypo.requires_verification,
+        "a generated connection is a hypothesis, never a verdict"
+    );
 }

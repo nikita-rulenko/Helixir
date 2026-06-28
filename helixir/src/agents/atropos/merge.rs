@@ -35,12 +35,14 @@ impl Atropos<'_> {
         limit: i64,
         cosine_threshold: f64,
     ) -> Result<MergeSummary> {
-        let mut judge = NliJudge::load(&NliJudge::default_dir())
-            .context("NLI model unavailable — run `helixir model download` (collective/insights)")?;
+        let mut judge = NliJudge::load(&NliJudge::default_dir()).context(
+            "NLI model unavailable — run `helixir model download` (collective/insights)",
+        )?;
 
         let briefs = self.tooling.list_recent_briefs(limit).await;
         let mut summary = MergeSummary::default();
-        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
 
         for brief in &briefs {
             summary.scanned += 1;
@@ -64,7 +66,10 @@ impl Atropos<'_> {
             {
                 Ok(n) => n,
                 Err(e) => {
-                    warn!("merge: neighbour search failed for {}: {e}", brief.memory_id);
+                    warn!(
+                        "merge: neighbour search failed for {}: {e}",
+                        brief.memory_id
+                    );
                     continue;
                 }
             };
@@ -91,7 +96,10 @@ impl Atropos<'_> {
                 summary.candidates += 1;
 
                 // Contradiction-safe judgment (both directions inside is_same_fact).
-                if judge.is_same_fact(&brief.content, &n.content).unwrap_or(false) {
+                if judge
+                    .is_same_fact(&brief.content, &n.content)
+                    .unwrap_or(false)
+                {
                     let canonical = ck_a.clone().min(ck_b.clone());
                     match self
                         .tooling

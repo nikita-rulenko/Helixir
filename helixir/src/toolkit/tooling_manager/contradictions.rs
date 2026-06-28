@@ -85,7 +85,10 @@ impl ToolingManager {
         }
         let resp: Resp = self
             .db
-            .execute_query("getMemoryUsers", &serde_json::json!({ "memory_id": memory_id }))
+            .execute_query(
+                "getMemoryUsers",
+                &serde_json::json!({ "memory_id": memory_id }),
+            )
             .await
             .unwrap_or_default();
         resp.users

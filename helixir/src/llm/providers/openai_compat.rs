@@ -251,7 +251,10 @@ mod tests {
         // `response_format` is omitted when not requested.
         let req = cerebras().build_request("sys", "usr", None);
         let v = serde_json::to_value(&req).unwrap();
-        assert!(v.get("thinking").is_none(), "cerebras must not send thinking");
+        assert!(
+            v.get("thinking").is_none(),
+            "cerebras must not send thinking"
+        );
         assert!(v.get("response_format").is_none());
         assert_eq!(v["temperature"], 0.3);
     }

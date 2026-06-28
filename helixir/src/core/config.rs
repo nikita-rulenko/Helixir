@@ -94,7 +94,12 @@ pub struct RetryConfig {
 }
 impl Default for RetryConfig {
     fn default() -> Self {
-        Self { max: 3, initial_delay_ms: 100, max_delay_ms: 10_000, backoff_factor: 2 }
+        Self {
+            max: 3,
+            initial_delay_ms: 100,
+            max_delay_ms: 10_000,
+            backoff_factor: 2,
+        }
     }
 }
 
@@ -135,7 +140,12 @@ pub struct EdgeDamping {
 }
 impl Default for EdgeDamping {
     fn default() -> Self {
-        Self { implies_in: 0.9, because_in: 0.85, contradicts_in: 0.8, relation_in: 0.6 }
+        Self {
+            implies_in: 0.9,
+            because_in: 0.85,
+            contradicts_in: 0.8,
+            relation_in: 0.6,
+        }
     }
 }
 
@@ -176,7 +186,10 @@ pub struct PprConfig {
 }
 impl Default for PprConfig {
     fn default() -> Self {
-        Self { alpha: 0.6, max_iterations: 20 }
+        Self {
+            alpha: 0.6,
+            max_iterations: 20,
+        }
     }
 }
 
@@ -461,7 +474,11 @@ pub struct ChunkingConfig {
 }
 impl Default for ChunkingConfig {
     fn default() -> Self {
-        Self { threshold: 500, chunk_size: 512, enable_embeddings: true }
+        Self {
+            threshold: 500,
+            chunk_size: 512,
+            enable_embeddings: true,
+        }
     }
 }
 
@@ -491,7 +508,9 @@ pub struct GatewayConfig {
 }
 impl Default for GatewayConfig {
     fn default() -> Self {
-        Self { default_bind: "0.0.0.0:8765".to_string() }
+        Self {
+            default_bind: "0.0.0.0:8765".to_string(),
+        }
     }
 }
 
@@ -735,7 +754,10 @@ impl HelixirConfig {
         if let Ok(v) = std::env::var("HELIX_HOST") {
             self.host = v;
         }
-        if let Some(p) = std::env::var("HELIX_PORT").ok().and_then(|p| p.parse().ok()) {
+        if let Some(p) = std::env::var("HELIX_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+        {
             self.port = p;
         }
         // Privilege tier — opt-in only; unset/unknown stays whatever was set.

@@ -61,23 +61,53 @@ async fn pmi_damps_thick_axis_lifts_specific() {
 
     // Run-unique categories so their member sets are exactly this run's tags.
     let cat = |name: &str| format!("{name}-{run}");
-    let cat_a = client.tooling().ensure_category(&cat("alpha"), "test", "").await.expect("cat a");
-    let cat_b = client.tooling().ensure_category(&cat("beta"), "test", "").await.expect("cat b");
-    let cat_thick = client.tooling().ensure_category(&cat("thick"), "test", "").await.expect("cat thick");
+    let cat_a = client
+        .tooling()
+        .ensure_category(&cat("alpha"), "test", "")
+        .await
+        .expect("cat a");
+    let cat_b = client
+        .tooling()
+        .ensure_category(&cat("beta"), "test", "")
+        .await
+        .expect("cat b");
+    let cat_thick = client
+        .tooling()
+        .ensure_category(&cat("thick"), "test", "")
+        .await
+        .expect("cat thick");
 
     // SPECIFIC pair: alpha and beta both tag exactly the first two memories.
     for id in &mids[..2] {
-        client.tooling().tag_memory(id, &cat_a, 90, "test").await.expect("tag a");
-        client.tooling().tag_memory(id, &cat_b, 90, "test").await.expect("tag b");
+        client
+            .tooling()
+            .tag_memory(id, &cat_a, 90, "test")
+            .await
+            .expect("tag a");
+        client
+            .tooling()
+            .tag_memory(id, &cat_b, 90, "test")
+            .await
+            .expect("tag b");
     }
     // THICK axis: tags the whole universe (like raw-material covering everything).
     for id in &mids {
-        client.tooling().tag_memory(id, &cat_thick, 90, "test").await.expect("tag thick");
+        client
+            .tooling()
+            .tag_memory(id, &cat_thick, 90, "test")
+            .await
+            .expect("tag thick");
     }
 
     let lachesis = client.lachesis();
-    let specific = lachesis.subset_pmi(&cat_a, &cat_b, universe).await.expect("pmi specific");
-    let thick = lachesis.subset_pmi(&cat_a, &cat_thick, universe).await.expect("pmi thick");
+    let specific = lachesis
+        .subset_pmi(&cat_a, &cat_b, universe)
+        .await
+        .expect("pmi specific");
+    let thick = lachesis
+        .subset_pmi(&cat_a, &cat_thick, universe)
+        .await
+        .expect("pmi thick");
 
     println!("\n==== lachesis_pmi_e2e ====");
     println!("universe N={universe}");

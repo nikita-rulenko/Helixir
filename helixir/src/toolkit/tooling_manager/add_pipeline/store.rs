@@ -21,7 +21,11 @@ use super::super::{ToolingError, ToolingManager};
 /// Normalization is byte-level (lowercase + whitespace-collapse): it groups exact
 /// restatements; semantic paraphrase stays the search/Atropos layer's job.
 pub(crate) fn content_key(text: &str, memory_type: &str) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let normalized = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     let mut hasher = Sha256::new();
     hasher.update(memory_type.to_lowercase().as_bytes());
     hasher.update([0u8]);
@@ -401,14 +405,25 @@ mod tests {
         // exact-dedup / consensus grouping work across users).
         let base = content_key("Dark Theme everywhere", "preference");
         assert_eq!(base, content_key("dark theme everywhere", "preference"));
-        assert_eq!(base, content_key("  dark   theme\teverywhere  ", "preference"));
+        assert_eq!(
+            base,
+            content_key("  dark   theme\teverywhere  ", "preference")
+        );
     }
 
     #[test]
     fn content_key_distinguishes_type_and_content() {
         let a = content_key("backups run weekly", "fact");
-        assert_ne!(a, content_key("backups run weekly", "preference"), "type must matter");
-        assert_ne!(a, content_key("backups run daily", "fact"), "content must matter");
+        assert_ne!(
+            a,
+            content_key("backups run weekly", "preference"),
+            "type must matter"
+        );
+        assert_ne!(
+            a,
+            content_key("backups run daily", "fact"),
+            "content must matter"
+        );
     }
 
     #[test]

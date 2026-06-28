@@ -312,8 +312,8 @@ impl ToolingManager {
         let tags = (!node.context_tags.is_empty()).then_some(node.context_tags.as_str());
 
         let max_retries = self.config.ingest.max_retries;
-        let deadline = std::time::Instant::now()
-            + Duration::from_secs(self.config.ingest.deadline_secs);
+        let deadline =
+            std::time::Instant::now() + Duration::from_secs(self.config.ingest.deadline_secs);
         let backoff_ms = self.config.ingest.retry_backoff_ms;
         let mut last_err = String::new();
         let mut attempt = 0u32;
@@ -493,8 +493,7 @@ impl ToolingManager {
 /// Drains `pending` items oldest-first, one at a time — serialization is the
 /// whole point (dedup-race closure), so this never parallelizes.
 pub async fn run_ingest_worker(tm: Arc<ToolingManager>) {
-    let interval =
-        Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
+    let interval = Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
     info!(
         "Ingest worker started (poll {}ms); add_memory now returns pending_id",
         interval.as_millis()

@@ -215,7 +215,16 @@ fn subset_dfs(
             }
             on_path.insert(next.clone());
             cur.push((next.clone(), *p));
-            subset_dfs(next, adj, on_path, cur, cur_min.min(*p), best, best_key, budget);
+            subset_dfs(
+                next,
+                adj,
+                on_path,
+                cur,
+                cur_min.min(*p),
+                best,
+                best_key,
+                budget,
+            );
             cur.pop();
             on_path.remove(next);
             if *budget == 0 {
@@ -381,8 +390,12 @@ impl<'a> Lachesis<'a> {
             if i > 0 {
                 let prev = &best[i - 1].0;
                 if let (Some(ma), Some(mb)) = (members.get(prev), members.get(id)) {
-                    let overlap: Vec<String> =
-                        ma.iter().filter(|m| mb.contains(*m)).take(lc.witnesses_per_hop).cloned().collect();
+                    let overlap: Vec<String> = ma
+                        .iter()
+                        .filter(|m| mb.contains(*m))
+                        .take(lc.witnesses_per_hop)
+                        .cloned()
+                        .collect();
                     for mid in overlap {
                         let snippet = self
                             .tooling
@@ -429,8 +442,15 @@ mod tests {
     fn reasoning_backed_chain_is_a_hypothesis() {
         let v = assess(&[e("IMPLIES", 0.72), e("BECAUSE", 0.70)], 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
-        assert!(v.requires_verification, "a hypothesis is never asserted as truth");
-        assert!(v.coherence > 0.7 && v.coherence <= 0.72, "geomean ~0.71, got {}", v.coherence);
+        assert!(
+            v.requires_verification,
+            "a hypothesis is never asserted as truth"
+        );
+        assert!(
+            v.coherence > 0.7 && v.coherence <= 0.72,
+            "geomean ~0.71, got {}",
+            v.coherence
+        );
         assert_eq!(v.reasoning_support, 1.0);
     }
 
@@ -458,13 +478,21 @@ mod tests {
         let long: Vec<ChainEdge> = (0..8).map(|_| e("IMPLIES", 0.7)).collect();
         let v = assess(&long, 0.5, 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
-        assert!((v.coherence - 0.7).abs() < 1e-9, "geomean of all-0.7 is 0.7, got {}", v.coherence);
+        assert!(
+            (v.coherence - 0.7).abs() < 1e-9,
+            "geomean of all-0.7 is 0.7, got {}",
+            v.coherence
+        );
     }
 
     #[test]
     fn mixed_chain_keeps_a_reasoning_majority() {
         // One associative bridge among reasoning hops still passes the support bar.
-        let v = assess(&[e("IMPLIES", 0.7), e("VIA_CATEGORY", 0.6), e("BECAUSE", 0.7)], 0.5, 0.5);
+        let v = assess(
+            &[e("IMPLIES", 0.7), e("VIA_CATEGORY", 0.6), e("BECAUSE", 0.7)],
+            0.5,
+            0.5,
+        );
         assert!(v.reasoning_support >= 0.5);
         assert_eq!(v.label, EpistemicLabel::PlausibleHypothesis);
     }
@@ -498,6 +526,9 @@ mod tests {
     fn pmi_specific_beats_thick() {
         let specific = pmi(5, 5, 5, 100); // narrow, fully overlapping
         let thick = pmi(5, 100, 5, 100); // B spans the whole universe
-        assert!(specific > thick, "specific {specific} should beat thick {thick}");
+        assert!(
+            specific > thick,
+            "specific {specific} should beat thick {thick}"
+        );
     }
 }

@@ -18,7 +18,10 @@ use helixir::core::HelixirClient;
 fn token() -> String {
     format!(
         "{:x}",
-        SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
     )
 }
 
@@ -66,7 +69,11 @@ async fn two_hosts_appear_in_one_roster() {
     // Fresh heartbeats are active in a generous window. (The active/stale
     // boundary itself is unit-tested with a controlled clock — here both were
     // just stamped, so age≈0 and any non-negative window counts them live.)
-    assert!(pa.is_active(now, 120), "a should be active: age={:?}", pa.age_seconds(now));
+    assert!(
+        pa.is_active(now, 120),
+        "a should be active: age={:?}",
+        pa.age_seconds(now)
+    );
     assert!(pb.is_active(now, 120), "b should be active");
 
     // Re-heartbeat is idempotent: no duplicate node, presence just updates.
@@ -81,7 +88,10 @@ async fn two_hosts_appear_in_one_roster() {
     assert_eq!(pa2.status, "idle", "status must update on re-heartbeat");
 
     println!("\n==== swarm_e2e ====");
-    println!("roster carries {} agent(s); two hosts visible in one collective", roster.len());
+    println!(
+        "roster carries {} agent(s); two hosts visible in one collective",
+        roster.len()
+    );
     for p in &roster2 {
         println!(
             "  {} [{}] @ {} — {} ({}s ago)",
@@ -89,7 +99,9 @@ async fn two_hosts_appear_in_one_roster() {
             p.role,
             p.host,
             p.status,
-            p.age_seconds(now).map(|s| s.to_string()).unwrap_or_else(|| "never".into())
+            p.age_seconds(now)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "never".into())
         );
     }
 }

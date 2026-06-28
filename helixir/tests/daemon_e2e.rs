@@ -17,7 +17,10 @@ use helixir::core::HelixirClient;
 fn token() -> String {
     format!(
         "{:x}",
-        SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
     )
 }
 

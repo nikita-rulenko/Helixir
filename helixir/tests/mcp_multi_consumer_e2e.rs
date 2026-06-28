@@ -201,7 +201,10 @@ fn multi_consumer_collective_invariants() {
 fn multi_consumer_buffer_invariants() {
     require_e2e();
     let run = token();
-    let buf = [("HELIXIR_INGEST_BUFFER", "1"), ("HELIXIR_MODE", "collective")];
+    let buf = [
+        ("HELIXIR_INGEST_BUFFER", "1"),
+        ("HELIXIR_MODE", "collective"),
+    ];
 
     // --- Invariant 5: several buffered producers, none lost ---------------
     // Keep all producer processes alive (their workers drain the shared queue)

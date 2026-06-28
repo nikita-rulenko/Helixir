@@ -52,14 +52,16 @@ async fn clotho_autotag_dictionary() {
     println!("seeded {seeded} categories");
 
     // 2) Two on-domain facts + one off-domain control.
-    let agri =
-        "After the monsoon rains this season, farmers across the region harvested a record grain crop.";
+    let agri = "After the monsoon rains this season, farmers across the region harvested a record grain crop.";
     let petro = "Hydraulic fracturing of shale wells relies on petrochemical fluid additives \
                  whose price drives drilling costs.";
     let arts = "The violin concerto moved the entire audience to tears at last night's premiere.";
 
     let a = client.add(agri, &user, None, None).await.expect("add agri");
-    let b = client.add(petro, &user, None, None).await.expect("add petro");
+    let b = client
+        .add(petro, &user, None, None)
+        .await
+        .expect("add petro");
     let c = client.add(arts, &user, None, None).await.expect("add arts");
 
     // 3) Auto-tag by embedding match. Tag every produced memory with its own
@@ -101,7 +103,11 @@ async fn clotho_autotag_dictionary() {
             .expect("auto_tag");
         println!(
             "[arts] {id}: tagged {:?} escalation={}",
-            outcome.tagged.iter().map(|h| h.name.clone()).collect::<Vec<_>>(),
+            outcome
+                .tagged
+                .iter()
+                .map(|h| h.name.clone())
+                .collect::<Vec<_>>(),
             outcome.escalation.is_some()
         );
         if outcome.escalation.is_some() {
@@ -143,7 +149,9 @@ async fn clotho_autotag_dictionary() {
     );
     // Precision: the bar excludes the OTHER domain — not a tag-everything pass.
     assert!(
-        !agri_tags.iter().any(|n| n == "petrochemicals" || n == "finance"),
+        !agri_tags
+            .iter()
+            .any(|n| n == "petrochemicals" || n == "finance"),
         "agri fact should NOT cross-tag petrochemicals/finance at bar {bar}; got {agri_tags:?}"
     );
     assert!(
