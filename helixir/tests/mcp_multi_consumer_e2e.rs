@@ -217,10 +217,19 @@ fn multi_consumer_buffer_invariants() {
             "Buffered multi-producer {run} #{i}: shard {i} of service atlas is pinned to region eu-{i}."
         );
         let (ack, _) = mcp.call_tool("add_memory", json!({ "message": msg, "user_id": user }));
+        // Confirm-or-promise (#63): a buffered add must read as SUCCESS, never a
+        // bare "pending". It returns ok:true (the result inline once the worker
+        // finishes within the ack window, else status:"accepted") and always
+        // carries a pollable pending_id.
         assert_eq!(
-            ack["queued"].as_bool(),
+            ack["ok"].as_bool(),
             Some(true),
-            "buffered add must queue: {ack}"
+            "buffered add must report ok:true (success), not an ambiguous/failed ack: {ack}"
+        );
+        assert_ne!(
+            ack["status"].as_str(),
+            Some("failed"),
+            "buffered add must not report failed: {ack}"
         );
         let pid = ack["pending_id"].as_str().unwrap_or("").to_string();
         assert!(pid.starts_with("pi_"), "pending_id shape: {ack}");
@@ -308,4 +317,61 @@ fn multi_consumer_buffer_invariants() {
     println!(
         "3 buffered producers all processed; outbox delivered; knowledge {n_before}→{n_after} (never shrank) ✓"
     );
+}
+
+/// Regression for the memory-layer blocker (#63): a buffered `add_memory` must
+/// hand the agent an UNAMBIGUOUS success it can act on — the result inline with
+/// memory_ids when the worker finishes in the ack window, else an explicit
+/// `status:"accepted"` promise. It must NEVER return the old bare
+/// `{status:"pending"}` shape that swarm agents misread as failure (which made
+/// them retry or defect to a private memory, fragmenting the shared graph).
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn buffered_add_reads_as_success_63() {
+    require_e2e();
+    let run = token();
+    let buf = [("HELIXIR_INGEST_BUFFER", "1")];
+    let (mut mcp, _) = McpClient::spawn_with_env(&buf);
+    let user = format!("ack63_{run}");
+
+    let (ack, _) = mcp.call_tool(
+        "add_memory",
+        json!({
+            "message": format!("Ack63 {run}: the helix bench node listens on port 6970 for the collective."),
+            "user_id": user,
+        }),
+    );
+
+    // (1) Top-level success signal — the core of the fix.
+    assert_eq!(
+        ack["ok"].as_bool(),
+        Some(true),
+        "buffered add must report ok:true so the agent trusts the write: {ack}"
+    );
+    // (2) The poison shape is gone: never a bare "pending" the agent reads as failure.
+    assert_ne!(
+        ack["status"].as_str(),
+        Some("pending"),
+        "buffered add must not return the bare pending shape (#63 regression): {ack}"
+    );
+    // (3) Always a pollable id.
+    let pid = ack["pending_id"].as_str().unwrap_or("");
+    assert!(pid.starts_with("pi_"), "must carry a pending_id: {ack}");
+
+    // (4) Either it confirmed inline (memory_ids present) OR it explicitly
+    // promised acceptance — both are actionable success, neither is ambiguous.
+    let confirmed_inline = ack["memory_ids"].as_array().map(|a| !a.is_empty()).unwrap_or(false);
+    let saved_inline = ack["saved"].as_u64().map(|n| n > 0).unwrap_or(false);
+    let accepted = ack["status"].as_str() == Some("accepted") || ack["accepted"].as_bool() == Some(true);
+    assert!(
+        confirmed_inline || saved_inline || accepted,
+        "buffered ack must be inline-confirmed (memory_ids/saved) or explicitly accepted: {ack}"
+    );
+
+    // (5) Whatever the ack said, the write must actually land and be findable.
+    let st = poll_done(&mut mcp, pid, 30);
+    assert_eq!(st["status"].as_str(), Some("done"), "write must reach done: {st}");
+
+    println!("\n==== buffered_add_reads_as_success_63 ====");
+    println!("buffered ack ok:true, no bare-pending, confirmed_inline={confirmed_inline} accepted={accepted} ✓");
 }
