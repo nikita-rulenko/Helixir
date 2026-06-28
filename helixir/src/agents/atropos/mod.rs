@@ -12,6 +12,7 @@
 //! is JSONL written by the CLL (deploy-free). Persisting `Insight` nodes to the
 //! graph and ranking by novelty-vs-journal-history are later steps.
 
+#[cfg(feature = "nli")]
 pub mod merge;
 pub mod reconcile;
 
@@ -70,7 +71,10 @@ impl<'a> Atropos<'a> {
         let lachesis = Lachesis::new(self.tooling);
         let mut hyps: Vec<SubsetHypothesis> = Vec::new();
         for (sid, _) in seeds {
-            if let Some(h) = lachesis.route_subsets(sid, candidates, universe, max_hops).await? {
+            if let Some(h) = lachesis
+                .route_subsets(sid, candidates, universe, max_hops)
+                .await?
+            {
                 hyps.push(h);
             }
         }
@@ -100,7 +104,11 @@ pub fn curate_hypotheses(
 
     // Strongest first, then keep a thread only if it isn't a subset of one
     // already kept — a 5-hop thread subsumes its 3-hop sub-threads.
-    insights.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    insights.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut kept: Vec<Insight> = Vec::new();
     for ins in insights {
         let cs: HashSet<&String> = ins.category_path.iter().collect();
@@ -188,7 +196,11 @@ mod tests {
         let big = hyp(&[("x", 0.0), ("y", 2.0), ("z", 2.0)]); // 2 hops × 2.0 = 4.0
         let out = curate_hypotheses(vec![small, big], 1.0, 2);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].category_path, vec!["x", "y", "z"], "highest value first");
+        assert_eq!(
+            out[0].category_path,
+            vec!["x", "y", "z"],
+            "highest value first"
+        );
         assert!(out[0].requires_verification, "an insight is a hypothesis");
         assert_eq!(out[0].status, "proposed");
         assert!(!out[0].witnesses.is_empty(), "insights carry provenance");

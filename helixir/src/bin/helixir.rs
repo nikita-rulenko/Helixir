@@ -19,16 +19,19 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dialoguer::{Confirm, Input, MultiSelect, Select};
+use helixir::HelixClient;
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
-use helixir::core::config::MemoryMode;
 use helixir::core::HelixirClient;
-use helixir::HelixClient;
+use helixir::core::config::MemoryMode;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "helixir", about = "Helixir agent control & monitoring (the Moirai)")]
+#[command(
+    name = "helixir",
+    about = "Helixir agent control & monitoring (the Moirai)"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -315,9 +318,14 @@ fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
             | Cmd::Lachesis { .. }
             | Cmd::Atropos { .. }
             | Cmd::Pipeline { .. }
-            | Cmd::Daemon { cmd: DaemonCmd::Run { .. } }
+            | Cmd::Daemon {
+                cmd: DaemonCmd::Run { .. }
+            }
     );
-    let needs_collective = matches!(cmd, Cmd::Swarm { .. } | Cmd::Heartbeat { .. } | Cmd::Debt { .. });
+    let needs_collective = matches!(
+        cmd,
+        Cmd::Swarm { .. } | Cmd::Heartbeat { .. } | Cmd::Debt { .. }
+    );
     if needs_insights && !mode.insights_enabled() {
         anyhow::bail!(
             "`{}` needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
@@ -363,9 +371,7 @@ fn print_mode() -> Result<()> {
         on(mode.insights_enabled())
     );
     if !mode.insights_enabled() {
-        println!(
-            "\nRaise it: HELIXIR_MODE=collective|insights, or `helixir setup --mode <tier>`."
-        );
+        println!("\nRaise it: HELIXIR_MODE=collective|insights, or `helixir setup --mode <tier>`.");
     }
     Ok(())
 }
@@ -374,7 +380,9 @@ fn print_mode() -> Result<()> {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "helixir=info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "helixir=info".into()),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -519,7 +527,12 @@ async fn main() -> Result<()> {
                 threshold,
                 max_seeds,
                 max_hops,
-            } => daemon_run(&client, user, interval, once, threshold, max_seeds, max_hops).await?,
+            } => {
+                daemon_run(
+                    &client, user, interval, once, threshold, max_seeds, max_hops,
+                )
+                .await?
+            }
             _ => unreachable!("daemon start/stop/status handled before client init"),
         },
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
@@ -691,10 +704,16 @@ async fn clotho_tag(
     top_k: i64,
 ) -> Result<()> {
     let mems = client.tooling().list_user_memories(user, limit).await?;
-    println!("Clotho tagging {} memories for '{user}' (bar {threshold})...", mems.len());
+    println!(
+        "Clotho tagging {} memories for '{user}' (bar {threshold})...",
+        mems.len()
+    );
     let (mut tags, mut escalations, mut tagged_mems) = (0usize, 0usize, 0usize);
     for (id, content) in &mems {
-        let outcome = client.clotho().auto_tag(id, content, top_k, threshold).await?;
+        let outcome = client
+            .clotho()
+            .auto_tag(id, content, top_k, threshold)
+            .await?;
         if !outcome.tagged.is_empty() {
             tagged_mems += 1;
             tags += outcome.tagged.len();
@@ -824,7 +843,10 @@ async fn lachesis_route(
 async fn chain(client: &HelixirClient, user: &str, topic: &str, max_hops: usize) -> Result<()> {
     match client.longest_chain(topic, user, max_hops).await? {
         Some(n) => {
-            println!("longest chain: {} hops, confidence {:.4}", n.hops, n.confidence);
+            println!(
+                "longest chain: {} hops, confidence {:.4}",
+                n.hops, n.confidence
+            );
             for (i, s) in n.steps.iter().enumerate() {
                 let edge = s
                     .edge_type
@@ -983,7 +1005,8 @@ fn client_targets() -> Vec<(String, PathBuf)> {
 /// servers and keys are preserved.
 fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool) -> Result<()> {
     let mut root: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(path)?).unwrap_or_else(|_| serde_json::json!({}))
+        serde_json::from_str(&std::fs::read_to_string(path)?)
+            .unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
     };
@@ -1004,7 +1027,10 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
         .insert("helixir-local".to_string(), entry.clone());
 
     if dry_run {
-        println!("  [dry-run] {name}: would set helixir-local in {}", path.display());
+        println!(
+            "  [dry-run] {name}: would set helixir-local in {}",
+            path.display()
+        );
         return Ok(());
     }
     if path.exists() {
@@ -1013,7 +1039,10 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
         std::fs::create_dir_all(parent).ok();
     }
     std::fs::write(path, serde_json::to_string_pretty(&root)?)?;
-    println!("  ✓ {name}: wired helixir-local → {} (backup .bak)", path.display());
+    println!(
+        "  ✓ {name}: wired helixir-local → {} (backup .bak)",
+        path.display()
+    );
     Ok(())
 }
 
@@ -1038,7 +1067,9 @@ async fn probe_backend(host: &str, port: u16) -> bool {
 /// env-pinned port is tried first, then the common Helix ports.
 async fn discover_backends() -> Vec<(String, u16)> {
     let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let env_port: Option<u16> = std::env::var("HELIX_PORT").ok().and_then(|p| p.parse().ok());
+    let env_port: Option<u16> = std::env::var("HELIX_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok());
     let mut ports: Vec<u16> = Vec::new();
     for p in env_port.into_iter().chain([6970u16, 6969]) {
         if !ports.contains(&p) {
@@ -1101,16 +1132,17 @@ fn prompt_mode_recommendation() -> Result<MemoryMode> {
         .default(0)
         .items(&options)
         .interact()?;
-    Ok([MemoryMode::Collective, MemoryMode::Solo, MemoryMode::Insights][idx])
+    Ok([
+        MemoryMode::Collective,
+        MemoryMode::Solo,
+        MemoryMode::Insights,
+    ][idx])
 }
 
 /// During setup, for the collective/insights tiers, surface and optionally fetch
 /// the local NLI model (the paraphrase-merge judge). Solo skips it entirely.
-async fn maybe_setup_nli_model(
-    mode: MemoryMode,
-    interactive: bool,
-    dry_run: bool,
-) -> Result<()> {
+#[cfg(feature = "nli")]
+async fn maybe_setup_nli_model(mode: MemoryMode, interactive: bool, dry_run: bool) -> Result<()> {
     use helixir::llm::nli;
     if !mode.collective_enabled() {
         return Ok(());
@@ -1142,12 +1174,26 @@ async fn maybe_setup_nli_model(
     if go {
         let bytes = nli::download(false).await?;
         match nli::NliJudge::load(&nli::NliJudge::default_dir()) {
-            Ok(_) => println!("  ✓ fetched {:.0} MB — NLI model ready.\n", bytes as f64 / 1e6),
+            Ok(_) => println!(
+                "  ✓ fetched {:.0} MB — NLI model ready.\n",
+                bytes as f64 / 1e6
+            ),
             Err(e) => println!("  ⚠ downloaded but failed to load: {e}\n"),
         }
     } else {
         println!("  skipped — run `helixir model download` when ready.\n");
     }
+    Ok(())
+}
+
+/// No-op when built without the `nli` feature: paraphrase merging is unavailable,
+/// so setup just proceeds without offering the model.
+#[cfg(not(feature = "nli"))]
+async fn maybe_setup_nli_model(
+    _mode: MemoryMode,
+    _interactive: bool,
+    _dry_run: bool,
+) -> Result<()> {
     Ok(())
 }
 
@@ -1189,7 +1235,13 @@ async fn setup_run(
         println!("  The privilege tier lives on the GATEWAY process — start it with");
         println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
         let entry = mcp_entry_gateway(&url);
-        return wire_entry_to_clients(entry, target, interactive, dry_run, &format!("gateway {url}"));
+        return wire_entry_to_clients(
+            entry,
+            target,
+            interactive,
+            dry_run,
+            &format!("gateway {url}"),
+        );
     }
 
     // 1. Discover — a HelixDB is a singleton; find an existing one so we connect
@@ -1243,12 +1295,8 @@ async fn setup_run(
         match lan_ip() {
             Some(ip) => {
                 println!("This machine's LAN address: {ip}:{}", cfg.port);
-                println!(
-                    "  Other hosts join the same collective by setting their client's"
-                );
-                println!(
-                    "  HELIX_HOST={ip} (full network trust assumed — no auth token yet).\n"
-                );
+                println!("  Other hosts join the same collective by setting their client's");
+                println!("  HELIX_HOST={ip} (full network trust assumed — no auth token yet).\n");
             }
             None => println!("(No LAN address found — offline, or no network interface.)\n"),
         }
@@ -1273,7 +1321,14 @@ fn wire_entry_to_clients(
         let path = PathBuf::from(&t);
         println!("Wiring helixir-local ({source}):");
         wire_client("target", &path, &entry, dry_run)?;
-        println!("{}", if dry_run { "\n(dry-run — nothing was written.)" } else { "\nDone." });
+        println!(
+            "{}",
+            if dry_run {
+                "\n(dry-run — nothing was written.)"
+            } else {
+                "\nDone."
+            }
+        );
         return Ok(());
     }
 
@@ -1281,7 +1336,13 @@ fn wire_entry_to_clients(
     let selected: Vec<(String, PathBuf)> = if interactive {
         let labels: Vec<String> = targets
             .iter()
-            .map(|(n, p)| format!("{n}  [{}]{}", p.display(), if p.exists() { "" } else { " (new)" }))
+            .map(|(n, p)| {
+                format!(
+                    "{n}  [{}]{}",
+                    p.display(),
+                    if p.exists() { "" } else { " (new)" }
+                )
+            })
             .collect();
         let picks = MultiSelect::new()
             .with_prompt("Wire which clients? (space to toggle, enter to confirm)")
@@ -1323,6 +1384,7 @@ fn wire_entry_to_clients(
 
 // --- contradiction debt (#45): the Cutter's hygiene dashboard ---
 
+#[cfg(feature = "nli")]
 async fn model_cmd(sub: &ModelCmd) -> Result<()> {
     use helixir::llm::nli;
     match sub {
@@ -1364,14 +1426,23 @@ async fn model_cmd(sub: &ModelCmd) -> Result<()> {
     }
 }
 
+#[cfg(not(feature = "nli"))]
+async fn model_cmd(_sub: &ModelCmd) -> Result<()> {
+    anyhow::bail!(
+        "this build was compiled without the `nli` feature — rebuild with `--features nli` to use the model/NLI commands"
+    )
+}
+
+#[cfg(feature = "nli")]
 fn nli_check() -> Result<()> {
     use helixir::llm::nli::{NliJudge, NliLabel};
 
     let dir = NliJudge::default_dir();
     println!("Local NLI judge — liveness + readiness check");
     println!("Loading from {} …\n", dir.display());
-    let mut judge = NliJudge::load(&dir)
-        .context("load NLI model (collective/insights setup downloads it to ~/.helixir/models/nli)")?;
+    let mut judge = NliJudge::load(&dir).context(
+        "load NLI model (collective/insights setup downloads it to ~/.helixir/models/nli)",
+    )?;
     // Introspected, not assumed — this is what bit us before.
     println!("  model inputs : {:?}", judge.input_names());
     println!("  model outputs: {:?}\n", judge.output_names());
@@ -1429,6 +1500,7 @@ fn nli_check() -> Result<()> {
     }
 }
 
+#[cfg(feature = "nli")]
 async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result<()> {
     use helixir::agents::atropos::Atropos;
     println!("Paraphrase backstop (#43/#55) — collective scan (cosine ≥ {threshold}) …");
@@ -1442,8 +1514,18 @@ async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result
         "  merged {} fingerprint group(s) — {} node(s) re-stamped",
         s.merged_groups, s.nodes_restamped
     );
-    println!("  contradictions blocked from merging: {}", s.contradictions_blocked);
+    println!(
+        "  contradictions blocked from merging: {}",
+        s.contradictions_blocked
+    );
     Ok(())
+}
+
+#[cfg(not(feature = "nli"))]
+async fn merge_run(_client: &HelixirClient, _limit: i64, _threshold: f64) -> Result<()> {
+    anyhow::bail!(
+        "this build was compiled without the `nli` feature — paraphrase merge is unavailable; rebuild with `--features nli`"
+    )
 }
 
 async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
@@ -1460,7 +1542,7 @@ async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
 }
 
 async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -> Result<()> {
-    use helixir::agents::atropos::reconcile::{classify, DisputeKind};
+    use helixir::agents::atropos::reconcile::{DisputeKind, classify};
 
     if reconcile {
         let s = client
@@ -1494,7 +1576,10 @@ async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -
         return Ok(());
     }
     let (mut pref, mut live) = (0u32, 0u32);
-    println!("Open contradiction debt for '{user}' — {} dispute(s):\n", open.len());
+    println!(
+        "Open contradiction debt for '{user}' — {} dispute(s):\n",
+        open.len()
+    );
     for oc in &open {
         let tag = match classify(&oc.resolution_strategy) {
             DisputeKind::Preference => {
@@ -1546,7 +1631,10 @@ fn trunc(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(n.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -1683,7 +1771,10 @@ fn stop_process(name: &str) -> Result<()> {
         println!("{name} not running (no pid file)");
         return Ok(());
     };
-    let pid = state.get("pid").and_then(|v| v.as_i64()).context("pid file has no pid")? as i32;
+    let pid = state
+        .get("pid")
+        .and_then(|v| v.as_i64())
+        .context("pid file has no pid")? as i32;
     if is_alive(pid) {
         unsafe { libc::kill(pid, libc::SIGTERM) };
         println!("{name} stopped (pid {pid})");
@@ -1722,7 +1813,10 @@ fn daemon_start(
             "max_seeds": max_seeds, "max_hops": max_hops,
         }),
     )?;
-    println!("daemon started (pid {pid}) for '{user}', every {interval}s; log: {}", log.display());
+    println!(
+        "daemon started (pid {pid}) for '{user}', every {interval}s; log: {}",
+        log.display()
+    );
     Ok(())
 }
 
@@ -1738,16 +1832,27 @@ fn daemon_status() -> Result<()> {
     let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     println!(
         "daemon: {}  pid={pid} user={} interval={}s started={}",
-        if is_alive(pid) { "running" } else { "STALE (process gone)" },
+        if is_alive(pid) {
+            "running"
+        } else {
+            "STALE (process gone)"
+        },
         state.get("user").and_then(|v| v.as_str()).unwrap_or("?"),
         state.get("interval").and_then(|v| v.as_u64()).unwrap_or(0),
-        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+        state
+            .get("started_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
     );
     if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
         println!("  log: {l}");
     }
     if let Ok(body) = std::fs::read_to_string(journal_path()) {
-        if let Some(last) = body.lines().filter(|l| l.contains("\"agent\":\"daemon\"")).last() {
+        if let Some(last) = body
+            .lines()
+            .filter(|l| l.contains("\"agent\":\"daemon\""))
+            .last()
+        {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(last) {
                 println!(
                     "  last pass: {} — {}",
@@ -1766,7 +1871,10 @@ fn gateway_start(bind: &str) -> Result<()> {
         &["gateway", "run", "--bind", bind],
         serde_json::json!({ "bind": bind }),
     )?;
-    println!("gateway started (pid {pid}) at http://{bind}/mcp; log: {}", log.display());
+    println!(
+        "gateway started (pid {pid}) at http://{bind}/mcp; log: {}",
+        log.display()
+    );
     Ok(())
 }
 
@@ -1779,8 +1887,15 @@ fn gateway_status() -> Result<()> {
     let bind = state.get("bind").and_then(|v| v.as_str()).unwrap_or("?");
     println!(
         "gateway: {}  pid={pid} url=http://{bind}/mcp started={}",
-        if is_alive(pid) { "running" } else { "STALE (process gone)" },
-        state.get("started_at").and_then(|v| v.as_str()).unwrap_or("?"),
+        if is_alive(pid) {
+            "running"
+        } else {
+            "STALE (process gone)"
+        },
+        state
+            .get("started_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
     );
     if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
         println!("  log: {l}");
@@ -1803,7 +1918,11 @@ fn journal(agent: &str, action: &str, detail: &str) {
         "action": action,
         "detail": detail,
     });
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(journal_path()) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(journal_path())
+    {
         let _ = writeln!(f, "{entry}");
     }
 }
@@ -1834,7 +1953,11 @@ fn insights_tail(n: usize) -> Result<()> {
         .with_context(|| format!("no insight journal yet at {}", path.display()))?;
     let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
     let start = lines.len().saturating_sub(n);
-    println!("insight journal (last {} of {}):", lines.len() - start, lines.len());
+    println!(
+        "insight journal (last {} of {}):",
+        lines.len() - start,
+        lines.len()
+    );
     for line in &lines[start..] {
         if let Ok(ins) = serde_json::from_str::<Insight>(line) {
             println!(
@@ -1859,7 +1982,11 @@ fn journal_tail(n: usize) -> Result<()> {
         .with_context(|| format!("no journal yet at {}", path.display()))?;
     let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
     let start = lines.len().saturating_sub(n);
-    println!("agent activity (last {} of {}):", lines.len() - start, lines.len());
+    println!(
+        "agent activity (last {} of {}):",
+        lines.len() - start,
+        lines.len()
+    );
     for line in &lines[start..] {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
             println!(
