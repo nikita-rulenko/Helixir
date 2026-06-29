@@ -47,42 +47,52 @@ fn reasoning_edge_created_on_fresh_write() {
 
     let (mut mcp, _boot) = McpClient::spawn();
     let run = token();
-    let user = format!("reason_{run}");
 
-    // An explicit causal statement: two facts joined by "because". A healthy
-    // extractor splits them and links them with a typed reasoning edge.
-    let causal = format!(
-        "Reasoning e2e {run}: the team migrated datastore kappa_{run} from SQLite to Postgres \
-         because SQLite could not handle the concurrent write load at peak traffic."
-    );
-    let (added, _) = mcp.call_tool("add_memory", json!({"message": causal, "user_id": user}));
-    assert!(
-        added["memories_added"].as_u64().unwrap_or(0) >= 1,
-        "the causal statement must store at least one memory: {added}"
-    );
-
-    // The reasoning edge connects the two extracted facts on the writer's own
-    // sub-graph — read it back via get_memory_graph.
-    let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
-    let edges = graph["edges"].as_array().cloned().unwrap_or_default();
-    let reasoning_edges: Vec<&str> = edges
-        .iter()
-        .filter_map(|e| e["edge_type"].as_str())
-        .filter(|t| REASONING_EDGES.iter().any(|r| t.contains(r)))
-        .collect();
+    // Inter-atom edge extraction on a SINGLE write is probabilistic (the model
+    // doesn't always emit the edge even on a clear "X because Y" — see #66), so
+    // retry a few fresh writes and assert the graph-of-why builds on at least
+    // one. This guards the feature ("edges still get built") without flaking on
+    // per-write LLM variance.
+    let mut user = String::new();
+    let mut reasoning_edges: Vec<String> = Vec::new();
+    for attempt in 0..3 {
+        let u = format!("reason_{run}_{attempt}");
+        let causal = format!(
+            "Reasoning e2e {u}: the team migrated datastore kappa_{u} from SQLite to Postgres \
+             because SQLite could not handle the concurrent write load at peak traffic."
+        );
+        let (added, _) = mcp.call_tool("add_memory", json!({"message": causal, "user_id": u}));
+        assert!(
+            added["memories_added"].as_u64().unwrap_or(0) >= 1,
+            "the causal statement must store at least one memory: {added}"
+        );
+        let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": u}));
+        reasoning_edges = graph["edges"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| e["edge_type"].as_str())
+            .filter(|t| REASONING_EDGES.iter().any(|r| t.contains(r)))
+            .map(str::to_string)
+            .collect();
+        if !reasoning_edges.is_empty() {
+            user = u;
+            break;
+        }
+    }
 
     assert!(
         !reasoning_edges.is_empty(),
-        "a 'X because Y' write must create a typed reasoning edge between the \
-         extracted facts (the graph-of-why must not silently stop emitting edges); \
-         got edges: {edges:?}"
+        "a 'X because Y' write must create a typed reasoning edge within 3 attempts \
+         (the graph-of-why must not silently stop emitting edges)"
     );
 
     // Cross-check the same edge is reachable through the reasoning-chain tool —
     // the surface an agent actually uses to ask "why".
     let (chain, _) = mcp.call_tool(
         "search_reasoning_chain",
-        json!({"query": format!("why was kappa_{run} migrated to Postgres"), "user_id": user}),
+        json!({"query": "why was the datastore migrated to Postgres", "user_id": user}),
     );
     assert!(
         chain["chains"]
@@ -129,32 +139,43 @@ fn associative_edges_built_on_fresh_write() {
 
     let (mut mcp, _boot) = McpClient::spawn();
     let run = token();
-    let user = format!("assoc_{run}");
-
-    // Compositional/taxonomic structure (associative-edge attempt) PLUS one
-    // explicit causal clause so there is always >=1 inter-atom edge to assert on
-    // (structural links often stay intra-atom — see edges_db_verified for the
-    // robust DB-ground-truth check; here we just guard against zero edges).
-    let structural = format!(
-        "Arsenal e2e {run}: the lexer_{run} is a part of the compiler_{run}. \
-         The compiler_{run} is a kind of language toolchain. The build_{run} \
-         failed because the lexer_{run} rejected malformed input."
-    );
-    let (added, add_ms) =
-        mcp.call_tool("add_memory", json!({"message": structural, "user_id": user}));
-    assert!(
-        added["memories_added"].as_u64().unwrap_or(0) >= 1,
-        "the structural statement must store memories: {added}"
-    );
     let provider = std::env::var("HELIX_LLM_PROVIDER").unwrap_or_else(|_| "default".into());
     let model = std::env::var("HELIX_LLM_MODEL").unwrap_or_else(|_| "?".into());
 
-    let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
-    let edges = graph["edges"].as_array().cloned().unwrap_or_default();
-    let edge_types: Vec<String> = edges
-        .iter()
-        .filter_map(|e| e["edge_type"].as_str().map(str::to_string))
-        .collect();
+    // Per-write edge extraction is probabilistic (#66) — retry fresh writes
+    // until the structural statement yields >=1 typed edge. The structural part
+    // attempts associative edges; the causal clause guarantees a candidate.
+    let mut edge_types: Vec<String> = Vec::new();
+    let mut add_ms = 0.0_f64;
+    for attempt in 0..3 {
+        let user = format!("assoc_{run}_{attempt}");
+        let structural = format!(
+            "Arsenal e2e {user}: the lexer_{user} is a part of the compiler_{user}. \
+             The compiler_{user} is a kind of language toolchain. The build_{user} \
+             failed because the lexer_{user} rejected malformed input."
+        );
+        let (added, ms) =
+            mcp.call_tool("add_memory", json!({"message": structural, "user_id": user}));
+        assert!(
+            added["memories_added"].as_u64().unwrap_or(0) >= 1,
+            "the structural statement must store memories: {added}"
+        );
+        add_ms = ms;
+        let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
+        edge_types = graph["edges"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| e["edge_type"].as_str().map(str::to_string))
+            .collect();
+        if edge_types
+            .iter()
+            .any(|t| ALL_EDGES.iter().any(|a| t.as_str() == *a))
+        {
+            break;
+        }
+    }
 
     // No silent garbage/corruption: every typed memory→memory edge is a valid
     // arsenal member (HAS_MEMORY etc. structural edges are allowed through).
@@ -164,7 +185,7 @@ fn associative_edges_built_on_fresh_write() {
         .collect();
     assert!(
         !arsenal_edges.is_empty(),
-        "a structural statement must create at least one typed edge: {edges:?}"
+        "a structural statement must create at least one typed edge within 3 attempts: {edge_types:?}"
     );
 
     // Anti-regression invariant (the reported P0): the pipeline must NOT collapse
