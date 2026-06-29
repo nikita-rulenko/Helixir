@@ -608,6 +608,10 @@ pub struct HelixirConfig {
 
     pub default_search_limit: usize,
     pub default_search_mode: String,
+    /// #64: when a personal-scope recall returns fewer than this many hits and
+    /// the collective tier is enabled, search_memory appends a hint nudging the
+    /// agent to retry with scope=collective. 0 disables the hint.
+    pub recall_thin_hint_threshold: usize,
     pub vector_search_enabled: bool,
     pub graph_search_enabled: bool,
     pub bm25_search_enabled: bool,
@@ -680,6 +684,7 @@ impl HelixirConfig {
 
             default_search_limit: 10,
             default_search_mode: "recent".to_string(),
+            recall_thin_hint_threshold: 3,
             vector_search_enabled: true,
             graph_search_enabled: true,
             bm25_search_enabled: true,

@@ -90,6 +90,16 @@ fn mcp_full_surface_liveness() {
         "list_memories must return our memory: {listed}"
     );
 
+    // #64 discovery tool. This oracle runs in Solo (default), so the roster is
+    // gated off — assert the privacy-preserving available:false shape.
+    let (users, _) = mcp.call_tool("list_users", json!({}));
+    exercised.push("list_users");
+    assert_eq!(
+        users["available"].as_bool(),
+        Some(false),
+        "list_users must be gated off in Solo mode: {users}"
+    );
+
     // A memory id to update: prefer the add result, else the listing.
     let mem_id = added_ids
         .first()
@@ -288,10 +298,11 @@ fn mcp_full_surface_liveness() {
     );
 
     // ---- report -------------------------------------------------------------
-    const ALL: [&str; 17] = [
+    const ALL: [&str; 18] = [
         "add_memory",
         "search_memory",
         "list_memories",
+        "list_users",
         "update_memory",
         "get_memory_graph",
         "search_by_concept",

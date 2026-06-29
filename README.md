@@ -329,8 +329,9 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 | `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
 | `search_by_concept` | Filter by ontology type: skill, preference, goal, fact, opinion, experience, achievement, action |
 | `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS — LLM-free |
-| `get_memory_graph` | Return memory as a graph of nodes and edges |
+| `get_memory_graph` | Return memory as a graph of nodes and typed edges — causal (IMPLIES/BECAUSE/SUPPORTS/CONTRADICTS) plus associative (RELATES_TO/PART_OF/IS_A) |
 | `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
+| `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
 

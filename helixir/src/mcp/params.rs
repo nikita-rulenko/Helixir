@@ -311,6 +311,14 @@ pub struct ListMemoriesParams {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ListUsersParams {
+    #[schemars(
+        description = "Max identities to return, newest first. Default 50. The roster can be large, so this is a deliberately small window for orientation, not a full dump."
+    )]
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ConnectMemoriesParams {
     #[schemars(
         description = "First anchor — a free-text description of concept A, OR an exact memory_id (mem_… / raw_…) to anchor precisely without searching."
