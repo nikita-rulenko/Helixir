@@ -38,17 +38,38 @@ impl OntologyLoader {
     }
 
     pub async fn check_initialized(&self) -> Result<bool, LoaderError> {
-        let result: serde_json::Value = self
+        // `checkOntologyInitialized` does `N<Concept>::...::FIRST`, which raises
+        // GRAPH_ERROR "No value found" on an EMPTY ontology (the #19 empty-
+        // traversal pattern) rather than returning an empty result. Treat that
+        // as "not initialized" so the loader self-heals by re-seeding the base
+        // ontology — otherwise a wiped/empty ontology makes every fresh MCP die
+        // at startup instead of rebuilding itself.
+        match self
             .client
-            .execute_query("checkOntologyInitialized", &serde_json::json!({}))
+            .execute_query::<serde_json::Value, _>(
+                "checkOntologyInitialized",
+                &serde_json::json!({}),
+            )
             .await
-            .map_err(|e| LoaderError::Database(e.to_string()))?;
-
-        Ok(result.get("thing").is_some())
+        {
+            Ok(result) => Ok(result.get("thing").is_some()),
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("no value found") || msg.contains("graph_error") {
+                    Ok(false)
+                } else {
+                    Err(LoaderError::Database(e.to_string()))
+                }
+            }
+        }
     }
 
     pub async fn initialize_base(&self) -> Result<(), LoaderError> {
-        let _: () = self
+        // `initializeBaseOntology` RETURNS the created root ({"thing": {...}}),
+        // so it must be decoded as a Value — deserializing into `()` fails with
+        // "error decoding response body" and aborts the self-heal. (Latent until
+        // the re-seed path actually ran, i.e. an emptied ontology.)
+        let _: serde_json::Value = self
             .client
             .execute_query("initializeBaseOntology", &serde_json::json!({}))
             .await

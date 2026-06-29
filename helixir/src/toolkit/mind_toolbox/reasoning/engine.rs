@@ -124,6 +124,9 @@ impl ReasoningEngine {
                 ReasoningType::Because => "←",
                 ReasoningType::Contradicts => "⊗",
                 ReasoningType::Supports => "↔",
+                ReasoningType::RelatesTo => "~",
+                ReasoningType::PartOf => "⊂",
+                ReasoningType::IsA => "≼",
             };
 
             if i > 0 {

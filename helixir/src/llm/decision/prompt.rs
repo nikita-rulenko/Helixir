@@ -30,8 +30,9 @@ pub fn build_decision_prompt(
                 String::new()
             };
             format!(
-                "  ID: {}\n  Content: {}\n  Similarity: {:.2}\n  Created: {}\n{}",
+                "  ID: {}\n  Type: {}\n  Content: {}\n  Similarity: {:.2}\n  Created: {}\n{}",
                 m.id,
+                m.memory_type.as_deref().unwrap_or("unknown"),
                 m.content,
                 m.score,
                 m.created_at.as_deref().unwrap_or("unknown"),
@@ -126,6 +127,21 @@ Decide what to do with the new memory. Choose ONE operation:
    - Set `contradicts_memory_id` to conflicting memory ID
 {cross_user_section}
 
+**ALWAYS build typed edges via `relates_to` (this is the core value of the graph):**
+Independently of the operation above, wire the new memory into the existing ones
+it genuinely connects to. `relates_to` is a list of [existing_memory_id, EDGE_TYPE]
+pairs. Pick the MOST SPECIFIC edge type; do NOT default everything to IMPLIES:
+- CAUSAL/LOGICAL: BECAUSE (A is the cause of B), IMPLIES (A logically leads to B),
+  SUPPORTS (A is evidence for B), CONTRADICTS (A conflicts with B).
+- ASSOCIATIVE/STRUCTURAL: RELATES_TO (same topic / strongly related, no cause or
+  hierarchy), PART_OF (A is a component of B), IS_A (A is a kind/instance of B).
+Use the `Type:` (ontology) of each memory as a signal: two `preference`/`opinion`
+memories on one topic that differ are usually CONTRADICT/SUPERSEDE; a `fact` that
+elaborates another `fact` is RELATES_TO or SUPPORTS; a narrower concept under a
+broader one is IS_A or PART_OF. When you choose ADD/UPDATE/NOOP and the new memory
+is still topically related to a similar one, emit a RELATES_TO edge so the graph
+stays connected rather than leaving orphan nodes.
+
 **Response Format (JSON):**
 {{
   "operation": "{operations_list}",
@@ -162,8 +178,11 @@ pub fn build_batch_decision_prompt(
                 .iter()
                 .map(|m| {
                     format!(
-                        "    - id: {} | sim: {:.2} | text: {}",
-                        m.id, m.score, m.content
+                        "    - id: {} | type: {} | sim: {:.2} | text: {}",
+                        m.id,
+                        m.memory_type.as_deref().unwrap_or("unknown"),
+                        m.score,
+                        m.content
                     )
                 })
                 .collect::<Vec<_>>()
@@ -180,12 +199,14 @@ Operations: ADD (new info) | UPDATE (extends an existing memory; provide merged_
 
 Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND whenever both memories answer the same mutable question (state/status/plan) with the new one reporting a later state — even if worded differently; UPDATE for added detail; NOOP for duplicates; never merge unrelated topics.
 
+ALSO build typed edges: for each item, set `relates_to` to a list of [candidate_id, EDGE_TYPE] for every candidate the item genuinely connects to (even when the operation is ADD/NOOP — keep the graph connected). EDGE_TYPE, most specific first: BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS (causal) or RELATES_TO / PART_OF / IS_A (associative). Do not default to IMPLIES; use RELATES_TO for plain topical relatedness. Use each candidate's `type:` (ontology) as a signal.
+
 **User ID:** {user_id}
 
 {items_str}
 
 Respond with JSON only:
-{{"decisions":[{{"i": <item number>, "operation": "ADD|UPDATE|NOOP|SUPERSEDE|CONTRADICT|DELETE", "target_memory_id": null, "confidence": 0-100, "reasoning": "...", "merged_content": null, "supersedes_memory_id": null, "contradicts_memory_id": null}}]}}
+{{"decisions":[{{"i": <item number>, "operation": "ADD|UPDATE|NOOP|SUPERSEDE|CONTRADICT|DELETE", "target_memory_id": null, "confidence": 0-100, "reasoning": "...", "merged_content": null, "supersedes_memory_id": null, "contradicts_memory_id": null, "relates_to": [["mem_xxx","RELATES_TO"]] }}]}}
 Every item number must appear exactly once."#
     )
 }

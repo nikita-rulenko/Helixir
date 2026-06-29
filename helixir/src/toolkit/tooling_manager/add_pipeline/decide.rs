@@ -256,6 +256,30 @@ impl ToolingManager {
             }
         };
 
+        // P0: persist the typed edges the decision proposed (`relates_to`). This
+        // is the "similar existing memory → typed edge" path; the field was
+        // parsed but NEVER applied, so the graph never grew across add_memory
+        // calls. Wire the resulting memory into each existing one it relates to,
+        // picking the most specific edge type the model chose.
+        if let Some(rels) = &decision.relates_to {
+            for (target_id, edge) in rels {
+                if target_id.is_empty() || target_id == &memory_id {
+                    continue;
+                }
+                let rel_type = ReasoningType::from_token(edge);
+                match self
+                    .reasoning_engine
+                    .add_relation(&memory_id, target_id, rel_type, 70, None)
+                    .await
+                {
+                    Ok(_) => *relations_created += 1,
+                    Err(e) => {
+                        debug!("relates_to {memory_id}->{target_id} ({edge}) skipped: {e}")
+                    }
+                }
+            }
+        }
+
         if let Some(agent_id) = agent_id {
             let _ = self
                 .link_agent_to_memory(agent_id, &memory_id, "extraction")

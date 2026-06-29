@@ -124,7 +124,13 @@ impl ReasoningEngine {
                     )
                     .await
             }
-            ReasoningType::Supports => {
+            // SUPPORTS + the associative arsenal (RELATES_TO / PART_OF / IS_A)
+            // all persist via the generic MEMORY_RELATION edge, tagged by their
+            // edge_name() — no dedicated query / schema change needed.
+            ReasoningType::Supports
+            | ReasoningType::RelatesTo
+            | ReasoningType::PartOf
+            | ReasoningType::IsA => {
                 let now = chrono::Utc::now().to_rfc3339();
                 self.client
                     .execute_query::<EdgeResponse, _>(
@@ -133,7 +139,7 @@ impl ReasoningEngine {
                             "relation_id": format!("rel_{}_{}", crate::safe_truncate(from_id, 8), crate::safe_truncate(to_id, 8)),
                             "from_memory_id": from_id,
                             "to_memory_id": to_id,
-                            "relation_type": "SUPPORTS",
+                            "relation_type": relation_type.edge_name(),
                             "strength": strength as i64,
                             "confidence": 80i64,
                             "explanation": "",
@@ -202,7 +208,11 @@ impl ReasoningEngine {
             ReasoningType::Implies => &result.implies_out,
             ReasoningType::Because => &result.because_out,
             ReasoningType::Contradicts => &result.contradicts_out,
-            ReasoningType::Supports => &result.relation_out,
+            // SUPPORTS + associative edges all live on the generic relation bucket.
+            ReasoningType::Supports
+            | ReasoningType::RelatesTo
+            | ReasoningType::PartOf
+            | ReasoningType::IsA => &result.relation_out,
         };
 
         targets.iter().any(|n| n.memory_id == to_id)
