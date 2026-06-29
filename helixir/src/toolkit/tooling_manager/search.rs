@@ -307,35 +307,33 @@ impl ToolingManager {
                 {
                     let matches_type = match concept_type {
                         Some(ct) => {
+                            // Exact match only — `contains` used to leak (ct "fact"
+                            // matched concept_id "artifact"), #62.
                             let has_db_link = concepts.instance_of.iter().any(|c| {
-                                c.name.to_lowercase() == ct.to_lowercase()
-                                    || c.concept_id.to_lowercase().contains(&ct.to_lowercase())
+                                c.name.eq_ignore_ascii_case(ct)
+                                    || c.concept_id.eq_ignore_ascii_case(ct)
                             });
 
                             if has_db_link {
                                 true
                             } else {
-                                let memory_type = self.get_memory_type(&candidate.memory_id).await;
-                                let type_matches = memory_type
-                                    .as_ref()
-                                    .map(|mt| mt.to_lowercase() == ct.to_lowercase())
-                                    .unwrap_or(false);
-
-                                if type_matches {
-                                    true
-                                } else {
-                                    let ontology = self.ontology_manager.read();
-                                    if ontology.is_loaded() {
-                                        let mapped = ontology.map_memory_to_concepts(
-                                            &candidate.content,
-                                            memory_type.as_deref(),
-                                        );
-                                        mapped.iter().any(|m| {
-                                            m.concept.name.to_lowercase() == ct.to_lowercase()
-                                                || m.concept.id.to_lowercase() == ct.to_lowercase()
-                                        })
-                                    } else {
-                                        false
+                                match self.get_memory_type(&candidate.memory_id).await {
+                                    // A memory with a KNOWN type matches ONLY if it
+                                    // IS that type — never fall through to the fuzzy
+                                    // ontology mapping, which pulled in adjacent
+                                    // ontology types via graph expansion (#62).
+                                    Some(mt) => mt.eq_ignore_ascii_case(ct),
+                                    // Unknown type: last-resort ontology mapping.
+                                    None => {
+                                        let ontology = self.ontology_manager.read();
+                                        ontology.is_loaded()
+                                            && ontology
+                                                .map_memory_to_concepts(&candidate.content, None)
+                                                .iter()
+                                                .any(|m| {
+                                                    m.concept.name.eq_ignore_ascii_case(ct)
+                                                        || m.concept.id.eq_ignore_ascii_case(ct)
+                                                })
                                     }
                                 }
                             }

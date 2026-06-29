@@ -192,7 +192,31 @@ impl ToolingManager {
             // caller that already knows the memory (a test, or an agent that
             // just stored it) can connect it deterministically by id.
             let seeds: Vec<(String, String)> = if looks_like_memory_id(query) {
-                vec![(query.to_string(), String::new())]
+                // Fetch the anchor's content so the path endpoints aren't blank
+                // in the connect output (#23) — id-anchors skip search, so their
+                // content must be looked up directly.
+                #[derive(serde::Deserialize)]
+                struct MemResp {
+                    #[serde(default)]
+                    memory: Option<MemNode>,
+                }
+                #[derive(serde::Deserialize)]
+                struct MemNode {
+                    #[serde(default)]
+                    content: String,
+                }
+                let content = self
+                    .db
+                    .execute_query::<MemResp, _>(
+                        "getMemory",
+                        &serde_json::json!({ "memory_id": query }),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|r| r.memory)
+                    .map(|m| m.content)
+                    .unwrap_or_default();
+                vec![(query.to_string(), content)]
             } else {
                 let embedding = self
                     .embedder
