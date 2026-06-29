@@ -481,3 +481,73 @@ fn personal_thin_recall_hints_collective_64() {
     println!("\n==== personal_thin_recall_hints_collective_64 ====");
     println!("thin personal recall emitted a collective hint in content[1] ✓");
 }
+
+/// #3a — fake collective duplicates. Two users asserting the SAME fact share one
+/// content_key (consensus is per fingerprint group), so a collective search must
+/// fold them into ONE row that reports the holder count — not return the same
+/// fact once per user. The collapse logic itself is unit-tested in search.rs;
+/// this proves it end-to-end through the real pipeline.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn collective_search_collapses_duplicate_holders_3a() {
+    require_e2e();
+    let run = token();
+    let coll = [("HELIXIR_MODE", "collective")];
+
+    // A short, atomic fact so extraction is stable and both holders land on the
+    // same content_key.
+    let fact = format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
+    for who in ["a", "b"] {
+        let (mut m, _) = McpClient::spawn_with_env(&coll);
+        let (ack, _) = m.call_tool(
+            "add_memory",
+            json!({ "message": fact, "user_id": format!("c3a_{who}_{run}") }),
+        );
+        assert_eq!(ack["ok"].as_bool(), Some(true), "holder {who} write must succeed: {ack}");
+    }
+
+    // A third identity reads the shared collective.
+    let (mut r, _) = McpClient::spawn_with_env(&coll);
+    let (found, _) = r.call_tool(
+        "search_memory",
+        json!({
+            "query": format!("where does the deploy runbook for svc{run} live"),
+            "user_id": format!("c3a_reader_{run}"),
+            "mode": "full",
+            "scope": "collective",
+            "limit": 10
+        }),
+    );
+    let rows = found.as_array().cloned().unwrap_or_default();
+    let matches: Vec<&Value> = rows
+        .iter()
+        .filter(|m| {
+            m["content"]
+                .as_str()
+                .map(|c| c.contains(&format!("deploy-{run}")) || c.contains(&format!("svc{run}")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(
+        !matches.is_empty(),
+        "the shared fact must surface in a collective search: {found}"
+    );
+    // #3a core: the same fact held by two users must NOT appear twice.
+    assert_eq!(
+        matches.len(),
+        1,
+        "same fact across 2 users must collapse to ONE collective row (got {}): {matches:?}",
+        matches.len()
+    );
+    // And the surviving row reports the consensus it folded.
+    let holders = matches[0]["metadata"]["collapsed_holders"].as_u64();
+    assert!(
+        holders.map(|h| h >= 2).unwrap_or(false),
+        "the collapsed row must report collapsed_holders>=2: {}",
+        matches[0]
+    );
+
+    println!("\n==== collective_search_collapses_duplicate_holders_3a ====");
+    println!("2 holders of one fact -> 1 collective row, collapsed_holders={holders:?} ✓");
+}
