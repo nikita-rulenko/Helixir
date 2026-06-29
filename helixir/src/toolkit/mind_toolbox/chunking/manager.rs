@@ -180,8 +180,10 @@ impl ChunkingManager {
             .await
             .map_err(|e| ChunkingError::Database(e.to_string()))?;
 
-        let memory_internal_id = match mem_result.memory {
-            Some(m) if !m.id.is_empty() => m.id,
+        // Validate the parent memory exists; addMemoryChunk links by the
+        // memory_id field (mem_…), not the internal UUID, so we don't need the id.
+        match mem_result.memory {
+            Some(m) if !m.id.is_empty() => {}
             _ => {
                 return Err(ChunkingError::Database(format!(
                     "Memory {} not found",
@@ -199,7 +201,7 @@ impl ChunkingManager {
             #[derive(Serialize)]
             struct AddChunkInput {
                 chunk_id: String,
-                memory_id: String,
+                parent_memory_id: String,
                 content: String,
                 position: i64,
                 token_count: i64,
@@ -219,7 +221,7 @@ impl ChunkingManager {
 
             let input = AddChunkInput {
                 chunk_id: chunk_id.clone(),
-                memory_id: memory_internal_id.clone(),
+                parent_memory_id: memory_id.to_string(),
                 content: chunk_text.clone(),
                 position: position as i64,
                 token_count: chunk_text.chars().count() as i64,
@@ -228,7 +230,7 @@ impl ChunkingManager {
 
             let chunk_result: AddChunkOutput = self
                 .client
-                .execute_query("addChunk", &input)
+                .execute_query("addMemoryChunk", &input)
                 .await
                 .map_err(|e| ChunkingError::Database(e.to_string()))?;
 
