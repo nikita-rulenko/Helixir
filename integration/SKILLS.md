@@ -14,8 +14,27 @@ Helixir is a reasoning-aware memory: it stores typed facts in a knowledge graph
 with causal edges, so it returns *why* things are true, not just similar text.
 The read path makes zero LLM calls and is fast — search liberally.
 
-Always pass a **consistent `user_id`** (e.g. `claude`) so memory stays coherent
-and personal search is scoped to you.
+Always pass a **consistent `user_id`** so memory stays coherent and personal
+search is scoped to you. `claude` below is a PLACEHOLDER — see "Establish your
+identity" first and use YOUR id everywhere.
+
+## Establish your identity (do this BEFORE the first recall)
+
+The `user_id` is YOUR name in the memory — using the wrong one recalls someone
+else's memories as if they were yours. Pick ONE stable id and use it on every
+call, choosing in this order:
+
+1. **An id you were explicitly assigned/configured** (by the user or your host) — use it.
+2. **Else derive a stable one:**
+   - your **own name from your system prompt** (e.g. a prompt that says "You are
+     Zeroclaw…" → `zeroclaw`), lower-kebab-case; or
+   - if you run in a shell, the **OS user** (`whoami`).
+3. Use that SAME id for the first `search_memory` AND every `add_memory`.
+4. If recall under it is empty/thin and you're unsure, call **`list_users`** to
+   see who already exists, then confirm or correct your id — don't silently adopt
+   another agent's id.
+
+Replace every `claude` below with the id you established.
 
 ## The core loop: recall → work → capture
 

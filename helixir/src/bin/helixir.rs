@@ -222,6 +222,19 @@ enum DaemonCmd {
         max_seeds: usize,
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
+        /// Run Clotho (tagging) every Nth pass (0 = never). Default: config.
+        #[arg(long = "clotho-every")]
+        clotho_every: Option<u64>,
+        /// Run the insight stage (Lachesis routing + Atropos curation) every
+        /// Nth pass (0 = never). Default: config.
+        #[arg(long = "insight-every")]
+        insight_every: Option<u64>,
+        /// Run the NLI paraphrase merge every Nth pass (0 = never). Default: config.
+        #[arg(long = "merge-every")]
+        merge_every: Option<u64>,
+        /// Drain contradiction debt every Nth pass (0 = never). Default: config.
+        #[arg(long = "reconcile-every")]
+        reconcile_every: Option<u64>,
     },
     /// Start a DETACHED background daemon (a frequency implies it should keep
     /// running). Writes a PID file; `stop` ends it.
@@ -236,6 +249,19 @@ enum DaemonCmd {
         max_seeds: usize,
         #[arg(long = "max-hops", default_value_t = 5)]
         max_hops: usize,
+        /// Run Clotho (tagging) every Nth pass (0 = never). Default: config.
+        #[arg(long = "clotho-every")]
+        clotho_every: Option<u64>,
+        /// Run the insight stage (Lachesis routing + Atropos curation) every
+        /// Nth pass (0 = never). Default: config.
+        #[arg(long = "insight-every")]
+        insight_every: Option<u64>,
+        /// Run the NLI paraphrase merge every Nth pass (0 = never). Default: config.
+        #[arg(long = "merge-every")]
+        merge_every: Option<u64>,
+        /// Drain contradiction debt every Nth pass (0 = never). Default: config.
+        #[arg(long = "reconcile-every")]
+        reconcile_every: Option<u64>,
     },
     /// Stop the background daemon.
     Stop,
@@ -397,17 +423,35 @@ async fn main() -> Result<()> {
                 threshold,
                 max_seeds,
                 max_hops,
+                clotho_every,
+                insight_every,
+                merge_every,
+                reconcile_every,
             } => {
                 // The background daemon is generative — gate it on insights mode
                 // before spawning (the child would otherwise fail in the dark).
-                let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+                // Use the LAYERED config (helixir.toml + env), same as mode_gate —
+                // a raw env read here ignored the toml and rejected valid setups.
+                let mode = helixir::core::config::HelixirConfig::from_env().mode;
                 if !mode.insights_enabled() {
                     anyhow::bail!(
-                        "daemon needs HELIXIR_MODE=insights (current: {}); the generative Moirai are off by default",
+                        "daemon needs mode=insights (current: {}); set it in ~/.helixir/helixir.toml or HELIXIR_MODE",
                         mode.label()
                     );
                 }
-                return daemon_start(user, *interval, *threshold, *max_seeds, *max_hops);
+                return daemon_start(
+                    user,
+                    *interval,
+                    *threshold,
+                    *max_seeds,
+                    *max_hops,
+                    [
+                        ("--clotho-every", *clotho_every),
+                        ("--insight-every", *insight_every),
+                        ("--merge-every", *merge_every),
+                        ("--reconcile-every", *reconcile_every),
+                    ],
+                );
             }
             DaemonCmd::Stop => return daemon_stop(),
             DaemonCmd::Status => return daemon_status(),
@@ -527,9 +571,20 @@ async fn main() -> Result<()> {
                 threshold,
                 max_seeds,
                 max_hops,
+                clotho_every,
+                insight_every,
+                merge_every,
+                reconcile_every,
             } => {
                 daemon_run(
-                    &client, user, interval, once, threshold, max_seeds, max_hops,
+                    &client,
+                    user,
+                    interval,
+                    once,
+                    threshold,
+                    max_seeds,
+                    max_hops,
+                    [clotho_every, insight_every, merge_every, reconcile_every],
                 )
                 .await?
             }
@@ -552,7 +607,11 @@ async fn daemon_run(
     threshold: f64,
     max_seeds: usize,
     max_hops: usize,
+    cadence: [Option<u64>; 4],
 ) -> Result<()> {
+    // Per-stage cadence: CLI flag → else moira.daemon.*_every_passes (config).
+    let d = &client.config().moira.daemon;
+    let [clotho_every, insight_every, merge_every, reconcile_every] = cadence;
     let cfg = DaemonConfig {
         user: user.clone(),
         interval: Duration::from_secs(interval),
@@ -564,6 +623,10 @@ async fn daemon_run(
             max_hops,
             ..PassConfig::default()
         },
+        clotho_every: clotho_every.unwrap_or(d.clotho_every_passes),
+        insight_every: insight_every.unwrap_or(d.insight_every_passes),
+        merge_every: merge_every.unwrap_or(d.merge_every_passes),
+        reconcile_every: reconcile_every.unwrap_or(d.reconcile_every_passes),
     };
     client
         .daemon()
@@ -1791,23 +1854,36 @@ fn daemon_start(
     threshold: f64,
     max_seeds: usize,
     max_hops: usize,
+    cadence: [(&str, Option<u64>); 4],
 ) -> Result<()> {
+    let interval_s = interval.to_string();
+    let threshold_s = threshold.to_string();
+    let max_seeds_s = max_seeds.to_string();
+    let max_hops_s = max_hops.to_string();
+    let mut args: Vec<String> = vec![
+        "daemon".into(),
+        "run".into(),
+        "--user".into(),
+        user.into(),
+        "--interval".into(),
+        interval_s,
+        "--threshold".into(),
+        threshold_s,
+        "--max-seeds".into(),
+        max_seeds_s,
+        "--max-hops".into(),
+        max_hops_s,
+    ];
+    for (flag, v) in cadence {
+        if let Some(v) = v {
+            args.push(flag.into());
+            args.push(v.to_string());
+        }
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let (pid, log) = spawn_detached(
         "daemon",
-        &[
-            "daemon",
-            "run",
-            "--user",
-            user,
-            "--interval",
-            &interval.to_string(),
-            "--threshold",
-            &threshold.to_string(),
-            "--max-seeds",
-            &max_seeds.to_string(),
-            "--max-hops",
-            &max_hops.to_string(),
-        ],
+        &arg_refs,
         serde_json::json!({
             "user": user, "interval": interval, "threshold": threshold,
             "max_seeds": max_seeds, "max_hops": max_hops,

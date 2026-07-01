@@ -67,19 +67,12 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
-        if let Err(e) = self
-            .db
-            .execute_query::<serde_json::Value, _>(
-                "deleteMemoryEmbedding",
-                &serde_json::json!({
-                    "memory_id": memory_id
-                }),
-            )
-            .await
-        {
-            debug!("No old embedding to delete for {}: {}", memory_id, e);
-        }
-
+        // Resolve the node's internal UUID FIRST: `deleteMemoryEmbedding` is
+        // declared `memory_id: ID` (internal UUID), so passing the mem_… string
+        // always failed with a Decode error that was swallowed below — leaving
+        // the OLD embedding alive next to the new one on every update. A stale
+        // embedding keeps matching vector searches with content the memory no
+        // longer holds (violates the HAS_EMBEDDING-is-1:1 invariant).
         let internal_id = {
             #[derive(serde::Deserialize)]
             struct MemResp {
@@ -101,6 +94,21 @@ impl ToolingManager {
                 Err(_) => memory_id.to_string(),
             }
         };
+
+        if let Err(e) = self
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "deleteMemoryEmbedding",
+                &serde_json::json!({
+                    "memory_id": internal_id
+                }),
+            )
+            .await
+        {
+            // A genuinely-new memory has no embedding yet — that's the only
+            // expected miss now that the id type is correct.
+            debug!("No old embedding to delete for {}: {}", memory_id, e);
+        }
 
         #[derive(Serialize)]
         struct EmbedInput {

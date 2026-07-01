@@ -9,6 +9,61 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
+/// Query the live HelixDB directly (bypassing the MCP layer) so a test can
+/// assert the GROUND TRUTH of what was persisted — e.g. that reasoning edges
+/// exist with the right `relation_type`. Uses `curl` to avoid an HTTP dep.
+/// Host/port come from HELIX_HOST/HELIX_PORT (default localhost:6970).
+pub fn db_query(query: &str, body: &Value) -> Value {
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "localhost".into());
+    let port = std::env::var("HELIX_PORT").unwrap_or_else(|_| "6970".into());
+    let url = format!("http://{host}:{port}/{query}");
+    let out = Command::new("curl")
+        .args([
+            "-s",
+            "-m",
+            "15",
+            "-X",
+            "POST",
+            &url,
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body.to_string(),
+        ])
+        .output()
+        .unwrap_or_else(|e| panic!("curl {query} failed to spawn: {e}"));
+    let text = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("db_query {query}: non-JSON response ({e}): {text}"))
+}
+
+/// Collect every outgoing typed edge `(relation_type)` for a memory straight
+/// from HelixDB: the dedicated IMPLIES/BECAUSE buckets plus the generic
+/// MEMORY_RELATION edges (SUPPORTS/RELATES_TO/PART_OF/IS_A) keyed by their
+/// `relation_type` property.
+pub fn db_edge_types_out(memory_id: &str) -> Vec<String> {
+    let r = db_query("getMemoryOutgoingRelations", &json!({ "memory_id": memory_id }));
+    let mut types = Vec::new();
+    if r["implies_out"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        for _ in r["implies_out"].as_array().unwrap() {
+            types.push("IMPLIES".to_string());
+        }
+    }
+    if let Some(arr) = r["because_out"].as_array() {
+        for _ in arr {
+            types.push("BECAUSE".to_string());
+        }
+    }
+    if let Some(arr) = r["relations_out"].as_array() {
+        for e in arr {
+            if let Some(t) = e["relation_type"].as_str() {
+                types.push(t.to_string());
+            }
+        }
+    }
+    types
+}
+
 pub struct McpClient {
     child: Child,
     stdin: ChildStdin,

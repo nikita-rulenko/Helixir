@@ -47,40 +47,50 @@ fn mcp_ingest_buffer() {
     let run = token();
     let user = format!("mcp_ingest_{run}");
 
-    // 1. add_memory returns an instant queued ack, not the result.
+    // 1. Buffered add returns an UNAMBIGUOUS success (#63 confirm-or-promise):
+    //    ok:true with the result inline once the worker finishes within the ack
+    //    window, else status:"accepted" — never a bare "pending". The ack is no
+    //    longer instant (it briefly waits to confirm), so we don't assert speed.
     let msg =
         format!("MCP ingest {run}: the canary deployment uses 10 percent traffic for one hour.");
     let (ack, ms) = mcp.call_tool("add_memory", json!({"message": msg, "user_id": user}));
     assert_eq!(
-        ack["queued"].as_bool(),
+        ack["ok"].as_bool(),
         Some(true),
-        "buffered add must return queued=true: {ack}"
+        "buffered add must report ok:true (success): {ack}"
+    );
+    assert_ne!(
+        ack["status"].as_str(),
+        Some("pending"),
+        "buffered add must not return a bare pending ack (#63): {ack}"
     );
     let pending_id = ack["pending_id"].as_str().unwrap_or("").to_string();
     assert!(pending_id.starts_with("pi_"), "pending_id shape: {ack}");
-    // The ack must be fast — the heavy pipeline runs in the background.
-    assert!(ms < 2000.0, "buffered ack should be quick, took {ms:.0}ms");
+    // Did it confirm inline (memory_ids present) or promise acceptance?
+    let confirmed_inline = ack["memory_ids"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
 
-    // 2. Poll get_add_status until the worker finishes (tests may poll; the
-    // production agent does not — it gets outcomes opportunistically).
-    let mut done = false;
-    for _ in 0..30 {
-        sleep(Duration::from_secs(2));
-        let (st, _) = mcp.call_tool("get_add_status", json!({"pending_id": pending_id}));
-        match st["status"].as_str().unwrap_or("") {
-            "done" => {
-                done = true;
-                assert!(
-                    st["result"]["memories_added"].as_u64().unwrap_or(0) >= 1,
-                    "done status must carry a result: {st}"
-                );
-                break;
+    // 2. If still processing, poll get_add_status until the worker finishes. When
+    // confirmed inline it is already done — and its tombstone may already be
+    // drained — so don't require the poll to observe it.
+    let mut done = confirmed_inline;
+    if !done {
+        for _ in 0..30 {
+            sleep(Duration::from_secs(2));
+            let (st, _) = mcp.call_tool("get_add_status", json!({"pending_id": pending_id}));
+            match st["status"].as_str().unwrap_or("") {
+                "done" => {
+                    done = true;
+                    break;
+                }
+                "failed" => panic!("worker reported failed: {st}"),
+                _ => {}
             }
-            "failed" => panic!("worker reported failed: {st}"),
-            _ => {}
         }
     }
-    assert!(done, "worker must finish within the polling window");
+    assert!(done, "buffered write must confirm inline or reach done");
 
     // 3. The fact is searchable.
     let (results, _) = mcp.call_tool(

@@ -375,3 +375,179 @@ fn buffered_add_reads_as_success_63() {
     println!("\n==== buffered_add_reads_as_success_63 ====");
     println!("buffered ack ok:true, no bare-pending, confirmed_inline={confirmed_inline} accepted={accepted} ✓");
 }
+
+/// #64 — opt-in identity discovery, gated by the collective tier. The roster is
+/// a thin orientation window (privacy-safe: no email/content), and Solo mode
+/// keeps it private. Reuses the already-deployed getAllUsers query (no schema
+/// change).
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn list_users_discovery_gated_64() {
+    require_e2e();
+    let run = token();
+
+    // Collective tier → roster available, privacy-safe shape.
+    let coll = [
+        ("HELIXIR_MODE", "collective"),
+        ("HELIXIR_INGEST_BUFFER", "1"),
+    ];
+    let (mut mcp, _) = McpClient::spawn_with_env(&coll);
+    let me = format!("disc_{run}");
+    let (ack, _) = mcp.call_tool(
+        "add_memory",
+        json!({ "message": format!("Discovery {run}: identity disc_{run} is online."), "user_id": me }),
+    );
+    assert_eq!(ack["ok"].as_bool(), Some(true), "seed write must succeed: {ack}");
+
+    let (roster, _) = mcp.call_tool("list_users", json!({ "limit": 50 }));
+    assert_eq!(
+        roster["available"].as_bool(),
+        Some(true),
+        "collective tier must expose the roster: {roster}"
+    );
+    let users = roster["users"].as_array().expect("users array");
+    assert!(!users.is_empty(), "roster must not be empty: {roster}");
+    let u0 = &users[0];
+    assert!(u0.get("user_id").is_some(), "roster entry has user_id: {u0}");
+    assert!(
+        u0.get("email").is_none() && u0.get("metadata").is_none(),
+        "roster must NOT leak email/metadata (privacy): {u0}"
+    );
+    assert!(
+        roster["total_users"].as_u64().unwrap_or(0) >= users.len() as u64,
+        "total_users must reflect the whole store: {roster}"
+    );
+
+    // Solo tier → no roster (discovery is a collective-only affordance).
+    let (mut s, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "solo")]);
+    let (sroster, _) = s.call_tool("list_users", json!({}));
+    assert_eq!(
+        sroster["available"].as_bool(),
+        Some(false),
+        "solo mode must NOT expose a roster: {sroster}"
+    );
+    assert!(
+        sroster["users"].as_array().map(|a| a.is_empty()).unwrap_or(false),
+        "solo roster must be empty: {sroster}"
+    );
+
+    println!("\n==== list_users_discovery_gated_64 ====");
+    println!(
+        "collective roster {} users (total {}); solo gated ✓",
+        users.len(),
+        roster["total_users"]
+    );
+}
+
+/// #64 — when a PERSONAL recall comes back thin and the collective tier is
+/// available, search_memory appends a second content block hinting at the
+/// collective escape hatch. content[0] stays the ranked array (stable
+/// contract); the hint rides in content[1] so existing consumers are untouched.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn personal_thin_recall_hints_collective_64() {
+    require_e2e();
+    let run = token();
+    let (mut mcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
+
+    // A brand-new user with no personal memories → personal recall is empty.
+    let fresh = format!("hintless_{run}");
+    let raw = mcp.request_raw(
+        "tools/call",
+        json!({
+            "name": "search_memory",
+            "arguments": {
+                "query": format!("xyzzy nonexistent topic {run}"),
+                "user_id": fresh,
+                "mode": "full",
+                "scope": "personal"
+            }
+        }),
+    );
+    let content = raw["result"]["content"].as_array().expect("content array");
+    // content[0] = the (empty) results array — contract preserved.
+    let first = content[0]["text"].as_str().unwrap_or("");
+    assert!(
+        first.trim_start().starts_with('['),
+        "content[0] must stay the results array: {first}"
+    );
+    // content[1] = the collective hint (personal was thin + collective enabled).
+    let hint = content.get(1).and_then(|c| c["text"].as_str()).unwrap_or("");
+    assert!(
+        hint.contains("collective"),
+        "thin personal recall must hint at scope=collective: content={content:?}"
+    );
+
+    println!("\n==== personal_thin_recall_hints_collective_64 ====");
+    println!("thin personal recall emitted a collective hint in content[1] ✓");
+}
+
+/// #3a — fake collective duplicates. Two users asserting the SAME fact share one
+/// content_key (consensus is per fingerprint group), so a collective search must
+/// fold them into ONE row that reports the holder count — not return the same
+/// fact once per user. The collapse logic itself is unit-tested in search.rs;
+/// this proves it end-to-end through the real pipeline.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn collective_search_collapses_duplicate_holders_3a() {
+    require_e2e();
+    let run = token();
+    let coll = [("HELIXIR_MODE", "collective")];
+
+    // A short, atomic fact so extraction is stable and both holders land on the
+    // same content_key.
+    let fact = format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
+    for who in ["a", "b"] {
+        let (mut m, _) = McpClient::spawn_with_env(&coll);
+        let (ack, _) = m.call_tool(
+            "add_memory",
+            json!({ "message": fact, "user_id": format!("c3a_{who}_{run}") }),
+        );
+        assert_eq!(ack["ok"].as_bool(), Some(true), "holder {who} write must succeed: {ack}");
+    }
+
+    // A third identity reads the shared collective.
+    let (mut r, _) = McpClient::spawn_with_env(&coll);
+    let (found, _) = r.call_tool(
+        "search_memory",
+        json!({
+            "query": format!("where does the deploy runbook for svc{run} live"),
+            "user_id": format!("c3a_reader_{run}"),
+            "mode": "full",
+            "scope": "collective",
+            "limit": 10
+        }),
+    );
+    let rows = found.as_array().cloned().unwrap_or_default();
+    let matches: Vec<&Value> = rows
+        .iter()
+        .filter(|m| {
+            m["content"]
+                .as_str()
+                .map(|c| c.contains(&format!("deploy-{run}")) || c.contains(&format!("svc{run}")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(
+        !matches.is_empty(),
+        "the shared fact must surface in a collective search: {found}"
+    );
+    // #3a core: the same fact held by two users must NOT appear twice.
+    assert_eq!(
+        matches.len(),
+        1,
+        "same fact across 2 users must collapse to ONE collective row (got {}): {matches:?}",
+        matches.len()
+    );
+    // And the surviving row reports the consensus it folded.
+    let holders = matches[0]["metadata"]["collapsed_holders"].as_u64();
+    assert!(
+        holders.map(|h| h >= 2).unwrap_or(false),
+        "the collapsed row must report collapsed_holders>=2: {}",
+        matches[0]
+    );
+
+    println!("\n==== collective_search_collapses_duplicate_holders_3a ====");
+    println!("2 holders of one fact -> 1 collective row, collapsed_holders={holders:?} ✓");
+}

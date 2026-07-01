@@ -186,8 +186,24 @@ impl HelixirMcpServer {
 
         info!("✅ Found {} memories", results.len());
 
-        let json = Self::result_to_json(&results)?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        // content[0] stays the ranked array (stable contract). When a PERSONAL
+        // recall comes back thin and the collective tier is available, append a
+        // second content block nudging the agent to the existing collective
+        // escape hatch (#64) — a hint, not a roster dump, and never in Solo
+        // (where collective would just downgrade back to personal).
+        let mut contents = vec![Content::text(Self::result_to_json(&results)?)];
+        let threshold = self.client.config().recall_thin_hint_threshold;
+        if scope == "personal"
+            && threshold > 0
+            && results.len() < threshold
+            && self.client.config().mode.collective_enabled()
+        {
+            contents.push(Content::text(format!(
+                "Hint: personal scope returned {} result(s). If you expected more, retry search_memory with scope=\"collective\" to include the shared collective memory; or call list_users to check which user_id holds the knowledge.",
+                results.len()
+            )));
+        }
+        Ok(CallToolResult::success(contents))
     }
 
     #[tool(
@@ -259,6 +275,78 @@ impl HelixirMcpServer {
         let json = serde_json::to_string_pretty(&memories)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "List the identities (user_ids) present in this Helixir, newest first — a deliberately small roster for ORIENTATION, not a full dump. Call it when you are unsure which user_id to use, want to find your OWN stable identity, or need a teammate's user_id to read their memories. It does NOT tell you which id is yours — pick one stable user_id and use it consistently on every call. Privacy: returns only {user_id, name, created_at}, never emails or content. GATED by the collective tier: in Solo mode it returns {available:false} with no roster (discovery is a shared-collective affordance). To read an identity's memories use list_memories(user_id); to search across everyone use search_memory(scope='collective')."
+    )]
+    async fn list_users(
+        &self,
+        Parameters(params): Parameters<ListUsersParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Discovery is gated by the collective tier — the same privilege as a
+        // collective read (#40/#64). Solo keeps the roster private rather than
+        // leaking who exists.
+        if !self.client.config().mode.collective_enabled() {
+            let payload = json!({
+                "available": false,
+                "users": [],
+                "note": "User discovery requires the collective tier; this Helixir runs in Solo mode (private memory). Set HELIXIR_MODE=collective to enable a shared roster.",
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                payload.to_string(),
+            )]));
+        }
+
+        let limit = params.limit.unwrap_or(50).max(1) as usize;
+        info!("👥 Listing users (limit={})", limit);
+
+        #[derive(serde::Deserialize)]
+        struct UsersResponse {
+            #[serde(default)]
+            users: Vec<serde_json::Value>,
+        }
+
+        // Reuses the already-deployed getAllUsers query (no schema change).
+        let resp: UsersResponse = self
+            .client
+            .db()
+            .execute_query("getAllUsers", &serde_json::json!({}))
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        let total = resp.users.len();
+        let mut users = resp.users;
+        // Newest first so the window is the most relevant slice of a big roster.
+        users.sort_by(|a, b| {
+            let ca = b.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            let cb = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("");
+            ca.cmp(cb)
+        });
+        // Project to a privacy-safe roster — no email / metadata / internal id.
+        let roster: Vec<serde_json::Value> = users
+            .into_iter()
+            .take(limit)
+            .map(|u| {
+                json!({
+                    "user_id": u.get("user_id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "name": u.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    "created_at": u.get("created_at").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            })
+            .collect();
+
+        info!("👥 Listed {}/{} users", roster.len(), total);
+        let payload = json!({
+            "available": true,
+            "total_users": total,
+            "returned": roster.len(),
+            "users": roster,
+            "note": "Roster for orientation. Pick your OWN stable user_id and use it consistently. Read an identity's memories with list_memories(user_id); search across everyone with search_memory(scope='collective').",
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            payload.to_string(),
+        )]))
     }
 
     #[tool(

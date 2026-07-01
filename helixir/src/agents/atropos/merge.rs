@@ -49,6 +49,14 @@ impl Atropos<'_> {
             if brief.content.trim().is_empty() {
                 continue;
             }
+            // #68: never seed a merge pair from a raw_input node. A raw source
+            // contains ALL its extracted atoms nearly verbatim, so atom↔raw
+            // passes the entailment gate and fingerprint unification then chains
+            // TRANSITIVELY (atomA ↔ raw ↔ atomB), conflating distinct facts into
+            // one group — which the collective collapse folds into one row.
+            if brief.memory_id.starts_with("raw_") {
+                continue;
+            }
             // Cheap pre-filter: cosine neighbours across the collective. A wide
             // temporal window so age never hides a paraphrase.
             let neighbours = match self
@@ -76,6 +84,10 @@ impl Atropos<'_> {
 
             for n in neighbours {
                 if n.memory_id == brief.memory_id || n.score < cosine_threshold {
+                    continue;
+                }
+                // #68: raw_input nodes are excluded from BOTH sides of a pair.
+                if n.memory_id.starts_with("raw_") {
                     continue;
                 }
                 let pair = order_pair(&brief.memory_id, &n.memory_id);

@@ -3,9 +3,53 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use super::ToolingManager;
+use super::add_pipeline::store::content_key;
 use super::types::{SearchMemoryResult, ToolingError};
 use crate::safe_truncate;
 use crate::utils::nullable_string;
+
+/// #3a: collapse same-`content_key` duplicates in a collective result set. Two
+/// users holding the SAME fact are ONE piece of knowledge (consensus is per
+/// content_key), so returning both is a fake duplicate. Keeps the highest-scored
+/// representative per fingerprint group and records how many holders collapsed
+/// into it via `collapsed_holders`. Pure (no I/O) so it is unit-tested directly.
+fn collapse_collective_duplicates(results: Vec<SearchMemoryResult>) -> Vec<SearchMemoryResult> {
+    let mut rep: HashMap<String, usize> = HashMap::new();
+    let mut count: HashMap<String, u64> = HashMap::new();
+    let mut out: Vec<SearchMemoryResult> = Vec::with_capacity(results.len());
+    for r in results {
+        let mtype = r
+            .metadata
+            .get("memory_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let key = content_key(&r.content, mtype);
+        *count.entry(key.clone()).or_insert(0) += 1;
+        match rep.get(&key).copied() {
+            // Already have a representative — keep whichever scored higher.
+            Some(i) => {
+                if r.score > out[i].score {
+                    out[i] = r;
+                }
+            }
+            None => {
+                rep.insert(key.clone(), out.len());
+                out.push(r);
+            }
+        }
+    }
+    // Surface the consensus: how many distinct holder-rows folded into each one.
+    for (key, &i) in &rep {
+        if let Some(&c) = count.get(key) {
+            if c > 1 {
+                out[i]
+                    .metadata
+                    .insert("collapsed_holders".to_string(), serde_json::json!(c));
+            }
+        }
+    }
+    out
+}
 
 impl ToolingManager {
     pub async fn search_memory(
@@ -105,6 +149,17 @@ impl ToolingManager {
             .collect();
 
         if scope == "collective" || scope == "all" {
+            // #3a: fold same-fact-across-users into one row BEFORE ranking, so
+            // the boost-sort operates on distinct knowledge, not duplicates.
+            let before = search_results.len();
+            search_results = collapse_collective_duplicates(search_results);
+            if search_results.len() < before {
+                debug!(
+                    "collective dedup: collapsed {} rows -> {} distinct facts",
+                    before,
+                    search_results.len()
+                );
+            }
             let boost = self.config.retrieval.collective_user_count_boost;
             search_results.sort_by(|a, b| {
                 let a_uc = a
@@ -252,35 +307,33 @@ impl ToolingManager {
                 {
                     let matches_type = match concept_type {
                         Some(ct) => {
+                            // Exact match only — `contains` used to leak (ct "fact"
+                            // matched concept_id "artifact"), #62.
                             let has_db_link = concepts.instance_of.iter().any(|c| {
-                                c.name.to_lowercase() == ct.to_lowercase()
-                                    || c.concept_id.to_lowercase().contains(&ct.to_lowercase())
+                                c.name.eq_ignore_ascii_case(ct)
+                                    || c.concept_id.eq_ignore_ascii_case(ct)
                             });
 
                             if has_db_link {
                                 true
                             } else {
-                                let memory_type = self.get_memory_type(&candidate.memory_id).await;
-                                let type_matches = memory_type
-                                    .as_ref()
-                                    .map(|mt| mt.to_lowercase() == ct.to_lowercase())
-                                    .unwrap_or(false);
-
-                                if type_matches {
-                                    true
-                                } else {
-                                    let ontology = self.ontology_manager.read();
-                                    if ontology.is_loaded() {
-                                        let mapped = ontology.map_memory_to_concepts(
-                                            &candidate.content,
-                                            memory_type.as_deref(),
-                                        );
-                                        mapped.iter().any(|m| {
-                                            m.concept.name.to_lowercase() == ct.to_lowercase()
-                                                || m.concept.id.to_lowercase() == ct.to_lowercase()
-                                        })
-                                    } else {
-                                        false
+                                match self.get_memory_type(&candidate.memory_id).await {
+                                    // A memory with a KNOWN type matches ONLY if it
+                                    // IS that type — never fall through to the fuzzy
+                                    // ontology mapping, which pulled in adjacent
+                                    // ontology types via graph expansion (#62).
+                                    Some(mt) => mt.eq_ignore_ascii_case(ct),
+                                    // Unknown type: last-resort ontology mapping.
+                                    None => {
+                                        let ontology = self.ontology_manager.read();
+                                        ontology.is_loaded()
+                                            && ontology
+                                                .map_memory_to_concepts(&candidate.content, None)
+                                                .iter()
+                                                .any(|m| {
+                                                    m.concept.name.eq_ignore_ascii_case(ct)
+                                                        || m.concept.id.eq_ignore_ascii_case(ct)
+                                                })
                                     }
                                 }
                             }
@@ -464,7 +517,65 @@ fn concept_fallback_score(
 
 #[cfg(test)]
 mod tests {
-    use super::concept_fallback_score;
+    use super::{collapse_collective_duplicates, concept_fallback_score};
+    use super::SearchMemoryResult;
+    use std::collections::HashMap;
+
+    fn res(memory_id: &str, content: &str, mtype: &str, score: f64) -> SearchMemoryResult {
+        let mut metadata = HashMap::new();
+        if !mtype.is_empty() {
+            metadata.insert("memory_type".to_string(), serde_json::json!(mtype));
+        }
+        SearchMemoryResult {
+            memory_id: memory_id.to_string(),
+            content: content.to_string(),
+            score,
+            method: "test".to_string(),
+            metadata,
+            created_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn collapse_folds_same_fact_across_users_keeping_best() {
+        // Two users hold the SAME fact (same content+type -> same content_key),
+        // plus one distinct fact. Whitespace/case differences must still fold.
+        let input = vec![
+            res("mem_a", "Rust is a systems language", "fact", 0.80), // user A
+            res("mem_b", "rust  is a   systems language", "fact", 0.91), // user B (higher)
+            res("mem_c", "Postgres is a database", "fact", 0.70),     // distinct
+        ];
+        let out = collapse_collective_duplicates(input);
+        assert_eq!(out.len(), 2, "the duplicated fact must collapse to one row");
+        // The surviving representative is the higher-scored copy.
+        let folded = out
+            .iter()
+            .find(|r| r.content.contains("systems language"))
+            .expect("folded fact present");
+        assert_eq!(folded.memory_id, "mem_b", "keep the highest-scored holder");
+        assert_eq!(
+            folded.metadata.get("collapsed_holders").and_then(|v| v.as_u64()),
+            Some(2),
+            "collapsed_holders must reflect both holders"
+        );
+        // The distinct fact is untouched and not annotated.
+        let distinct = out
+            .iter()
+            .find(|r| r.content.contains("Postgres"))
+            .expect("distinct fact present");
+        assert!(distinct.metadata.get("collapsed_holders").is_none());
+    }
+
+    #[test]
+    fn collapse_distinguishes_by_memory_type() {
+        // Same text but different ontology type -> different content_key -> NOT folded.
+        let input = vec![
+            res("mem_a", "I prefer dark mode", "preference", 0.9),
+            res("mem_b", "I prefer dark mode", "fact", 0.8),
+        ];
+        let out = collapse_collective_duplicates(input);
+        assert_eq!(out.len(), 2, "different memory_type must not collapse");
+    }
 
     #[test]
     fn concept_fallback_score_rewards_token_overlap() {

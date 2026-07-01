@@ -371,6 +371,14 @@ pub struct MoiraDaemonConfig {
     pub merge_limit: i64,
     /// Cosine pre-filter for the merge backstop (the NLI judge is the real gate).
     pub merge_cosine_threshold: f64,
+    /// Per-stage cadence: run the stage every Nth daemon pass (1 = every pass,
+    /// 0 = never). Lets Clotho tag often while the heavier insight stage
+    /// (Lachesis routing + Atropos curation — coupled until insights persist)
+    /// runs less frequently.
+    pub clotho_every_passes: u64,
+    pub insight_every_passes: u64,
+    pub merge_every_passes: u64,
+    pub reconcile_every_passes: u64,
 }
 impl Default for MoiraDaemonConfig {
     fn default() -> Self {
@@ -379,6 +387,10 @@ impl Default for MoiraDaemonConfig {
             reconcile_limit: 500,
             merge_limit: 500,
             merge_cosine_threshold: 0.82,
+            clotho_every_passes: 1,
+            insight_every_passes: 1,
+            merge_every_passes: 1,
+            reconcile_every_passes: 1,
         }
     }
 }
@@ -608,6 +620,10 @@ pub struct HelixirConfig {
 
     pub default_search_limit: usize,
     pub default_search_mode: String,
+    /// #64: when a personal-scope recall returns fewer than this many hits and
+    /// the collective tier is enabled, search_memory appends a hint nudging the
+    /// agent to retry with scope=collective. 0 disables the hint.
+    pub recall_thin_hint_threshold: usize,
     pub vector_search_enabled: bool,
     pub graph_search_enabled: bool,
     pub bm25_search_enabled: bool,
@@ -680,6 +696,7 @@ impl HelixirConfig {
 
             default_search_limit: 10,
             default_search_mode: "recent".to_string(),
+            recall_thin_hint_threshold: 3,
             vector_search_enabled: true,
             graph_search_enabled: true,
             bm25_search_enabled: true,

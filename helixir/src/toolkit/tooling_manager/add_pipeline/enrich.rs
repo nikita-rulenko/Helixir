@@ -243,13 +243,9 @@ impl ToolingManager {
                 });
 
             if let (Some(from), Some(to)) = (from_id, to_id) {
-                let rel_type = match relation.relation_type.to_uppercase().as_str() {
-                    "IMPLIES" => ReasoningType::Implies,
-                    "BECAUSE" => ReasoningType::Because,
-                    "CONTRADICTS" => ReasoningType::Contradicts,
-                    "SUPPORTS" => ReasoningType::Supports,
-                    _ => ReasoningType::Implies,
-                };
+                // Full arsenal incl. associative edges (RELATES_TO/PART_OF/IS_A).
+                // Unknown tokens fall back to RELATES_TO, never a false IMPLIES.
+                let rel_type = ReasoningType::from_token(&relation.relation_type);
 
                 match self
                     .reasoning_engine

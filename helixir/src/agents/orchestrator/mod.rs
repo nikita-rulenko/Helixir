@@ -21,11 +21,17 @@ pub struct PipelineRun {
 }
 
 /// Tunables for a pass. Defaults match the CLI.
+#[derive(Debug, Clone)]
 pub struct PassConfig {
     pub corpus_limit: i64,
     pub grow_threshold: f64,
     pub max_seeds: usize,
     pub max_hops: usize,
+    /// Stage gates — the daemon flips these per pass to give each Moira its
+    /// own cadence (moira.daemon.*_every_passes). A skipped stage contributes
+    /// empty stats. Both default to true (a bare full_pass runs everything).
+    pub run_clotho: bool,
+    pub run_insights: bool,
 }
 
 impl Default for PassConfig {
@@ -44,6 +50,8 @@ impl PassConfig {
             grow_threshold: o.grow_threshold,
             max_seeds: o.max_seeds,
             max_hops: o.max_hops,
+            run_clotho: true,
+            run_insights: true,
         }
     }
 }
@@ -67,31 +75,45 @@ impl<'a> Orchestrator<'a> {
         user: &str,
         cfg: &PassConfig,
     ) -> Result<PipelineRun, ToolingError> {
-        // 1) Clotho — tag (and grow the dictionary on misses).
-        let clotho = Clotho::new(self.tooling);
-        clotho.seed_dictionary().await?;
-        let mems = self
-            .tooling
-            .list_user_memories(user, cfg.corpus_limit)
-            .await?;
-        let grow = clotho.grow_pass(&mems, cfg.grow_threshold).await?;
+        // 1) Clotho — tag (and grow the dictionary on misses). Cadence-gated by
+        // the daemon via cfg.run_clotho.
+        let grow = if cfg.run_clotho {
+            let clotho = Clotho::new(self.tooling);
+            clotho.seed_dictionary().await?;
+            let mems = self
+                .tooling
+                .list_user_memories(user, cfg.corpus_limit)
+                .await?;
+            clotho.grow_pass(&mems, cfg.grow_threshold).await?
+        } else {
+            GrowStats::default()
+        };
 
-        // 2) Atropos — curate the woven subsets (Lachesis routes & gates within).
-        let orch = &self.tooling.config.moira.orchestrator;
-        let candidates = self.tooling.list_categories(orch.candidate_cap).await?;
-        let universe = self
-            .tooling
-            .total_memory_count(orch.universe_cap)
-            .await?
-            .max(1);
-        let seeds: Vec<(String, String)> = candidates.iter().take(cfg.max_seeds).cloned().collect();
-        let atropos = Atropos::new(self.tooling);
-        let insights = atropos
-            .curate(&seeds, &candidates, universe, cfg.max_hops)
-            .await?;
+        // 2) The insight stage — Lachesis routes & gates INSIDE Atropos::curate,
+        // so the two share one cadence gate (they decouple once insights persist
+        // to memory and Atropos can curate previously-routed threads).
+        let insights = if cfg.run_insights {
+            let orch = &self.tooling.config.moira.orchestrator;
+            let candidates = self.tooling.list_categories(orch.candidate_cap).await?;
+            let universe = self
+                .tooling
+                .total_memory_count(orch.universe_cap)
+                .await?
+                .max(1);
+            let seeds: Vec<(String, String)> =
+                candidates.iter().take(cfg.max_seeds).cloned().collect();
+            let atropos = Atropos::new(self.tooling);
+            atropos
+                .curate(&seeds, &candidates, universe, cfg.max_hops)
+                .await?
+        } else {
+            Vec::new()
+        };
 
         info!(
-            "orchestrator.full_pass(user={user}): tagged {} (minted {}), {} insights",
+            "orchestrator.full_pass(user={user}): clotho={} insights_stage={} — tagged {} (minted {}), {} insights",
+            cfg.run_clotho,
+            cfg.run_insights,
             grow.tagged_by_match + grow.reused_mint,
             grow.minted,
             insights.len()

@@ -10,7 +10,17 @@
 This project is backed by **Helixir**, a reasoning-aware memory exposed as MCP
 tools (`mcp__helixir-local__*`). You are NOT stateless: treat it as your own
 long-term knowledge and keep it current. Always pass a **consistent `user_id`**
-(here: `claude`) so the memory stays coherent and personal search is scoped.
+so the memory stays coherent and personal search is scoped. `claude` below is a
+PLACEHOLDER — establish YOUR id first (next section) and use it everywhere.
+
+### Establish your identity (BEFORE the first recall)
+The `user_id` is YOUR name in the memory — the wrong one recalls another agent's
+memories as your own. Pick ONE stable id, in this order: (1) an id you were
+explicitly assigned/configured; else (2) your own name from your system prompt
+(e.g. "You are Zeroclaw…" → `zeroclaw`) or, in a shell, the OS user (`whoami`).
+Use that SAME id for the first `search_memory` and every `add_memory`. If recall
+is empty/thin and you're unsure, call `list_users` to see who exists and confirm
+your id — never silently adopt another agent's. Replace every `claude` below.
 
 Helixir stores typed facts in a knowledge graph with causal edges, so it returns
 *why* things are true — not just similar text. The read path makes no LLM calls

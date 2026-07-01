@@ -946,3 +946,6 @@ QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limi
   category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
   memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
   RETURN memories
+QUERY dropConceptByInternalId(concept_internal_id: ID) =>
+  DROP N<Concept>(concept_internal_id)
+  RETURN "deleted"
