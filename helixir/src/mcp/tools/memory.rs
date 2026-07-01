@@ -101,7 +101,9 @@ impl HelixirMcpServer {
             if !outcomes.is_empty() {
                 json["pending_outcomes"] = serde_json::to_value(&outcomes).unwrap_or_default();
             }
-            return Ok(CallToolResult::success(vec![Content::text(json.to_string())]));
+            return Ok(CallToolResult::success(vec![Content::text(
+                json.to_string(),
+            )]));
         }
 
         let result = self
@@ -127,7 +129,9 @@ impl HelixirMcpServer {
         let mut json = Self::result_to_value(&result)?;
         json["ok"] = json!(true);
         json["saved"] = json!(result.memories_added + result.deduped.len());
-        Ok(CallToolResult::success(vec![Content::text(json.to_string())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            json.to_string(),
+        )]))
     }
 
     #[tool(

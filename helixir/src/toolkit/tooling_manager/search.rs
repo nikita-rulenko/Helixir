@@ -517,8 +517,8 @@ fn concept_fallback_score(
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_collective_duplicates, concept_fallback_score};
     use super::SearchMemoryResult;
+    use super::{collapse_collective_duplicates, concept_fallback_score};
     use std::collections::HashMap;
 
     fn res(memory_id: &str, content: &str, mtype: &str, score: f64) -> SearchMemoryResult {
@@ -554,7 +554,10 @@ mod tests {
             .expect("folded fact present");
         assert_eq!(folded.memory_id, "mem_b", "keep the highest-scored holder");
         assert_eq!(
-            folded.metadata.get("collapsed_holders").and_then(|v| v.as_u64()),
+            folded
+                .metadata
+                .get("collapsed_holders")
+                .and_then(|v| v.as_u64()),
             Some(2),
             "collapsed_holders must reflect both holders"
         );

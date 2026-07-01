@@ -42,9 +42,16 @@ pub fn db_query(query: &str, body: &Value) -> Value {
 /// MEMORY_RELATION edges (SUPPORTS/RELATES_TO/PART_OF/IS_A) keyed by their
 /// `relation_type` property.
 pub fn db_edge_types_out(memory_id: &str) -> Vec<String> {
-    let r = db_query("getMemoryOutgoingRelations", &json!({ "memory_id": memory_id }));
+    let r = db_query(
+        "getMemoryOutgoingRelations",
+        &json!({ "memory_id": memory_id }),
+    );
     let mut types = Vec::new();
-    if r["implies_out"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+    if r["implies_out"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
         for _ in r["implies_out"].as_array().unwrap() {
             types.push("IMPLIES".to_string());
         }

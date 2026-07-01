@@ -360,9 +360,13 @@ fn buffered_add_reads_as_success_63() {
 
     // (4) Either it confirmed inline (memory_ids present) OR it explicitly
     // promised acceptance — both are actionable success, neither is ambiguous.
-    let confirmed_inline = ack["memory_ids"].as_array().map(|a| !a.is_empty()).unwrap_or(false);
+    let confirmed_inline = ack["memory_ids"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
     let saved_inline = ack["saved"].as_u64().map(|n| n > 0).unwrap_or(false);
-    let accepted = ack["status"].as_str() == Some("accepted") || ack["accepted"].as_bool() == Some(true);
+    let accepted =
+        ack["status"].as_str() == Some("accepted") || ack["accepted"].as_bool() == Some(true);
     assert!(
         confirmed_inline || saved_inline || accepted,
         "buffered ack must be inline-confirmed (memory_ids/saved) or explicitly accepted: {ack}"
@@ -370,10 +374,16 @@ fn buffered_add_reads_as_success_63() {
 
     // (5) Whatever the ack said, the write must actually land and be findable.
     let st = poll_done(&mut mcp, pid, 30);
-    assert_eq!(st["status"].as_str(), Some("done"), "write must reach done: {st}");
+    assert_eq!(
+        st["status"].as_str(),
+        Some("done"),
+        "write must reach done: {st}"
+    );
 
     println!("\n==== buffered_add_reads_as_success_63 ====");
-    println!("buffered ack ok:true, no bare-pending, confirmed_inline={confirmed_inline} accepted={accepted} ✓");
+    println!(
+        "buffered ack ok:true, no bare-pending, confirmed_inline={confirmed_inline} accepted={accepted} ✓"
+    );
 }
 
 /// #64 — opt-in identity discovery, gated by the collective tier. The roster is
@@ -397,7 +407,11 @@ fn list_users_discovery_gated_64() {
         "add_memory",
         json!({ "message": format!("Discovery {run}: identity disc_{run} is online."), "user_id": me }),
     );
-    assert_eq!(ack["ok"].as_bool(), Some(true), "seed write must succeed: {ack}");
+    assert_eq!(
+        ack["ok"].as_bool(),
+        Some(true),
+        "seed write must succeed: {ack}"
+    );
 
     let (roster, _) = mcp.call_tool("list_users", json!({ "limit": 50 }));
     assert_eq!(
@@ -408,7 +422,10 @@ fn list_users_discovery_gated_64() {
     let users = roster["users"].as_array().expect("users array");
     assert!(!users.is_empty(), "roster must not be empty: {roster}");
     let u0 = &users[0];
-    assert!(u0.get("user_id").is_some(), "roster entry has user_id: {u0}");
+    assert!(
+        u0.get("user_id").is_some(),
+        "roster entry has user_id: {u0}"
+    );
     assert!(
         u0.get("email").is_none() && u0.get("metadata").is_none(),
         "roster must NOT leak email/metadata (privacy): {u0}"
@@ -427,7 +444,10 @@ fn list_users_discovery_gated_64() {
         "solo mode must NOT expose a roster: {sroster}"
     );
     assert!(
-        sroster["users"].as_array().map(|a| a.is_empty()).unwrap_or(false),
+        sroster["users"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
         "solo roster must be empty: {sroster}"
     );
 
@@ -472,7 +492,10 @@ fn personal_thin_recall_hints_collective_64() {
         "content[0] must stay the results array: {first}"
     );
     // content[1] = the collective hint (personal was thin + collective enabled).
-    let hint = content.get(1).and_then(|c| c["text"].as_str()).unwrap_or("");
+    let hint = content
+        .get(1)
+        .and_then(|c| c["text"].as_str())
+        .unwrap_or("");
     assert!(
         hint.contains("collective"),
         "thin personal recall must hint at scope=collective: content={content:?}"
@@ -496,14 +519,19 @@ fn collective_search_collapses_duplicate_holders_3a() {
 
     // A short, atomic fact so extraction is stable and both holders land on the
     // same content_key.
-    let fact = format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
+    let fact =
+        format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
     for who in ["a", "b"] {
         let (mut m, _) = McpClient::spawn_with_env(&coll);
         let (ack, _) = m.call_tool(
             "add_memory",
             json!({ "message": fact, "user_id": format!("c3a_{who}_{run}") }),
         );
-        assert_eq!(ack["ok"].as_bool(), Some(true), "holder {who} write must succeed: {ack}");
+        assert_eq!(
+            ack["ok"].as_bool(),
+            Some(true),
+            "holder {who} write must succeed: {ack}"
+        );
     }
 
     // A third identity reads the shared collective.

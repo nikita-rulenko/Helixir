@@ -64,10 +64,16 @@ fn related_but_distinct_facts_both_persist_46() {
     let (listed, _) = mcp.call_tool("list_memories", json!({"user_id": user, "limit": 50}));
     let rows = listed.as_array().cloned().unwrap_or_default();
     let has_algo = rows.iter().any(|m| {
-        m["content"].as_str().map(|c| c.contains("content_key") || c.contains("fingerprint")).unwrap_or(false)
+        m["content"]
+            .as_str()
+            .map(|c| c.contains("content_key") || c.contains("fingerprint"))
+            .unwrap_or(false)
     });
     let has_tests = rows.iter().any(|m| {
-        m["content"].as_str().map(|c| c.contains("test suite") || c.contains("Cerebras")).unwrap_or(false)
+        m["content"]
+            .as_str()
+            .map(|c| c.contains("test suite") || c.contains("Cerebras"))
+            .unwrap_or(false)
     });
 
     assert!(

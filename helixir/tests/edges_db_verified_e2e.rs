@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::json;
 
 mod common;
-use common::{db_edge_types_out, McpClient};
+use common::{McpClient, db_edge_types_out};
 
 fn token() -> String {
     format!(
@@ -99,7 +99,10 @@ fn edges_persisted_with_correct_types_db() {
                 .collect()
         })
         .unwrap_or_default();
-    assert!(!mids.is_empty(), "list_memories must return our memories: {listed}");
+    assert!(
+        !mids.is_empty(),
+        "list_memories must return our memories: {listed}"
+    );
 
     let mut all_edges: Vec<String> = Vec::new();
     for mid in &mids {
@@ -132,7 +135,11 @@ fn edges_persisted_with_correct_types_db() {
 
     println!("\n==== edges_persisted_with_correct_types_db ====");
     println!("PROVIDER={provider} MODEL={model} first_add={a_ms:.0}ms");
-    println!("memories: {} | edges persisted in DB: {}", mids.len(), all_edges.len());
+    println!(
+        "memories: {} | edges persisted in DB: {}",
+        mids.len(),
+        all_edges.len()
+    );
     println!("edge types (DB ground truth): {all_edges:?}");
     if associative.is_empty() {
         println!("associative (PART_OF/IS_A/RELATES_TO): none this run");

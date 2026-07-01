@@ -289,7 +289,8 @@ For each entity, optionally include "relations" — connections to OTHER entitie
     }
   ]"#,
             );
-            prompt.push_str(r#"
+            prompt.push_str(
+                r#"
 
 Relations use INDICES into the memories array (0-based). This typed graph is the
 whole point of the memory — for each related pair, pick the SINGLE most accurate
@@ -313,7 +314,8 @@ EXAMPLES (the pair -> the correct edge):
 - "The server crashed" / "The disk was full"              -> BECAUSE
 
 Emit an edge for EVERY related pair, even with only 2 memories. Use
-from_memory_index and to_memory_index (0-based)."#);
+from_memory_index and to_memory_index (0-based)."#,
+            );
         } else {
             prompt.push_str(
                 r#",

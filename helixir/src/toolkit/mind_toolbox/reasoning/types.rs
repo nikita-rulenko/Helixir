@@ -206,11 +206,17 @@ mod tests {
             assert_eq!(ReasoningType::from_token(t.edge_name()), t);
         }
         // Case / whitespace tolerant + synonyms.
-        assert_eq!(ReasoningType::from_token(" implies "), ReasoningType::Implies);
+        assert_eq!(
+            ReasoningType::from_token(" implies "),
+            ReasoningType::Implies
+        );
         assert_eq!(ReasoningType::from_token("instance_of"), ReasoningType::IsA);
         // CRITICAL: an unknown token must fall back to the generic RELATES_TO,
         // NEVER to a false causal IMPLIES (the old silent-coercion bug).
-        assert_eq!(ReasoningType::from_token("ELABORATES"), ReasoningType::RelatesTo);
+        assert_eq!(
+            ReasoningType::from_token("ELABORATES"),
+            ReasoningType::RelatesTo
+        );
         assert_eq!(ReasoningType::from_token(""), ReasoningType::RelatesTo);
     }
 

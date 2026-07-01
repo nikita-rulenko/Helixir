@@ -154,8 +154,10 @@ fn associative_edges_built_on_fresh_write() {
              The compiler_{user} is a kind of language toolchain. The build_{user} \
              failed because the lexer_{user} rejected malformed input."
         );
-        let (added, ms) =
-            mcp.call_tool("add_memory", json!({"message": structural, "user_id": user}));
+        let (added, ms) = mcp.call_tool(
+            "add_memory",
+            json!({"message": structural, "user_id": user}),
+        );
         assert!(
             added["memories_added"].as_u64().unwrap_or(0) >= 1,
             "the structural statement must store memories: {added}"

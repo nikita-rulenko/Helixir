@@ -7,7 +7,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 mod common;
 use common::McpClient;
@@ -50,7 +50,11 @@ fn connect_by_id_populates_node_content_23() {
     );
     let ids: Vec<String> = added["memory_ids"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     assert!(ids.len() >= 2, "need two linked atoms to connect: {added}");
 
@@ -58,12 +62,19 @@ fn connect_by_id_populates_node_content_23() {
         "connect_memories",
         json!({"query_a": ids[0], "query_b": ids[1], "user_id": user}),
     );
-    assert_eq!(conn["found"].as_bool(), Some(true), "anchors must connect: {conn}");
+    assert_eq!(
+        conn["found"].as_bool(),
+        Some(true),
+        "anchors must connect: {conn}"
+    );
     let nodes = conn["nodes"].as_array().cloned().unwrap_or_default();
     assert!(!nodes.is_empty(), "path must have nodes: {conn}");
-    let all_have_content = nodes
-        .iter()
-        .all(|n| n["content"].as_str().map(|c| !c.trim().is_empty()).unwrap_or(false));
+    let all_have_content = nodes.iter().all(|n| {
+        n["content"]
+            .as_str()
+            .map(|c| !c.trim().is_empty())
+            .unwrap_or(false)
+    });
     assert!(
         all_have_content,
         "#23: every node in a by-id connect path must carry its content (not blank): {nodes:?}"
@@ -100,14 +111,23 @@ fn concept_filter_excludes_adjacent_types_62() {
     );
     let rows: Vec<Value> = res.as_array().cloned().unwrap_or_default();
     // The preference must be found; the fact ("log-structured merge tree") must NOT.
-    let pref_found = rows
-        .iter()
-        .any(|m| m["content"].as_str().map(|c| c.contains("prefer")).unwrap_or(false));
-    let fact_leaked = rows
-        .iter()
-        .any(|m| m["content"].as_str().map(|c| c.contains("log-structured") || c.contains("merge tree")).unwrap_or(false));
+    let pref_found = rows.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .map(|c| c.contains("prefer"))
+            .unwrap_or(false)
+    });
+    let fact_leaked = rows.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .map(|c| c.contains("log-structured") || c.contains("merge tree"))
+            .unwrap_or(false)
+    });
 
-    assert!(pref_found, "the preference must be returned for concept_type=preference: {rows:?}");
+    assert!(
+        pref_found,
+        "the preference must be returned for concept_type=preference: {rows:?}"
+    );
     assert!(
         !fact_leaked,
         "#62: a FACT on the same topic must NOT leak into a concept_type=preference search: {rows:?}"
