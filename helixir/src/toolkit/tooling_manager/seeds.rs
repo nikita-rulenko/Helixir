@@ -16,7 +16,7 @@ use super::ToolingManager;
 use crate::llm::extractor::ExtractedMemory;
 
 /// Bump to re-seed on the next startup (old seeds stay — elder brain).
-const SEED_VERSION: u32 = 1;
+const SEED_VERSION: u32 = 2;
 
 /// The system user that owns self-knowledge.
 pub const SEED_USER: &str = "helixir";
@@ -135,6 +135,51 @@ const SEEDS: &[(i32, &str)] = &[
     (
         80,
         "Under algo_opt the final ranking blends 0.3 cosine similarity, 0.5 Personalized PageRank mass and 0.2 temporal freshness.",
+    ),
+    // --- Operations & integration (seeded at install: the manual lives inside the memory) ---
+    (
+        90,
+        "Helixir runs in three modes of escalating trust: solo (one agent, one user_id, private dedup), collective (write-time dedup across all user_ids; contradictions are scored by stances and user_count consensus, never resolved by rewriting the graph) and insights (the Moirai — Clotho, Lachesis, Atropos — generate tag dictionaries, indirect multi-hop correlations and curated hypotheses). Set mode in ~/.helixir/helixir.toml (mode = \"Solo|Collective|Insights\") or the HELIXIR_MODE env var; env overrides the toml.",
+    ),
+    (
+        85,
+        "The helixir CLI drives the generative layer: clotho grow --user <id> grows the tag dictionary; pipeline --user <id> runs one Clotho-Lachesis-Atropos pass; daemon start --user <id> --interval <secs> runs passes continuously with per-stage cadence flags --clotho-every, --insight-every, --merge-every, --reconcile-every (1 = every pass, 0 = never); categories, swarm, heartbeat, merge, insights and journal inspect and drive the rest.",
+    ),
+    (
+        85,
+        "Moirai intensity thresholds live in ~/.helixir/helixir.toml: [moira.clotho] grow_threshold and tag_threshold, [moira.lachesis] subset_pmi_bar, coherence_bar and dfs_budget, [moira.atropos] quality_pmi_bar (curation strictness), [moira.daemon] interval_secs and the *_every_passes cadences.",
+    ),
+    (
+        85,
+        "To connect Claude Desktop or Claude Code, add an mcpServers entry named helixir-local running the helixir-mcp binary with HELIX_HOST/HELIX_PORT/HELIX_INSTANCE plus LLM and embedding provider env; helixir setup writes this non-destructively. For Cursor use ~/.cursor/mcp.json with the same env. For network clients, helixir gateway start serves the same MCP tools over streamable-HTTP at /mcp.",
+    ),
+    (
+        85,
+        "To connect zeroclaw, add a [[mcp.servers]] stdio entry named helixir-local in ~/.zeroclaw/config.toml pointing at the helixir-mcp binary with the HELIX_* env in [mcp.servers.env]; its tools register as helixir-local__<tool> and are deferred, so autonomy.auto_approve must include tool_search plus the helixir-local__* tool names for non-interactive runs.",
+    ),
+    (
+        90,
+        "Agents must establish identity BEFORE the first recall: use the assigned user_id; otherwise derive a stable one from the agent's own name, and consult list_users when unsure — never adopt another agent's id (the example id claude in templates is a placeholder to replace).",
+    ),
+    (
+        90,
+        "Agent usage rules: recall first at the start of any non-trivial task and right after a context summary (retry with scope=collective if personal recall is empty); capture durable facts proactively (decisions, preferences, goals, constraints, outcomes, gotchas — never secrets or ephemeral chatter); surface needs_clarification questions to the human instead of resolving conflicts silently.",
+    ),
+    (
+        90,
+        "Every add_memory result carries a top-level ok field: ok true means the write succeeded (memory_ids inline, or status accepted for a buffered write still finishing) — never retry on ok true; deduped entries with memories_added 0 mean already known, which is success; only ok false is a failure.",
+    ),
+    (
+        85,
+        "For multi-step reasoning use FastThink: think_start, then think_add steps, optional think_recall to pull known facts, think_conclude, and ONE think_commit at the end — it synthesizes the whole session into a single enriched memory and is the heaviest call; think_discard throws the scratchpad away.",
+    ),
+    (
+        85,
+        "Data safety: the LMDB data lives wherever the HelixDB container's data dir is bind-mounted — back it up before schema deploys; schema changes are compiled into the server (no hot reload), deploy = helix check, rebuild the image, swap the container onto the same volume; HelixDB errors often hide in HTTP-200 response bodies, and search visibility lags writes, so re-probe before concluding data is missing.",
+    ),
+    (
+        80,
+        "The drop-in agent templates live in the repo's integration folder: AGENTS.md for any coding agent via the agents.md convention and SKILLS.md for Claude as a skill — both encode the recall-capture-reason loop so every connected agent uses the memory the way its maintainers do.",
     ),
 ];
 

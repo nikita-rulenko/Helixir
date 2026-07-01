@@ -16,9 +16,15 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 #[tool_router(router = memory_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Store something in long-term memory. Pass raw natural-language text; an LLM extracts it into atomic typed facts (max 15 per call), embeds them, and links them into the reasoning graph. Use this whenever the user states a fact, decision, preference, or outcome worth remembering across sessions; for >15 facts, split across calls. \
-        \nEvery result carries a top-level boolean 'ok': ok:true means your write was accepted and stored (or will be) — treat it as SUCCESS and do NOT retry. The fields: {ok, memories_added, memory_ids, deduped, saved, status?, pending_id?, pending_outcomes?}. 'deduped' holds existing memory_ids this input was already-known-and-linked-to (not newly stored), and 'saved' = memories_added + deduped — so memories_added=0 with a non-empty deduped (saved>0) means 'already saved', NOT a failure. When the server runs the ingest buffer the write is processed by a background worker; the call waits briefly and returns the finished result with memory_ids when it completes in time. If it is still processing you get {ok:true, status:'accepted', pending_id} — also SUCCESS, searchable within seconds; optionally confirm with get_add_status(pending_id). Only ok:false (status:'failed') is a real failure. 'pending_outcomes' carries results of EARLIER buffered adds delivered opportunistically. \
-        \nIMPORTANT: if the result contains a non-empty needs_clarification array, the memory charter refused to silently resolve a conflict (e.g. a reversed preference). Read each entry and ask the user its suggested_question (or apply a standing rule), then add the answer as a new memory — do not ignore it."
+        description = "Store raw natural-language text in long-term memory. An LLM splits it into atomic typed facts (max 15 per call — split bigger inputs), embeds them, and wires them into the reasoning graph with typed edges. Use whenever the user states a fact, decision, preference, goal or outcome worth keeping across sessions.\
+        \nRESULT CONTRACT — read carefully:\
+        \n- ok:true = SUCCESS. NEVER retry an ok:true result.\
+        \n- ok:true + memory_ids = stored now.\
+        \n- ok:true + status:'accepted' + pending_id = buffered write still finishing; searchable within seconds; optionally confirm via get_add_status(pending_id). Still SUCCESS.\
+        \n- memories_added:0 with non-empty 'deduped' = this fact was ALREADY known and got linked ('saved' = memories_added + deduped). SUCCESS, not a failure.\
+        \n- Only ok:false / status:'failed' is a real failure.\
+        \n- 'pending_outcomes' = results of EARLIER buffered adds, delivered opportunistically.\
+        \nneeds_clarification: if non-empty, the memory charter refused to silently resolve a conflict (e.g. a reversed preference). Ask the user each suggested_question (or apply a standing rule), then store the answer as a new memory. Never ignore it."
     )]
     async fn add_memory(
         &self,

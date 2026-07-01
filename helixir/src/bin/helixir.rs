@@ -1009,6 +1009,7 @@ fn mcp_entry(c: &SetupConfig) -> serde_json::Value {
         "command": c.mcp_bin,
         "args": [],
         "env": {
+            "HELIXIR_SELF_SEED": "1",
             "HELIX_HOST": c.host,
             "HELIX_PORT": c.port,
             "HELIX_INSTANCE": c.instance,
