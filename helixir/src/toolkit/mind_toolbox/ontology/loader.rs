@@ -16,6 +16,10 @@ pub enum LoaderError {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConceptNode {
+    /// HelixDB internal node UUID (time-ordered) — used by the duplicate
+    /// self-heal to keep the earliest copy per concept_id.
+    #[serde(default)]
+    id: String,
     concept_id: String,
     name: String,
     level: i32,
@@ -89,11 +93,57 @@ impl OntologyLoader {
             self.initialize_base().await?;
         }
 
-        let response: ConceptsResponse = self
+        let mut response: ConceptsResponse = self
             .client
             .execute_query("getAllConcepts", &serde_json::json!({}))
             .await
             .map_err(|e| LoaderError::Database(e.to_string()))?;
+
+        // Self-heal duplicated trees (#67): retry-amplified seeding once left
+        // FOUR copies of the base tree. Live lookups (`WHERE … ::FIRST`)
+        // resolve in insertion order, so the earliest copy is the one all
+        // INSTANCE_OF edges actually target — keep the earliest node per
+        // concept_id (ids are time-ordered) and drop the later phantoms.
+        {
+            let mut earliest: HashMap<&str, &str> = HashMap::new();
+            for n in &response.concepts {
+                let e = earliest.entry(n.concept_id.as_str()).or_insert(&n.id);
+                if n.id.as_str() < *e {
+                    *e = &n.id;
+                }
+            }
+            let phantoms: Vec<String> = response
+                .concepts
+                .iter()
+                .filter(|n| earliest.get(n.concept_id.as_str()) != Some(&n.id.as_str()))
+                .map(|n| n.id.clone())
+                .collect();
+            if !phantoms.is_empty() {
+                tracing::warn!(
+                    "Ontology self-heal: dropping {} duplicate concept node(s) \
+                     (multiple seeded copies detected)",
+                    phantoms.len()
+                );
+                for id in &phantoms {
+                    if let Err(e) = self
+                        .client
+                        .execute_query::<serde_json::Value, _>(
+                            "dropConceptByInternalId",
+                            &serde_json::json!({ "concept_internal_id": id }),
+                        )
+                        .await
+                    {
+                        // Pre-#67 deployments don't have the query yet — the
+                        // in-memory map below still dedupes, so only warn.
+                        tracing::warn!("Ontology self-heal: drop {} failed: {}", id, e);
+                        break;
+                    }
+                }
+                let keep: std::collections::HashSet<String> =
+                    earliest.values().map(|s| s.to_string()).collect();
+                response.concepts.retain(|n| keep.contains(&n.id));
+            }
+        }
 
         let mut concepts = HashMap::new();
         let mut relations = Vec::new();
