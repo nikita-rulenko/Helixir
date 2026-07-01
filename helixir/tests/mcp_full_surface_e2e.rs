@@ -1,13 +1,14 @@
 //! Liveness oracle: exercise EVERY MCP Helixir tool end-to-end (#42 audit).
 //!
 //! "Compiles" does not prove a code path is live — only the running product
-//! does. This drives all 17 MCP tools through the real stdio transport and
+//! does. This drives all 19 MCP tools through the real stdio transport and
 //! proves write→read-back persistence, so it can serve as the gate for the
 //! dead-code deletion stages: after removing a suspected-dead module, this
 //! must stay green (not just `cargo check`).
 //!
 //! Runs the synchronous write path (buffer OFF) for determinism. Tools covered:
-//!   add_memory, search_memory, list_memories, update_memory, get_memory_graph,
+//!   add_memory, search_memory, list_memories, list_users, swarm_status,
+//!   update_memory, get_memory_graph,
 //!   search_by_concept, search_reasoning_chain, connect_memories,
 //!   search_incomplete_thoughts, get_add_status,
 //!   think_start, think_add, think_status, think_recall, think_conclude,
@@ -49,7 +50,9 @@ fn mcp_full_surface_liveness() {
         "this oracle runs the synchronous path — do NOT set HELIXIR_INGEST_BUFFER"
     );
 
-    let (mut mcp, _boot) = McpClient::spawn();
+    // Pin Solo explicitly: the machine's ~/.helixir/helixir.toml may set a
+    // collective-tier mode, and the gate assertions below depend on Solo.
+    let (mut mcp, _boot) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "solo")]);
     let run = token();
     let user = format!("oracle_{run}");
     let mut exercised: Vec<&str> = Vec::new();
@@ -98,6 +101,15 @@ fn mcp_full_surface_liveness() {
         users["available"].as_bool(),
         Some(false),
         "list_users must be gated off in Solo mode: {users}"
+    );
+
+    // #39 rendezvous. Same Solo gate applies to the swarm roster.
+    let (swarm, _) = mcp.call_tool("swarm_status", json!({}));
+    exercised.push("swarm_status");
+    assert_eq!(
+        swarm["available"].as_bool(),
+        Some(false),
+        "swarm_status must be gated off in Solo mode: {swarm}"
     );
 
     // A memory id to update: prefer the add result, else the listing.
@@ -298,11 +310,12 @@ fn mcp_full_surface_liveness() {
     );
 
     // ---- report -------------------------------------------------------------
-    const ALL: [&str; 18] = [
+    const ALL: [&str; 19] = [
         "add_memory",
         "search_memory",
         "list_memories",
         "list_users",
+        "swarm_status",
         "update_memory",
         "get_memory_graph",
         "search_by_concept",

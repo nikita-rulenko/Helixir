@@ -579,3 +579,56 @@ fn collective_search_collapses_duplicate_holders_3a() {
     println!("\n==== collective_search_collapses_duplicate_holders_3a ====");
     println!("2 holders of one fact -> 1 collective row, collapsed_holders={holders:?} ✓");
 }
+
+/// #39 — rendezvous through the shared DB. A writing agent that passes agent_id
+/// is stamped into the swarm automatically (host + status "working"), and any
+/// other consumer sees it ACTIVE in swarm_status — presence with no channel
+/// other than the memory itself.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn write_with_agent_id_appears_in_swarm_39() {
+    require_e2e();
+    let run = token();
+    let coll = [("HELIXIR_MODE", "collective")];
+    let agent = format!("rondo_{run}");
+
+    // Writer announces presence implicitly via add_memory(agent_id=...).
+    let (mut w, _) = McpClient::spawn_with_env(&coll);
+    let (ack, _) = w.call_tool(
+        "add_memory",
+        json!({
+            "message": format!("Rendezvous {run}: the beacon service pings the mesh each minute."),
+            "user_id": format!("rondo_user_{run}"),
+            "agent_id": agent,
+        }),
+    );
+    assert_eq!(ack["ok"].as_bool(), Some(true), "write ok: {ack}");
+
+    // A DIFFERENT consumer reads the roster.
+    let (mut r, _) = McpClient::spawn_with_env(&coll);
+    let (swarm, _) = r.call_tool("swarm_status", json!({}));
+    assert_eq!(
+        swarm["available"].as_bool(),
+        Some(true),
+        "roster on: {swarm}"
+    );
+    let row = swarm["agents"]
+        .as_array()
+        .and_then(|a| {
+            a.iter()
+                .find(|x| x["agent_id"].as_str() == Some(agent.as_str()))
+        })
+        .unwrap_or_else(|| panic!("writer must appear in the swarm roster: {swarm}"));
+    assert_eq!(
+        row["active"].as_bool(),
+        Some(true),
+        "freshly-writing agent must be ACTIVE: {row}"
+    );
+    assert!(
+        row["host"].as_str().map(|h| !h.is_empty()).unwrap_or(false),
+        "presence must carry the host: {row}"
+    );
+
+    println!("\n==== write_with_agent_id_appears_in_swarm_39 ====");
+    println!("agent {agent} active in roster, host={} ✓", row["host"]);
+}

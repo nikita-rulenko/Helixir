@@ -319,6 +319,14 @@ pub struct ListUsersParams {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct SwarmStatusParams {
+    #[schemars(
+        description = "Heartbeats within this many seconds count as ACTIVE. Omit to use the server's configured window (default 90)."
+    )]
+    pub active_window_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ConnectMemoriesParams {
     #[schemars(
         description = "First anchor — a free-text description of concept A, OR an exact memory_id (mem_… / raw_…) to anchor precisely without searching."

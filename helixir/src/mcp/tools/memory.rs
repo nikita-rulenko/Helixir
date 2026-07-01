@@ -32,6 +32,23 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         info!("🧠 Adding memory for user={}", params.user_id);
 
+        // Rendezvous (#39): a writing agent announces its presence for free —
+        // any agent that passes agent_id shows up in swarm_status with host +
+        // "working" without a separate heartbeat call. Best-effort by design.
+        if let Some(agent_id) = params.agent_id.as_deref() {
+            if self.client.config().mode.collective_enabled() {
+                let role = self.client.config().swarm.default_role.clone();
+                if let Err(e) = self
+                    .client
+                    .tooling()
+                    .register_or_heartbeat(agent_id, &role, machine_hostname(), "working")
+                    .await
+                {
+                    debug!("swarm heartbeat for {agent_id} failed (non-fatal): {e}");
+                }
+            }
+        }
+
         // Ingest buffer (#25): when HELIXIR_INGEST_BUFFER=1, the raw input is
         // persisted to a queue drained by ONE serial worker, so parallel
         // writers can't race the dedup check. Confirm-or-promise (#63): we then
@@ -360,6 +377,74 @@ impl HelixirMcpServer {
     }
 
     #[tool(
+        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE if its last heartbeat is within active_window_secs (default from config, ~90s). Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
+    )]
+    async fn swarm_status(
+        &self,
+        Parameters(params): Parameters<SwarmStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.client.config().mode.collective_enabled() {
+            let payload = json!({
+                "available": false,
+                "agents": [],
+                "note": "The swarm roster requires the collective tier; this Helixir runs in Solo mode (private memory). Set mode=Collective or Insights to join a swarm.",
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                payload.to_string(),
+            )]));
+        }
+
+        let window = params
+            .active_window_secs
+            .unwrap_or(self.client.config().swarm.active_window_secs) as i64;
+        let mut agents = self
+            .client
+            .tooling()
+            .list_swarm()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        let now = chrono::Utc::now();
+        // Live first, then most-recently-seen.
+        agents.sort_by_key(|a| {
+            let age = a.age_seconds(now).unwrap_or(i64::MAX);
+            (!a.is_active(now, window), age)
+        });
+        let roster: Vec<serde_json::Value> = agents
+            .iter()
+            .map(|a| {
+                json!({
+                    "agent_id": a.agent_id,
+                    "role": a.role,
+                    "host": a.host,
+                    "status": a.status,
+                    "age_seconds": a.age_seconds(now),
+                    "active": a.is_active(now, window),
+                })
+            })
+            .collect();
+        let active = roster
+            .iter()
+            .filter(|a| a["active"].as_bool() == Some(true))
+            .count();
+        info!(
+            "👥 Swarm roster: {} agents, {} active",
+            roster.len(),
+            active
+        );
+        let payload = json!({
+            "available": true,
+            "active_window_secs": window,
+            "active": active,
+            "total": roster.len(),
+            "agents": roster,
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            payload.to_string(),
+        )]))
+    }
+
+    #[tool(
         description = "Replace the content of an EXISTING memory (you must pass its memory_id, e.g. from a search result); the embedding and graph relations are regenerated. Use to correct or refine a specific known fact. Note: this edits in place and Helixir never deletes — to retire an OUTDATED fact, prefer add_memory with the corrected statement and let the charter supersede the old one (history is preserved). Returns {updated: bool, memory_id}."
     )]
     async fn update_memory(
@@ -541,4 +626,19 @@ impl HelixirMcpServer {
         }))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+}
+
+/// Cached machine hostname for swarm presence — resolved once per process.
+fn machine_hostname() -> &'static str {
+    use std::sync::OnceLock;
+    static HOST: OnceLock<String> = OnceLock::new();
+    HOST.get_or_init(|| {
+        std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".to_string())
+    })
 }
