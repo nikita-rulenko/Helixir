@@ -49,6 +49,11 @@ async fn daemon_on_call_runs_exactly_one_pass() {
             max_hops: 3,
             ..PassConfig::default()
         },
+        // Every stage on every pass — the pre-cadence behavior this e2e asserts.
+        clotho_every: 1,
+        insight_every: 1,
+        merge_every: 1,
+        reconcile_every: 1,
     };
 
     let mut passes = 0u64;

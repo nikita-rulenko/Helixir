@@ -29,6 +29,13 @@ pub struct DaemonConfig {
     /// Host label stamped on this daemon's swarm presence (#39).
     pub host: String,
     pub pass: PassConfig,
+    /// Per-stage cadence: run the stage every Nth pass (1 = every pass,
+    /// 0 = never). Defaults come from `moira.daemon.*_every_passes` in config;
+    /// the CLI flags override per launch.
+    pub clotho_every: u64,
+    pub insight_every: u64,
+    pub merge_every: u64,
+    pub reconcile_every: u64,
 }
 
 /// The daemon. Borrows the toolkit; constructs the orchestrator per run.
@@ -63,6 +70,15 @@ impl<'a> Daemon<'a> {
         // shared graph each pass so any host's roster (`helixir swarm`) sees it.
         let agent_id = format!("daemon:{}", cfg.user);
 
+        // Per-stage cadence: a stage runs on the passes where
+        // (pass-1) % every == 0, so everything due fires on pass 1;
+        // every = 0 disables the stage entirely.
+        let due = |every: u64, pass: u64| every != 0 && (pass - 1) % every == 0;
+        info!(
+            "daemon cadence: clotho every {} pass(es), insight stage every {}, merge every {}, reconcile every {}",
+            cfg.clotho_every, cfg.insight_every, cfg.merge_every, cfg.reconcile_every
+        );
+
         let mut pass = 0u64;
         loop {
             pass += 1;
@@ -73,32 +89,39 @@ impl<'a> Daemon<'a> {
             {
                 warn!("daemon: heartbeat failed (pass {pass}): {e}");
             }
-            match orchestrator.full_pass(&cfg.user, &cfg.pass).await {
-                Ok(run) => on_pass(pass, &run),
-                Err(e) => warn!("daemon: pass {pass} failed: {e}"),
+            let mut pass_cfg = cfg.pass.clone();
+            pass_cfg.run_clotho = due(cfg.clotho_every, pass);
+            pass_cfg.run_insights = due(cfg.insight_every, pass);
+            if pass_cfg.run_clotho || pass_cfg.run_insights {
+                match orchestrator.full_pass(&cfg.user, &pass_cfg).await {
+                    Ok(run) => on_pass(pass, &run),
+                    Err(e) => warn!("daemon: pass {pass} failed: {e}"),
+                }
             }
 
-            // Drain contradiction debt each pass — keep resolved=0 cross-user
-            // disputes from piling up as the collective grows (#45).
-            let debt_limit = self.tooling.config.moira.daemon.reconcile_limit;
-            match Atropos::new(self.tooling)
-                .reconcile(&cfg.user, debt_limit)
-                .await
-            {
-                Ok(s) if s.scanned > 0 => info!(
-                    "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
-                    s.drained_preference, s.drained_superseded, s.kept_live, s.notified
-                ),
-                Ok(_) => {}
-                Err(e) => warn!("daemon: reconcile failed: {e}"),
+            // Drain contradiction debt — keep resolved=0 cross-user disputes
+            // from piling up as the collective grows (#45).
+            if due(cfg.reconcile_every, pass) {
+                let debt_limit = self.tooling.config.moira.daemon.reconcile_limit;
+                match Atropos::new(self.tooling)
+                    .reconcile(&cfg.user, debt_limit)
+                    .await
+                {
+                    Ok(s) if s.scanned > 0 => info!(
+                        "daemon: reconciled debt — drained {} pref + {} superseded, {} live kept ({} surfaced)",
+                        s.drained_preference, s.drained_superseded, s.kept_live, s.notified
+                    ),
+                    Ok(_) => {}
+                    Err(e) => warn!("daemon: reconcile failed: {e}"),
+                }
             }
 
             // Paraphrase backstop (#43/#55) — merge same-meaning facts into one
             // fingerprint group, NLI-gated (never merges a contradiction). Runs
-            // every pass when the local NLI model is installed (collective/insights).
-            // Compiled out entirely without the `nli` feature.
+            // on its own cadence when the local NLI model is installed
+            // (collective/insights). Compiled out without the `nli` feature.
             #[cfg(feature = "nli")]
-            if crate::llm::nli::status().installed {
+            if due(cfg.merge_every, pass) && crate::llm::nli::status().installed {
                 let mlim = self.tooling.config.moira.daemon.merge_limit;
                 let mcos = self.tooling.config.moira.daemon.merge_cosine_threshold;
                 match Atropos::new(self.tooling)

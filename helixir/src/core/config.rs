@@ -371,6 +371,14 @@ pub struct MoiraDaemonConfig {
     pub merge_limit: i64,
     /// Cosine pre-filter for the merge backstop (the NLI judge is the real gate).
     pub merge_cosine_threshold: f64,
+    /// Per-stage cadence: run the stage every Nth daemon pass (1 = every pass,
+    /// 0 = never). Lets Clotho tag often while the heavier insight stage
+    /// (Lachesis routing + Atropos curation — coupled until insights persist)
+    /// runs less frequently.
+    pub clotho_every_passes: u64,
+    pub insight_every_passes: u64,
+    pub merge_every_passes: u64,
+    pub reconcile_every_passes: u64,
 }
 impl Default for MoiraDaemonConfig {
     fn default() -> Self {
@@ -379,6 +387,10 @@ impl Default for MoiraDaemonConfig {
             reconcile_limit: 500,
             merge_limit: 500,
             merge_cosine_threshold: 0.82,
+            clotho_every_passes: 1,
+            insight_every_passes: 1,
+            merge_every_passes: 1,
+            reconcile_every_passes: 1,
         }
     }
 }
