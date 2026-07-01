@@ -38,6 +38,7 @@
 - [Ontology](#ontology)
 - [Graph Schema](#graph-schema)
 - [MCP Tools](#mcp-tools)
+- [Glossary](GLOSSARY.md) — PPR, RRF, apophenia gate, the Moirai and the rest of the vocabulary
 - [CLI](#cli) — `helixir setup` + driving the agents
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
@@ -50,7 +51,7 @@
 
 Helixir gives AI agents **memory that persists between sessions** — and more than that: memory that *reasons*. When an agent starts a new conversation, it recalls past decisions, preferences, goals and the **chains of reasoning behind them**, not a flat log of similar text.
 
-Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed logical edges (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`), and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
+Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
 
 Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, Claude Code and any MCP-compatible client.
 
@@ -193,9 +194,9 @@ The chain *Rajasthan weather → guar harvest → guar gum → fracking cost →
 - **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it.
 - **Atropos — the Cutter.** Curates the survivors into ranked, deduplicated **insights** carrying provenance and a lifecycle (`proposed → verified → refuted`).
 
-The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli) — writing to an insight journal. Drive and watch them with the [`helixir` CLI](#cli).
+The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli), with a per-Moira cadence (tag every pass, route insights every Nth). Each surviving insight is journaled **and persisted back into the graph** as a first-class hypothesis-memory under `user_id=helixir`, with `SUPPORTS` edges from its witness memories — so any connected agent can recall generated knowledge the same way it recalls stored facts. Drive and watch it all with the [`helixir` CLI](#cli).
 
-> **Status.** The pipeline is built and validated end-to-end on clean data — the guar chain reconstructs as a single insight. On a real corpus, insight quality tracks tag/corpus hygiene; the provenance is what lets you tell signal from noise.
+> **Status.** The pipeline is built and validated end-to-end — the guar chain reconstructs as a single insight on clean data, and a live multi-agent corpus produced 5-hop cross-domain chains (weather → agriculture → petrochemicals → battery tech). Insight quality tracks tag/corpus hygiene; the provenance is what lets you tell signal from noise.
 
 ---
 
@@ -268,43 +269,64 @@ Helixir stores everything as a typed graph: **18 node types** (+ 5 vector-index 
 | **EntityEmbedding** | Vector embedding for entity search | name |
 | **DocPage / DocChunk / CodeExample / ErrorCode** | Documentation pipeline (reserved) | — |
 
+### Memory ↔ memory relations (the edge arsenal)
+
+All seven typed relations between memories persist as ONE physical edge —
+`MEMORY_RELATION` — whose `relation_type` property names the type, so new
+relation types need no schema change. Four are **causal/logical** (these form
+reasoning chains and are what `search_reasoning_chain` walks); three are
+**associative/structural** (relatedness without a causal claim; they surface
+in `get_memory_graph`):
+
+| relation_type | Kind | What it means |
+|:--------------|:-----|:--------------|
+| **IMPLIES** | causal | A logically leads to B |
+| **BECAUSE** | causal | A is the reason for B |
+| **CONTRADICTS** | causal | A conflicts with B |
+| **SUPPORTS** | causal | A provides evidence for B |
+| **RELATES_TO** | associative | Same topic / relatedness, no causal claim |
+| **PART_OF** | associative | A is a part/component of B |
+| **IS_A** | associative | A is a kind/instance of B |
+
+Two dedicated memory→memory edges are written by the **decision engine**
+(not the reasoning arsenal): `SUPERSEDES` (a new fact replaces an outdated
+one — with reason and timestamp) and `CONTRADICTS` (a tracked, resolvable
+conflict — with `resolved` / `resolution_strategy` for the reconcile pass).
+
 ### Edge types (active)
 
-These 24 edge types are used in the current pipeline:
+The other edge types used in the current pipeline:
 
 | Edge | From → To | What it means |
 |:-----|:----------|:--------------|
-| **HAS_MEMORY** | User → Memory | User owns this memory |
+| **HAS_MEMORY** | User → Memory | User owns this memory (consensus `user_count` derives from these) |
 | **INSTANCE_OF** | Memory → Concept | Memory is of this ontology type |
 | **BELONGS_TO_CATEGORY** | Memory → Concept | Memory belongs to this category |
 | **MENTIONS** | Memory → Entity | Memory mentions this entity |
 | **EXTRACTED_ENTITY** | Memory → Entity | Entity was LLM-extracted from this memory |
 | **RELATES_TO** | Entity → Entity | Two entities are related (typed: works_at, uses, etc.) |
 | **VALID_IN** | Memory → Context | Memory applies in this context (work, personal...) |
-| **OCCURRED_IN** | Memory → Context | Memory is about an event in this context |
 | **AGENT_CREATED** | Agent → Memory | This agent created the memory |
 | **HAS_HISTORY** | Memory → HistoryEvent | Audit trail: who changed what and when |
 | **HAS_CHUNK** | Memory → MemoryChunk | Memory split into chunks (long texts) |
 | **NEXT_CHUNK** | MemoryChunk → MemoryChunk | Sequential chunk ordering |
 | **CHUNK_HAS_EMBEDDING** | MemoryChunk → MemoryEmbedding | Chunk's vector index |
-| **MEMORY_RELATION** | Memory → Memory | General relation between memories (typed) |
-| **IMPLIES** | Memory → Memory | A logically leads to B |
-| **BECAUSE** | Memory → Memory | A is the reason for B |
-| **CONTRADICTS** | Memory → Memory | A conflicts with B |
-| **SUPERSEDES** | Memory → Memory | A replaces outdated B |
 | **HAS_EMBEDDING** | Memory → MemoryEmbedding | Memory's vector index for semantic search |
 | **ENTITY_HAS_EMBEDDING** | Entity → EntityEmbedding | Entity's vector index |
 | **HAS_SUBTYPE** | Concept → Concept | Ontology hierarchy (Attribute → Skill) |
-| **PAGE_TO_CHUNK** | DocPage → DocChunk | Documentation structure |
-| **CHUNK_TO_EMBEDDING** | DocChunk → ChunkEmbedding | Documentation vector index |
-| **SUPPORTS** | Memory → Memory | A provides evidence for B |
+| **TAGGED_AS** | Memory → Category | Clotho's category tag (the Moirai substrate) |
 
 ### Edge types (reserved)
 
-These 9 edge types are defined in the schema with HQL queries ready, but not yet called from the Rust pipeline. They are infrastructure for planned features:
+These edge types are defined in the schema with HQL queries ready, but not
+yet called from the Rust pipeline. They are infrastructure for planned
+features. (Dedicated `IMPLIES` / `BECAUSE` / `SUPPORTS` edge declarations
+also remain in the schema, but the pipeline persists those types via
+`MEMORY_RELATION.relation_type` — see above.)
 
 | Edge | From → To | Planned use |
 |:-----|:----------|:------------|
+| OCCURRED_IN | Memory → Context | Event-time context linking |
 | IN_SESSION | User → Session | Session tracking |
 | CREATED_IN | Memory → Session | Which session created this memory |
 | IS_A | Concept → Concept | Dynamic ontology extension |
@@ -323,7 +345,7 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Returns the synchronous result or, under the ingest buffer, a `pending_id`. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped` |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
 | `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
 | `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
 | `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
@@ -332,6 +354,7 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 | `get_memory_graph` | Return memory as a graph of nodes and typed edges — causal (IMPLIES/BECAUSE/SUPPORTS/CONTRADICTS) plus associative (RELATES_TO/PART_OF/IS_A) |
 | `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
 | `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
+| `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
 
@@ -372,6 +395,8 @@ helixir atropos                        # curate threads into ranked, journaled i
 helixir pipeline --user <id>           # one orchestrated pass: Clotho → Lachesis → Atropos
 helixir daemon start --user <id> --interval 600   # run passes in the background
 helixir daemon status | stop           # inspect / stop the background daemon
+#   per-Moira cadence: --clotho-every 1 --insight-every 3 --merge-every 5 --reconcile-every 5
+#   (1 = every pass, N = every Nth, 0 = never; defaults live in moira.daemon.* of helixir.toml)
 helixir merge --limit <n>              # run the NLI paraphrase backstop once (collective)
 helixir journal | insights             # activity + insight journals (with provenance)
 ```
@@ -569,7 +594,7 @@ helixir-rs/
         fast_think/             # Working memory (petgraph-based)
     schema/
       schema.hx                 # Node/edge definitions (18 nodes + 5 vectors, 37 edges)
-      queries.hx                # HQL queries (120)
+      queries.hx                # HQL queries (153)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)

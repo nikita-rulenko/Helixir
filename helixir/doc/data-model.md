@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.6.0-dev`. Last verified: 2026-07-02._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (~100 HQL queries that materialize the
+and `helixir/schema/queries.hx` (153 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -12,11 +12,12 @@ contract). Anything below disagreeing with those files is the bug.
                   ┌─────────────────────────────┐
                   │  HelixDB (graph + vector)   │
                   │                             │
-                  │   15 node types             │
-                  │   33 edge types             │
-                  │     ├── 24 active in code   │
-                  │     └──  9 reserved         │
-                  │   ~100 named HQL queries    │
+                  │   18 node types             │
+                  │    + 5 vector-index types   │
+                  │   37 edge types             │
+                  │     ├── active in code      │
+                  │     └── reserved (see §3)   │
+                  │   153 named HQL queries     │
                   │   vector dim: 768 (default) │
                   └─────────────────────────────┘
 ```
@@ -54,7 +55,7 @@ Nodes group into five purposes:
 | Node | Key fields | Notes |
 |---|---|---|
 | **User** | `user_id`, `name`, `email`, `created_at`, `metadata` | One per identity. |
-| **Agent** | `agent_id`, `role`, `capabilities`, `agent_version` | Tracks which agent wrote which memory. |
+| **Agent** | `agent_id`, `role`, `capabilities`, `agent_version`, `host`, `last_seen`, `status` | Tracks which agent wrote which memory — and, since #39, doubles as the swarm presence record: `add_memory(agent_id=…)` heartbeats it (`heartbeatAgent`), `swarm_status` reads the roster. |
 | **Session** | `session_id`, `started_at`, `ended_at`, `status`, `session_type` | Reserved — no code path creates Sessions yet. |
 | **Memory** | `memory_id`, `user_id`, `content`, `memory_type`, `certainty`, `importance`, `created_at/updated_at`, `valid_from/until`, `immutable`, `verified`, `context_tags`, `source`, `metadata`, `is_deleted/deleted_at/deleted_by`, `user_count` | Core unit. `user_count` is the Hive Memory dedup counter. |
 | **MemoryChunk** | `chunk_id`, `position`, `parent_memory_id`, `content`, `token_count` | For long memories split for retrieval. |
@@ -103,52 +104,73 @@ the next schema step (persists what PMI v0 computes on the fly).
                           │ INSTANCE_OF ──────► Concept
                           │ BELONGS_TO_CATEGORY► Concept
                           │ VALID_IN ─────────► Context
-                          │ OCCURRED_IN ──────► Context
+                          │ TAGGED_AS ────────► Category
                           │                       │
                           │ HAS_EMBEDDING ────► MemoryEmbedding
    Agent AGENT_CREATED ──►│                       │
                           │ HAS_HISTORY ──────► HistoryEvent
                           │                       │
-   REASONING (Memory→Memory):  IMPLIES · BECAUSE · CONTRADICTS · SUPPORTS
-                               SUPERSEDES · MEMORY_RELATION
+   REASONING (Memory→Memory):  MEMORY_RELATION{relation_type ∈ 7-type arsenal}
+   DECISION  (Memory→Memory):  SUPERSEDES · CONTRADICTS
 ```
 
-### Active edges (24)
+### Memory→memory relations: one physical edge, seven types
+
+The reasoning engine persists ALL typed memory↔memory relations as a single
+`MEMORY_RELATION` edge whose `relation_type` property is the type name
+(`ReasoningType::edge_name()`), so extending the arsenal needs no schema
+change. Four types are causal/logical — `IMPLIES`, `BECAUSE`, `CONTRADICTS`,
+`SUPPORTS` — and are what `search_reasoning_chain` walks; three are
+associative/structural — `RELATES_TO`, `PART_OF`, `IS_A` — surfaced by
+`get_memory_graph` without a causal claim.
+(`src/toolkit/mind_toolbox/reasoning/types.rs`, `edges.rs`;
+query `addMemoryRelation`.)
+
+Separately, the **decision engine** writes two dedicated edges:
+
+| Edge | Properties | Created in |
+|---|---|---|
+| `SUPERSEDES` | `reason`, `superseded_at`, `is_contradiction` | decision verdict `SUPERSEDE` (`addMemorySupersession`) |
+| `CONTRADICTS` | `resolution`, `resolved`, `resolution_strategy` | verdict `CONTRADICT` / cross-user contradiction (`addMemoryContradiction`); `resolved`/`resolution_strategy` are what the Atropos reconcile pass flips |
+
+(The schema still declares dedicated `IMPLIES`/`BECAUSE`/`SUPPORTS` edges
+with HQL ready, but no Rust producer uses them — the arsenal rides
+`MEMORY_RELATION`.)
+
+### Active edges
 
 | Edge | From → To | Properties | Created in |
 |---|---|---|---|
-| `HAS_MEMORY` | User → Memory | `context`, `access_count` | `add_pipeline.rs::link_user_to_memory_bg` |
+| `HAS_MEMORY` | User → Memory | `context`, `access_count` | `add_pipeline.rs::link_user_to_memory_bg`; consensus `user_count` derives from these (#54) |
 | `INSTANCE_OF` | Memory → Concept | `confidence` | ontology mapping in add pipeline |
 | `BELONGS_TO_CATEGORY` | Memory → Concept | `relevance` | ontology mapping |
 | `MENTIONS` | Memory → Entity | `salience`, `sentiment` | entity manager |
 | `EXTRACTED_ENTITY` | Memory → Entity | `confidence`, `method` | extractor output |
 | `RELATES_TO` | Entity → Entity | `relationship_type`, `strength`, `bidirectional` | extractor relations |
-| `VALID_IN` | Memory → Context | `priority`, `exclusive` | context linking |
-| `OCCURRED_IN` | Memory → Context | `timestamp` | context linking |
-| `AGENT_CREATED` | Agent → Memory | `timestamp`, `method` | tooling helpers |
+| `VALID_IN` | Memory → Context | `priority`, `exclusive` | `add_pipeline/context_link.rs` (creates the Context on miss) |
+| `AGENT_CREATED` | Agent → Memory | `timestamp`, `method` | tooling helpers — ensure-then-link: the Agent node is auto-created on first sight |
 | `HAS_HISTORY` | Memory → HistoryEvent | — | every UPDATE/SUPERSEDE/DELETE |
 | `HAS_CHUNK` | Memory → MemoryChunk | `chunk_index` | chunking manager |
 | `NEXT_CHUNK` | MemoryChunk → MemoryChunk | — | chunking manager |
 | `CHUNK_HAS_EMBEDDING` | MemoryChunk → MemoryEmbedding | `embedding_model` | chunking manager |
-| `MEMORY_RELATION` | Memory → Memory | `relation_type`, `strength`, `created_at`, `metadata` | reasoning engine (generic) |
-| `IMPLIES` | Memory → Memory | `probability`, `reasoning_id` | reasoning engine |
-| `BECAUSE` | Memory → Memory | `strength`, `reasoning_id` | reasoning engine |
-| `CONTRADICTS` | Memory → Memory | `resolution`, `resolved`, `resolution_strategy` | decision engine `CONTRADICT` / `CROSS_CONTRADICT` |
-| `SUPERSEDES` | Memory → Memory | `reason`, `superseded_at`, `is_contradiction` | decision engine `SUPERSEDE` |
+| `MEMORY_RELATION` | Memory → Memory | `relation_type`, `strength`, `created_at`, `metadata` | reasoning engine — see above |
+| `SUPERSEDES` / `CONTRADICTS` | Memory → Memory | see above | decision engine — see above |
 | `HAS_EMBEDDING` | Memory → MemoryEmbedding | `embedding_model` | add pipeline |
 | `ENTITY_HAS_EMBEDDING` | Entity → EntityEmbedding | `embedding_model` | entity manager |
-| `HAS_SUBTYPE` | Concept → Concept | — | ontology loader (seed) |
-| `PAGE_TO_CHUNK` | DocPage → DocChunk | — | reserved |
-| `CHUNK_TO_EMBEDDING` | DocChunk → ChunkEmbedding | — | reserved |
-| `SUPPORTS` | Memory → Memory | — | reasoning engine |
+| `HAS_SUBTYPE` | Concept → Concept | — | ontology loader (seed; self-healing against duplicate trees, #67) |
+| `TAGGED_AS` | Memory → Category | `confidence`, `source` | `Clotho::auto_tag` (§2.1) |
 
-### Reserved edges (9)
+### Reserved edges
 
 Schema-declared and HQL-ready, but no Rust producer yet:
 
-`IN_SESSION`, `CREATED_IN`, `IS_A`, `CONCEPT_RELATED_TO`, `PART_OF`,
-`APPLIES_IN`, `CHUNK_MENTIONS_CONCEPT`, `CONCEPT_HAS_EXAMPLE`,
-`ERROR_REFERENCES_CONCEPT`.
+`OCCURRED_IN` (Memory→Context event-time linking), `IN_SESSION`,
+`CREATED_IN`, `IS_A` (Concept-level), `CONCEPT_RELATED_TO`, `PART_OF`
+(Entity-level), `APPLIES_IN`, `CHUNK_MENTIONS_CONCEPT`,
+`CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT` — plus the dedicated
+`IMPLIES`/`BECAUSE`/`SUPPORTS` declarations noted above and the
+`CATEGORY_HAS_EMBEDDING`/`SUBCATEGORY_OF`/`ALIAS_OF` states described
+in §2.1.
 
 ## 4. Ontology hierarchy (instances of `Concept`)
 
