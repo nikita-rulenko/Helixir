@@ -281,9 +281,15 @@ impl ToolingManager {
         }
 
         if let Some(agent_id) = agent_id {
-            let _ = self
+            // Best-effort (a failed provenance link must not fail the write),
+            // but never silent — the old `let _ =` hid that AGENT_CREATED had
+            // never worked for unregistered agents.
+            if let Err(e) = self
                 .link_agent_to_memory(agent_id, &memory_id, "extraction")
-                .await;
+                .await
+            {
+                warn!("AGENT_CREATED link failed for {agent_id}: {e}");
+            }
         }
 
         Ok(Some(memory_id))

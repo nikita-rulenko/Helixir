@@ -51,10 +51,38 @@ impl ToolingManager {
             "timestamp": timestamp,
             "method": method
         });
-        self.db
+        let first_try = self
+            .db
             .execute_query::<serde_json::Value, _>("linkAgentToMemory", &params)
-            .await
-            .map_err(|e| ToolingError::Database(e.to_string()))?;
+            .await;
+
+        if let Err(e) = first_try {
+            // `linkAgentToMemory` looks the Agent node up by agent_id — but only
+            // the swarm path ever created Agent nodes, so for an ordinary
+            // add_memory(agent_id=…) the lookup raised "No value found" and the
+            // AGENT_CREATED edge silently never existed. Ensure-then-retry:
+            // auto-register the agent on first sight, then link again.
+            if !e.to_string().to_lowercase().contains("no value found") {
+                return Err(ToolingError::Database(e.to_string()));
+            }
+            let reg = serde_json::json!({
+                "agent_id": agent_id,
+                "name": agent_id,
+                "role": "agent",
+                "capabilities": "[]",
+                "agent_version": "",
+                "created_at": timestamp,
+            });
+            self.db
+                .execute_query::<serde_json::Value, _>("addAgent", &reg)
+                .await
+                .map_err(|e| ToolingError::Database(e.to_string()))?;
+            debug!("Auto-registered agent {}", agent_id);
+            self.db
+                .execute_query::<serde_json::Value, _>("linkAgentToMemory", &params)
+                .await
+                .map_err(|e| ToolingError::Database(e.to_string()))?;
+        }
         debug!(
             "Linked agent {} to memory {} (method={})",
             agent_id, memory_id, method
