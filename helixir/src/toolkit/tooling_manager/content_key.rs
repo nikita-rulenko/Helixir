@@ -6,6 +6,11 @@ use serde::Deserialize;
 
 use super::{ToolingError, ToolingManager};
 
+/// The pure fingerprint hash (sha256 over normalized content + type) —
+/// re-exported so agent-layer writers (e.g. Atropos insight persistence) can
+/// compute keys without reaching into the private add_pipeline.
+pub(crate) use super::add_pipeline::store::content_key as compute_content_key;
+
 /// A lightweight memory view for the merge scan.
 #[derive(Debug, Clone)]
 pub struct MemoryBrief {

@@ -110,13 +110,22 @@ impl<'a> Orchestrator<'a> {
             Vec::new()
         };
 
+        // Close the hive loop: curated hypotheses become first-class memories
+        // (user `helixir`, SUPPORTS provenance) so any agent can recall them.
+        let persisted = if insights.is_empty() {
+            0
+        } else {
+            Atropos::new(self.tooling).persist_insights(&insights).await
+        };
+
         info!(
-            "orchestrator.full_pass(user={user}): clotho={} insights_stage={} — tagged {} (minted {}), {} insights",
+            "orchestrator.full_pass(user={user}): clotho={} insights_stage={} — tagged {} (minted {}), {} insights ({} newly persisted to memory)",
             cfg.run_clotho,
             cfg.run_insights,
             grow.tagged_by_match + grow.reused_mint,
             grow.minted,
-            insights.len()
+            insights.len(),
+            persisted
         );
         Ok(PipelineRun { grow, insights })
     }

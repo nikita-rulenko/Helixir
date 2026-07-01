@@ -18,7 +18,7 @@ pub mod reconcile;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::agents::lachesis::{Lachesis, SubsetHypothesis};
 use crate::toolkit::tooling_manager::ToolingManager;
@@ -147,6 +147,110 @@ fn build_insight(h: &SubsetHypothesis) -> Insight {
         witnesses,
         status: "proposed".to_string(),
         requires_verification: true,
+    }
+}
+
+impl Atropos<'_> {
+    /// Persist curated insights into the shared graph as FIRST-CLASS memories
+    /// under the `helixir` user — hypothesis-framed (never asserted truth),
+    /// provenance-linked to their witness memories with SUPPORTS edges, and
+    /// recallable by ANY agent via collective search. The file journal remains
+    /// the operator-facing log; this is what closes the hive loop: generated
+    /// knowledge flows back into the memory it came from.
+    ///
+    /// Idempotent per category path: the hypothesis text is deterministic
+    /// (volatile numbers stay out of the content), so a re-generated insight
+    /// hits the same content_key group and is skipped.
+    pub async fn persist_insights(&self, insights: &[Insight]) -> usize {
+        use crate::llm::extractor::ExtractedMemory;
+        use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
+        use crate::toolkit::tooling_manager::content_key::compute_content_key;
+
+        let mut persisted = 0usize;
+        for ins in insights {
+            if ins.category_path.len() < 2 {
+                continue;
+            }
+            let first = &ins.category_path[0];
+            let last = ins.category_path.last().expect("len checked");
+            let chain = ins.category_path.join(" -> ");
+            // Deterministic content: path only — PMI/value change as the corpus
+            // grows and would defeat content_key idempotency; they live in the
+            // journal and in the edge strengths.
+            let text = format!(
+                concat!(
+                    "HYPOTHESIS (generated, requires verification): an indirect ",
+                    "cross-domain link may connect {first} to {last} via the chain ",
+                    "{chain}. Found by Lachesis routing over shared-category subsets ",
+                    "and curated by Atropos; this is a lead with provenance, NOT an ",
+                    "asserted fact — if it holds, changes in {first} could propagate ",
+                    "to {last}."
+                ),
+                first = first,
+                last = last,
+                chain = chain
+            );
+
+            // Idempotency: an identical hypothesis already lives in the graph.
+            let key = compute_content_key(&text, "opinion");
+            if !self.tooling.memories_in_group(&key).await.is_empty() {
+                continue;
+            }
+
+            let vector = match self.tooling.embedder.generate(&text, true).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("insight persist: embedding failed, skipping: {e}");
+                    continue;
+                }
+            };
+            let memory = ExtractedMemory {
+                text,
+                // `opinion` marks it epistemically subjective — the ontology's
+                // closest type to "hypothesis"; certainty stays low by design.
+                memory_type: "opinion".to_string(),
+                certainty: 40,
+                importance: (50 + (ins.hops as i32) * 5).min(85),
+                entities: vec![],
+                context: None,
+            };
+            let insight_id = match self
+                .tooling
+                .store_new_memory(&memory, "helixir", &vector, "moira-insight")
+                .await
+            {
+                Ok((id, _)) => id,
+                Err(e) => {
+                    warn!("insight persist: store failed: {e}");
+                    continue;
+                }
+            };
+
+            // Provenance: every witness memory SUPPORTS the hypothesis.
+            for w in &ins.witnesses {
+                if w.memory_id.is_empty() || w.memory_id == insight_id {
+                    continue;
+                }
+                if let Err(e) = self
+                    .tooling
+                    .reasoning_engine
+                    .add_relation(&w.memory_id, &insight_id, ReasoningType::Supports, 60, None)
+                    .await
+                {
+                    warn!(
+                        "insight persist: witness edge {} -> {} failed: {e}",
+                        w.memory_id, insight_id
+                    );
+                }
+            }
+            info!(
+                "insight persisted as {insight_id} ({} witnesses): {}",
+                ins.witnesses.len(),
+                ins.category_path.join(" -> ")
+            );
+            persisted += 1;
+        }
+        persisted
     }
 }
 
