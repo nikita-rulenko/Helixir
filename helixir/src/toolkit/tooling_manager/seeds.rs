@@ -16,7 +16,7 @@ use super::ToolingManager;
 use crate::llm::extractor::ExtractedMemory;
 
 /// Bump to re-seed on the next startup (old seeds stay — elder brain).
-const SEED_VERSION: u32 = 2;
+const SEED_VERSION: u32 = 3;
 
 /// The system user that owns self-knowledge.
 pub const SEED_USER: &str = "helixir";
@@ -181,6 +181,64 @@ const SEEDS: &[(i32, &str)] = &[
         80,
         "The drop-in agent templates live in the repo's integration folder: AGENTS.md for any coding agent via the agents.md convention and SKILLS.md for Claude as a skill — both encode the recall-capture-reason loop so every connected agent uses the memory the way its maintainers do.",
     ),
+    // --- Glossary (seed@3): the project vocabulary, defined once in the
+    //     memory itself — the full text lives in the repo-root GLOSSARY.md ---
+    (
+        85,
+        "Glossary — atomization: add_memory never stores input as-is; the LLM extractor splits it into atomic facts (one claim per memory), each ontology-classified and entity-linked, because chains and dedup only work on atoms.",
+    ),
+    (
+        85,
+        "Glossary — edge arsenal: the seven typed memory-to-memory relations are causal IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS (what search_reasoning_chain walks) plus associative RELATES_TO, PART_OF, IS_A; all persist as one MEMORY_RELATION edge whose relation_type property names the type, so new types need no schema change.",
+    ),
+    (
+        85,
+        "Glossary — same-subject gate: destructive write verdicts (UPDATE, SUPERSEDE, CONTRADICT, DELETE) are only legal when both memories concern the same specific subject; mere keyword overlap yields ADD plus a RELATES_TO edge.",
+    ),
+    (
+        85,
+        "Glossary — content key: a normalized hash of content and type stamped on every memory; the exact-duplicate gate — a re-added fact hits the same key group atomically and raises consensus instead of creating a copy.",
+    ),
+    (
+        85,
+        "Glossary — RRF (Reciprocal Rank Fusion): dense vector results and sparse BM25 results merge by each contributing 1/(k + rank); rank-based fusion never needs the two arms' scores to be comparable.",
+    ),
+    (
+        85,
+        "Glossary — PPR (Personalized PageRank): PageRank whose random walker teleports back to the seed memories that matched the query, so graph centrality is measured relative to the question being asked; it carries 0.5 of the final ranking weight.",
+    ),
+    (
+        85,
+        "Glossary — PMI (Pointwise Mutual Information): the log of observed-over-expected co-occurrence of two categories on the same memories; a thread's weakest-link PMI is its coherence floor, and Atropos ranks insights by hops times minimum PMI.",
+    ),
+    (
+        85,
+        "Glossary — apophenia gate: the defence against seeing patterns in noise — a thick, everything-touching category has huge member sets, so its PMI with everything collapses toward zero and it gates itself out by arithmetic, not by a blocklist.",
+    ),
+    (
+        85,
+        "Glossary — insight and witness: an insight is a generated cross-domain hypothesis with provenance (its category path plus the witness memories evidencing each link) and a lifecycle proposed-verified-refuted; it persists under user_id helixir with SUPPORTS edges from its witnesses and is never asserted as truth.",
+    ),
+    (
+        85,
+        "Glossary — anti-gaslight NLI backstop: two memories paraphrase-merge only if a local NLI judge finds mutual entailment; divergent numbers fail entailment, so the memory cannot be talked into quietly averaging conflicting figures.",
+    ),
+    (
+        85,
+        "Glossary — rendezvous: agents discover each other through the database itself — add_memory with agent_id auto-heartbeats presence (host, status, last_seen on the Agent node) and swarm_status returns the live roster; no side channel exists or is needed.",
+    ),
+    (
+        85,
+        "Glossary — dogfooding and self-documentation: the maintainers (human and agents) use Helixir as their own long-term memory while building it, and the manual, integration recipes and this glossary are seeded into the graph under user_id helixir — ask the memory how to use the memory.",
+    ),
+    (
+        80,
+        "Glossary — the guar chain: Rajasthan weather to guar harvest to guar gum price to fracking costs to shale stocks; the canonical example that memory value lives in long chains, used as the end-to-end validation fixture for the Moirai.",
+    ),
+    (
+        80,
+        "Glossary — ingest buffer (предбанник): the bounded queue in front of the write pipeline; add_memory enqueues and answers confirm-or-promise, so a slow LLM never blocks the agent's turn.",
+    ),
 ];
 
 impl ToolingManager {
@@ -192,8 +250,8 @@ impl ToolingManager {
         if mode.is_empty() || mode == "0" || mode == "false" {
             return;
         }
-        // ~26 facts = one embedding batch + the inserts (a couple of
-        // seconds, once per version) — cheap enough to run inline.
+        // ~50 facts = one embedding batch + the inserts (a few seconds,
+        // once per version) — cheap enough to run inline.
         let _ = mode;
         self.seed_system_memories().await;
     }
