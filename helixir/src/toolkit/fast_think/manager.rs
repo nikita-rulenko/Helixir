@@ -96,6 +96,7 @@ impl FastThinkManager {
                 .get_mut(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?;
             session.status = SessionStatus::NeedsRecall;
+            session.owner_hint = Some(user_id.to_string());
         }
 
         let memories = self
@@ -190,7 +191,12 @@ impl FastThinkManager {
         }
 
         let conclusion_content = session.build_conclusion_content();
-        let supporting_ids: Vec<String> = session.get_supporting_memory_ids();
+        // Evidence = recalls the conclusion rests on; fall back to all recalls
+        // only when the session graph is too flat to tell (old behaviour).
+        let mut supporting_ids: Vec<String> = session.get_conclusion_evidence_ids();
+        if supporting_ids.is_empty() {
+            supporting_ids = session.get_supporting_memory_ids();
+        }
         let ft = &self.main_memory.tooling().config.fast_think;
 
         // The session already IS the structure — conclusions are explicit,
@@ -494,6 +500,35 @@ impl FastThinkManager {
 
     pub fn list_sessions(&self) -> Vec<String> {
         self.sessions.read().keys().cloned().collect()
+    }
+
+    /// Shutdown auto-save: persist every still-active session as an
+    /// [INCOMPLETE] memory (via `commit_partial`) so reasoning survives the
+    /// process — one-shot MCP clients kill the server long before the
+    /// session-TTL sweeper would fire. Sessions with no recall never learned
+    /// an owner; they save under the `helixir` system user, and
+    /// `search_incomplete_thoughts` finds them regardless (tag search is
+    /// user-agnostic). Returns how many sessions were saved.
+    pub async fn save_all_interrupted(&self, reason: &str) -> usize {
+        let ids = self.list_sessions();
+        let mut saved = 0usize;
+        for id in ids {
+            let owner = {
+                let sessions = self.sessions.read();
+                sessions.get(&id).and_then(|s| s.owner_hint.clone())
+            }
+            .unwrap_or_else(|| "helixir".to_string());
+            match self.commit_partial(&id, &owner, reason).await {
+                Ok(_) => {
+                    info!(session_id = %id, owner = %owner, "Auto-saved interrupted FastThink session");
+                    saved += 1;
+                }
+                // NoConclusion = empty session — nothing worth keeping.
+                Err(FastThinkError::NoConclusion) => {}
+                Err(e) => warn!(session_id = %id, "Shutdown auto-save failed: {e}"),
+            }
+        }
+        saved
     }
 }
 

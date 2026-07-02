@@ -18,6 +18,9 @@ pub struct ThinkingSession {
     pub last_activity: Instant,
     pub current_depth: usize,
     pub status: SessionStatus,
+    /// Last user_id seen by think_recall/commit on this session — the best
+    /// guess of the owner when a shutdown auto-save must pick one.
+    pub owner_hint: Option<String>,
     root_thought: Option<NodeIndex>,
 }
 
@@ -34,6 +37,7 @@ impl ThinkingSession {
             last_activity: Instant::now(),
             current_depth: 0,
             status: SessionStatus::Thinking,
+            owner_hint: None,
             root_thought: None,
         }
     }
@@ -365,6 +369,52 @@ impl ThinkingSession {
             .collect()
     }
 
+    /// Memory ids of recall nodes the conclusion(s) actually REST on: direct
+    /// supporters of a conclusion, their ancestors, and recalls hanging off
+    /// those nodes. `get_supporting_memory_ids` (every recall in the session)
+    /// over-attributed — broad exploratory recalls became SUPPORTS provenance
+    /// for conclusions they never touched.
+    pub fn get_conclusion_evidence_ids(&self) -> Vec<String> {
+        use std::collections::HashSet;
+
+        let mut evidence: Vec<String> = Vec::new();
+        let mut pushed: HashSet<String> = HashSet::new();
+        let mut seen: HashSet<NodeIndex> = HashSet::new();
+        let mut push_recall = |t: &Thought, pushed: &mut HashSet<String>, out: &mut Vec<String>| {
+            if t.is_recall() {
+                if let Some(id) = &t.source_memory_id {
+                    if pushed.insert(id.clone()) {
+                        out.push(id.clone());
+                    }
+                }
+            }
+        };
+
+        for (cidx, _) in self.get_conclusions() {
+            let mut stack: Vec<NodeIndex> = self
+                .graph
+                .neighbors_directed(cidx, Direction::Incoming)
+                .collect();
+            while let Some(idx) = stack.pop() {
+                if !seen.insert(idx) {
+                    continue;
+                }
+                if let Some(t) = self.graph.node_weight(idx) {
+                    push_recall(t, &mut pushed, &mut evidence);
+                }
+                // Recalls attached UNDER a supporting thought count as its
+                // evidence (think_recall parents them to the thought).
+                for child in self.graph.neighbors_directed(idx, Direction::Outgoing) {
+                    if let Some(t) = self.graph.node_weight(child) {
+                        push_recall(t, &mut pushed, &mut evidence);
+                    }
+                }
+                stack.extend(self.graph.neighbors_directed(idx, Direction::Incoming));
+            }
+        }
+        evidence
+    }
+
     pub fn get_supporting_memory_ids(&self) -> Vec<String> {
         self.graph
             .node_indices()
@@ -377,5 +427,62 @@ impl ThinkingSession {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    use crate::toolkit::fast_think::limits::FastThinkLimits;
+    use crate::toolkit::fast_think::models::{Thought, ThoughtEdge, ThoughtType};
+
+    /// Only recalls in the conclusion's supporting subtree are evidence — a
+    /// broad exploratory recall on an unrelated branch must NOT become
+    /// SUPPORTS provenance (the inflation observed live: ~105 edges).
+    #[test]
+    fn evidence_excludes_unrelated_recalls() {
+        let limits = FastThinkLimits::default();
+        let mut s = ThinkingSession::new("t");
+        let root = s
+            .add_thought("pick a policy", ThoughtType::Initial, None, None, &limits)
+            .unwrap();
+        let obs = s
+            .add_thought(
+                "outages are short",
+                ThoughtType::Observation,
+                Some(root),
+                Some(ThoughtEdge::LeadsTo),
+                &limits,
+            )
+            .unwrap();
+        let used = s
+            .add_recalled_thought("queue fact", "mem_used", 0.9, obs, &limits)
+            .unwrap();
+        let _ = used;
+        // Unrelated branch with its own recall.
+        let side = s
+            .add_thought(
+                "tangent",
+                ThoughtType::Question,
+                Some(root),
+                Some(ThoughtEdge::LeadsTo),
+                &limits,
+            )
+            .unwrap();
+        s.add_recalled_thought("noise fact", "mem_noise", 0.9, side, &limits)
+            .unwrap();
+
+        s.add_conclusion("backoff with jitter", &[obs], &limits)
+            .unwrap();
+
+        let ev = s.get_conclusion_evidence_ids();
+        assert!(
+            ev.contains(&"mem_used".to_string()),
+            "supporting recall kept: {ev:?}"
+        );
+        assert!(
+            !ev.contains(&"mem_noise".to_string()),
+            "unrelated recall must be excluded: {ev:?}"
+        );
     }
 }
