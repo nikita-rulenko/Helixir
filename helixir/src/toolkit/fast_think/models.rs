@@ -238,7 +238,10 @@ impl std::fmt::Display for FastThinkError {
             ),
             FastThinkError::SessionAlreadyExists => write!(f, "Session already exists"),
             FastThinkError::Timeout => write!(f, "Thinking timeout exceeded"),
-            FastThinkError::TooManyThoughts => write!(f, "Too many thoughts in session"),
+            FastThinkError::TooManyThoughts => write!(
+                f,
+                "session is at its thought limit — think_conclude STILL WORKS (finish now and commit), or think_discard to abandon; further think_add/think_recall will not fit"
+            ),
             FastThinkError::TooManyEntities => write!(f, "Too many entities extracted"),
             FastThinkError::TooManyConcepts => write!(f, "Too many concepts mapped"),
             FastThinkError::TooDeep => write!(f, "Thought chain too deep"),

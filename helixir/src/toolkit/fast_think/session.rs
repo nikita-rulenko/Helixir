@@ -55,7 +55,12 @@ impl ThinkingSession {
             return Err(FastThinkError::Timeout);
         }
 
-        if self.graph.node_count() >= limits.max_thoughts {
+        // The conclusion is the EXIT from a full session — it must always be
+        // allowed, or an agent that hit the cap is trapped into discarding
+        // everything it built (observed live: a zeroclaw session overflowed
+        // and think_conclude ALSO refused, burning the whole reasoning tree).
+        if self.graph.node_count() >= limits.max_thoughts && thought_type != ThoughtType::Conclusion
+        {
             self.status = SessionStatus::Overflow;
             return Err(FastThinkError::TooManyThoughts);
         }

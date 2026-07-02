@@ -23,6 +23,7 @@
 //! See `helixir/doc/dataflow.md` for the end-to-end picture and `AGENTS.md`
 //! §1bis for the load-bearing invariants this pipeline preserves.
 
+mod connective_backstop;
 mod context_link;
 mod cross_user;
 mod decide;

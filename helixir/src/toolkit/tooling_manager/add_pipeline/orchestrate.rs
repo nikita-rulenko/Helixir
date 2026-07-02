@@ -361,6 +361,55 @@ impl ToolingManager {
             )
             .await?;
 
+        // Deterministic causal floor (#66): an explicit connective in the RAW
+        // message with >=2 stored atoms and ZERO relations from the whole
+        // pipeline gets a BECAUSE edge wired by clause alignment — "reasons
+        // in chains" must not depend on the model's mood (or its fallback
+        // tier). The LLM path stays first; this fires only when it gave nothing.
+        if relations_created == 0 && stored_memory_ids.len() >= 2 {
+            if let Some(message) = raw_message {
+                if let Some((cause_text, effect_text)) =
+                    super::connective_backstop::split_causal(message)
+                {
+                    let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
+                    idx.sort_unstable();
+                    let atom_texts: Vec<&str> = idx
+                        .iter()
+                        .map(|i| memories_to_store[*i].text.as_str())
+                        .collect();
+                    if let Some((c, e)) = super::connective_backstop::pick_cause_effect(
+                        &atom_texts,
+                        &cause_text,
+                        &effect_text,
+                    ) {
+                        let from = &stored_memory_ids[&idx[c]];
+                        let to = &stored_memory_ids[&idx[e]];
+                        match self
+                            .reasoning_engine
+                            .add_relation(
+                                from,
+                                to,
+                                crate::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
+                                55,
+                                None,
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                relations_created += 1;
+                                info!(
+                                    "connective backstop: BECAUSE {} -> {} (extractor emitted no relations for an explicitly causal message)",
+                                    safe_truncate(from, 12),
+                                    safe_truncate(to, 12)
+                                );
+                            }
+                            Err(err) => warn!("connective backstop failed: {err}"),
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(message) = raw_message
             .filter(|m| m.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1)
         {

@@ -421,7 +421,9 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
 
 /// Print the effective privilege tier and what it permits.
 fn print_mode() -> Result<()> {
-    let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+    // Layered config (toml + env), same as the gates — a raw env read here
+    // showed "solo" while every gate honored the toml's Insights.
+    let mode = helixir::core::config::HelixirConfig::from_env().mode;
     let on = |b: bool| if b { "ON" } else { "off" };
     println!("Privilege tier: {} (HELIXIR_MODE)", mode.label());
     println!(
