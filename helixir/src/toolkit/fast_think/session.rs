@@ -380,7 +380,7 @@ impl ThinkingSession {
         let mut evidence: Vec<String> = Vec::new();
         let mut pushed: HashSet<String> = HashSet::new();
         let mut seen: HashSet<NodeIndex> = HashSet::new();
-        let mut push_recall = |t: &Thought, pushed: &mut HashSet<String>, out: &mut Vec<String>| {
+        let push_recall = |t: &Thought, pushed: &mut HashSet<String>, out: &mut Vec<String>| {
             if t.is_recall() {
                 if let Some(id) = &t.source_memory_id {
                     if pushed.insert(id.clone()) {
@@ -434,7 +434,7 @@ impl ThinkingSession {
 mod evidence_tests {
     use super::*;
     use crate::toolkit::fast_think::limits::FastThinkLimits;
-    use crate::toolkit::fast_think::models::{Thought, ThoughtEdge, ThoughtType};
+    use crate::toolkit::fast_think::models::{ThoughtEdge, ThoughtType};
 
     /// Only recalls in the conclusion's supporting subtree are evidence — a
     /// broad exploratory recall on an unrelated branch must NOT become
