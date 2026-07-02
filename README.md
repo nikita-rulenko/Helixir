@@ -355,6 +355,7 @@ also remain in the schema, but the pipeline persists those types via
 | `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
 | `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
 | `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
+| `resolve_contradiction` | Answer a `contradiction_review` notice: `confirm` (my memory stands), `retract` (the disputing memory supersedes mine — history preserved) or `preference` (both coexist). Non-destructive in every branch |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
 

@@ -326,6 +326,22 @@ pub struct SwarmStatusParams {
     pub active_window_secs: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ResolveContradictionParams {
+    #[schemars(
+        description = "The memory that RAISED the dispute (from_id in the contradiction_review notice)."
+    )]
+    pub from_id: String,
+    #[schemars(
+        description = "Your disputed memory (to_id in the notice). Used for the retract verdict and echoed back."
+    )]
+    pub to_id: String,
+    #[schemars(
+        description = "Your verdict: 'confirm' = my memory stands, both records stay; 'retract' = my memory is outdated — the disputing memory SUPERSEDES it (history preserved, nothing deleted); 'preference' = both are valid viewpoints, coexist."
+    )]
+    pub resolution: String,
+}
+
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ConnectMemoriesParams {
     #[schemars(

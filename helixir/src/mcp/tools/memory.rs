@@ -445,6 +445,69 @@ impl HelixirMcpServer {
     }
 
     #[tool(
+        description = "Answer a contradiction_review notice: settle a dispute between two memories. Pass the notice's from_id/to_id and your verdict — 'confirm' (my memory stands; both records stay, dispute retired), 'retract' (my memory is outdated; the disputing memory SUPERSEDES it — history preserved, nothing deleted), or 'preference' (both are valid viewpoints; they coexist). Non-destructive in every branch. Once resolved the dispute stops re-surfacing in reconcile passes. Returns {resolved, from_id, to_id, strategy}."
+    )]
+    async fn resolve_contradiction(
+        &self,
+        Parameters(params): Parameters<ResolveContradictionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let verdict = params.resolution.trim().to_ascii_lowercase();
+        let strategy = match verdict.as_str() {
+            "confirm" | "confirmed" => "owner_confirmed",
+            "retract" | "retracted" => "owner_retracted",
+            "preference" | "coexist" => "coexist_preference",
+            other => {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "resolution must be 'confirm', 'retract' or 'preference' (got '{other}')"
+                    ),
+                    None,
+                ));
+            }
+        };
+        info!(
+            "⚖️ Resolving contradiction {} -> {} as {strategy}",
+            params.from_id, params.to_id
+        );
+
+        // Retract = the disputing memory wins: record the supersession FIRST
+        // (if this fails the dispute must stay open), then retire the edge.
+        if strategy == "owner_retracted" {
+            self.client
+                .tooling()
+                .record_supersession(
+                    &params.from_id,
+                    &params.to_id,
+                    "owner retracted in contradiction review",
+                )
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        }
+
+        let resolved = match self
+            .client
+            .tooling()
+            .resolve_memory_contradictions(&params.from_id, strategy)
+            .await
+        {
+            Ok(()) => true,
+            // "No value found" = no open dispute (already resolved or bogus
+            // ids) — graceful, not an error: the end state is what was asked.
+            Err(e) if e.to_string().to_lowercase().contains("no value found") => false,
+            Err(e) => return Err(McpError::internal_error(e.to_string(), None)),
+        };
+
+        let json = Self::result_to_json(json!({
+            "resolved": resolved,
+            "from_id": params.from_id,
+            "to_id": params.to_id,
+            "strategy": strategy,
+            "note": if resolved { "dispute retired; it will not re-surface" } else { "no open dispute found for from_id (already resolved?)" },
+        }))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
         description = "Replace the content of an EXISTING memory (you must pass its memory_id, e.g. from a search result); the embedding and graph relations are regenerated. Use to correct or refine a specific known fact. Note: this edits in place and Helixir never deletes — to retire an OUTDATED fact, prefer add_memory with the corrected statement and let the charter supersede the old one (history is preserved). Returns {updated: bool, memory_id}."
     )]
     async fn update_memory(

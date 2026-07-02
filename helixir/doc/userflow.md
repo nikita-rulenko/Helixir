@@ -6,7 +6,7 @@ Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
-There are 19 tools, 2 prompts, 2 resources.
+There are 20 tools, 2 prompts, 2 resources.
 
 ## 1. Tool catalog
 
@@ -26,6 +26,7 @@ There are 19 tools, 2 prompts, 2 resources.
 | `search_incomplete_thoughts` | — | `limit` | Session start, to resume interrupted FastThink sessions. |
 | `list_users` | — | `limit` | Orientation in a shared store: which identities exist. Collective-gated (`available:false` in Solo); privacy-safe (ids/names only). |
 | `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
+| `resolve_contradiction` | `from_id`, `to_id`, `resolution` | — | Answering a `contradiction_review` notice: `confirm` / `retract` (supersedes, history kept) / `preference`. Retired disputes stop re-surfacing. |
 
 Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 `needs_clarification` array — write-path conflicts the memory charter
