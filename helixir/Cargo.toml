@@ -106,6 +106,14 @@ tokenizers = { version = "0.23.1", default-features = false, features = ["onig"]
 default = ["nli"]
 # Local contradiction-safe paraphrase backstop (DeBERTa NLI via ONNX).
 nli = ["dep:ort", "dep:tokenizers"]
+# Self-contained TLS for cross-compiled Linux artifacts: helix-rs pulls
+# reqwest with default features (native-tls -> openssl-sys on Linux), and a
+# cross container has no OpenSSL for the target. `vendored` compiles OpenSSL
+# from source so the binary carries its own.
+vendored-tls = ["dep:openssl"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

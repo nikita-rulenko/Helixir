@@ -11,6 +11,7 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1783,13 +1784,22 @@ fn read_pid_state(name: &str) -> Option<serde_json::Value> {
 }
 
 /// Signal 0 probes a pid's existence without delivering anything.
+#[cfg(unix)]
 fn is_alive(pid: i32) -> bool {
     pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Windows has no signal 0; the detached-process machinery is unix-only, so
+/// any recorded pid is treated as gone (stale state files self-clean).
+#[cfg(not(unix))]
+fn is_alive(_pid: i32) -> bool {
+    false
 }
 
 /// Spawn `helixir <args>` as a detached background process (setsid), logging to
 /// `~/.helixir/<name>.log` and recording a `<name>.pid` state file. Shared by
 /// the daemon (#43) and the gateway (#42). Returns the child pid.
+#[cfg(unix)]
 fn spawn_detached(name: &str, args: &[&str], extra: serde_json::Value) -> Result<(u32, PathBuf)> {
     if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
         if is_alive(pid as i32) {
@@ -1829,7 +1839,18 @@ fn spawn_detached(name: &str, args: &[&str], extra: serde_json::Value) -> Result
     Ok((pid, log))
 }
 
+/// Detached background processes need setsid/pre_exec — unix-only. On
+/// Windows the foreground variants (`helixir daemon run`, `helixir gateway`
+/// in its own terminal) cover the same ground.
+#[cfg(not(unix))]
+fn spawn_detached(name: &str, _args: &[&str], _extra: serde_json::Value) -> Result<(u32, PathBuf)> {
+    anyhow::bail!(
+        "`helixir {name} start` (detached background process) is unix-only; on Windows run the foreground variant (e.g. `helixir daemon run`) in its own terminal"
+    )
+}
+
 /// SIGTERM the named background process and clean up its pid file.
+#[cfg(unix)]
 fn stop_process(name: &str) -> Result<()> {
     let Some(state) = read_pid_state(name) else {
         println!("{name} not running (no pid file)");
@@ -1846,6 +1867,15 @@ fn stop_process(name: &str) -> Result<()> {
         println!("{name} already gone (stale pid {pid}); cleaned up");
     }
     std::fs::remove_file(pid_file(name)?).ok();
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn stop_process(name: &str) -> Result<()> {
+    // No detached processes exist on Windows (see spawn_detached); just
+    // clear any stale state file copied over from a unix machine.
+    std::fs::remove_file(pid_file(name)?).ok();
+    println!("{name} not running (background processes are unix-only on this platform)");
     Ok(())
 }
 
