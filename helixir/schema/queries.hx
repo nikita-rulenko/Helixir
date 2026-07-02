@@ -953,3 +953,10 @@ QUERY dropConceptByInternalId(concept_internal_id: ID) =>
 QUERY dropCategoryByInternalId(category_internal_id: ID) =>
   DROP N<Category>(category_internal_id)
   RETURN "deleted"
+
+QUERY dropMemoryCascadeByInternalId(memory_internal_id: ID) =>
+  DROP N<Memory>(memory_internal_id)::Out<HAS_CHUNK>::Out<CHUNK_HAS_EMBEDDING>
+  DROP N<Memory>(memory_internal_id)::Out<HAS_CHUNK>
+  DROP N<Memory>(memory_internal_id)::Out<HAS_EMBEDDING>
+  DROP N<Memory>(memory_internal_id)
+  RETURN "deleted"

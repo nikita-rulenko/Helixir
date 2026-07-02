@@ -123,20 +123,33 @@ impl ToolingManager {
         Ok(true)
     }
 
+    /// OPERATOR repair path — not exposed over MCP (the memory has no delete
+    /// tool by design; supersede is the agent-facing way to retire a fact).
+    /// This exists for purging DEBUG ARTIFACTS (e.g. the 2026-07-02 insight
+    /// flood): resolves the internal id, then cascade-drops the node with its
+    /// embedding, chunks and chunk embeddings. Previously this pointed at a
+    /// `deleteMemory` query that never existed in the schema.
     pub async fn delete_memory(&self, memory_id: &str) -> Result<bool, ToolingError> {
-        info!("Deleting memory: {}", memory_id);
+        info!("Cascade-dropping memory (operator repair): {}", memory_id);
 
-        #[derive(Serialize)]
-        struct DeleteInput {
-            memory_id: String,
+        #[derive(serde::Deserialize, Default)]
+        struct NodeResp {
+            #[serde(default)]
+            memory: serde_json::Value,
         }
+        let resp: NodeResp = self
+            .db
+            .execute_query("getMemory", &serde_json::json!({ "memory_id": memory_id }))
+            .await
+            .map_err(|e| ToolingError::Database(e.to_string()))?;
+        let Some(internal) = resp.memory.get("id").and_then(|v| v.as_str()) else {
+            return Ok(false);
+        };
 
         self.db
-            .execute_query::<(), _>(
-                "deleteMemory",
-                &DeleteInput {
-                    memory_id: memory_id.to_string(),
-                },
+            .execute_query::<serde_json::Value, _>(
+                "dropMemoryCascadeByInternalId",
+                &serde_json::json!({ "memory_internal_id": internal }),
             )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
