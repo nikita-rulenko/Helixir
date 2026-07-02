@@ -174,6 +174,14 @@ session already held. Fixed at the root:
 
 ## Known gaps (honest list)
 
+- `read_path_e2e` / `mcp_read_e2e` golden fixtures pinned exact memory
+  ids from the historic bench corpus lost on 2026-06-30; both suites now
+  SKIP with an explicit message until the golden set is re-recorded.
+- Collective-collapse e2e (#3a) retries up to 3× — per-write extraction
+  is probabilistic, and an attempt whose atoms come out only as
+  paraphrases never exercises the collapse (the paraphrase case belongs
+  to the async NLI merge backstop).
+
 - Category dictionary carries e2e pollution (`thick-*`/`crop-*` names);
   cleanup needs a `dropCategory` HQL on the next schema swap.
 - Contradiction-review notices are re-delivered after resolution
