@@ -501,13 +501,18 @@ All settings are passed as environment variables.
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
 | `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
+| `HELIX_LLM_FALLBACK_CHAIN` | `deepseek,ollama` | Ordered fallback tiers after the primary; empty value disables fallback |
+| `HELIX_DEEPSEEK_API_KEY` | — | Credentials for the `deepseek` fallback tier |
 | `RUST_LOG` | `helixir=warn` | Log level |
 
-> **Automatic local fallback.** When the remote LLM provider (Cerebras /
-> DeepSeek) is unreachable, Helixir transparently retries the same request
-> against a local Ollama model (`qwen2.5:7b` by default) so a write never
-> fails on a remote outage. Enabled by default; tune via the `llm_fallback_*`
-> keys in `helixir.toml`.
+> **Automatic fallback chain.** When the primary LLM provider errors — a
+> network outage *or* an exhausted quota — Helixir transparently retries the
+> same request down an ordered chain, by default `deepseek → ollama`
+> (smart remote → cheap remote → local selfhost), and readopts the primary as
+> soon as it recovers. Tiers missing credentials are skipped at boot, so
+> without a DeepSeek key the chain simply degrades to local Ollama
+> (`qwen2.5:7b` by default). Tune via `llm_fallback_chain = ["deepseek",
+> "ollama"]` + `deepseek_api_key` in `helixir.toml`, or the env vars above.
 
 ### Provider presets
 

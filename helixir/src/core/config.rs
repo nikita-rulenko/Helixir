@@ -692,6 +692,15 @@ pub struct HelixirConfig {
     pub llm_fallback_enabled: bool,
     pub llm_fallback_url: String,
     pub llm_fallback_model: String,
+    /// Ordered provider names tried after the primary (smart → cheap → local).
+    /// Entries equal to the primary, unknown names, or tiers missing
+    /// credentials are skipped at boot with a warning — a partial chain still
+    /// boots. Env: `HELIX_LLM_FALLBACK_CHAIN` (comma-separated).
+    pub llm_fallback_chain: Vec<String>,
+    /// Credentials for the `deepseek` chain tier (the primary's key lives in
+    /// `llm_api_key`). Env: `HELIX_DEEPSEEK_API_KEY` / `HELIX_DEEPSEEK_MODEL`.
+    pub deepseek_api_key: Option<String>,
+    pub deepseek_model: String,
 
     pub embedding_provider: String,
     pub embedding_model: String,
@@ -769,6 +778,9 @@ impl HelixirConfig {
             llm_fallback_enabled: true,
             llm_fallback_url: crate::DEFAULT_OLLAMA_URL.to_string(),
             llm_fallback_model: crate::DEFAULT_LLM_FALLBACK_MODEL.to_string(),
+            llm_fallback_chain: vec!["deepseek".to_string(), "ollama".to_string()],
+            deepseek_api_key: None,
+            deepseek_model: crate::DEFAULT_DEEPSEEK_MODEL.to_string(),
 
             embedding_provider: "ollama".to_string(),
             embedding_model: crate::DEFAULT_EMBEDDING_MODEL.to_string(),
@@ -894,6 +906,22 @@ impl HelixirConfig {
         if let Ok(url) = std::env::var("HELIX_LLM_BASE_URL") {
             self.llm_base_url = Some(url);
         }
+        // Comma-separated tier names; an explicitly empty value clears the
+        // chain (fallback off without touching llm_fallback_enabled).
+        if let Ok(chain) = std::env::var("HELIX_LLM_FALLBACK_CHAIN") {
+            self.llm_fallback_chain = chain
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+        }
+        if let Ok(key) = std::env::var("HELIX_DEEPSEEK_API_KEY") {
+            self.deepseek_api_key = Some(key);
+        }
+        if let Ok(model) = std::env::var("HELIX_DEEPSEEK_MODEL") {
+            self.deepseek_model = model;
+        }
         if let Ok(provider) = std::env::var("HELIX_EMBEDDING_PROVIDER") {
             self.embedding_provider = provider;
         }
@@ -946,6 +974,28 @@ mod tests {
     fn test_default_has_no_base_url() {
         let config = HelixirConfig::default();
         assert!(config.llm_base_url.is_none());
+    }
+
+    #[test]
+    fn test_fallback_chain_env_parses_and_empty_clears() {
+        unsafe {
+            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", " deepseek , ollama ");
+        }
+        let config = HelixirConfig::from_env();
+        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+
+        unsafe {
+            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", "");
+        }
+        let config = HelixirConfig::from_env();
+        assert!(
+            config.llm_fallback_chain.is_empty(),
+            "explicit empty value must clear the chain"
+        );
+
+        unsafe {
+            std::env::remove_var("HELIX_LLM_FALLBACK_CHAIN");
+        }
     }
 
     #[test]

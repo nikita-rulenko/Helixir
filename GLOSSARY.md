@@ -282,3 +282,12 @@ with a few lines of config; `helixir setup` writes them for you.
 `~/.helixir/helixir.toml` ← environment variables, later layers winning.
 Gotcha: one invalid field rejects the whole TOML layer, and enum values are
 capitalized (`mode = "Insights"`).
+
+**Fallback chain.** The LLM resilience strategy: on *any* primary-provider
+error (outage, exhausted quota) the same prompt cascades down an ordered
+chain — by default `deepseek → ollama`, i.e. smart remote → cheap remote →
+local selfhost — and the primary is readopted on its first successful call.
+Tiers missing credentials are skipped at boot with a warning, never a boot
+failure; the write result's metadata carries the full error trail that led
+to the answering tier. Configured by `llm_fallback_chain` (or
+`HELIX_LLM_FALLBACK_CHAIN`); an empty chain disables fallback.

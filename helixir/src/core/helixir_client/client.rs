@@ -57,24 +57,14 @@ impl HelixirClient {
         )
         .into();
 
-        // External→local fallback: if the primary provider (Cerebras or any
-        // remote) errors, transparently retry the same prompt against local
-        // Ollama. Skipped when the primary is already Ollama (nothing to fall
-        // back to) — mirrors the embedding pipeline's fallback gate. The
-        // mechanism existed but was never wired; without this the config
-        // fields llm_fallback_* were dead and a remote outage failed the write.
+        // Resilience chain: if the primary errors (outage, exhausted quota),
+        // the same prompt cascades down llm_fallback_chain — by default
+        // smart remote → cheap remote → local Ollama — and readopts the
+        // primary as soon as it recovers. Tiers equal to the primary or
+        // missing credentials are skipped at boot; with no surviving tier
+        // this is an identity passthrough.
         let llm_provider: Arc<dyn LlmProvider> =
-            if config.llm_fallback_enabled && config.llm_provider != "ollama" {
-                Arc::new(LlmProviderFactory::create_with_fallback(
-                    primary_llm,
-                    config.llm_fallback_enabled,
-                    Some(&config.llm_fallback_url),
-                    &config.llm_fallback_model,
-                    f64::from(config.llm_temperature),
-                ))
-            } else {
-                primary_llm
-            };
+            LlmProviderFactory::create_chained(primary_llm, &config);
 
         let tooling_manager = Arc::new(ToolingManager::new(
             Arc::clone(&db),
