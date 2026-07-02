@@ -14,6 +14,22 @@ fn looks_like_memory_id(q: &str) -> bool {
 }
 
 impl ToolingManager {
+    /// Persist one typed memory→memory relation (public surface for fixture
+    /// seeding and importers; the write pipeline uses the engine directly).
+    pub async fn add_typed_relation(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        relation_type: crate::toolkit::mind_toolbox::reasoning::ReasoningType,
+        strength: i32,
+    ) -> Result<(), ToolingError> {
+        self.reasoning_engine
+            .add_relation(from_id, to_id, relation_type, strength, None)
+            .await
+            .map(|_| ())
+            .map_err(|e| ToolingError::Database(e.to_string()))
+    }
+
     pub async fn search_reasoning_chain(
         &self,
         query: &str,

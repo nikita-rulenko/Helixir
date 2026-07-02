@@ -81,8 +81,10 @@ impl SearchEngine {
         graph_depth: u32,
         min_vector_score: f64,
         min_combined_score: f64,
+        temporal_weight: f64,
     ) -> SearchConfig {
         let t = &self.config.search_thresholds;
+        let _ = t.temporal_weight; // superseded by the per-mode weight (#31)
         SearchConfig {
             vector_top_k,
             graph_depth,
@@ -94,7 +96,7 @@ impl SearchEngine {
                 "MEMORY_RELATION".to_string(),
             ]),
             vector_weight: t.vector_weight,
-            temporal_weight: t.temporal_weight,
+            temporal_weight,
             graph_semantic_weight: t.graph_semantic_weight,
             graph_graph_weight: t.graph_graph_weight,
             graph_temporal_weight: t.graph_temporal_weight,

@@ -69,6 +69,7 @@ impl SearchEngine {
                             .unwrap_or(if mode == "recent" { 1 } else { 2 }),
                         mode_defaults.min_vector_score,
                         mode_defaults.min_combined_score,
+                        mode_defaults.temporal_weight,
                     );
                     let traversal_results = traversal
                         .search(
@@ -110,6 +111,7 @@ impl SearchEngine {
                         graph_depth.map(|d| d.clamp(1, 4)).unwrap_or(3),
                         self.config.search_thresholds.min_vector_score,
                         mode_defaults.min_combined_score,
+                        mode_defaults.temporal_weight,
                     );
                     let traversal_results = traversal
                         .search(
@@ -143,18 +145,29 @@ impl SearchEngine {
             }
             "full" => {
                 if let Some(ref traversal) = self.smart_traversal {
+                    // #31: full mode has no IMPLICIT window (presets are None
+                    // everywhere now), but an EXPLICIT temporal_days is the
+                    // caller asking for a hard window — honor it here too
+                    // (this branch used to hardcode None and silently drop it).
                     debug!(
-                        "Using SmartTraversalV2 for full mode (no temporal filter), scope={}",
-                        scope
+                        "Using SmartTraversalV2 for full mode, temporal_cutoff={:?}, scope={}",
+                        temporal_cutoff, scope
                     );
                     let config = self.make_search_config(
                         limit * 2,
                         graph_depth.map(|d| d.clamp(1, 4)).unwrap_or(4),
                         self.config.search_thresholds.min_vector_score,
                         self.config.search_thresholds.min_combined_score,
+                        mode_defaults.temporal_weight,
                     );
                     let traversal_results = traversal
-                        .search(query, query_embedding, effective_user_id, config, None)
+                        .search(
+                            query,
+                            query_embedding,
+                            effective_user_id,
+                            config,
+                            temporal_cutoff,
+                        )
                         .await
                         .unwrap_or_default();
 
@@ -259,6 +272,7 @@ impl SearchEngine {
                 2,
                 self.config.search_thresholds.min_vector_score,
                 self.config.search_thresholds.min_combined_score,
+                self.config.search_thresholds.temporal_weight,
             );
             let results = traversal
                 .search(query, query_embedding, None, config, None)

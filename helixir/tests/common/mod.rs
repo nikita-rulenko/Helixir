@@ -3,6 +3,8 @@
 
 #![allow(dead_code)] // each test crate uses a subset
 
+pub mod golden;
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;

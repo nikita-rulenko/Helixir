@@ -36,6 +36,8 @@ struct VectorMemory {
     #[serde(default, deserialize_with = "nullable_string")]
     created_at: String,
     #[serde(default, deserialize_with = "nullable_string")]
+    valid_from: String,
+    #[serde(default, deserialize_with = "nullable_string")]
     memory_type: String,
     #[serde(default, deserialize_with = "nullable_string")]
     user_id: String,
@@ -70,6 +72,8 @@ struct ConnectedMemory {
     content: String,
     #[serde(default, deserialize_with = "nullable_string")]
     created_at: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    valid_from: String,
     #[serde(default, deserialize_with = "nullable_string")]
     memory_type: String,
 }
@@ -117,7 +121,11 @@ pub async fn vector_search_phase(
     };
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
 
-    let hql_cutoff_active = profile.temporal_cutoff_in_hql() && temporal_cutoff.is_some();
+    // #31 bi-temporality: the window filters on EVENT time (valid_from else
+    // created_at) — HQL can't express the coalesce, so the pushdown is off
+    // and the Rust-side filter below is authoritative. Explicit windows are
+    // the rare path; the overfetch already covers the delta.
+    let hql_cutoff_active = false && profile.temporal_cutoff_in_hql() && temporal_cutoff.is_some();
     let vector_response: VectorSearchResponse = if hql_cutoff_active {
         let cutoff = temporal_cutoff.unwrap();
         let params = serde_json::json!({
@@ -237,8 +245,9 @@ pub async fn vector_search_phase(
         // query — BM25 rows arrive unfiltered, so the Rust filter must stay
         // active even when hql_cutoff_active.
         if let Some(cutoff) = &temporal_cutoff {
-            if let Ok(created_at) = DateTime::parse_from_rfc3339(&memory.created_at) {
-                if created_at.with_timezone(&Utc) < *cutoff {
+            let when = super::scoring::event_time(&memory.valid_from, &memory.created_at);
+            if let Ok(t) = DateTime::parse_from_rfc3339(when) {
+                if t.with_timezone(&Utc) < *cutoff {
                     continue;
                 }
             }
@@ -247,8 +256,10 @@ pub async fn vector_search_phase(
         let vector_score = config.rank_base * config.rank_decay.powi(accepted_rank as i32);
         accepted_rank += 1;
 
-        let temporal_score =
-            calculate_temporal_freshness(&memory.created_at, config.temporal_decay_days);
+        let temporal_score = calculate_temporal_freshness(
+            super::scoring::event_time(&memory.valid_from, &memory.created_at),
+            config.temporal_decay_days,
+        );
 
         let mut result = SearchResult::from_vector_weighted(
             &memory.memory_id,
@@ -535,7 +546,10 @@ fn process_edge_collection(
             continue;
         }
 
-        let temporal_score = calculate_temporal_freshness(&mem.created_at, decay_days);
+        let temporal_score = calculate_temporal_freshness(
+            super::scoring::event_time(&mem.valid_from, &mem.created_at),
+            decay_days,
+        );
         let graph_score = calculate_graph_score(edge_weight, parent_score);
 
         let semantic_sim = 0.5;

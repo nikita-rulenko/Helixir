@@ -1,8 +1,9 @@
 //! Read-path end-to-end suite: every read tool the `local-reasoning` branch
-//! touched, exercised against a live HelixDB with the bench corpus loaded.
+//! touched, exercised against a live HelixDB with the GOLDEN corpus (#76) —
+//! deterministic, self-seeding, LLM-free.
 //!
 //! **Not run by default** (`#[ignore]`). Requires live infrastructure:
-//! - `HELIX_HOST` / `HELIX_PORT` — HelixDB with the bench corpus (user `bench`)
+//! - `HELIX_HOST` / `HELIX_PORT` — a live HelixDB (the suite seeds `golden_v1`)
 //! - embedding env vars (ollama) — reads need embeddings, but **no working LLM**:
 //!   run with a deliberately dead `HELIX_LLM_API_KEY` to prove the read path
 //!   never calls an LLM (`HELIXIR_RETRIEVAL_PROFILE=algo_opt`).
@@ -14,55 +15,14 @@
 //! ```
 //!
 //! Reports per-tool latency (cold first call vs warm) and context-restoration
-//! quality (hit@5 / MRR over a golden query set tied to the bench corpus).
+//! quality (hit@5 / MRR over the golden query set, matched by content markers).
 
 use std::time::Instant;
 
 use helixir::core::HelixirClient;
 
-const USER: &str = "bench";
-
-/// Golden set: query → memory_ids, any of which counts as the right context.
-/// Curated against the bench corpus (seeded 2026-03-27..04-23).
-fn golden_set() -> Vec<(&'static str, Vec<&'static str>)> {
-    vec![
-        (
-            "flaky test Cyrillic",
-            vec!["mem_6d0c00cbb797", "mem_02e89bafeed2", "raw_02b063cbbd7a"],
-        ),
-        // Exact identifier — the BM25 half of the hybrid earns its keep here.
-        ("TestIntegrationProductSearch", vec!["mem_02e89bafeed2"]),
-        (
-            "repository interfaces",
-            vec!["mem_14f614cee843", "mem_c100418279dc", "mem_74c82048e8a9"],
-        ),
-        (
-            "ICU extension SQLite",
-            vec!["raw_3c52decc7930", "raw_02b063cbbd7a"],
-        ),
-        (
-            "Clean Architecture test isolation",
-            vec!["raw_97ec3e9ac5f9", "mem_4d3b50638e96"],
-        ),
-        ("test coverage repository sqlite", vec!["mem_c100418279dc"]),
-        (
-            "interfaces.go ProductRepository methods",
-            vec!["mem_14f614cee843", "mem_491ed67a50f4", "mem_c100418279dc"],
-        ),
-        (
-            "boilerplate trade-off",
-            vec!["mem_c100418279dc", "raw_97ec3e9ac5f9"],
-        ),
-        (
-            "setupTestDB isolated in-memory database",
-            vec!["mem_02e89bafeed2"],
-        ),
-        (
-            "SQLite LIKE case sensitivity Unicode",
-            vec!["mem_7ed1df043686", "mem_02e89bafeed2", "raw_3c52decc7930"],
-        ),
-    ]
-}
+mod common;
+use common::golden::{GOLDEN_USER as USER, ensure_seeded, golden_set};
 
 fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
     if sorted_ms.is_empty() {
@@ -73,7 +33,7 @@ fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
 }
 
 #[tokio::test]
-#[ignore = "needs HELIX_E2E=1 and live HelixDB (bench corpus) + embeddings; see module doc"]
+#[ignore = "needs HELIX_E2E=1 and live HelixDB + embeddings; see module doc"]
 async fn read_path_e2e() {
     assert_eq!(
         std::env::var("HELIX_E2E").unwrap_or_default(),
@@ -89,22 +49,11 @@ async fn read_path_e2e() {
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
     client.initialize().await.expect("initialize");
 
-    // Fixture guard: the golden set pins EXACT memory ids from the recorded
-    // bench corpus, which was lost with the bench data dir on 2026-06-30.
-    // Without that corpus every miss is a false alarm, not a read-path
-    // regression — skip gracefully until the fixtures are re-recorded.
-    let corpus = client
-        .tooling()
-        .list_user_memories(USER, 1)
-        .await
-        .unwrap_or_default();
-    if corpus.is_empty() {
-        println!("\n==== read_path_e2e ====");
-        println!(
-            "SKIP: user '{USER}' has no corpus (historic golden fixtures lost with the bench data, 2026-06-30). Re-record golden_set() against a fresh corpus to re-enable."
-        );
-        return;
-    }
+    // #76: the golden corpus is deterministic and LLM-free — seed it in
+    // place if this store has never seen it (content_key dedup makes the
+    // re-run a no-op, so the dead-LLM-key property of the suite holds).
+    let seeded = ensure_seeded(&client).await;
+    println!("golden corpus: {seeded} atoms added this run");
 
     // ---------- 1. search_memory: context restoration quality ----------
     let golden = golden_set();
@@ -136,7 +85,7 @@ async fn read_path_e2e() {
 
         let rank = results
             .iter()
-            .position(|r| expected.contains(&r.id.as_str()));
+            .position(|r| expected.iter().any(|m| r.content.contains(m)));
         match rank {
             Some(r) => {
                 hits_at_5 += 1;
@@ -145,9 +94,12 @@ async fn read_path_e2e() {
             None => {
                 reciprocal_ranks.push(0.0);
                 eprintln!(
-                    "  MISS '{query}': expected one of {:?}, got {:?}",
+                    "  MISS '{query}': expected marker of {:?}, got {:?}",
                     expected,
-                    results.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
+                    results
+                        .iter()
+                        .map(|r| r.content.chars().take(50).collect::<String>())
+                        .collect::<Vec<_>>()
                 );
             }
         }
@@ -176,48 +128,86 @@ async fn read_path_e2e() {
     cold_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
     warm_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    // ---------- 3. temporal window + cache isolation ----------
-    // NOTE: mode "full" deliberately ignores temporal_days (dispatch.rs hardcodes
-    // cutoff = None), so the window check must use a windowed mode. `recent`
-    // has a 4h default window; the bench corpus is months old.
-    let q = "repository interfaces";
-    let full = client
-        .search(q, USER, Some(5), Some("full"), None, None, Some("personal"))
-        .await
-        .expect("full search");
-    let recent = client
+    // ---------- 3. the temporal contract (#31) ----------
+    // Time governs ATTENTION, never REACHABILITY: no mode hides old facts;
+    // only an EXPLICIT temporal_days is a hard window, and it runs on EVENT
+    // time (valid_from else created_at) — bi-temporality.
+    // Marker-specific queries: BM25 lifts the vectorless fixtures to the top
+    // for THEIR OWN terms; a shared-topic query only proves attention, not
+    // reachability.
+    let q_old = "legacy billing cron quarterly reconciliation";
+    let q_event = "reconciliation window moved first business day";
+    let hits = |rs: &Vec<helixir::core::helixir_client::SearchResult>, marker: &str| {
+        rs.iter().any(|r| r.content.contains(marker))
+    };
+
+    // 3a. A year-old fact is reachable in EVERY mode.
+    for mode in ["full", "recent", "contextual", "deep"] {
+        let rs = client
+            .search(
+                q_old,
+                USER,
+                Some(10),
+                Some(mode),
+                None,
+                None,
+                Some("personal"),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{mode} search failed: {e}"));
+        assert!(
+            hits(&rs, "GOLDOLD"),
+            "reachability violated: year-old GOLDOLD missing in mode={mode}: {:?}",
+            rs.iter().map(|r| &r.content).collect::<Vec<_>>()
+        );
+    }
+
+    // 3b. An EXPLICIT 30-day window is a hard filter on EVENT time:
+    // GOLDOLD (created AND valid 2025) is out; GOLDEVENT (ingested 2025 but
+    // valid_from 2026-06-20) survives — the bi-temporal discriminator.
+    let windowed_old = client
         .search(
-            q,
+            q_old,
             USER,
-            Some(5),
-            Some("recent"),
-            None,
+            Some(10),
+            Some("full"),
+            Some(30.0),
             None,
             Some("personal"),
         )
         .await
-        .expect("recent search");
-    assert!(!full.is_empty(), "corpus must be reachable in full mode");
-    if !recent.is_empty() {
-        for r in &recent {
-            eprintln!(
-                "  LEAK: {} created_at={} score={:.3}",
-                r.id, r.created_at, r.score
-            );
-        }
-    }
+        .expect("windowed search (old)");
     assert!(
-        recent.is_empty(),
-        "recent mode (4h window) on a months-old corpus must return nothing — \
-         non-empty means the cache collided across temporal windows (P0.3) \
-         or BM25 leaked past the cutoff"
+        !hits(&windowed_old, "GOLDOLD"),
+        "explicit temporal_days=30 must exclude GOLDOLD (event time 2025) — it WAS top-ranked for this query without the window: {:?}",
+        windowed_old.iter().map(|r| &r.content).collect::<Vec<_>>()
+    );
+    let windowed_event = client
+        .search(
+            q_event,
+            USER,
+            Some(10),
+            Some("full"),
+            Some(30.0),
+            None,
+            Some("personal"),
+        )
+        .await
+        .expect("windowed search (event)");
+    assert!(
+        hits(&windowed_event, "GOLDEVENT"),
+        "bi-temporality: GOLDEVENT (ingested 2025, valid_from 2026-06) must SURVIVE the 30-day window: {:?}",
+        windowed_event
+            .iter()
+            .map(|r| &r.content)
+            .collect::<Vec<_>>()
     );
 
     // ---------- 4. search_reasoning_chain: relations without an LLM ----------
     let t0 = Instant::now();
     let chains = client
         .search_reasoning_chain(
-            "repository interfaces clean architecture",
+            "why did payments migrate from sqlite to postgres",
             USER,
             Some("both"),
             Some(5),
@@ -228,8 +218,8 @@ async fn read_path_e2e() {
     let chain_ms = t0.elapsed().as_secs_f64() * 1000.0;
     assert!(
         !chains.chains.is_empty(),
-        "bench corpus has IMPLIES/BECAUSE edges around the repository-interfaces \
-         cluster; empty chains mean seed search or traversal regressed"
+        "the golden corpus wires BECAUSE/IMPLIES around the sqlite->postgres \
+         migration (GA-chain); empty chains mean seed search or traversal regressed"
     );
     let has_logical_edge = chains.chains.iter().any(|c| {
         c.nodes
@@ -243,7 +233,7 @@ async fn read_path_e2e() {
     // cause via a BECAUSE edge, not just similar text.
     let causal = client
         .search_reasoning_chain(
-            "repository interfaces clean architecture",
+            "why did checkout latency spikes stop",
             USER,
             Some("causal"),
             Some(5),
@@ -293,7 +283,7 @@ async fn read_path_e2e() {
     // from a fact pulled through the graph, and see the link that pulled it.
     let provenance_results = client
         .search(
-            "repository interfaces",
+            "postgres migration payments service",
             USER,
             Some(15),
             Some("deep"),
@@ -317,7 +307,7 @@ async fn read_path_e2e() {
     );
     assert!(
         !graph_pulled.is_empty(),
-        "deep search around the repository-interfaces cluster must pull at \
+        "deep search around the migration cluster must pull at \
          least one neighbour through the graph (origin=graph)"
     );
     for r in &graph_pulled {
@@ -332,8 +322,8 @@ async fn read_path_e2e() {
     let t0 = Instant::now();
     let connection = client
         .connect_memories(
-            "repository interfaces clean architecture",
-            "product validation test negative price",
+            "sqlite file locked under concurrent writers",
+            "team standardized on postgres for new services",
             USER,
             Some(4),
         )
@@ -342,8 +332,8 @@ async fn read_path_e2e() {
     let connect_ms = t0.elapsed().as_secs_f64() * 1000.0;
     assert!(
         connection.found,
-        "the repository-interfaces and product-validation clusters are linked \
-         (IMPLIES edge) — a path must exist"
+        "GA2 and GA4 are linked through the golden migration chain \
+         (BECAUSE/IMPLIES edges) — a path must exist"
     );
     assert_eq!(
         connection.nodes.len(),
@@ -352,22 +342,39 @@ async fn read_path_e2e() {
     );
 
     // ---------- 5. get_memory_graph ----------
+    // Anchor on a chain node resolved at runtime (ids are random per seed).
+    let anchor = client
+        .search(
+            "payments service migrated sqlite postgres",
+            USER,
+            Some(3),
+            Some("full"),
+            None,
+            None,
+            Some("personal"),
+        )
+        .await
+        .expect("anchor search")
+        .into_iter()
+        .find(|r| r.content.contains("GA1"))
+        .map(|r| r.id)
+        .expect("GA1 must be findable to anchor the graph probe");
     let t0 = Instant::now();
     let graph = client
-        .get_graph(USER, Some("mem_c100418279dc"), Some(2))
+        .get_graph(USER, Some(anchor.as_str()), Some(2))
         .await
         .expect("get_graph");
     let graph_ms = t0.elapsed().as_secs_f64() * 1000.0;
     assert!(
         !graph.nodes.is_empty() && !graph.edges.is_empty(),
-        "mem_c100418279dc has IMPLIES edges in/out; graph must not be empty"
+        "GA1 sits mid-chain (BECAUSE in, IMPLIES out); graph must not be empty"
     );
 
     // ---------- 6. search_by_concept ----------
     let t0 = Instant::now();
     let concepts = client
         .search_by_concept(
-            "flaky test decision",
+            "payments service migrated postgres",
             USER,
             Some("action"),
             None,
@@ -379,7 +386,7 @@ async fn read_path_e2e() {
     let concept_ms = t0.elapsed().as_secs_f64() * 1000.0;
     assert!(
         !concepts.is_empty(),
-        "bench corpus contains action-typed memories about the flaky test"
+        "the golden corpus contains an action-typed memory (GA1 migration)"
     );
 
     // ---------- summary ----------
@@ -430,7 +437,7 @@ async fn read_path_e2e() {
         concepts.len(),
         concept_ms
     );
-    println!("temporal-window cache isolation: OK (recent-mode query returned empty)");
+    println!("temporal contract: reachable in every mode; explicit window bi-temporal");
 
     // Quality bars: loose enough to survive corpus drift, tight enough to
     // catch real regressions.

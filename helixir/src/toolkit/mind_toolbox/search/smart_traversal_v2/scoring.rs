@@ -32,6 +32,23 @@ pub fn cosine_score(vec1: &[f32], vec2: &[f32]) -> f64 {
     ((similarity + 1.0) / 2.0).clamp(0.0, 1.0)
 }
 
+/// Bi-temporality (#31): the freshness signal (and the explicit hard window)
+/// runs on EVENT time — `valid_from` when it parses, else ingestion time
+/// (`created_at`). "The reconciliation window moved in June" stays fresh even
+/// if the memory was ingested a year ago.
+pub fn event_time<'a>(valid_from: &'a str, created_at: &'a str) -> &'a str {
+    if DateTime::parse_from_rfc3339(valid_from).is_ok()
+        || valid_from
+            .replace('Z', "+00:00")
+            .parse::<DateTime<Utc>>()
+            .is_ok()
+    {
+        valid_from
+    } else {
+        created_at
+    }
+}
+
 pub fn calculate_temporal_freshness(created_at: &str, decay_days: f64) -> f64 {
     let created = match DateTime::parse_from_rfc3339(created_at) {
         Ok(dt) => dt.with_timezone(&Utc),
