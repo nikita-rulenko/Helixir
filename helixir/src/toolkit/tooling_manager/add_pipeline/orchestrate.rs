@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use tracing::{debug, info, warn};
 
-use crate::llm::decision::SimilarMemory;
-use crate::llm::extractor::ExtractedMemory;
+use crate::llm::decision::{MemoryOperation, SimilarMemory};
+use crate::llm::extractor::{ExtractedEntity, ExtractedMemory, ExtractedRelation};
 
 use super::super::ToolingManager;
 use super::super::types::{AddMemoryResult, ToolingError};
@@ -43,6 +43,61 @@ impl ToolingManager {
             extraction.relations.len()
         );
 
+        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
+        self.run_add_pipeline(
+            memories_to_store,
+            &extraction.entities,
+            &extraction.relations,
+            Some(message),
+            user_id,
+            agent_id,
+            tags,
+        )
+        .await
+    }
+
+    /// LLM-free entry for callers that ALREADY hold structured atoms (FastThink
+    /// commit, future importers): the same pipeline as `add_memory` minus the
+    /// extraction call — embeddings, recall, the batched decision phase (dedup
+    /// and charter safety stay), storage, chunking and edges run unchanged.
+    /// No raw-source preservation: the caller's atoms ARE the source.
+    pub async fn add_prepared_memories(
+        &self,
+        memories: Vec<ExtractedMemory>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, ToolingError> {
+        info!(
+            "Adding {} prepared memories for user={} (no extraction)",
+            memories.len(),
+            user_id
+        );
+        self.run_add_pipeline(
+            memories,
+            &[],
+            &[],
+            None,
+            user_id,
+            agent_id,
+            context_tags.unwrap_or(""),
+        )
+        .await
+    }
+
+    /// The shared post-extraction pipeline: embed → recall → decide → execute
+    /// → cross-memory relations → optional raw-source preservation.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_add_pipeline(
+        &self,
+        memories_to_store: Vec<ExtractedMemory>,
+        extracted_entities: &[ExtractedEntity],
+        extracted_relations: &[ExtractedRelation],
+        raw_message: Option<&str>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        tags: &str,
+    ) -> Result<AddMemoryResult, ToolingError> {
         let mut added_ids = Vec::new();
         let mut updated_ids = Vec::new();
         let mut deduped_ids = Vec::new();
@@ -52,8 +107,9 @@ impl ToolingManager {
         let mut clarifications: Vec<super::super::types::Clarification> = Vec::new();
         let mut relations_created = 0usize;
         let mut chunks_created = 0usize;
-
-        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
+        // (memory_id, text, context pairs) per stored atom — the LLM relation
+        // inference runs over these concurrently in Phase D.
+        let mut infer_jobs: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
 
         debug!(
             "Batch-generating embeddings for {} memories",
@@ -231,29 +287,50 @@ impl ToolingManager {
 
             stored_memory_ids.insert(i, memory_id.clone());
 
-            let (linked, rels) = self
-                .enrich_memory_relations(
-                    &memory_id,
-                    memory,
-                    &extraction.entities,
-                    &similar_memories,
-                    &decision,
-                )
+            entities_linked += self
+                .link_memory_semantics(&memory_id, memory, extracted_entities)
                 .await?;
 
-            entities_linked += linked;
-            relations_created += rels;
+            let should_infer = !similar_memories.is_empty()
+                && !matches!(
+                    decision.operation,
+                    MemoryOperation::Noop | MemoryOperation::Delete
+                );
+            if should_infer {
+                let context_pairs: Vec<(String, String)> = similar_memories
+                    .iter()
+                    .take(self.config.write.relation_inference_context_k)
+                    .map(|s| (s.id.clone(), s.content.clone()))
+                    .collect();
+                infer_jobs.push((memory_id, memory.text.clone(), context_pairs));
+            }
+        }
+
+        // Phase D: relation inference — one independent LLM call per stored
+        // atom. These used to run sequentially inside the store loop, stacking
+        // K× model latency onto every multi-atom write; concurrent, the
+        // wall-clock cost is the slowest single call.
+        if !infer_jobs.is_empty() {
+            let inferred = futures::future::join_all(
+                infer_jobs
+                    .iter()
+                    .map(|(id, text, pairs)| self.infer_and_persist_relations(id, text, pairs)),
+            )
+            .await;
+            relations_created += inferred.into_iter().sum::<usize>();
         }
 
         relations_created += self
             .resolve_and_persist_extraction_relations(
-                &extraction.relations,
+                extracted_relations,
                 &memories_to_store,
                 &stored_memory_ids,
             )
             .await?;
 
-        if message.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1 {
+        if let Some(message) = raw_message
+            .filter(|m| m.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1)
+        {
             let raw_mem = ExtractedMemory {
                 text: message.to_string(),
                 memory_type: "fact".to_string(),

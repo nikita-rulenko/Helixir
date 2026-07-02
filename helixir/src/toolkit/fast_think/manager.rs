@@ -184,35 +184,105 @@ impl FastThinkManager {
                 .ok_or(FastThinkError::SessionNotFound)?
         };
 
-        if session.get_conclusions().is_empty() {
+        let conclusions = session.get_conclusions();
+        if conclusions.is_empty() {
             return Err(FastThinkError::NoConclusion);
         }
 
         let conclusion_content = session.build_conclusion_content();
         let supporting_ids: Vec<String> = session.get_supporting_memory_ids();
+        let ft = &self.main_memory.tooling().config.fast_think;
 
-        let content_for_storage = if supporting_ids.is_empty() {
-            conclusion_content
+        // The session already IS the structure — conclusions are explicit,
+        // typed and atomized by the agent. Re-running LLM extraction over them
+        // re-discovers what we hold (and used to dominate commit latency at
+        // 40-96s). Fast path: hand the conclusions to the pipeline as prepared
+        // atoms — dedup, charter and typed-edge enrichment all still apply.
+        // A wall-of-text conclusion still earns full extraction: atomizing it
+        // is worth the wait.
+        let fast = conclusion_content.len() <= ft.commit_extract_over_chars;
+        let (certainty, importance, support_strength) = (
+            ft.commit_certainty as i32,
+            ft.commit_importance as i32,
+            ft.commit_support_strength as i32,
+        );
+
+        let result = if fast {
+            let atoms: Vec<crate::llm::extractor::ExtractedMemory> = conclusions
+                .iter()
+                .map(|(_, t)| crate::llm::extractor::ExtractedMemory {
+                    text: t.content.clone(),
+                    // A committed conclusion is decided-but-derived knowledge.
+                    memory_type: "fact".to_string(),
+                    certainty,
+                    importance,
+                    entities: vec![],
+                    context: None,
+                })
+                .collect();
+            self.main_memory
+                .add_prepared(atoms, user_id, None, None)
+                .await
         } else {
-            format!(
-                "{}\n\n[Evidence: {}]",
-                conclusion_content,
-                supporting_ids.join(", ")
-            )
-        };
+            self.main_memory
+                .add(&conclusion_content, user_id, None, None)
+                .await
+        }
+        .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
 
-        let result = self
-            .main_memory
-            .add(&content_for_storage, user_id, None, None)
-            .await
-            .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
+        // Recalled evidence becomes SUPPORTS provenance edges (LLM-free) —
+        // not "[Evidence: ...]" text glued into the content.
+        let committed_ids: Vec<String> = if result.memory_ids.is_empty() {
+            result.deduped.clone()
+        } else {
+            result.memory_ids.clone()
+        };
+        for sid in &supporting_ids {
+            for mid in &committed_ids {
+                if sid == mid {
+                    continue;
+                }
+                if let Err(e) = self
+                    .main_memory
+                    .tooling()
+                    .reasoning_engine
+                    .add_relation(
+                        sid,
+                        mid,
+                        crate::toolkit::mind_toolbox::reasoning::ReasoningType::Supports,
+                        support_strength,
+                        None,
+                    )
+                    .await
+                {
+                    debug!("commit: evidence SUPPORTS {sid} -> {mid} failed (non-fatal): {e}");
+                }
+            }
+        }
+
+        // The fast path skipped extraction, so entity discovery moves OFF the
+        // critical path: one background extraction call links entities to the
+        // stored conclusion after the agent already has its ack.
+        if fast && !committed_ids.is_empty() {
+            let client = Arc::clone(&self.main_memory);
+            let text = conclusion_content.clone();
+            let uid = user_id.to_string();
+            let ids = committed_ids.clone();
+            tokio::spawn(async move {
+                client
+                    .tooling()
+                    .extract_and_link_entities(&text, &uid, &ids)
+                    .await;
+            });
+        }
 
         let pipeline_entities = result.entities_extracted;
-        let pipeline_relations = result.relations_created;
+        let pipeline_relations = result.relations_created + supporting_ids.len();
 
         info!(
             session_id = session_id,
-            memory_id = ?result.memory_ids.first(),
+            memory_id = ?committed_ids.first(),
+            fast_path = fast,
             thoughts_processed = session.thought_count(),
             entities_extracted = pipeline_entities + session.entity_count(),
             relations_created = pipeline_relations,
@@ -221,7 +291,7 @@ impl FastThinkManager {
         );
 
         Ok(CommitResult {
-            memory_id: result.memory_ids.first().cloned().unwrap_or_default(),
+            memory_id: committed_ids.first().cloned().unwrap_or_default(),
             thoughts_processed: session.thought_count(),
             entities_extracted: pipeline_entities + session.entity_count(),
             concepts_mapped: pipeline_relations + session.concept_count(),

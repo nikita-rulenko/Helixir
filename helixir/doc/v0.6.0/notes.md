@@ -101,6 +101,31 @@ all fixed:
   `[moira.atropos]` `quality_pmi_bar` — curation strictness is an
   operator dial, not a constant.
 
+## FastThink commit is finally fast
+
+Live agent feedback: `think_commit` took 40–96 s. The cause was
+algorithmic, not model speed — commit glued the session's conclusions
+into a text blob (with `[Evidence: mem_...]` pasted into the content)
+and paid the full extraction pipeline to re-discover structure the
+session already held. Fixed at the root:
+
+- **No re-extraction**: conclusions enter the pipeline as prepared
+  atoms (`add_prepared` — type, certainty, importance stamped from
+  config). Dedup, the charter and typed-edge enrichment still apply;
+  a novel conclusion commits with **zero LLM calls**. Measured:
+  **2.7 s** on the same setup that took 40–96 s.
+- **Evidence became provenance**: recalled memories now `SUPPORTS`-edge
+  the committed conclusion instead of polluting its content.
+- **Entity discovery moved off the critical path**: one background
+  extraction call links entities after the agent has its ack.
+- **Wall-of-text escape hatch**: conclusions over
+  `fast_think.commit_extract_over_chars` (default 900) still get full
+  extraction — atomizing a blob is worth the wait.
+- **Bonus for every write**: per-atom relation inference (one LLM call
+  per stored atom!) used to run *sequentially* inside the store loop;
+  it now runs concurrently, so multi-atom `add_memory` pays the slowest
+  call, not the sum.
+
 ## Self-documentation (#35, #40, #41)
 
 - **The manual lives in the memory**: install-time self-seed

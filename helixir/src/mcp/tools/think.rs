@@ -163,7 +163,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Persist a concluded FastThink session into main memory, storing the conclusion with its supporting evidence. Call think_conclude first. NOTE: this is the HEAVY tool — it synthesizes the whole reasoning tree via an LLM and can take tens of seconds (longer for big sessions); call it ONCE at the end, not repeatedly. Returns {memory_id, thoughts_processed, elapsed_ms}."
+        description = "Persist a concluded FastThink session into main memory. Call think_conclude first. The conclusion is stored as-is (fast path, typically a few seconds): recalled evidence becomes SUPPORTS provenance edges and entity discovery finishes in the background — only a very long conclusion falls back to full LLM extraction. Call it ONCE at the end. Returns {memory_id, thoughts_processed, elapsed_ms}."
     )]
     async fn think_commit(
         &self,

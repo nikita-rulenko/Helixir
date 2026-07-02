@@ -171,7 +171,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         85,
-        "For multi-step reasoning use FastThink: think_start, then think_add steps, optional think_recall to pull known facts, think_conclude, and ONE think_commit at the end — it synthesizes the whole session into a single enriched memory and is the heaviest call; think_discard throws the scratchpad away.",
+        "For multi-step reasoning use FastThink: think_start, then think_add steps, optional think_recall to pull known facts, think_conclude, and ONE think_commit at the end — the conclusion persists in seconds with SUPPORTS provenance edges from recalled evidence, and entity enrichment finishes in the background; think_discard throws the scratchpad away.",
     ),
     (
         85,

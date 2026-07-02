@@ -48,6 +48,36 @@ impl HelixirClient {
         })
     }
 
+    /// Store atoms the caller has ALREADY structured (FastThink commit) —
+    /// the same pipeline as `add_with_tags` minus the extraction LLM call.
+    /// Dedup, the charter and typed-edge enrichment all still apply.
+    pub async fn add_prepared(
+        &self,
+        memories: Vec<crate::llm::extractor::ExtractedMemory>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.ensure_initialized().await?;
+
+        let result = self
+            .tooling_manager
+            .add_prepared_memories(memories, user_id, agent_id, context_tags)
+            .await
+            .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
+
+        Ok(AddMemoryResult {
+            memories_added: result.added.len(),
+            memory_ids: result.added,
+            deduped: result.deduped,
+            chunks_created: result.chunks_created,
+            entities_extracted: result.entities_extracted,
+            relations_created: result.reasoning_relations_created,
+            stats: result.metadata,
+            needs_clarification: result.needs_clarification,
+        })
+    }
+
     /// Ingest buffer (#25): persist the raw input and return a `pending_id`
     /// immediately. A background worker drains the queue serially. Use
     /// [`Self::add_status`] to poll for the result.

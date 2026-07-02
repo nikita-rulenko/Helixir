@@ -569,6 +569,18 @@ pub struct FastThinkConfig {
     pub thinking_timeout_secs: u64,
     pub session_ttl_secs: u64,
     pub max_recall_results: usize,
+    /// Fast-commit ceiling: conclusions up to this many chars skip the
+    /// re-extraction LLM call on `think_commit` (the session already IS the
+    /// structure). Longer blobs fall back to full extraction — atomizing a
+    /// wall of text is worth the wait.
+    pub commit_extract_over_chars: usize,
+    /// certainty (0-100) stamped on fast-committed conclusions.
+    pub commit_certainty: u32,
+    /// importance (0-100) stamped on fast-committed conclusions.
+    pub commit_importance: u32,
+    /// Strength of the SUPPORTS provenance edge written from each recalled
+    /// evidence memory to the committed conclusion.
+    pub commit_support_strength: u32,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -580,6 +592,10 @@ impl Default for FastThinkConfig {
             thinking_timeout_secs: 90,
             session_ttl_secs: 600,
             max_recall_results: 8,
+            commit_extract_over_chars: 900,
+            commit_certainty: 75,
+            commit_importance: 60,
+            commit_support_strength: 60,
         }
     }
 }
