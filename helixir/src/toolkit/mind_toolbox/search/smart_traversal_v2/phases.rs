@@ -1,4 +1,4 @@
-use super::models::{SearchConfig, SearchResult, edge_weights};
+use super::models::{SearchConfig, SearchResult};
 use super::rrf;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::core::RetrievalProfile;
@@ -213,9 +213,6 @@ pub async fn vector_search_phase(
     let mut seen_ids = HashSet::new();
     let mut accepted_rank: usize = 0;
 
-    const RANK_BASE: f64 = 0.95;
-    const RANK_DECAY: f64 = 0.92;
-
     for memory_id in visit_order {
         let Some(memory) = memory_by_id.get(&memory_id) else {
             continue;
@@ -247,7 +244,7 @@ pub async fn vector_search_phase(
             }
         }
 
-        let vector_score = RANK_BASE * RANK_DECAY.powi(accepted_rank as i32);
+        let vector_score = config.rank_base * config.rank_decay.powi(accepted_rank as i32);
         accepted_rank += 1;
 
         let temporal_score =
@@ -297,7 +294,9 @@ pub async fn vector_search_phase(
         }
     }
 
-    results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+    results.sort_by(|a, b| {
+        crate::toolkit::mind_toolbox::ranking::desc(&a.combined_score, &b.combined_score)
+    });
 
     if !results.is_empty() {
         let top = results.first().unwrap().combined_score;
@@ -336,6 +335,8 @@ pub async fn graph_expansion_phase(
         config.graph_temporal_weight,
         config.temporal_decay_days,
     );
+    let ew = config.edge_weights;
+    let ed = config.edge_damping;
 
     for hit in vector_hits {
         let client = Arc::clone(&client);
@@ -356,6 +357,8 @@ pub async fn graph_expansion_phase(
                 &mut visited,
                 hit.combined_score,
                 weights,
+                ew,
+                ed,
             )
             .await
         });
@@ -384,6 +387,8 @@ async fn expand_from_node(
     visited: &mut HashSet<String>,
     parent_score: f64,
     graph_weights: (f64, f64, f64, f64),
+    ew: crate::core::config::EdgeWeights,
+    ed: crate::core::config::EdgeDamping,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     debug!("Expanding from node {} at depth {}", node_id, current_depth);
 
@@ -402,7 +407,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.implies_out,
         "IMPLIES",
-        edge_weights::IMPLIES,
+        ew.implies,
         parent_score,
         visited,
         &mut results,
@@ -413,7 +418,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.because_out,
         "BECAUSE",
-        edge_weights::BECAUSE,
+        ew.because,
         parent_score,
         visited,
         &mut results,
@@ -424,7 +429,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.contradicts_out,
         "CONTRADICTS",
-        edge_weights::CONTRADICTS,
+        ew.contradicts,
         parent_score,
         visited,
         &mut results,
@@ -435,7 +440,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.relation_out,
         "MEMORY_RELATION",
-        edge_weights::MEMORY_RELATION,
+        ew.memory_relation,
         parent_score,
         visited,
         &mut results,
@@ -446,7 +451,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.implies_in,
         "IMPLIES_IN",
-        edge_weights::IMPLIES * 0.9,
+        ew.implies * ed.implies_in,
         parent_score,
         visited,
         &mut results,
@@ -457,7 +462,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.because_in,
         "BECAUSE_IN",
-        edge_weights::BECAUSE * 0.85,
+        ew.because * ed.because_in,
         parent_score,
         visited,
         &mut results,
@@ -468,7 +473,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.contradicts_in,
         "CONTRADICTS_IN",
-        edge_weights::CONTRADICTS * 0.8,
+        ew.contradicts * ed.contradicts_in,
         parent_score,
         visited,
         &mut results,
@@ -479,7 +484,7 @@ async fn expand_from_node(
     process_edge_collection(
         &response.relation_in,
         "MEMORY_RELATION_IN",
-        edge_weights::MEMORY_RELATION * 0.6,
+        ew.memory_relation * ed.relation_in,
         parent_score,
         visited,
         &mut results,
@@ -488,7 +493,7 @@ async fn expand_from_node(
     );
 
     if current_depth < max_depth {
-        neighbors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        neighbors.sort_by(|a, b| crate::toolkit::mind_toolbox::ranking::desc(&a.1, &b.1));
         for (neighbor_id, neighbor_score) in neighbors.into_iter().take(3) {
             if !visited.contains(&neighbor_id) {
                 visited.insert(neighbor_id.clone());
@@ -501,6 +506,8 @@ async fn expand_from_node(
                     visited,
                     neighbor_score,
                     graph_weights,
+                    ew,
+                    ed,
                 ))
                 .await?;
                 results.extend(expanded);
@@ -578,7 +585,9 @@ pub fn rank_and_filter(results: Vec<SearchResult>, min_combined_score: f64) -> V
         .filter(|r| r.combined_score >= min_combined_score)
         .collect();
 
-    filtered_results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+    filtered_results.sort_by(|a, b| {
+        crate::toolkit::mind_toolbox::ranking::desc(&a.combined_score, &b.combined_score)
+    });
 
     info!(
         "Phase 3 completed: {} final results",

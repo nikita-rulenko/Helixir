@@ -7,6 +7,57 @@ QUERY getUser(user_id: String) =>
 QUERY addMemory(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// addMemoryWithValidFrom: like addMemory but also sets valid_from explicitly.
+// The schema default `valid_from: String DEFAULT "{{timestamp}}"` is a literal,
+// not a macro (HelixDB's only timestamp default is `DEFAULT NOW`, valid on Date
+// fields only — see #45), so an unset String valid_from persists "{{timestamp}}".
+// Passing it here keeps valid_from a real RFC3339 timestamp without a Date-type
+// migration. Additive — addMemory stays for backward compatibility.
+QUERY addMemoryWithValidFrom(memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
+// #43: atomic content-keyed dedup. UpsertN collapses concurrent identical
+// writes onto ONE canonical Memory (keyed by the INDEX'd content_key), so the
+// read-after-write snapshot lag can't fork it into duplicates; UpsertE makes the
+// per-user HAS_MEMORY link idempotent so the derived user_count stays correct.
+// memory_id must be deterministic (= a function of content_key) so the upsert's
+// update branch is a no-op on identity.
+QUERY addOrLinkMemoryByContentKey(content_key: String, memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String, stance: String, linked_at: String) =>
+  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
+  existing_mem <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  memory <- existing_mem::UpsertN({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
+  existing_link <- E<HAS_MEMORY>
+  link <- existing_link::UpsertE({ context: context_tags, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
+  RETURN memory
+// #54: derive user_count from the live HAS_MEMORY edge set instead of the
+// read-then-write scalar (a lost-update under concurrent linkers).
+QUERY getMemoryUserCount(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  count <- memory::In<HAS_MEMORY>::COUNT
+  RETURN count
+// #43 (personal-node + subscribe-by-fingerprint model): each user keeps their own
+// Memory node; identical facts share a content_key. Collective consensus is the
+// count of users holding any node in the content_key group — derived on read, so
+// there is no shared node to race on. Additive: addMemoryWithValidFrom stays.
+QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
+// Consensus over a fingerprint group: how many distinct holders across all
+// personal nodes that share this content_key.
+QUERY getContentKeyGroupUserCount(content_key: String) =>
+  holders <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))::In<HAS_MEMORY>
+  count <- holders::COUNT
+  RETURN count
+// All personal nodes for a fingerprint group (collective view groups by these).
+QUERY getMemoriesByContentKey(content_key: String) =>
+  memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  RETURN memories
+// Backfill: stamp a content_key fingerprint onto an existing node (hash is
+// computed in Rust; HelixDB only stores it).
+QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ content_key: content_key })
+  RETURN updated
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
@@ -64,6 +115,21 @@ QUERY addMemoryContradiction(from_id: String, to_id: String, resolution: String,
   to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
   contradiction <- AddE<CONTRADICTS>({ resolution: resolution, resolved: resolved, resolution_strategy: resolution_strategy })::From(from_memory)::To(to_memory)
   RETURN contradiction
+
+// Contradiction-debt reconciliation (#45): enumerate a memory's outgoing
+// disputes (edges + their targets, parallel order) so the Cutter can drain the
+// dead ones; and retire the open ones from a memory with a strategy label.
+QUERY getMemoryContradictionsFull(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  out_edges <- memory::OutE<CONTRADICTS>
+  out_targets <- memory::Out<CONTRADICTS>
+  RETURN out_edges, out_targets
+
+QUERY resolveMemoryContradictions(memory_id: String, strategy: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  edges <- memory::OutE<CONTRADICTS>::WHERE(_::{resolved}::EQ(0))
+  updated <- edges::UPDATE({ resolved: 1, resolution_strategy: strategy })
+  RETURN updated
 QUERY addMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
   new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
   old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::FIRST
@@ -115,9 +181,10 @@ QUERY getMemoryByEmbeddingId(embedding_id: ID) =>
   embedding <- V<MemoryEmbedding>(embedding_id)
   memory <- embedding::In<HAS_EMBEDDING>
   RETURN memory
-QUERY addEntityEmbedding(entity_id: ID, vector_data: [F64], content: String, embedding_model: String) =>
+QUERY addEntityEmbedding(entity_id: String, vector_data: [F64], content: String, embedding_model: String) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
   embedding <- AddV<EntityEmbedding>(vector_data, { name: content })
-  link <- AddE<ENTITY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(entity_id)::To(embedding)
+  link <- AddE<ENTITY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(entity)::To(embedding)
   RETURN embedding
 QUERY getEntity(entity_id: String) =>
   entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
@@ -479,6 +546,15 @@ QUERY getMemoryEntities(memory_id: String) =>
   entities <- memory::Out<EXTRACTED_ENTITY>
   mentions <- memory::Out<MENTIONS>
   RETURN entities, mentions
+// #33 relation density: memories linked to a given entity via EXTRACTED_ENTITY,
+// excluding `exclude_memory_id`. The cross-domain bridge primitive — the
+// background consolidate pass (Clotho-lite) uses it to weave reasoning edges
+// between memories that share an entity but are embedding-dissimilar (which
+// similarity alone can never surface). Additive — getMemoryEntities is untouched.
+QUERY getMemoriesByEntity(entity_id: String, exclude_memory_id: String, limit: I64) =>
+  entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
+  memories <- entity::In<EXTRACTED_ENTITY>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories
 
 QUERY getMemoryConcepts(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
@@ -629,6 +705,17 @@ QUERY getMemoryAgent(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   agent <- memory::In<AGENT_CREATED>
   RETURN agent
+
+// Swarm rendezvous (#39): presence lives in the shared graph, so agents on any
+// host see each other through the one DB — no CLI-to-CLI coordination.
+QUERY heartbeatAgent(agent_id: String, host: String, last_seen: String, status: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  updated <- agent::UPDATE({ host: host, last_seen: last_seen, status: status })
+  RETURN updated
+
+QUERY listAgents() =>
+  agents <- N<Agent>
+  RETURN agents
 
 QUERY addConceptIsA(child_id: String, parent_id: String, inheritance_type: String) =>
   child <- N<Concept>::WHERE(_::{concept_id}::EQ(child_id))::FIRST
@@ -792,3 +879,73 @@ QUERY getMemoryStances(memory_id: String) =>
   stance_edges <- memory::InE<HAS_MEMORY>
   knowers <- memory::In<HAS_MEMORY>
   RETURN stance_edges, knowers
+QUERY enqueuePendingInput(pending_id: String, user_id: String, raw_message: String, agent_id: String, context_tags: String, status: String, created_at: String) =>
+  pending <- AddN<PendingInput>({ pending_id: pending_id, user_id: user_id, raw_message: raw_message, agent_id: agent_id, context_tags: context_tags, status: status, created_at: created_at })
+  RETURN pending
+QUERY getPendingInputsByStatus(status: String, limit: I64) =>
+  pending <- N<PendingInput>::WHERE(_::{status}::EQ(status))::RANGE(0, limit)
+  RETURN pending
+QUERY getPendingInput(pending_id: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  RETURN pending
+QUERY updatePendingInput(pending_id: String, status: String, processed_at: String, result: String, error: String) =>
+  pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
+  updated <- pending::UPDATE({ status: status, processed_at: processed_at, result: result, error: error })
+  RETURN updated
+QUERY deletePendingInput(pending_id: String) =>
+  DROP N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))
+  RETURN "ok"
+QUERY enqueueNotice(notice_id: String, user_id: String, kind: String, payload: String, pending_id: String, created_at: String) =>
+  notice <- AddN<MemoryNotice>({ notice_id: notice_id, user_id: user_id, kind: kind, payload: payload, pending_id: pending_id, created_at: created_at })
+  RETURN notice
+QUERY getUndeliveredNotices(user_id: String, limit: I64) =>
+  notices <- N<MemoryNotice>::WHERE(AND(_::{user_id}::EQ(user_id), _::{delivered}::EQ(0)))::RANGE(0, limit)
+  RETURN notices
+QUERY markNoticeDelivered(notice_id: String) =>
+  notice <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))::FIRST
+  updated <- notice::UPDATE({ delivered: 1 })
+  RETURN updated
+// --- Clotho category dictionary queries — Moira #33 (additive) ---
+QUERY addCategory(category_id: String, name: String, kind: String, description: String, created_at: String) =>
+  category <- AddN<Category>({ category_id: category_id, name: name, kind: kind, description: description, created_at: created_at })
+  RETURN category
+QUERY getCategoryByName(name: String) =>
+  category <- N<Category>::WHERE(_::{name}::EQ(name))::FIRST
+  RETURN category
+QUERY getAllCategories(limit: I64) =>
+  categories <- N<Category>::RANGE(0, limit)
+  RETURN categories
+QUERY addCategoryEmbedding(category_id: String, vector_data: [F64], content: String, embedding_model: String) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  embedding <- AddV<CategoryEmbedding>(vector_data, { name: content })
+  link <- AddE<CATEGORY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(category)::To(embedding)
+  RETURN embedding
+QUERY searchSimilarCategories(query_vector: [F64], limit: I64) =>
+  embeddings <- SearchV<CategoryEmbedding>(query_vector, limit)
+  RETURN embeddings
+QUERY linkSubcategory(child_id: String, parent_id: String) =>
+  child <- N<Category>::WHERE(_::{category_id}::EQ(child_id))::FIRST
+  parent <- N<Category>::WHERE(_::{category_id}::EQ(parent_id))::FIRST
+  link <- AddE<SUBCATEGORY_OF>::From(child)::To(parent)
+  RETURN link
+QUERY addCategoryAlias(alias_id: String, canonical_id: String) =>
+  alias <- N<Category>::WHERE(_::{category_id}::EQ(alias_id))::FIRST
+  canonical <- N<Category>::WHERE(_::{category_id}::EQ(canonical_id))::FIRST
+  link <- AddE<ALIAS_OF>::From(alias)::To(canonical)
+  RETURN link
+QUERY tagMemoryWithCategory(memory_id: String, category_id: String, confidence: I64, source: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  link <- AddE<TAGGED_AS>({ confidence: confidence, source: source })::From(memory)::To(category)
+  RETURN link
+QUERY getMemoryCategories(memory_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  categories <- memory::Out<TAGGED_AS>
+  RETURN categories
+QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limit: I64) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories
+QUERY dropConceptByInternalId(concept_internal_id: ID) =>
+  DROP N<Concept>(concept_internal_id)
+  RETURN "deleted"

@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.4.0"
+version = "0.6.0"
 edition = "2024"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
 description = "Ontological memory for LLMs - Rust implementation"
@@ -28,6 +28,11 @@ serde_json = "1.0"
 thiserror = "2.0"
 anyhow = "1.0"
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+dialoguer = "0.11"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -45,10 +50,20 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 strum = { version = "0.26", features = ["derive"] }
 
 # MCP Server (Model Context Protocol)
-rmcp = { version = "0.8", features = ["macros", "server", "transport-io"] }
+# transport-io = stdio (per-client); transport-streamable-http-server = the
+# network gateway (#42, one process per host serving many clients over HTTP).
+rmcp = { version = "0.8", features = [
+    "macros",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+# HTTP host for the gateway's StreamableHttpService (rmcp pins axum 0.8).
+axum = "0.8"
 
 # Config
 config = "0.14"
+toml = "0.8"
 
 # Caching
 lru = "0.12"
@@ -76,8 +91,21 @@ petgraph = "0.8"
 schemars = "1.0"
 moka = { version = "0.12.15", features = ["future"] }
 
+# Local NLI judge (#55) — the ONNX runtime + tokenizer. Optional behind the
+# `nli` feature: it pulls a heavy native dependency (`ort` needs rustc 1.88 and
+# its download-binaries step doesn't link on every CI runner), and NLI is itself
+# opt-in (collective/insights tier). Default builds include it; `--no-default-
+# features` gives a lean core that still compiles on 1.85 and everywhere.
+ort = { version = "2.0.0-rc.12", optional = true }
+tokenizers = { version = "0.23.1", default-features = false, features = ["onig"], optional = true }
+
 # MCP (Model Context Protocol)
 # TODO: Add mcp-rust-sdk when available or implement manually
+
+[features]
+default = ["nli"]
+# Local contradiction-safe paraphrase backstop (DeBERTa NLI via ONNX).
+nli = ["dep:ort", "dep:tokenizers"]
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -97,4 +125,8 @@ path = "src/bin/helixir_deploy.rs"
 [[bin]]
 name = "helixir-bench"
 path = "src/bin/helixir_bench.rs"
+
+[[bin]]
+name = "helixir"
+path = "src/bin/helixir.rs"
 

@@ -282,31 +282,40 @@ For each entity, optionally include "relations" — connections to OTHER entitie
     {
       "from_memory_index": 0,
       "to_memory_index": 1,
-      "relation_type": "IMPLIES|BECAUSE|CONTRADICTS|SUPPORTS",
+      "relation_type": "IMPLIES|BECAUSE|CONTRADICTS|SUPPORTS|RELATES_TO|PART_OF|IS_A",
       "strength": 80,
       "confidence": 80,
       "explanation": "Why this relation exists"
     }
   ]"#,
             );
-            prompt.push_str(r#"
+            prompt.push_str(
+                r#"
 
-Relations use INDICES into the memories array (0-based).
-Relation types:
-- IMPLIES: memory A logically leads to or suggests memory B
-- BECAUSE: memory A is the reason/cause for memory B
-- CONTRADICTS: memory A conflicts with memory B
-- SUPPORTS: memory A provides evidence for memory B
+Relations use INDICES into the memories array (0-based). This typed graph is the
+whole point of the memory — for each related pair, pick the SINGLE most accurate
+edge by this procedure.
 
-Always look for causal and logical connections between extracted memories. If the text contains cause-effect, reasoning, or contradictions, you MUST extract them as relations.
+DECISION PROCEDURE (check in order, STOP at the first match):
+1. Does A cause or explain B?            -> BECAUSE (A is the cause) or IMPLIES (A leads to B)
+2. Is A evidence/justification for B?     -> SUPPORTS
+3. Do A and B conflict?                   -> CONTRADICTS
+4. Is A a COMPONENT / PART / MEMBER of B? -> PART_OF   (wheel PART_OF car; lexer PART_OF compiler)
+5. Is A a KIND / TYPE / INSTANCE of B?    -> IS_A      (dog IS_A animal; Rust IS_A language)
+6. Same topic, none of the above?         -> RELATES_TO
+SUPPORTS is ONLY evidence for a claim — NEVER for components (use PART_OF) or
+categories (use IS_A). Do NOT default to IMPLIES or SUPPORTS.
 
-CRITICAL relation extraction rules:
-- If memory A is the REASON for memory B → relation_type: "BECAUSE"
-- If memory A logically LEADS TO memory B → relation_type: "IMPLIES"
-- If memory A CONFLICTS with memory B → relation_type: "CONTRADICTS"
-- If memory A provides EVIDENCE for memory B → relation_type: "SUPPORTS"
-- Even for 2 memories, check if there is a logical connection between them.
-- Use from_memory_index and to_memory_index (0-based indices into the memories array)."#);
+EXAMPLES (the pair -> the correct edge):
+- "The wheel is round" / "The car has four wheels"        -> PART_OF
+- "Python is interpreted" / "Python is a programming language" -> IS_A
+- "The cache stores sessions" / "The cache uses Redis"    -> RELATES_TO
+- "Tests passed" / "The build is green"                   -> SUPPORTS
+- "The server crashed" / "The disk was full"              -> BECAUSE
+
+Emit an edge for EVERY related pair, even with only 2 memories. Use
+from_memory_index and to_memory_index (0-based)."#,
+            );
         } else {
             prompt.push_str(
                 r#",

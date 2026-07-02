@@ -34,9 +34,12 @@
 - [How It Works](#how-it-works)
   - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
   - [Architecture](#architecture)
+- [**Generative memory — the Moirai**](#generative-memory--the-moirai) — Clotho · Lachesis · Atropos
 - [Ontology](#ontology)
 - [Graph Schema](#graph-schema)
 - [MCP Tools](#mcp-tools)
+- [Glossary](GLOSSARY.md) — PPR, RRF, apophenia gate, the Moirai and the rest of the vocabulary
+- [CLI](#cli) — `helixir setup` + driving the agents
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
@@ -48,7 +51,7 @@
 
 Helixir gives AI agents **memory that persists between sessions** — and more than that: memory that *reasons*. When an agent starts a new conversation, it recalls past decisions, preferences, goals and the **chains of reasoning behind them**, not a flat log of similar text.
 
-Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed logical edges (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`), and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
+Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
 
 Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, Claude Code and any MCP-compatible client.
 
@@ -60,6 +63,8 @@ Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database
 | LLM in the retrieval loop | Read path is LLM-free: ~15–30 ms warm searches, fully local |
 | Single-user silo | Shared graph: one fact, many knowers, consensus ranking, conflict detection |
 | Silent overwrites | Memory charter: conflicting writes escalate to the agent as questions |
+
+And recall is only the floor. Helixir now takes the next step — from *retrieving* chains to **generating** them: three background agents (the Moirai) weave a category layer over the graph and surface non-obvious cross-domain connections as **hypotheses with provenance**. See [Generative memory](#generative-memory--the-moirai).
 
 ## Philosophy
 
@@ -101,12 +106,12 @@ make config         # Print MCP config to paste into your IDE
 
 ### Prerequisites
 
-- **Rust 1.85+** — [rustup.rs](https://rustup.rs)
+- **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
-  - [OpenAI](https://platform.openai.com/api-keys)
-  - [Ollama](https://ollama.com) (local, no key needed)
+  - [DeepSeek](https://platform.deepseek.com) (cheap, ~$0.14/$0.28 per 1M tok)
+  - [Ollama](https://ollama.com) (local, no key needed — auto-fallback when a remote provider is down)
 
 ---
 
@@ -181,6 +186,20 @@ Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on 
 
 ---
 
+## Generative memory — the Moirai
+
+The chain *Rajasthan weather → guar harvest → guar gum → fracking cost → shale stocks* is never a single stored edge — it runs through layers of abstraction. Helixir's next step is to **generate** those connections itself: three background agents, named for the Fates, spin a second axis over the flat graph and surface non-obvious cross-domain links — always as **hypotheses with provenance**, never asserted truth (the charter, extended from stored facts to generated connections).
+
+- **Clotho — the Spinner.** Tags memories from a controlled, self-growing category vocabulary (embedding-match; on a miss it mints a fitting category via the LLM). Shared tags weave distant memories into subsets — a category layer that accretes over the graph from the corpus itself.
+- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it.
+- **Atropos — the Cutter.** Curates the survivors into ranked, deduplicated **insights** carrying provenance and a lifecycle (`proposed → verified → refuted`).
+
+The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli), with a per-Moira cadence (tag every pass, route insights every Nth). Each surviving insight is journaled **and persisted back into the graph** as a first-class hypothesis-memory under `user_id=helixir`, with `SUPPORTS` edges from its witness memories — so any connected agent can recall generated knowledge the same way it recalls stored facts. Drive and watch it all with the [`helixir` CLI](#cli).
+
+> **Status.** The pipeline is built and validated end-to-end — the guar chain reconstructs as a single insight on clean data, and a live multi-agent corpus produced 5-hop cross-domain chains (weather → agriculture → petrochemicals → battery tech). Insight quality tracks tag/corpus hygiene; the provenance is what lets you tell signal from noise.
+
+---
+
 ## Ontology
 
 Every memory is classified into one of **8 concept types**. The LLM extractor assigns the type during ingestion; `search_by_concept` retrieves memories by type.
@@ -229,7 +248,7 @@ The hierarchy enables traversal: searching for "Attribute" returns all facts, pr
 
 ## Graph Schema
 
-Helixir stores everything as a typed graph: **15 node types** connected by **33 edge types**.
+Helixir stores everything as a typed graph: **18 node types** (+ 5 vector-index types) connected by **37 edge types** — including the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) for the generative layer.
 
 ### Node types
 
@@ -250,43 +269,64 @@ Helixir stores everything as a typed graph: **15 node types** connected by **33 
 | **EntityEmbedding** | Vector embedding for entity search | name |
 | **DocPage / DocChunk / CodeExample / ErrorCode** | Documentation pipeline (reserved) | — |
 
+### Memory ↔ memory relations (the edge arsenal)
+
+All seven typed relations between memories persist as ONE physical edge —
+`MEMORY_RELATION` — whose `relation_type` property names the type, so new
+relation types need no schema change. Four are **causal/logical** (these form
+reasoning chains and are what `search_reasoning_chain` walks); three are
+**associative/structural** (relatedness without a causal claim; they surface
+in `get_memory_graph`):
+
+| relation_type | Kind | What it means |
+|:--------------|:-----|:--------------|
+| **IMPLIES** | causal | A logically leads to B |
+| **BECAUSE** | causal | A is the reason for B |
+| **CONTRADICTS** | causal | A conflicts with B |
+| **SUPPORTS** | causal | A provides evidence for B |
+| **RELATES_TO** | associative | Same topic / relatedness, no causal claim |
+| **PART_OF** | associative | A is a part/component of B |
+| **IS_A** | associative | A is a kind/instance of B |
+
+Two dedicated memory→memory edges are written by the **decision engine**
+(not the reasoning arsenal): `SUPERSEDES` (a new fact replaces an outdated
+one — with reason and timestamp) and `CONTRADICTS` (a tracked, resolvable
+conflict — with `resolved` / `resolution_strategy` for the reconcile pass).
+
 ### Edge types (active)
 
-These 24 edge types are used in the current pipeline:
+The other edge types used in the current pipeline:
 
 | Edge | From → To | What it means |
 |:-----|:----------|:--------------|
-| **HAS_MEMORY** | User → Memory | User owns this memory |
+| **HAS_MEMORY** | User → Memory | User owns this memory (consensus `user_count` derives from these) |
 | **INSTANCE_OF** | Memory → Concept | Memory is of this ontology type |
 | **BELONGS_TO_CATEGORY** | Memory → Concept | Memory belongs to this category |
 | **MENTIONS** | Memory → Entity | Memory mentions this entity |
 | **EXTRACTED_ENTITY** | Memory → Entity | Entity was LLM-extracted from this memory |
 | **RELATES_TO** | Entity → Entity | Two entities are related (typed: works_at, uses, etc.) |
 | **VALID_IN** | Memory → Context | Memory applies in this context (work, personal...) |
-| **OCCURRED_IN** | Memory → Context | Memory is about an event in this context |
 | **AGENT_CREATED** | Agent → Memory | This agent created the memory |
 | **HAS_HISTORY** | Memory → HistoryEvent | Audit trail: who changed what and when |
 | **HAS_CHUNK** | Memory → MemoryChunk | Memory split into chunks (long texts) |
 | **NEXT_CHUNK** | MemoryChunk → MemoryChunk | Sequential chunk ordering |
 | **CHUNK_HAS_EMBEDDING** | MemoryChunk → MemoryEmbedding | Chunk's vector index |
-| **MEMORY_RELATION** | Memory → Memory | General relation between memories (typed) |
-| **IMPLIES** | Memory → Memory | A logically leads to B |
-| **BECAUSE** | Memory → Memory | A is the reason for B |
-| **CONTRADICTS** | Memory → Memory | A conflicts with B |
-| **SUPERSEDES** | Memory → Memory | A replaces outdated B |
 | **HAS_EMBEDDING** | Memory → MemoryEmbedding | Memory's vector index for semantic search |
 | **ENTITY_HAS_EMBEDDING** | Entity → EntityEmbedding | Entity's vector index |
 | **HAS_SUBTYPE** | Concept → Concept | Ontology hierarchy (Attribute → Skill) |
-| **PAGE_TO_CHUNK** | DocPage → DocChunk | Documentation structure |
-| **CHUNK_TO_EMBEDDING** | DocChunk → ChunkEmbedding | Documentation vector index |
-| **SUPPORTS** | Memory → Memory | A provides evidence for B |
+| **TAGGED_AS** | Memory → Category | Clotho's category tag (the Moirai substrate) |
 
 ### Edge types (reserved)
 
-These 9 edge types are defined in the schema with HQL queries ready, but not yet called from the Rust pipeline. They are infrastructure for planned features:
+These edge types are defined in the schema with HQL queries ready, but not
+yet called from the Rust pipeline. They are infrastructure for planned
+features. (Dedicated `IMPLIES` / `BECAUSE` / `SUPPORTS` edge declarations
+also remain in the schema, but the pipeline persists those types via
+`MEMORY_RELATION.relation_type` — see above.)
 
 | Edge | From → To | Planned use |
 |:-----|:----------|:------------|
+| OCCURRED_IN | Memory → Context | Event-time context linking |
 | IN_SESSION | User → Session | Session tracking |
 | CREATED_IN | Memory → Session | Which session created this memory |
 | IS_A | Concept → Concept | Dynamic ontology extension |
@@ -305,12 +345,16 @@ These 9 edge types are defined in the schema with HQL queries ready, but not yet
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Charter conflicts come back in `needs_clarification` |
-| `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal modes: `recent` (4h), `contextual` (30d), `deep` (90d), `full`. Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
-| `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts, with edge types and cumulative confidence |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
+| `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
+| `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
+| `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
 | `search_by_concept` | Filter by ontology type: skill, preference, goal, fact, opinion, experience, achievement, action |
 | `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS — LLM-free |
-| `get_memory_graph` | Return memory as a graph of nodes and edges |
+| `get_memory_graph` | Return memory as a graph of nodes and typed edges — causal (IMPLIES/BECAUSE/SUPPORTS/CONTRADICTS) plus associative (RELATES_TO/PART_OF/IS_A) |
+| `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
+| `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
+| `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
 | `update_memory` | Modify existing memory content |
 | `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
 
@@ -334,7 +378,36 @@ If a session times out, partial thoughts are auto-saved with an `[INCOMPLETE]` t
 
 ---
 
+## CLI
+
+Beyond the MCP server, the `helixir` binary drives and monitors the generative agents:
+
+```bash
+helixir setup                          # interactive: configure + wire the MCP server into
+                                       #   Claude Code / Claude Desktop / Cursor / Gemini CLI
+helixir mode                           # show the privilege tier (solo | collective | insights)
+helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
+helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
+helixir categories                     # the category dictionary + member counts (coverage)
+helixir clotho grow --user <id>        # tag a user's memories, growing the dictionary on misses
+helixir lachesis route --seed <cat>    # route a cross-domain subset thread (with witnesses)
+helixir atropos                        # curate threads into ranked, journaled insights
+helixir pipeline --user <id>           # one orchestrated pass: Clotho → Lachesis → Atropos
+helixir daemon start --user <id> --interval 600   # run passes in the background
+helixir daemon status | stop           # inspect / stop the background daemon
+#   per-Moira cadence: --clotho-every 1 --insight-every 3 --merge-every 5 --reconcile-every 5
+#   (1 = every pass, N = every Nth, 0 = never; defaults live in moira.daemon.* of helixir.toml)
+helixir merge --limit <n>              # run the NLI paraphrase backstop once (collective)
+helixir journal | insights             # activity + insight journals (with provenance)
+```
+
+`helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.
+
 ## Integration
+
+> The quickest path is **`helixir setup`** (above) — it detects your clients and writes the config for you. The manual JSON below is for reference or custom setups.
+
+> **Make your agents *use* the memory well.** Wiring the MCP server is step one; the [`integration/`](integration/) templates (a drop-in `AGENTS.md` and a Claude `SKILLS.md`) encode how an agent should recall before answering, capture durable facts, and reason with FastThink — the same rules the maintainers run, so your agents get the same quality.
 
 ### Cursor
 
@@ -407,13 +480,20 @@ All settings are passed as environment variables.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `openai`, `ollama` |
+| `HELIXIR_MODE` | `solo` | Privilege tier: `solo` (private, no cross-user), `collective` (shared consensus), `insights` (+ generative Moirai) |
+| `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
 | `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name |
-| `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama) |
+| `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
 | `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
 | `RUST_LOG` | `helixir=warn` | Log level |
+
+> **Automatic local fallback.** When the remote LLM provider (Cerebras /
+> DeepSeek) is unreachable, Helixir transparently retries the same request
+> against a local Ollama model (`qwen2.5:7b` by default) so a write never
+> fails on a remote outage. Enabled by default; tune via the `llm_fallback_*`
+> keys in `helixir.toml`.
 
 ### Provider presets
 
@@ -434,35 +514,36 @@ HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
 </details>
 
 <details>
-<summary><b>Fully local with Ollama</b> (no API keys, fully private)</summary>
+<summary><b>DeepSeek + OpenRouter</b> (cheapest remote — ~$0.0001 per write)</summary>
 
 ```bash
-# Install Ollama: https://ollama.com
-ollama pull llama3:8b
-ollama pull nomic-embed-text
+HELIX_LLM_PROVIDER=deepseek
+HELIX_LLM_MODEL=deepseek-v4-flash   # non-thinking mode is selected automatically
+HELIX_LLM_API_KEY=sk-xxx            # https://platform.deepseek.com
 
-HELIX_LLM_PROVIDER=ollama
-HELIX_LLM_MODEL=llama3:8b
-HELIX_LLM_BASE_URL=http://localhost:11434
-
-HELIX_EMBEDDING_PROVIDER=ollama
-HELIX_EMBEDDING_URL=http://localhost:11434
-HELIX_EMBEDDING_MODEL=nomic-embed-text
+HELIX_EMBEDDING_PROVIDER=openai
+HELIX_EMBEDDING_URL=https://openrouter.ai/api/v1
+HELIX_EMBEDDING_MODEL=nomic-embed-text-v1.5
+HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
 ```
 
 </details>
 
 <details>
-<summary><b>OpenAI only</b> (simple, one API key)</summary>
+<summary><b>Fully local with Ollama</b> (no API keys, fully private)</summary>
 
 ```bash
-HELIX_LLM_PROVIDER=openai
-HELIX_LLM_MODEL=gpt-4o-mini
-HELIX_LLM_API_KEY=sk-xxx
+# Install Ollama: https://ollama.com
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 
-HELIX_EMBEDDING_PROVIDER=openai
-HELIX_EMBEDDING_MODEL=text-embedding-3-small
-HELIX_EMBEDDING_API_KEY=sk-xxx
+HELIX_LLM_PROVIDER=ollama
+HELIX_LLM_MODEL=qwen2.5:7b
+HELIX_LLM_BASE_URL=http://localhost:11434
+
+HELIX_EMBEDDING_PROVIDER=ollama
+HELIX_EMBEDDING_URL=http://localhost:11434
+HELIX_EMBEDDING_MODEL=nomic-embed-text
 ```
 
 </details>
@@ -512,8 +593,8 @@ helixir-rs/
         mind_toolbox/           # Search engine, entity, ontology, reasoning
         fast_think/             # Working memory (petgraph-based)
     schema/
-      schema.hx                 # Node/edge definitions (15 nodes, 33 edges)
-      queries.hx                # HQL queries (120)
+      schema.hx                 # Node/edge definitions (18 nodes + 5 vectors, 37 edges)
+      queries.hx                # HQL queries (153)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)

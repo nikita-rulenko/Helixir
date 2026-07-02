@@ -31,4 +31,4 @@ mod entity_links;
 mod orchestrate;
 mod prepare;
 mod recall;
-mod store;
+pub(crate) mod store;

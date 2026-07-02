@@ -30,8 +30,9 @@ pub fn build_decision_prompt(
                 String::new()
             };
             format!(
-                "  ID: {}\n  Content: {}\n  Similarity: {:.2}\n  Created: {}\n{}",
+                "  ID: {}\n  Type: {}\n  Content: {}\n  Similarity: {:.2}\n  Created: {}\n{}",
                 m.id,
+                m.memory_type.as_deref().unwrap_or("unknown"),
                 m.content,
                 m.score,
                 m.created_at.as_deref().unwrap_or("unknown"),
@@ -97,10 +98,22 @@ pub fn build_decision_prompt(
 **User ID:** {user_id}
 
 **Your Task:**
-Decide what to do with the new memory. Choose ONE operation:
+Decide what to do with the new memory. Choose ONE operation.
+
+**FIRST apply the SAME-SUBJECT GATE (prevents false merges/conflicts):**
+UPDATE, SUPERSEDE, CONTRADICT and DELETE may be used ONLY when the new memory and
+the candidate describe the SAME SPECIFIC subject — the same entity, the same
+attribute, the same question. High topical similarity is NOT enough: two facts
+about "deduplication", or two facts mentioning "the MCP server", can score
+similar yet describe DIFFERENT things. If they are merely on a RELATED topic
+(not the same specific claim), the answer is ADD — then wire a RELATES_TO edge.
+When unsure, prefer ADD: a wrong merge/supersede DESTROYS information, while a
+missed one is only a harmless duplicate. Never UPDATE/SUPERSEDE/CONTRADICT just
+because two memories share keywords or a theme.
 
 1. **ADD** - Add as completely new memory
-   - Use when: Information is new and different
+   - Use when: Information is new, OR is only topically related to a candidate
+     (different specific subject) — this is the DEFAULT when the gate fails
 
 2. **UPDATE** - Update existing memory with new information
    - Use when: New memory enhances or extends existing one
@@ -125,6 +138,29 @@ Decide what to do with the new memory. Choose ONE operation:
    - Use when: Two memories contradict but both might be valid
    - Set `contradicts_memory_id` to conflicting memory ID
 {cross_user_section}
+
+**ALWAYS build typed edges via `relates_to` (this is the core value of the graph):**
+Independently of the operation above, wire the new memory into the existing ones
+it genuinely connects to. `relates_to` is a list of [existing_memory_id, EDGE_TYPE]
+pairs. Pick the MOST SPECIFIC edge type; do NOT default everything to IMPLIES:
+- CAUSAL/LOGICAL: BECAUSE (A is the cause of B), IMPLIES (A logically leads to B),
+  SUPPORTS (A is evidence for B), CONTRADICTS (A conflicts with B).
+- ASSOCIATIVE/STRUCTURAL: RELATES_TO (same topic / strongly related, no cause or
+  hierarchy), PART_OF (A is a component of B), IS_A (A is a kind/instance of B).
+Use the `Type:` (ontology) of each memory as a signal: two `preference`/`opinion`
+memories on one topic that differ are usually CONTRADICT/SUPERSEDE; a `fact` that
+elaborates another `fact` is RELATES_TO or SUPPORTS; a narrower concept under a
+broader one is IS_A or PART_OF. When you choose ADD/UPDATE/NOOP and the new memory
+is still topically related to a similar one, emit a RELATES_TO edge so the graph
+stays connected rather than leaving orphan nodes.
+WORKED EXAMPLE — new memory "The lexer turns source text into tokens" with
+candidates [mem_1 "The compiler translates source to machine code", mem_2 "A
+compiler is a kind of language tool"]: operation ADD, and
+relates_to = [["mem_1","PART_OF"]] (the lexer is a component of the compiler) —
+NOT SUPPORTS or IMPLIES. If a candidate were "Rust is a programming language" and
+the new memory were "Rust is a systems language", that pair is IS_A. Reach for
+PART_OF/IS_A whenever the structural relation is real; only fall back to
+RELATES_TO when no component/kind relation holds.
 
 **Response Format (JSON):**
 {{
@@ -162,8 +198,11 @@ pub fn build_batch_decision_prompt(
                 .iter()
                 .map(|m| {
                     format!(
-                        "    - id: {} | sim: {:.2} | text: {}",
-                        m.id, m.score, m.content
+                        "    - id: {} | type: {} | sim: {:.2} | text: {}",
+                        m.id,
+                        m.memory_type.as_deref().unwrap_or("unknown"),
+                        m.score,
+                        m.content
                     )
                 })
                 .collect::<Vec<_>>()
@@ -178,14 +217,18 @@ pub fn build_batch_decision_prompt(
 
 Operations: ADD (new info) | UPDATE (extends an existing memory; provide merged_content about ONE topic, no contradictions) | NOOP (duplicate) | SUPERSEDE (replaces an outdated version; set supersedes_memory_id) | CONTRADICT (conflicts but both may be valid; set contradicts_memory_id) | DELETE (old one is plainly wrong; set target_memory_id).
 
-Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND whenever both memories answer the same mutable question (state/status/plan) with the new one reporting a later state — even if worded differently; UPDATE for added detail; NOOP for duplicates; never merge unrelated topics.
+SAME-SUBJECT GATE (most important): UPDATE/SUPERSEDE/CONTRADICT/NOOP/DELETE are allowed ONLY when the item and the candidate are about the SAME SPECIFIC subject (same entity + same attribute/claim). Shared keywords or a shared theme is NOT enough — two facts both about "dedup" or both mentioning "the MCP server" are usually DIFFERENT facts → ADD. If in doubt, ADD (a wrong merge destroys info; a missed one is a harmless duplicate).
+
+Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND whenever both memories answer the same mutable question (state/status/plan) with the new one reporting a later state — even if worded differently; UPDATE for added detail; NOOP for exact duplicates; never merge unrelated or merely-related topics.
+
+ALSO build typed edges: for each item, set `relates_to` to a list of [candidate_id, EDGE_TYPE] for every candidate the item genuinely connects to (even when the operation is ADD/NOOP — keep the graph connected). EDGE_TYPE, most specific first: BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS (causal) or RELATES_TO / PART_OF / IS_A (associative). Do not default to IMPLIES; use RELATES_TO for plain topical relatedness. Use each candidate's `type:` (ontology) as a signal.
 
 **User ID:** {user_id}
 
 {items_str}
 
 Respond with JSON only:
-{{"decisions":[{{"i": <item number>, "operation": "ADD|UPDATE|NOOP|SUPERSEDE|CONTRADICT|DELETE", "target_memory_id": null, "confidence": 0-100, "reasoning": "...", "merged_content": null, "supersedes_memory_id": null, "contradicts_memory_id": null}}]}}
+{{"decisions":[{{"i": <item number>, "operation": "ADD|UPDATE|NOOP|SUPERSEDE|CONTRADICT|DELETE", "target_memory_id": null, "confidence": 0-100, "reasoning": "...", "merged_content": null, "supersedes_memory_id": null, "contradicts_memory_id": null, "relates_to": [["mem_xxx","RELATES_TO"]] }}]}}
 Every item number must appear exactly once."#
     )
 }

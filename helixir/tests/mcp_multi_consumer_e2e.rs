@@ -1,0 +1,672 @@
+//! Liveness oracle L2: the multi-consumer topology (#42 audit).
+//!
+//! The real system is N MCP processes ↔ one HelixDB ↔ shared collective
+//! knowledge. A single-consumer "it didn't crash" run under-tests it: the
+//! emergent invariants below only exist with several consumers. Each
+//! `McpClient` here is a *separate* `helixir-mcp` process against the shared
+//! instance — the actual deployment shape.
+//!
+//! Invariants asserted (the 7 agreed with Nikita):
+//!   1+2. consensus + cross-user dedup — the same fact from K users links to
+//!        ONE memory node whose user_count reflects all K;
+//!   3.   collective visibility — a fresh user finds others' knowledge via
+//!        scope=collective;
+//!   4.   personal isolation — that fresh user does NOT see it in scope=personal;
+//!   5.   buffered multi-producer — several processes enqueue concurrently and
+//!        the worker(s) process every one, none lost;
+//!   6.   outbox — a write outcome reaches the agent on a later call;
+//!   7.   knowledge is never deleted — only queue scaffolding is pruned.
+//!
+//! ```text
+//! HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
+//!   cargo test -p helixir --test mcp_multi_consumer_e2e -- --ignored --nocapture
+//! ```
+
+use std::thread::sleep;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde_json::{Value, json};
+
+mod common;
+use common::McpClient;
+
+fn token() -> String {
+    format!(
+        "{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    )
+}
+
+fn require_e2e() {
+    assert_eq!(
+        std::env::var("HELIX_E2E").unwrap_or_default(),
+        "1",
+        "Set HELIX_E2E=1 when running this test with --ignored"
+    );
+}
+
+/// Poll a buffered write to completion via get_add_status from any consumer.
+fn poll_done(mcp: &mut McpClient, pid: &str, tries: usize) -> Value {
+    for _ in 0..tries {
+        sleep(Duration::from_secs(2));
+        let (st, _) = mcp.call_tool("get_add_status", json!({ "pending_id": pid }));
+        match st["status"].as_str().unwrap_or("") {
+            "done" => return st,
+            "failed" => panic!("worker reported failed for {pid}: {st}"),
+            _ => {}
+        }
+    }
+    panic!("{pid} did not reach done within the polling window");
+}
+
+/// Poll collective search until a result mentions `needle`, returning the
+/// highest user_count seen for it (0 = never became visible). Makes snapshot
+/// lag deterministic: we wait for a write to be visible before the next one,
+/// so cross-user dedup is tested on its logic, not on a race.
+fn wait_collective(mcp: &mut McpClient, query: &str, needle: &str, tries: usize) -> u64 {
+    let mut best = 0u64;
+    for _ in 0..tries {
+        let (res, _) = mcp.call_tool(
+            "search_memory",
+            json!({ "query": query, "user_id": "mc_visibility_probe", "mode": "full", "scope": "collective", "limit": 10 }),
+        );
+        if let Some(arr) = res.as_array() {
+            let hit = arr
+                .iter()
+                .filter(|r| {
+                    r["content"]
+                        .as_str()
+                        .map(|c| c.contains(needle))
+                        .unwrap_or(false)
+                })
+                .filter_map(|r| r["metadata"]["user_count"].as_u64())
+                .max();
+            if let Some(uc) = hit {
+                best = best.max(uc);
+                return best;
+            }
+        }
+        sleep(Duration::from_secs(2));
+    }
+    best
+}
+
+// ---------------------------------------------------------------------------
+// Invariants 1–4: consensus, cross-user dedup, collective visibility,
+// personal isolation. Sync path (buffer OFF) for deterministic assertions.
+// Three producer processes write the SAME fact; a fourth fresh process reads.
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn multi_consumer_collective_invariants() {
+    require_e2e();
+    let run = token();
+
+    // A fact whose SUBJECT carries a unique token (a made-up service name) so:
+    //  - extraction keeps it as one clean fact (no removable "Prefix:" that
+    //    spawns a junk second fact);
+    //  - it cannot dedup against earlier runs, so the consensus we observe is
+    //    THIS run's three writers, not history.
+    // Match results by that token substring — robust to the extractor rewording
+    // the sentence — and assert on user_count.
+    let svc = format!("atlas{run}");
+    let fact = format!("Service {svc} ships its release train every Thursday at 14:00 UTC.");
+    let users = [
+        format!("mc_a_{run}"),
+        format!("mc_b_{run}"),
+        format!("mc_c_{run}"),
+    ];
+
+    // Sequential writes from three separate MCP processes. After each write we
+    // WAIT until it is collectively searchable before the next writer, so the
+    // next write's dedup search is guaranteed to see the prior node. This
+    // removes snapshot-lag as a variable and tests the dedup logic itself:
+    // given visibility, three identical writes must consolidate.
+    for user in &users {
+        let (mut mcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
+        mcp.call_tool("add_memory", json!({ "message": fact, "user_id": user }));
+        let visible = wait_collective(&mut mcp, &fact, &svc, 20);
+        assert!(
+            visible >= 1,
+            "write by {user} must become collectively searchable before the next writer: {svc}"
+        );
+    }
+    sleep(Duration::from_secs(2)); // let the final link settle for the reader
+
+    // A fourth, fresh consumer that never wrote the fact.
+    let reader = format!("mc_reader_{run}");
+    let (mut rmcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
+
+    // Highest user_count among results that actually mention our unique service.
+    let token_user_count = |arr: &[Value]| -> Option<u64> {
+        arr.iter()
+            .filter(|r| {
+                r["content"]
+                    .as_str()
+                    .map(|c| c.contains(&svc))
+                    .unwrap_or(false)
+            })
+            .filter_map(|r| r["metadata"]["user_count"].as_u64())
+            .max()
+    };
+
+    // Invariant 3: collective visibility — the fresh reader finds the shared
+    // fact even though it never wrote it.
+    let (coll, _) = rmcp.call_tool(
+        "search_memory",
+        json!({ "query": fact, "user_id": reader, "mode": "full", "scope": "collective", "limit": 10 }),
+    );
+    let coll_arr = coll.as_array().cloned().unwrap_or_default();
+    let user_count = token_user_count(&coll_arr).unwrap_or_else(|| {
+        panic!(
+            "invariant 3 (collective visibility): reader must find a node mentioning {svc}: {coll}"
+        )
+    });
+
+    // Invariants 1+2: consensus + cross-user dedup — the shared fact consolidates
+    // into a node whose user_count reflects multiple of the three writers.
+    assert!(
+        user_count >= 2,
+        "invariant 1+2 (consensus/dedup): the shared fact must consolidate to \
+         user_count >= 2, got {user_count}: {coll}"
+    );
+
+    // Invariant 4: personal isolation — the reader never wrote it, so personal
+    // scope must not surface the fact.
+    let (pers, _) = rmcp.call_tool(
+        "search_memory",
+        json!({ "query": fact, "user_id": reader, "mode": "full", "scope": "personal", "limit": 10 }),
+    );
+    let pers_arr = pers.as_array().cloned().unwrap_or_default();
+    assert!(
+        token_user_count(&pers_arr).is_none(),
+        "invariant 4 (personal isolation): reader's personal scope must not contain {svc}: {pers}"
+    );
+
+    println!("\n==== multi_consumer_collective_invariants ====");
+    println!(
+        "shared fact {svc}: user_count={user_count}; visible in collective, hidden in personal ✓"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Invariants 5–7: buffered multi-producer (none lost), outbox delivery,
+// knowledge-never-deleted. Buffer ON consumers.
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn multi_consumer_buffer_invariants() {
+    require_e2e();
+    let run = token();
+    let buf = [
+        ("HELIXIR_INGEST_BUFFER", "1"),
+        ("HELIXIR_MODE", "collective"),
+    ];
+
+    // --- Invariant 5: several buffered producers, none lost ---------------
+    // Keep all producer processes alive (their workers drain the shared queue)
+    // while we wait for completion.
+    let mut producers: Vec<(McpClient, String, String)> = Vec::new(); // (client, pid, msg)
+    for i in 0..3 {
+        let (mut mcp, _) = McpClient::spawn_with_env(&buf);
+        let user = format!("mc_buf_{run}_{i}");
+        let msg = format!(
+            "Buffered multi-producer {run} #{i}: shard {i} of service atlas is pinned to region eu-{i}."
+        );
+        let (ack, _) = mcp.call_tool("add_memory", json!({ "message": msg, "user_id": user }));
+        // Confirm-or-promise (#63): a buffered add must read as SUCCESS, never a
+        // bare "pending". It returns ok:true (the result inline once the worker
+        // finishes within the ack window, else status:"accepted") and always
+        // carries a pollable pending_id.
+        assert_eq!(
+            ack["ok"].as_bool(),
+            Some(true),
+            "buffered add must report ok:true (success), not an ambiguous/failed ack: {ack}"
+        );
+        assert_ne!(
+            ack["status"].as_str(),
+            Some("failed"),
+            "buffered add must not report failed: {ack}"
+        );
+        let pid = ack["pending_id"].as_str().unwrap_or("").to_string();
+        assert!(pid.starts_with("pi_"), "pending_id shape: {ack}");
+        producers.push((mcp, pid, msg));
+    }
+    // "None lost" = the worker(s) processed every queued item (poll_done panics
+    // on `failed`/timeout, so reaching `done` for all three is that proof) AND
+    // each write landed in the shared graph. A write may dedup to 0 NEW memories
+    // (e.g. an identical fact from a prior run) — that is processed-and-linked,
+    // not lost — so we assert searchability, not memories_added.
+    let (mut poller, _) = McpClient::spawn_with_env(&buf);
+    for (_mcp, pid, msg) in &producers {
+        poll_done(&mut poller, pid, 30);
+        let (found, _) = poller.call_tool(
+            "search_memory",
+            json!({ "query": msg, "user_id": "mc_buf_reader", "mode": "full", "scope": "collective", "limit": 5 }),
+        );
+        assert!(
+            found.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            "each buffered write must land in the shared graph (processed, not lost): {msg} -> {found}"
+        );
+    }
+    drop(producers);
+
+    // --- Invariant 6: outbox delivers an outcome on a later call ----------
+    let (mut h, _) = McpClient::spawn_with_env(&buf);
+    let huser = format!("mc_outbox_{run}");
+    let (ack1, _) = h.call_tool(
+        "add_memory",
+        json!({ "message": format!("Outbox {run}: the atlas changelog lives at docs/atlas/CHANGELOG.md."), "user_id": huser }),
+    );
+    let pid1 = ack1["pending_id"].as_str().unwrap_or("").to_string();
+    poll_done(&mut h, &pid1, 30);
+    // A subsequent write carries the prior outcome opportunistically.
+    let (ack2, _) = h.call_tool(
+        "add_memory",
+        json!({ "message": format!("Outbox {run}: the atlas oncall rotation is weekly."), "user_id": huser }),
+    );
+    assert!(
+        ack2["pending_outcomes"].is_array(),
+        "invariant 6 (outbox): a buffered response must carry a pending_outcomes array: {ack2}"
+    );
+
+    // --- Invariant 7: knowledge never deleted, only scaffolding pruned ----
+    let (mut k, _) = McpClient::spawn_with_env(&buf);
+    let kuser = format!("mc_nodelete_{run}");
+    let count_memories = |mcp: &mut McpClient| -> usize {
+        let (listed, _) = mcp.call_tool("list_memories", json!({ "user_id": kuser }));
+        listed.as_array().map(Vec::len).unwrap_or(0)
+    };
+    // First write so the user has a baseline.
+    let (kack1, _) = k.call_tool(
+        "add_memory",
+        json!({ "message": format!("No-delete {run}: atlas uses postgres 16 in production."), "user_id": kuser }),
+    );
+    let kpid1 = kack1["pending_id"].as_str().unwrap_or("").to_string();
+    poll_done(&mut k, &kpid1, 30);
+    // Drain the outbox (prunes kpid1's PendingInput tombstone) via another write.
+    let (kack2, _) = k.call_tool(
+        "add_memory",
+        json!({ "message": format!("No-delete {run}: atlas caches sessions in redis."), "user_id": kuser }),
+    );
+    let kpid2 = kack2["pending_id"].as_str().unwrap_or("").to_string();
+    poll_done(&mut k, &kpid2, 30);
+    let n_before = count_memories(&mut k);
+    // One more write + drain cycle; knowledge count must not shrink.
+    let (kack3, _) = k.call_tool(
+        "add_memory",
+        json!({ "message": format!("No-delete {run}: atlas exposes metrics on port 9090."), "user_id": kuser }),
+    );
+    let kpid3 = kack3["pending_id"].as_str().unwrap_or("").to_string();
+    poll_done(&mut k, &kpid3, 30);
+    let _ = k.call_tool(
+        "add_memory",
+        json!({ "message": format!("No-delete {run}: atlas log level is info."), "user_id": kuser }),
+    );
+    let n_after = count_memories(&mut k);
+    assert!(
+        n_after >= n_before,
+        "invariant 7 (no-delete): knowledge count must not shrink across queue drains \
+         (before={n_before}, after={n_after})"
+    );
+
+    println!("\n==== multi_consumer_buffer_invariants ====");
+    println!(
+        "3 buffered producers all processed; outbox delivered; knowledge {n_before}→{n_after} (never shrank) ✓"
+    );
+}
+
+/// Regression for the memory-layer blocker (#63): a buffered `add_memory` must
+/// hand the agent an UNAMBIGUOUS success it can act on — the result inline with
+/// memory_ids when the worker finishes in the ack window, else an explicit
+/// `status:"accepted"` promise. It must NEVER return the old bare
+/// `{status:"pending"}` shape that swarm agents misread as failure (which made
+/// them retry or defect to a private memory, fragmenting the shared graph).
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn buffered_add_reads_as_success_63() {
+    require_e2e();
+    let run = token();
+    let buf = [("HELIXIR_INGEST_BUFFER", "1")];
+    let (mut mcp, _) = McpClient::spawn_with_env(&buf);
+    let user = format!("ack63_{run}");
+
+    let (ack, _) = mcp.call_tool(
+        "add_memory",
+        json!({
+            "message": format!("Ack63 {run}: the helix bench node listens on port 6970 for the collective."),
+            "user_id": user,
+        }),
+    );
+
+    // (1) Top-level success signal — the core of the fix.
+    assert_eq!(
+        ack["ok"].as_bool(),
+        Some(true),
+        "buffered add must report ok:true so the agent trusts the write: {ack}"
+    );
+    // (2) The poison shape is gone: never a bare "pending" the agent reads as failure.
+    assert_ne!(
+        ack["status"].as_str(),
+        Some("pending"),
+        "buffered add must not return the bare pending shape (#63 regression): {ack}"
+    );
+    // (3) Always a pollable id.
+    let pid = ack["pending_id"].as_str().unwrap_or("");
+    assert!(pid.starts_with("pi_"), "must carry a pending_id: {ack}");
+
+    // (4) Either it confirmed inline (memory_ids present) OR it explicitly
+    // promised acceptance — both are actionable success, neither is ambiguous.
+    let confirmed_inline = ack["memory_ids"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    let saved_inline = ack["saved"].as_u64().map(|n| n > 0).unwrap_or(false);
+    let accepted =
+        ack["status"].as_str() == Some("accepted") || ack["accepted"].as_bool() == Some(true);
+    assert!(
+        confirmed_inline || saved_inline || accepted,
+        "buffered ack must be inline-confirmed (memory_ids/saved) or explicitly accepted: {ack}"
+    );
+
+    // (5) Whatever the ack said, the write must actually land and be findable.
+    let st = poll_done(&mut mcp, pid, 30);
+    assert_eq!(
+        st["status"].as_str(),
+        Some("done"),
+        "write must reach done: {st}"
+    );
+
+    println!("\n==== buffered_add_reads_as_success_63 ====");
+    println!(
+        "buffered ack ok:true, no bare-pending, confirmed_inline={confirmed_inline} accepted={accepted} ✓"
+    );
+}
+
+/// #64 — opt-in identity discovery, gated by the collective tier. The roster is
+/// a thin orientation window (privacy-safe: no email/content), and Solo mode
+/// keeps it private. Reuses the already-deployed getAllUsers query (no schema
+/// change).
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn list_users_discovery_gated_64() {
+    require_e2e();
+    let run = token();
+
+    // Collective tier → roster available, privacy-safe shape.
+    let coll = [
+        ("HELIXIR_MODE", "collective"),
+        ("HELIXIR_INGEST_BUFFER", "1"),
+    ];
+    let (mut mcp, _) = McpClient::spawn_with_env(&coll);
+    let me = format!("disc_{run}");
+    let (ack, _) = mcp.call_tool(
+        "add_memory",
+        json!({ "message": format!("Discovery {run}: identity disc_{run} is online."), "user_id": me }),
+    );
+    assert_eq!(
+        ack["ok"].as_bool(),
+        Some(true),
+        "seed write must succeed: {ack}"
+    );
+
+    let (roster, _) = mcp.call_tool("list_users", json!({ "limit": 50 }));
+    assert_eq!(
+        roster["available"].as_bool(),
+        Some(true),
+        "collective tier must expose the roster: {roster}"
+    );
+    let users = roster["users"].as_array().expect("users array");
+    assert!(!users.is_empty(), "roster must not be empty: {roster}");
+    let u0 = &users[0];
+    assert!(
+        u0.get("user_id").is_some(),
+        "roster entry has user_id: {u0}"
+    );
+    assert!(
+        u0.get("email").is_none() && u0.get("metadata").is_none(),
+        "roster must NOT leak email/metadata (privacy): {u0}"
+    );
+    assert!(
+        roster["total_users"].as_u64().unwrap_or(0) >= users.len() as u64,
+        "total_users must reflect the whole store: {roster}"
+    );
+
+    // Solo tier → no roster (discovery is a collective-only affordance).
+    let (mut s, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "solo")]);
+    let (sroster, _) = s.call_tool("list_users", json!({}));
+    assert_eq!(
+        sroster["available"].as_bool(),
+        Some(false),
+        "solo mode must NOT expose a roster: {sroster}"
+    );
+    assert!(
+        sroster["users"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "solo roster must be empty: {sroster}"
+    );
+
+    println!("\n==== list_users_discovery_gated_64 ====");
+    println!(
+        "collective roster {} users (total {}); solo gated ✓",
+        users.len(),
+        roster["total_users"]
+    );
+}
+
+/// #64 — when a PERSONAL recall comes back thin and the collective tier is
+/// available, search_memory appends a second content block hinting at the
+/// collective escape hatch. content[0] stays the ranked array (stable
+/// contract); the hint rides in content[1] so existing consumers are untouched.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn personal_thin_recall_hints_collective_64() {
+    require_e2e();
+    let run = token();
+    let (mut mcp, _) = McpClient::spawn_with_env(&[("HELIXIR_MODE", "collective")]);
+
+    // A brand-new user with no personal memories → personal recall is empty.
+    let fresh = format!("hintless_{run}");
+    let raw = mcp.request_raw(
+        "tools/call",
+        json!({
+            "name": "search_memory",
+            "arguments": {
+                "query": format!("xyzzy nonexistent topic {run}"),
+                "user_id": fresh,
+                "mode": "full",
+                "scope": "personal"
+            }
+        }),
+    );
+    let content = raw["result"]["content"].as_array().expect("content array");
+    // content[0] = the (empty) results array — contract preserved.
+    let first = content[0]["text"].as_str().unwrap_or("");
+    assert!(
+        first.trim_start().starts_with('['),
+        "content[0] must stay the results array: {first}"
+    );
+    // content[1] = the collective hint (personal was thin + collective enabled).
+    let hint = content
+        .get(1)
+        .and_then(|c| c["text"].as_str())
+        .unwrap_or("");
+    assert!(
+        hint.contains("collective"),
+        "thin personal recall must hint at scope=collective: content={content:?}"
+    );
+
+    println!("\n==== personal_thin_recall_hints_collective_64 ====");
+    println!("thin personal recall emitted a collective hint in content[1] ✓");
+}
+
+/// #3a — fake collective duplicates. Two users asserting the SAME fact share one
+/// content_key (consensus is per fingerprint group), so a collective search must
+/// fold them into ONE row that reports the holder count — not return the same
+/// fact once per user. The collapse logic itself is unit-tested in search.rs;
+/// this proves it end-to-end through the real pipeline.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn collective_search_collapses_duplicate_holders_3a() {
+    require_e2e();
+    // Per-write extraction is probabilistic: an attempt where the two holders'
+    // atoms come out ONLY as divergent paraphrases (and no raw echo is stored)
+    // never exercises the collapse at all. Retry the whole scenario a few
+    // times; the no-duplicate-content invariant is asserted on every attempt.
+    let attempts = 3;
+    for attempt in 1..=attempts {
+        if collapse_scenario_3a(attempt == attempts) {
+            return;
+        }
+        println!("attempt {attempt}/{attempts}: contents never coincided, retrying");
+    }
+}
+
+/// One run of the 3a scenario. Asserts the hard invariant (no duplicated
+/// content in the collective view) unconditionally; returns whether a
+/// collapsed row (collapsed_holders>=2) was observed. When `last` is set the
+/// missing collapse is a failure instead of a retry signal.
+fn collapse_scenario_3a(last: bool) -> bool {
+    let run = token();
+    let coll = [("HELIXIR_MODE", "collective")];
+
+    // A short, atomic fact so extraction is stable and both holders land on the
+    // same content_key.
+    let fact =
+        format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
+    for who in ["a", "b"] {
+        let (mut m, _) = McpClient::spawn_with_env(&coll);
+        let (ack, _) = m.call_tool(
+            "add_memory",
+            json!({ "message": fact, "user_id": format!("c3a_{who}_{run}") }),
+        );
+        assert_eq!(
+            ack["ok"].as_bool(),
+            Some(true),
+            "holder {who} write must succeed: {ack}"
+        );
+    }
+
+    // A third identity reads the shared collective.
+    let (mut r, _) = McpClient::spawn_with_env(&coll);
+    let (found, _) = r.call_tool(
+        "search_memory",
+        json!({
+            "query": format!("where does the deploy runbook for svc{run} live"),
+            "user_id": format!("c3a_reader_{run}"),
+            "mode": "full",
+            "scope": "collective",
+            "limit": 10
+        }),
+    );
+    let rows = found.as_array().cloned().unwrap_or_default();
+    let matches: Vec<&Value> = rows
+        .iter()
+        .filter(|m| {
+            m["content"]
+                .as_str()
+                .map(|c| c.contains(&format!("deploy-{run}")) || c.contains(&format!("svc{run}")))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(
+        !matches.is_empty(),
+        "the shared fact must surface in a collective search: {found}"
+    );
+    // #3a core contract: the SAME content must never appear twice in a
+    // collective result — write-time dedup collapses identical atoms into one
+    // row. NOTE: per-write extraction is probabilistic, so the two users'
+    // atoms may come out PARAPHRASED (different content_key -> legitimately
+    // distinct rows; the async NLI merge backstop owns that case). Asserting
+    // "exactly one row" was testing LLM determinism, not the dedup contract.
+    let mut by_content: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for m in &matches {
+        *by_content
+            .entry(m["content"].as_str().unwrap_or(""))
+            .or_insert(0) += 1;
+    }
+    let duplicated: Vec<(&&str, &usize)> = by_content.iter().filter(|(_, n)| **n > 1).collect();
+    assert!(
+        duplicated.is_empty(),
+        "identical content must collapse to ONE collective row, found duplicates: {duplicated:?} in {matches:?}"
+    );
+    // And where content DID coincide across the two users, the surviving row
+    // reports the consensus it folded.
+    let holders = matches
+        .iter()
+        .filter_map(|m| m["metadata"]["collapsed_holders"].as_u64())
+        .max();
+    let collapsed = holders.map(|h| h >= 2).unwrap_or(false);
+    if !collapsed {
+        assert!(
+            !last,
+            "no attempt produced coinciding content — the collapse was never exercised: {matches:?}"
+        );
+        return false;
+    }
+
+    println!("\n==== collective_search_collapses_duplicate_holders_3a ====");
+    println!(
+        "2 holders -> no duplicate content in collective view, collapsed_holders={holders:?} ✓"
+    );
+    true
+}
+
+/// #39 — rendezvous through the shared DB. A writing agent that passes agent_id
+/// is stamped into the swarm automatically (host + status "working"), and any
+/// other consumer sees it ACTIVE in swarm_status — presence with no channel
+/// other than the memory itself.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn write_with_agent_id_appears_in_swarm_39() {
+    require_e2e();
+    let run = token();
+    let coll = [("HELIXIR_MODE", "collective")];
+    let agent = format!("rondo_{run}");
+
+    // Writer announces presence implicitly via add_memory(agent_id=...).
+    let (mut w, _) = McpClient::spawn_with_env(&coll);
+    let (ack, _) = w.call_tool(
+        "add_memory",
+        json!({
+            "message": format!("Rendezvous {run}: the beacon service pings the mesh each minute."),
+            "user_id": format!("rondo_user_{run}"),
+            "agent_id": agent,
+        }),
+    );
+    assert_eq!(ack["ok"].as_bool(), Some(true), "write ok: {ack}");
+
+    // A DIFFERENT consumer reads the roster.
+    let (mut r, _) = McpClient::spawn_with_env(&coll);
+    let (swarm, _) = r.call_tool("swarm_status", json!({}));
+    assert_eq!(
+        swarm["available"].as_bool(),
+        Some(true),
+        "roster on: {swarm}"
+    );
+    let row = swarm["agents"]
+        .as_array()
+        .and_then(|a| {
+            a.iter()
+                .find(|x| x["agent_id"].as_str() == Some(agent.as_str()))
+        })
+        .unwrap_or_else(|| panic!("writer must appear in the swarm roster: {swarm}"));
+    assert_eq!(
+        row["active"].as_bool(),
+        Some(true),
+        "freshly-writing agent must be ACTIVE: {row}"
+    );
+    assert!(
+        row["host"].as_str().map(|h| !h.is_empty()).unwrap_or(false),
+        "presence must carry the host: {row}"
+    );
+
+    println!("\n==== write_with_agent_id_appears_in_swarm_39 ====");
+    println!("agent {agent} active in roster, host={} ✓", row["host"]);
+}

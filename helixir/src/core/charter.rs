@@ -11,9 +11,6 @@
 
 use crate::llm::decision::{MemoryDecision, MemoryOperation};
 
-/// Confidence below which destructive operations are flagged (charter C5).
-const LOW_CONFIDENCE: u8 = 70;
-
 /// Memory types whose rewrites always escalate (charter C3): a reversed
 /// preference / goal / decision may be a real change of mind, a different
 /// context, or an extraction error — only the human knows which.
@@ -29,6 +26,7 @@ pub fn escalation_reason(
     decision: &MemoryDecision,
     memory_type: &str,
     target_type: Option<&str>,
+    low_confidence: u8,
 ) -> Option<&'static str> {
     let touches_protected = PROTECTED_TYPES.contains(&memory_type)
         || target_type.is_some_and(|t| PROTECTED_TYPES.contains(&t));
@@ -47,7 +45,7 @@ pub fn escalation_reason(
         }
         // C5: low-confidence rewrites of anything else.
         MemoryOperation::Update | MemoryOperation::Supersede
-            if decision.confidence < LOW_CONFIDENCE =>
+            if decision.confidence < low_confidence =>
         {
             Some("low_confidence_rewrite")
         }
@@ -95,21 +93,21 @@ mod tests {
     fn constitution_rules() {
         // C1: delete always escalates, even at full confidence.
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Delete, 100), "fact", None),
+            escalation_reason(&decision(MemoryOperation::Delete, 100), "fact", None, 70),
             Some("auto_delete")
         );
         // C3: contradictions always escalate.
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Contradict, 95), "fact", None),
+            escalation_reason(&decision(MemoryOperation::Contradict, 95), "fact", None, 70),
             Some("contradiction")
         );
         // C5: low-confidence rewrites escalate, confident ones do not.
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Update, 50), "fact", None),
+            escalation_reason(&decision(MemoryOperation::Update, 50), "fact", None, 70),
             Some("low_confidence_rewrite")
         );
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Update, 90), "fact", None),
+            escalation_reason(&decision(MemoryOperation::Update, 90), "fact", None, 70),
             None
         );
         // C3: protected types escalate on rewrite even at high confidence.
@@ -117,12 +115,13 @@ mod tests {
             escalation_reason(
                 &decision(MemoryOperation::Supersede, 95),
                 "preference",
-                None
+                None,
+                70,
             ),
             Some("protected_type_rewrite")
         );
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Update, 95), "goal", None),
+            escalation_reason(&decision(MemoryOperation::Update, 95), "goal", None, 70),
             Some("protected_type_rewrite")
         );
         // C3 via the TARGET: rewriting a stored preference escalates even
@@ -131,17 +130,18 @@ mod tests {
             escalation_reason(
                 &decision(MemoryOperation::Supersede, 95),
                 "fact",
-                Some("preference")
+                Some("preference"),
+                70,
             ),
             Some("protected_type_rewrite")
         );
         // Plain adds and noops are silent.
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Add, 10), "fact", None),
+            escalation_reason(&decision(MemoryOperation::Add, 10), "fact", None, 70),
             None
         );
         assert_eq!(
-            escalation_reason(&decision(MemoryOperation::Noop, 10), "preference", None),
+            escalation_reason(&decision(MemoryOperation::Noop, 10), "preference", None, 70),
             None
         );
     }

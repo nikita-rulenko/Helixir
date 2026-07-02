@@ -13,6 +13,10 @@ pub struct AddMemoryResult {
     pub added: Vec<String>,
     pub updated: Vec<String>,
     pub deleted: Vec<String>,
+    /// #44: existing memory_ids a duplicate write was deduped to (NOOP). Lets the
+    /// agent tell "saved new" from "already known, linked" — not a silent skip.
+    #[serde(default)]
+    pub deduped: Vec<String>,
     pub skipped: usize,
     pub entities_extracted: usize,
     pub reasoning_relations_created: usize,

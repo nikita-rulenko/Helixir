@@ -19,7 +19,10 @@ N::Agent {
   role: String,
   capabilities: String,
   agent_version: String,
-  created_at: String
+  created_at: String,
+  host: String DEFAULT "",
+  last_seen: String DEFAULT "",
+  status: String DEFAULT "idle"
 }
 E::IN_SESSION {
   From: User,
@@ -30,6 +33,7 @@ E::IN_SESSION {
 }
 N::Memory {
   memory_id: String,
+  INDEX content_key: String DEFAULT "",
   user_id: String DEFAULT "",
   content: String,
   memory_type: String DEFAULT "fact",
@@ -367,4 +371,62 @@ V::ChunkEmbedding {
 }
 V::ConceptEmbedding {
     embedding: [F64]
+}
+
+N::PendingInput {
+  pending_id: String,
+  user_id: String DEFAULT "",
+  raw_message: String,
+  agent_id: String DEFAULT "",
+  context_tags: String DEFAULT "",
+  status: String DEFAULT "pending",
+  created_at: String DEFAULT "{{timestamp}}",
+  processed_at: String DEFAULT "",
+  result: String DEFAULT "",
+  error: String DEFAULT ""
+}
+
+N::MemoryNotice {
+  notice_id: String,
+  user_id: String DEFAULT "",
+  kind: String DEFAULT "add_result",
+  payload: String DEFAULT "{}",
+  pending_id: String DEFAULT "",
+  created_at: String DEFAULT "{{timestamp}}",
+  delivered: I64 DEFAULT 0
+}
+
+// --- Clotho category dictionary (controlled vocabulary) — Moira #33 ---
+N::Category {
+  category_id: String,
+  name: String,
+  kind: String,
+  description: String,
+  created_at: String
+}
+V::CategoryEmbedding {
+  name: String
+}
+E::CATEGORY_HAS_EMBEDDING {
+  From: Category,
+  To: CategoryEmbedding,
+  Properties: {
+    embedding_model: String
+  }
+}
+E::SUBCATEGORY_OF {
+  From: Category,
+  To: Category
+}
+E::ALIAS_OF {
+  From: Category,
+  To: Category
+}
+E::TAGGED_AS {
+  From: Memory,
+  To: Category,
+  Properties: {
+    confidence: I64,
+    source: String
+  }
 }

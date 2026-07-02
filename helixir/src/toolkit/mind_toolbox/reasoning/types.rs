@@ -4,15 +4,27 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// A typed memory→memory edge. The first four are CAUSAL/logical (they form
+/// reasoning chains and are what `search_reasoning_chain` walks); the rest are
+/// ASSOCIATIVE/structural (relatedness, composition, taxonomy) — they enrich
+/// the graph and surface in `get_memory_graph`, but do not claim causality.
+/// All persist uniformly as a `MEMORY_RELATION` edge whose `relation_type`
+/// property is the `edge_name()` string, so adding a variant needs no schema
+/// change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReasoningType {
+    // --- causal / logical ---
     Implies,
-
     Because,
-
     Contradicts,
-
     Supports,
+    // --- associative / structural ---
+    /// General relatedness — same topic / near-duplicate, no causal claim.
+    RelatesTo,
+    /// Compositional: A is a part/component of B.
+    PartOf,
+    /// Taxonomic: A is a kind/instance of B.
+    IsA,
 }
 
 impl ReasoningType {
@@ -23,7 +35,36 @@ impl ReasoningType {
             Self::Because => "BECAUSE",
             Self::Contradicts => "CONTRADICTS",
             Self::Supports => "SUPPORTS",
+            Self::RelatesTo => "RELATES_TO",
+            Self::PartOf => "PART_OF",
+            Self::IsA => "IS_A",
         }
+    }
+
+    /// Parse an LLM-supplied edge token. Unknown tokens fall back to the safe
+    /// generic `RelatesTo` — never to a causal type, so a misread never invents
+    /// a false cause/effect claim (the old code silently coerced to IMPLIES).
+    #[must_use]
+    pub fn from_token(s: &str) -> Self {
+        match s.trim().to_uppercase().as_str() {
+            "IMPLIES" => Self::Implies,
+            "BECAUSE" => Self::Because,
+            "CONTRADICTS" => Self::Contradicts,
+            "SUPPORTS" => Self::Supports,
+            "PART_OF" | "PARTOF" => Self::PartOf,
+            "IS_A" | "ISA" | "INSTANCE_OF" => Self::IsA,
+            // "RELATES_TO" and anything unrecognised → generic relatedness.
+            _ => Self::RelatesTo,
+        }
+    }
+
+    /// Causal/logical edges form reasoning chains; associative ones do not.
+    #[must_use]
+    pub fn is_causal(&self) -> bool {
+        matches!(
+            self,
+            Self::Implies | Self::Because | Self::Contradicts | Self::Supports
+        )
     }
 }
 
@@ -144,6 +185,50 @@ mod tests {
         assert_eq!(ReasoningType::Because.edge_name(), "BECAUSE");
         assert_eq!(ReasoningType::Contradicts.edge_name(), "CONTRADICTS");
         assert_eq!(ReasoningType::Supports.edge_name(), "SUPPORTS");
+        // Associative arsenal (P0: these must actually build, not collapse).
+        assert_eq!(ReasoningType::RelatesTo.edge_name(), "RELATES_TO");
+        assert_eq!(ReasoningType::PartOf.edge_name(), "PART_OF");
+        assert_eq!(ReasoningType::IsA.edge_name(), "IS_A");
+    }
+
+    #[test]
+    fn from_token_covers_full_arsenal_and_is_safe() {
+        // Every edge token round-trips through from_token → edge_name.
+        for t in [
+            ReasoningType::Implies,
+            ReasoningType::Because,
+            ReasoningType::Contradicts,
+            ReasoningType::Supports,
+            ReasoningType::RelatesTo,
+            ReasoningType::PartOf,
+            ReasoningType::IsA,
+        ] {
+            assert_eq!(ReasoningType::from_token(t.edge_name()), t);
+        }
+        // Case / whitespace tolerant + synonyms.
+        assert_eq!(
+            ReasoningType::from_token(" implies "),
+            ReasoningType::Implies
+        );
+        assert_eq!(ReasoningType::from_token("instance_of"), ReasoningType::IsA);
+        // CRITICAL: an unknown token must fall back to the generic RELATES_TO,
+        // NEVER to a false causal IMPLIES (the old silent-coercion bug).
+        assert_eq!(
+            ReasoningType::from_token("ELABORATES"),
+            ReasoningType::RelatesTo
+        );
+        assert_eq!(ReasoningType::from_token(""), ReasoningType::RelatesTo);
+    }
+
+    #[test]
+    fn is_causal_splits_reasoning_from_association() {
+        assert!(ReasoningType::Because.is_causal());
+        assert!(ReasoningType::Implies.is_causal());
+        assert!(ReasoningType::Supports.is_causal());
+        assert!(ReasoningType::Contradicts.is_causal());
+        assert!(!ReasoningType::RelatesTo.is_causal());
+        assert!(!ReasoningType::PartOf.is_causal());
+        assert!(!ReasoningType::IsA.is_causal());
     }
 
     #[test]

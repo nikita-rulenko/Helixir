@@ -50,8 +50,7 @@ pub use models::{SearchMethod, SearchResult};
 pub use vector::{VectorSearch, VectorSearchError};
 
 pub use smart_traversal_v2::{
-    SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness,
-    cosine_score, edge_weights,
+    SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness, cosine_score,
 };
 
 pub use query_processor::{EnhancedQuery, QueryIntent, QueryProcessor};

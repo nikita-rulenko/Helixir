@@ -16,6 +16,10 @@ pub enum LoaderError {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConceptNode {
+    /// HelixDB internal node UUID (time-ordered) — used by the duplicate
+    /// self-heal to keep the earliest copy per concept_id.
+    #[serde(default)]
+    id: String,
     concept_id: String,
     name: String,
     level: i32,
@@ -38,17 +42,38 @@ impl OntologyLoader {
     }
 
     pub async fn check_initialized(&self) -> Result<bool, LoaderError> {
-        let result: serde_json::Value = self
+        // `checkOntologyInitialized` does `N<Concept>::...::FIRST`, which raises
+        // GRAPH_ERROR "No value found" on an EMPTY ontology (the #19 empty-
+        // traversal pattern) rather than returning an empty result. Treat that
+        // as "not initialized" so the loader self-heals by re-seeding the base
+        // ontology — otherwise a wiped/empty ontology makes every fresh MCP die
+        // at startup instead of rebuilding itself.
+        match self
             .client
-            .execute_query("checkOntologyInitialized", &serde_json::json!({}))
+            .execute_query::<serde_json::Value, _>(
+                "checkOntologyInitialized",
+                &serde_json::json!({}),
+            )
             .await
-            .map_err(|e| LoaderError::Database(e.to_string()))?;
-
-        Ok(result.get("thing").is_some())
+        {
+            Ok(result) => Ok(result.get("thing").is_some()),
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("no value found") || msg.contains("graph_error") {
+                    Ok(false)
+                } else {
+                    Err(LoaderError::Database(e.to_string()))
+                }
+            }
+        }
     }
 
     pub async fn initialize_base(&self) -> Result<(), LoaderError> {
-        let _: () = self
+        // `initializeBaseOntology` RETURNS the created root ({"thing": {...}}),
+        // so it must be decoded as a Value — deserializing into `()` fails with
+        // "error decoding response body" and aborts the self-heal. (Latent until
+        // the re-seed path actually ran, i.e. an emptied ontology.)
+        let _: serde_json::Value = self
             .client
             .execute_query("initializeBaseOntology", &serde_json::json!({}))
             .await
@@ -68,11 +93,57 @@ impl OntologyLoader {
             self.initialize_base().await?;
         }
 
-        let response: ConceptsResponse = self
+        let mut response: ConceptsResponse = self
             .client
             .execute_query("getAllConcepts", &serde_json::json!({}))
             .await
             .map_err(|e| LoaderError::Database(e.to_string()))?;
+
+        // Self-heal duplicated trees (#67): retry-amplified seeding once left
+        // FOUR copies of the base tree. Live lookups (`WHERE … ::FIRST`)
+        // resolve in insertion order, so the earliest copy is the one all
+        // INSTANCE_OF edges actually target — keep the earliest node per
+        // concept_id (ids are time-ordered) and drop the later phantoms.
+        {
+            let mut earliest: HashMap<&str, &str> = HashMap::new();
+            for n in &response.concepts {
+                let e = earliest.entry(n.concept_id.as_str()).or_insert(&n.id);
+                if n.id.as_str() < *e {
+                    *e = &n.id;
+                }
+            }
+            let phantoms: Vec<String> = response
+                .concepts
+                .iter()
+                .filter(|n| earliest.get(n.concept_id.as_str()) != Some(&n.id.as_str()))
+                .map(|n| n.id.clone())
+                .collect();
+            if !phantoms.is_empty() {
+                tracing::warn!(
+                    "Ontology self-heal: dropping {} duplicate concept node(s) \
+                     (multiple seeded copies detected)",
+                    phantoms.len()
+                );
+                for id in &phantoms {
+                    if let Err(e) = self
+                        .client
+                        .execute_query::<serde_json::Value, _>(
+                            "dropConceptByInternalId",
+                            &serde_json::json!({ "concept_internal_id": id }),
+                        )
+                        .await
+                    {
+                        // Pre-#67 deployments don't have the query yet — the
+                        // in-memory map below still dedupes, so only warn.
+                        tracing::warn!("Ontology self-heal: drop {} failed: {}", id, e);
+                        break;
+                    }
+                }
+                let keep: std::collections::HashSet<String> =
+                    earliest.values().map(|s| s.to_string()).collect();
+                response.concepts.retain(|n| keep.contains(&n.id));
+            }
+        }
 
         let mut concepts = HashMap::new();
         let mut relations = Vec::new();

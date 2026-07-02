@@ -15,16 +15,23 @@ the gap between the two.
 
 ## 2. Current inventory
 
+> _The catalogue below is the original v0.3.1 baseline. As of v0.5.0 the surface
+> is far larger — see the current numbers immediately under it._
+
 ```
-Tests today (cargo test, no E2E):
+Tests (v0.3.1 baseline):
 
    ✔ 52 unit tests, all passing                    helixir/src/**/*.rs
    ✔  1 integration test (ignored by default)      helixir/tests/hive_memory_e2e.rs
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
-   ✘  0 CI runs on push / PR (release-only)        see issue #5
 ```
 
-Run: `cargo test --lib` from `helixir/`.
+**Current (v0.5.0):** ~129 unit tests (`cargo test --lib`, run in CI) + **25
+HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
+clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
+negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
+E2E are run by hand (not in CI yet); the manual recipe lives in the suites'
+module docs. Run unit tests: `cargo test --lib` from `helixir/`.
 
 ### Unit-test distribution
 

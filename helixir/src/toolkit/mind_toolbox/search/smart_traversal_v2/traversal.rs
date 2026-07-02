@@ -151,8 +151,12 @@ impl SmartTraversalV2 {
                         reranked += 1;
                     }
                 }
-                vector_hits
-                    .sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap());
+                vector_hits.sort_by(|a, b| {
+                    crate::toolkit::mind_toolbox::ranking::desc(
+                        &a.combined_score,
+                        &b.combined_score,
+                    )
+                });
                 let rerank_ms = rerank_start.elapsed().as_millis();
                 if reranked > 0 {
                     let top = vector_hits.first().unwrap().combined_score;
@@ -203,7 +207,12 @@ impl SmartTraversalV2 {
                 .iter()
                 .map(|h| (h.memory_id.clone(), h.combined_score.max(0.01)))
                 .collect();
-            let ppr_scores = personalized_pagerank(&ego_edges, &personalization);
+            let ppr_scores = personalized_pagerank(
+                &ego_edges,
+                &personalization,
+                config.ppr_alpha,
+                config.ppr_iterations,
+            );
             let mut rescored = 0usize;
             for result in vector_hits.iter_mut().chain(graph_results.iter_mut()) {
                 let Some(ppr) = ppr_scores.get(&result.memory_id) else {

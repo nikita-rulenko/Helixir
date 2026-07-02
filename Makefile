@@ -15,6 +15,18 @@ help: ## Show this help
 build: ## Build release binaries
 	cd helixir && $(CARGO) build --release
 
+install: build ## Install binaries to ~/.helixir/bin (what agent configs should point at)
+	@# Agents must NOT execute target/release/ directly: cargo replaces those
+	@# files on every rebuild, and macOS can SIGKILL a RUNNING process whose
+	@# backing executable changed (observed live: a zeroclaw session's MCP died
+	@# mid-conversation minutes after a rebuild). `install` copies to a stable
+	@# path; rebuilds never touch what agents are running until you re-install.
+	mkdir -p $(HOME)/.helixir/bin
+	install -m755 helixir/target/release/helixir-mcp $(HOME)/.helixir/bin/helixir-mcp
+	install -m755 helixir/target/release/helixir $(HOME)/.helixir/bin/helixir
+	mkdir -p $(HOME)/.local/bin && ln -sf $(HOME)/.helixir/bin/helixir $(HOME)/.local/bin/helixir
+	@echo "installed: ~/.helixir/bin/{helixir,helixir-mcp}; point MCP configs at ~/.helixir/bin/helixir-mcp"
+
 test: ## Run all tests
 	cd helixir && $(CARGO) test
 

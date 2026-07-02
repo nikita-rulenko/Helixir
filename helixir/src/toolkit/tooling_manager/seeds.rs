@@ -16,7 +16,7 @@ use super::ToolingManager;
 use crate::llm::extractor::ExtractedMemory;
 
 /// Bump to re-seed on the next startup (old seeds stay — elder brain).
-const SEED_VERSION: u32 = 1;
+const SEED_VERSION: u32 = 3;
 
 /// The system user that owns self-knowledge.
 pub const SEED_USER: &str = "helixir";
@@ -136,6 +136,109 @@ const SEEDS: &[(i32, &str)] = &[
         80,
         "Under algo_opt the final ranking blends 0.3 cosine similarity, 0.5 Personalized PageRank mass and 0.2 temporal freshness.",
     ),
+    // --- Operations & integration (seeded at install: the manual lives inside the memory) ---
+    (
+        90,
+        "Helixir runs in three modes of escalating trust: solo (one agent, one user_id, private dedup), collective (write-time dedup across all user_ids; contradictions are scored by stances and user_count consensus, never resolved by rewriting the graph) and insights (the Moirai — Clotho, Lachesis, Atropos — generate tag dictionaries, indirect multi-hop correlations and curated hypotheses). Set mode in ~/.helixir/helixir.toml (mode = \"Solo|Collective|Insights\") or the HELIXIR_MODE env var; env overrides the toml.",
+    ),
+    (
+        85,
+        "The helixir CLI drives the generative layer: clotho grow --user <id> grows the tag dictionary; pipeline --user <id> runs one Clotho-Lachesis-Atropos pass; daemon start --user <id> --interval <secs> runs passes continuously with per-stage cadence flags --clotho-every, --insight-every, --merge-every, --reconcile-every (1 = every pass, 0 = never); categories, swarm, heartbeat, merge, insights and journal inspect and drive the rest.",
+    ),
+    (
+        85,
+        "Moirai intensity thresholds live in ~/.helixir/helixir.toml: [moira.clotho] grow_threshold and tag_threshold, [moira.lachesis] subset_pmi_bar, coherence_bar and dfs_budget, [moira.atropos] quality_pmi_bar (curation strictness), [moira.daemon] interval_secs and the *_every_passes cadences.",
+    ),
+    (
+        85,
+        "To connect Claude Desktop or Claude Code, add an mcpServers entry named helixir-local running the helixir-mcp binary with HELIX_HOST/HELIX_PORT/HELIX_INSTANCE plus LLM and embedding provider env; helixir setup writes this non-destructively. For Cursor use ~/.cursor/mcp.json with the same env. For network clients, helixir gateway start serves the same MCP tools over streamable-HTTP at /mcp.",
+    ),
+    (
+        85,
+        "To connect zeroclaw, add a [[mcp.servers]] stdio entry named helixir-local in ~/.zeroclaw/config.toml pointing at the helixir-mcp binary with the HELIX_* env in [mcp.servers.env]; its tools register as helixir-local__<tool> and are deferred, so autonomy.auto_approve must include tool_search plus the helixir-local__* tool names for non-interactive runs.",
+    ),
+    (
+        90,
+        "Agents must establish identity BEFORE the first recall: use the assigned user_id; otherwise derive a stable one from the agent's own name, and consult list_users when unsure — never adopt another agent's id (the example id claude in templates is a placeholder to replace).",
+    ),
+    (
+        90,
+        "Agent usage rules: recall first at the start of any non-trivial task and right after a context summary (retry with scope=collective if personal recall is empty); capture durable facts proactively (decisions, preferences, goals, constraints, outcomes, gotchas — never secrets or ephemeral chatter); surface needs_clarification questions to the human instead of resolving conflicts silently.",
+    ),
+    (
+        90,
+        "Every add_memory result carries a top-level ok field: ok true means the write succeeded (memory_ids inline, or status accepted for a buffered write still finishing) — never retry on ok true; deduped entries with memories_added 0 mean already known, which is success; only ok false is a failure.",
+    ),
+    (
+        85,
+        "For multi-step reasoning use FastThink: think_start, then think_add steps, optional think_recall to pull known facts, think_conclude, and ONE think_commit at the end — the conclusion persists in seconds with SUPPORTS provenance edges from recalled evidence, and entity enrichment finishes in the background; think_discard throws the scratchpad away.",
+    ),
+    (
+        85,
+        "Data safety: the LMDB data lives wherever the HelixDB container's data dir is bind-mounted — back it up before schema deploys; schema changes are compiled into the server (no hot reload), deploy = helix check, rebuild the image, swap the container onto the same volume; HelixDB errors often hide in HTTP-200 response bodies, and search visibility lags writes, so re-probe before concluding data is missing.",
+    ),
+    (
+        80,
+        "The drop-in agent templates live in the repo's integration folder: AGENTS.md for any coding agent via the agents.md convention and SKILLS.md for Claude as a skill — both encode the recall-capture-reason loop so every connected agent uses the memory the way its maintainers do.",
+    ),
+    // --- Glossary (seed@3): the project vocabulary, defined once in the
+    //     memory itself — the full text lives in the repo-root GLOSSARY.md ---
+    (
+        85,
+        "Glossary — atomization: add_memory never stores input as-is; the LLM extractor splits it into atomic facts (one claim per memory), each ontology-classified and entity-linked, because chains and dedup only work on atoms.",
+    ),
+    (
+        85,
+        "Glossary — edge arsenal: the seven typed memory-to-memory relations are causal IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS (what search_reasoning_chain walks) plus associative RELATES_TO, PART_OF, IS_A; all persist as one MEMORY_RELATION edge whose relation_type property names the type, so new types need no schema change.",
+    ),
+    (
+        85,
+        "Glossary — same-subject gate: destructive write verdicts (UPDATE, SUPERSEDE, CONTRADICT, DELETE) are only legal when both memories concern the same specific subject; mere keyword overlap yields ADD plus a RELATES_TO edge.",
+    ),
+    (
+        85,
+        "Glossary — content key: a normalized hash of content and type stamped on every memory; the exact-duplicate gate — a re-added fact hits the same key group atomically and raises consensus instead of creating a copy.",
+    ),
+    (
+        85,
+        "Glossary — RRF (Reciprocal Rank Fusion): dense vector results and sparse BM25 results merge by each contributing 1/(k + rank); rank-based fusion never needs the two arms' scores to be comparable.",
+    ),
+    (
+        85,
+        "Glossary — PPR (Personalized PageRank): PageRank whose random walker teleports back to the seed memories that matched the query, so graph centrality is measured relative to the question being asked; it carries 0.5 of the final ranking weight.",
+    ),
+    (
+        85,
+        "Glossary — PMI (Pointwise Mutual Information): the log of observed-over-expected co-occurrence of two categories on the same memories; a thread's weakest-link PMI is its coherence floor, and Atropos ranks insights by hops times minimum PMI.",
+    ),
+    (
+        85,
+        "Glossary — apophenia gate: the defence against seeing patterns in noise — a thick, everything-touching category has huge member sets, so its PMI with everything collapses toward zero and it gates itself out by arithmetic, not by a blocklist.",
+    ),
+    (
+        85,
+        "Glossary — insight and witness: an insight is a generated cross-domain hypothesis with provenance (its category path plus the witness memories evidencing each link) and a lifecycle proposed-verified-refuted; it persists under user_id helixir with SUPPORTS edges from its witnesses and is never asserted as truth.",
+    ),
+    (
+        85,
+        "Glossary — anti-gaslight NLI backstop: two memories paraphrase-merge only if a local NLI judge finds mutual entailment; divergent numbers fail entailment, so the memory cannot be talked into quietly averaging conflicting figures.",
+    ),
+    (
+        85,
+        "Glossary — rendezvous: agents discover each other through the database itself — add_memory with agent_id auto-heartbeats presence (host, status, last_seen on the Agent node) and swarm_status returns the live roster; no side channel exists or is needed.",
+    ),
+    (
+        85,
+        "Glossary — dogfooding and self-documentation: the maintainers (human and agents) use Helixir as their own long-term memory while building it, and the manual, integration recipes and this glossary are seeded into the graph under user_id helixir — ask the memory how to use the memory.",
+    ),
+    (
+        80,
+        "Glossary — the guar chain: Rajasthan weather to guar harvest to guar gum price to fracking costs to shale stocks; the canonical example that memory value lives in long chains, used as the end-to-end validation fixture for the Moirai.",
+    ),
+    (
+        80,
+        "Glossary — ingest buffer (предбанник): the bounded queue in front of the write pipeline; add_memory enqueues and answers confirm-or-promise, so a slow LLM never blocks the agent's turn.",
+    ),
 ];
 
 impl ToolingManager {
@@ -147,8 +250,8 @@ impl ToolingManager {
         if mode.is_empty() || mode == "0" || mode == "false" {
             return;
         }
-        // ~26 facts = one embedding batch + the inserts (a couple of
-        // seconds, once per version) — cheap enough to run inline.
+        // ~50 facts = one embedding batch + the inserts (a few seconds,
+        // once per version) — cheap enough to run inline.
         let _ = mode;
         self.seed_system_memories().await;
     }

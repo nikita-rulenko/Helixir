@@ -1,12 +1,12 @@
 # Userflow
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.6.0-dev`. Last verified: 2026-07-02._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
 
-The MCP surface is fully defined at `helixir/src/mcp/server.rs:70-553`. There
-are 14 tools, 2 prompts, 2 resources.
+The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
+There are 19 tools, 2 prompts, 2 resources.
 
 ## 1. Tool catalog
 
@@ -14,7 +14,8 @@ are 14 tools, 2 prompts, 2 resources.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `add_memory` | `user_id`, `message` | `agent_id` | After a user reveals a preference, makes a decision, or completes a task. |
+| `add_memory` | `user_id`, `message` | `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when the ingest buffer needs more time. Passing `agent_id` also heartbeats swarm presence (#39). |
+| `get_add_status` | `pending_id` | — | Polling a promised (buffered) `add_memory` to completion. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
 | `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |
 | `update_memory` | `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
@@ -23,6 +24,8 @@ are 14 tools, 2 prompts, 2 resources.
 | `search_reasoning_chain` | `user_id`, `query` | `chain_mode` (`causal`/`forward`/`both`/`deep`), `max_depth`, `limit` | Answering "why" / "what follows" questions. |
 | `connect_memories` | `user_id`, `query_a`, `query_b` | `max_depth` | "How is A related to B?" — path between two concepts with edge types and confidence. |
 | `search_incomplete_thoughts` | — | `limit` | Session start, to resume interrupted FastThink sessions. |
+| `list_users` | — | `limit` | Orientation in a shared store: which identities exist. Collective-gated (`available:false` in Solo); privacy-safe (ids/names only). |
+| `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
 
 Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 `needs_clarification` array — write-path conflicts the memory charter

@@ -3,7 +3,9 @@
 This folder is the engineering source-of-truth for the Helixir codebase. The
 README (in the repo root) is product-facing; everything here is for contributors
 who need to reason about the system, the data, the flows, and the tests.
-The write-path constitution lives next door in `../memory-charter.md`.
+The write-path constitution lives next door in `../memory-charter.md`; the
+project vocabulary (PPR, RRF, apophenia gate, the Moirai...) is defined once
+in the root-level `GLOSSARY.md` — link to it instead of re-defining terms.
 
 ## Layout
 

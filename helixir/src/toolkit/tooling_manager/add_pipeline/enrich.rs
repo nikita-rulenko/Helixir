@@ -8,7 +8,6 @@ use std::collections::HashMap;
 
 use tracing::{debug, info, warn};
 
-use crate::llm::decision::{MemoryDecision, MemoryOperation, SimilarMemory};
 use crate::llm::extractor::{ExtractedEntity, ExtractedMemory, ExtractedRelation};
 use crate::toolkit::mind_toolbox::entity::EntityEdgeType;
 use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
@@ -18,80 +17,73 @@ use super::super::types::ToolingError;
 use crate::safe_truncate;
 
 impl ToolingManager {
-    pub(super) async fn enrich_memory_relations(
+    /// One relation-inference LLM call for a freshly stored memory, persisting
+    /// whatever it finds. Separated from the store loop so the orchestrator can
+    /// run these independent calls CONCURRENTLY — sequential per-atom inference
+    /// used to stack K× model latency onto every multi-atom write.
+    pub(super) async fn infer_and_persist_relations(
+        &self,
+        memory_id: &str,
+        memory_text: &str,
+        context_pairs: &[(String, String)],
+    ) -> usize {
+        let mut relations_created = 0usize;
+
+        info!(
+            "Calling infer_relations with {} context pairs for {}",
+            context_pairs.len(),
+            safe_truncate(memory_id, 12)
+        );
+
+        match self
+            .reasoning_engine
+            .infer_relations(memory_id, memory_text, context_pairs)
+            .await
+        {
+            Ok(inferred) => {
+                info!("infer_relations returned {} relations", inferred.len());
+                for rel in &inferred {
+                    match self
+                        .reasoning_engine
+                        .add_relation(
+                            &rel.from_memory_id,
+                            &rel.to_memory_id,
+                            rel.relation_type,
+                            rel.strength,
+                            rel.reasoning_id.as_deref(),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            relations_created += 1;
+                            info!(
+                                "Persisted {} relation: {} -> {} (strength={})",
+                                rel.relation_type.edge_name(),
+                                safe_truncate(memory_id, 12),
+                                safe_truncate(&rel.to_memory_id, 12),
+                                rel.strength
+                            );
+                        }
+                        Err(e) => warn!("Failed to persist inferred relation: {}", e),
+                    }
+                }
+            }
+            Err(e) => warn!("Relation inference failed: {}", e),
+        }
+
+        relations_created
+    }
+
+    /// Entity linking + entity↔entity edges + ontology concept mapping for one
+    /// stored memory. Pure DB work — no LLM. (The inference half of the old
+    /// `enrich_memory_relations` lives in `infer_and_persist_relations`.)
+    pub(super) async fn link_memory_semantics(
         &self,
         memory_id: &str,
         memory: &ExtractedMemory,
         extraction_entities: &[ExtractedEntity],
-        similar_memories: &[SimilarMemory],
-        decision: &MemoryDecision,
-    ) -> Result<(usize, usize), ToolingError> {
+    ) -> Result<usize, ToolingError> {
         let mut entities_linked = 0usize;
-        let mut relations_created = 0usize;
-
-        let should_infer = !similar_memories.is_empty()
-            && !matches!(
-                decision.operation,
-                MemoryOperation::Noop | MemoryOperation::Delete
-            );
-
-        info!(
-            "enrich_memory_relations: memory={}, similar={}, decision={:?}, should_infer={}",
-            safe_truncate(memory_id, 12),
-            similar_memories.len(),
-            decision.operation,
-            should_infer
-        );
-
-        if should_infer {
-            let context_pairs: Vec<(String, String)> = similar_memories
-                .iter()
-                .take(5)
-                .map(|s| (s.id.clone(), s.content.clone()))
-                .collect();
-
-            info!(
-                "Calling infer_relations with {} context pairs for {}",
-                context_pairs.len(),
-                safe_truncate(memory_id, 12)
-            );
-
-            match self
-                .reasoning_engine
-                .infer_relations(memory_id, &memory.text, &context_pairs)
-                .await
-            {
-                Ok(inferred) => {
-                    info!("infer_relations returned {} relations", inferred.len());
-                    for rel in &inferred {
-                        match self
-                            .reasoning_engine
-                            .add_relation(
-                                &rel.from_memory_id,
-                                &rel.to_memory_id,
-                                rel.relation_type,
-                                rel.strength,
-                                rel.reasoning_id.as_deref(),
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                relations_created += 1;
-                                info!(
-                                    "Persisted {} relation: {} -> {} (strength={})",
-                                    rel.relation_type.edge_name(),
-                                    safe_truncate(memory_id, 12),
-                                    safe_truncate(&rel.to_memory_id, 12),
-                                    rel.strength
-                                );
-                            }
-                            Err(e) => warn!("Failed to persist inferred relation: {}", e),
-                        }
-                    }
-                }
-                Err(e) => warn!("Relation inference failed: {}", e),
-            }
-        }
 
         for entity_id in &memory.entities {
             if let Some(entity) = extraction_entities.iter().find(|e| &e.id == entity_id) {
@@ -107,8 +99,8 @@ impl ToolingManager {
                                 &db_entity.entity_id,
                                 memory_id,
                                 EntityEdgeType::ExtractedEntity,
-                                80,
-                                50,
+                                self.config.write.entity_link_strength as i32,
+                                self.config.write.entity_link_confidence as i32,
                                 "neutral",
                             )
                             .await
@@ -170,7 +162,68 @@ impl ToolingManager {
             }
         }
 
-        Ok((entities_linked, relations_created))
+        Ok(entities_linked)
+    }
+
+    /// Deferred entity enrichment for memories stored WITHOUT extraction
+    /// (FastThink fast commit): one extraction call for the entities only,
+    /// linked to the already-stored memories. Runs in a background task —
+    /// off the caller's critical path by design.
+    pub(crate) async fn extract_and_link_entities(
+        &self,
+        text: &str,
+        user_id: &str,
+        memory_ids: &[String],
+    ) -> usize {
+        let extraction = match self.extractor.extract(text, user_id, true, false).await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("Deferred entity enrichment: extraction failed: {e}");
+                return 0;
+            }
+        };
+
+        let mut linked = 0usize;
+        for entity in &extraction.entities {
+            match self
+                .entity_manager
+                .get_or_create_entity(&entity.name, &entity.entity_type, None)
+                .await
+            {
+                Ok(db_entity) => {
+                    for memory_id in memory_ids {
+                        match self
+                            .entity_manager
+                            .link_to_memory(
+                                &db_entity.entity_id,
+                                memory_id,
+                                EntityEdgeType::ExtractedEntity,
+                                self.config.write.entity_link_strength as i32,
+                                self.config.write.entity_link_confidence as i32,
+                                "neutral",
+                            )
+                            .await
+                        {
+                            Ok(()) => linked += 1,
+                            Err(e) => warn!(
+                                "Deferred entity enrichment: link {} -> {} failed: {e}",
+                                db_entity.entity_id, memory_id
+                            ),
+                        }
+                    }
+                }
+                Err(e) => warn!(
+                    "Deferred entity enrichment: get/create '{}' failed: {e}",
+                    entity.name
+                ),
+            }
+        }
+        info!(
+            "Deferred entity enrichment: {} links across {} memories",
+            linked,
+            memory_ids.len()
+        );
+        linked
     }
 
     pub(super) async fn resolve_and_persist_extraction_relations(
@@ -243,13 +296,9 @@ impl ToolingManager {
                 });
 
             if let (Some(from), Some(to)) = (from_id, to_id) {
-                let rel_type = match relation.relation_type.to_uppercase().as_str() {
-                    "IMPLIES" => ReasoningType::Implies,
-                    "BECAUSE" => ReasoningType::Because,
-                    "CONTRADICTS" => ReasoningType::Contradicts,
-                    "SUPPORTS" => ReasoningType::Supports,
-                    _ => ReasoningType::Implies,
-                };
+                // Full arsenal incl. associative edges (RELATES_TO/PART_OF/IS_A).
+                // Unknown tokens fall back to RELATES_TO, never a false IMPLIES.
+                let rel_type = ReasoningType::from_token(&relation.relation_type);
 
                 match self
                     .reasoning_engine

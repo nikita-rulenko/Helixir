@@ -47,18 +47,32 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn new(base_url: impl Into<String>, model: impl Into<String>, temperature: f64) -> Self {
+        Self::with_timeout(
+            base_url,
+            model,
+            temperature,
+            crate::DEFAULT_LLM_REQUEST_TIMEOUT_SECS,
+        )
+    }
+
+    pub fn with_timeout(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        temperature: f64,
+        timeout_secs: u64,
+    ) -> Self {
         let base_url = base_url.into();
         let model = model.into();
         info!(
-            "Ollama provider initialized (model={}, url={})",
-            model, base_url
+            "Ollama provider initialized (model={}, url={}, timeout={}s)",
+            model, base_url, timeout_secs
         );
         Self {
             base_url,
             model,
             temperature,
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .expect("Failed to create HTTP client"),
         }

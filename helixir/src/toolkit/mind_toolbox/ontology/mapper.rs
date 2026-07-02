@@ -135,7 +135,9 @@ impl ConceptMapper {
             }
         }
 
-        matches.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        matches.sort_by(|a, b| {
+            crate::toolkit::mind_toolbox::ranking::desc(&a.confidence, &b.confidence)
+        });
 
         matches.into_iter().take(top_k).collect()
     }

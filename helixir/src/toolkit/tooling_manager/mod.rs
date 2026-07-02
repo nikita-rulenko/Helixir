@@ -1,11 +1,17 @@
 mod add_pipeline;
+pub mod categories;
+pub mod consolidate;
+pub mod content_key;
+pub mod contradictions;
 mod crud;
 mod events;
 mod graph;
 pub(crate) mod helpers;
+pub mod ingest_buffer;
 mod reasoning;
 mod search;
 pub mod seeds;
+pub mod swarm;
 pub mod types;
 
 pub use types::*;
@@ -59,16 +65,26 @@ impl ToolingManager {
             thresholds.similarity_threshold,
             thresholds.exact_duplicate_score,
         );
-        let chunking_manager = ChunkingManager::new(Arc::clone(&db), Some(Arc::clone(&embedder)));
-        let entity_manager = EntityManager::new(Arc::clone(&db), 1000);
+        let chunking_manager = ChunkingManager::with_config(
+            Arc::clone(&db),
+            Some(Arc::clone(&embedder)),
+            config.chunking.threshold,
+            config.chunking.chunk_size,
+            config.chunking.enable_embeddings,
+        );
+        let entity_manager = EntityManager::new(Arc::clone(&db), config.entity_cache_size);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));
-        let reasoning_engine =
-            ReasoningEngine::new(Arc::clone(&db), Some(Arc::clone(&llm_provider)), 500);
+        let reasoning_engine = ReasoningEngine::new(
+            Arc::clone(&db),
+            Some(Arc::clone(&llm_provider)),
+            config.reasoning_context_limit,
+        );
         let search_engine = SearchEngine::new(
             Arc::clone(&db),
             Arc::clone(&embedder),
             SearchEngineConfig {
                 search_thresholds: config.search_thresholds.clone(),
+                retrieval: config.retrieval.clone(),
                 ..SearchEngineConfig::default()
             },
         );

@@ -26,15 +26,19 @@ impl ToolingManager {
         phase1_similar: &[SimilarMemory],
         added_ids: &mut Vec<String>,
         updated_ids: &mut Vec<String>,
+        deduped_ids: &mut Vec<String>,
         skipped: &mut usize,
         chunks_created: &mut usize,
         relations_created: &mut usize,
     ) -> Result<Option<String>, ToolingError> {
         let memory_id = match decision.operation {
             MemoryOperation::Noop => {
-                debug!("NOOP: skipping duplicate memory");
+                debug!("NOOP: duplicate memory");
                 *skipped += 1;
                 if let Some(target_id) = &decision.target_memory_id {
+                    // #44: surface the existing memory the write deduped to, so the
+                    // agent sees "linked to X" rather than an empty/silent result.
+                    deduped_ids.push(target_id.clone());
                     self.emit_memory_deduplicated(target_id, user_id).await;
                 }
                 return Ok(None);
@@ -138,7 +142,13 @@ impl ToolingManager {
                     debug!("CONTRADICT: {} contradicts {}", new_id, contra_id);
                     let _ = self
                         .reasoning_engine
-                        .add_relation(&new_id, contra_id, ReasoningType::Contradicts, 80, None)
+                        .add_relation(
+                            &new_id,
+                            contra_id,
+                            ReasoningType::Contradicts,
+                            self.config.write.contradict_edge_strength as i32,
+                            None,
+                        )
                         .await;
                 }
                 added_ids.push(new_id.clone());
@@ -216,7 +226,11 @@ impl ToolingManager {
                     .await;
 
                 let exact_thr = self.config.search_thresholds.exact_duplicate_score;
-                if phase1_similar.iter().any(|m| m.score >= exact_thr) {
+                if !self.config.mode.collective_enabled() {
+                    // Solo mode: never reach across users. The memory stays the
+                    // writer's own — no linking, no cross-user contradictions.
+                    debug!("Skipping Phase 2: solo mode (no cross-user behavior)");
+                } else if phase1_similar.iter().any(|m| m.score >= exact_thr) {
                     let max_score = phase1_similar
                         .iter()
                         .map(|m| m.score)
@@ -242,10 +256,40 @@ impl ToolingManager {
             }
         };
 
+        // P0: persist the typed edges the decision proposed (`relates_to`). This
+        // is the "similar existing memory → typed edge" path; the field was
+        // parsed but NEVER applied, so the graph never grew across add_memory
+        // calls. Wire the resulting memory into each existing one it relates to,
+        // picking the most specific edge type the model chose.
+        if let Some(rels) = &decision.relates_to {
+            for (target_id, edge) in rels {
+                if target_id.is_empty() || target_id == &memory_id {
+                    continue;
+                }
+                let rel_type = ReasoningType::from_token(edge);
+                match self
+                    .reasoning_engine
+                    .add_relation(&memory_id, target_id, rel_type, 70, None)
+                    .await
+                {
+                    Ok(_) => *relations_created += 1,
+                    Err(e) => {
+                        debug!("relates_to {memory_id}->{target_id} ({edge}) skipped: {e}")
+                    }
+                }
+            }
+        }
+
         if let Some(agent_id) = agent_id {
-            let _ = self
+            // Best-effort (a failed provenance link must not fail the write),
+            // but never silent — the old `let _ =` hid that AGENT_CREATED had
+            // never worked for unregistered agents.
+            if let Err(e) = self
                 .link_agent_to_memory(agent_id, &memory_id, "extraction")
-                .await;
+                .await
+            {
+                warn!("AGENT_CREATED link failed for {agent_id}: {e}");
+            }
         }
 
         Ok(Some(memory_id))
