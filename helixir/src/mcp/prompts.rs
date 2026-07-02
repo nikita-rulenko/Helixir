@@ -232,7 +232,24 @@ Before add_memory, ask:
 
 ## FASTTHINK: Working Memory for Complex Reasoning
 
-Use FastThink when you need to think through a problem before acting.
+### The trigger (operational, not vague):
+The moment your plan is "search_memory, then decide" — open FastThink
+instead and do BOTH inside it. Concretely, open a session when:
+- you are comparing 2+ options or diagnosing a cause, AND
+- the judgement rests on facts worth recalling (project decisions,
+  constraints, prior outcomes).
+
+For a single fact with no weighing, plain add_memory is correct.
+
+### Why not just think silently:
+1. `think_recall` lands stored facts INSIDE the reasoning tree — the
+   evidence is part of the thought process, not a separate lookup.
+2. `think_commit` persists ONE synthesized conclusion with SUPPORTS
+   provenance edges from every recalled fact — the next agent (or the
+   next session) inherits the WHY, not just the answer. It is fast
+   (seconds).
+3. A timed-out session auto-saves as [INCOMPLETE] and is recoverable —
+   silent reasoning dies with the context window.
 
 ### Workflow:
 ```
@@ -247,12 +264,14 @@ think_conclude(conclusion)            <- mark your decision
 think_commit()                        <- save conclusion to persistent memory
 ```
 
-### When to use FastThink:
-- Architecture decisions
-- Debugging complex issues
-- Evaluating multiple options
-- Planning multi-step tasks
-- Any situation requiring explicit reasoning
+### Worked episode (the shape to imitate):
+```
+think_start(session_id="retry-policy", initial_thought="Pick a retry policy for the aurora service")
+think_add(content="transient outages last under a minute", thought_type="observation", parent_idx=0)
+think_recall(query="aurora service outages queue", parent_idx=0)   # pulls 2 known facts in
+think_conclude(conclusion="Exponential backoff capped at 90s with jitter", supporting_idx=[1])
+think_commit()   # -> one memory, SUPPORTS edges from the recalled facts
+```
 
 ### Thought types:
 `reasoning`, `hypothesis`, `observation`, `question`

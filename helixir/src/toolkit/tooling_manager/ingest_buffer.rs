@@ -443,14 +443,18 @@ impl ToolingManager {
 
         let mut out = Vec::with_capacity(resp.notices.len());
         for n in resp.notices {
-            // Mark delivered, then prune the tombstone PendingInput.
-            let _ = self
+            // Mark delivered, then prune the tombstone PendingInput. A failed
+            // mark means the notice will re-deliver forever — never silent.
+            if let Err(e) = self
                 .db
                 .execute_query::<serde_json::Value, _>(
                     "markNoticeDelivered",
                     &serde_json::json!({ "notice_id": n.notice_id }),
                 )
-                .await;
+                .await
+            {
+                warn!("Outbox: markNoticeDelivered({}) failed: {e}", n.notice_id);
+            }
             if !n.pending_id.is_empty() {
                 let _ = self
                     .db
