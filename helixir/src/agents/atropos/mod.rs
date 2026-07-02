@@ -165,10 +165,38 @@ impl Atropos<'_> {
         use crate::llm::extractor::ExtractedMemory;
         use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
         use crate::toolkit::tooling_manager::content_key::compute_content_key;
+        use std::collections::HashSet;
+
+        // Flood guard. A daemon re-routing a slowly drifting corpus finds
+        // near-identical threads every pass (one hop shifts, the content_key
+        // changes, a "new" insight lands — 173 in one night). Two brakes:
+        // a per-pass cap, and a subsume check against hypotheses ALREADY in
+        // the graph — if an existing insight's category set contains (or
+        // equals) the new path, it is the same lead, not new knowledge.
+        let cap = self.tooling.config.moira.atropos.max_persist_per_pass;
+        let existing_sets: Vec<HashSet<String>> = self
+            .tooling
+            .search_by_tag("moira-insight", 500)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|m| extract_chain_set(&m.content))
+            .collect();
 
         let mut persisted = 0usize;
         for ins in insights {
+            if persisted >= cap {
+                info!(
+                    "insight persist: per-pass cap ({cap}) reached, {} candidates skipped",
+                    insights.len()
+                );
+                break;
+            }
             if ins.category_path.len() < 2 {
+                continue;
+            }
+            let new_set: HashSet<String> = ins.category_path.iter().cloned().collect();
+            if existing_sets.iter().any(|e| new_set.is_subset(e)) {
                 continue;
             }
             let first = &ins.category_path[0];
@@ -254,6 +282,22 @@ impl Atropos<'_> {
     }
 }
 
+/// Parse the category set out of a persisted hypothesis text ("via the chain
+/// A -> B -> C. Found by ..."). Returns None for texts that don't match —
+/// robustness over cleverness: an unparseable insight simply doesn't dedupe.
+fn extract_chain_set(content: &str) -> Option<std::collections::HashSet<String>> {
+    let start = content.find("via the chain ")? + "via the chain ".len();
+    let rest = &content[start..];
+    let end = rest.find(". Found by")?;
+    Some(
+        rest[..end]
+            .split(" -> ")
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +352,21 @@ mod tests {
         assert!(out[0].requires_verification, "an insight is a hypothesis");
         assert_eq!(out[0].status, "proposed");
         assert!(!out[0].witnesses.is_empty(), "insights carry provenance");
+    }
+
+    #[test]
+    fn chain_set_parses_persisted_hypothesis_text() {
+        let text = "HYPOTHESIS (generated, requires verification): an indirect \
+cross-domain link may connect a to c via the chain a -> b -> c. Found by \
+Lachesis routing over shared-category subsets...";
+        let set = extract_chain_set(text).expect("parses");
+        assert_eq!(set.len(), 3);
+        assert!(set.contains("b"));
+        // A re-routed sub-path of an existing insight is the same lead.
+        let new_path: std::collections::HashSet<String> =
+            ["a".to_string(), "b".to_string()].into_iter().collect();
+        assert!(new_path.is_subset(&set));
+        assert!(extract_chain_set("no chain here").is_none());
     }
 
     #[test]
