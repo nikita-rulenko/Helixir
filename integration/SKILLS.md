@@ -66,9 +66,11 @@ add_memory(message="<one plain natural-language sentence>", user_id="claude")
   success, searchable in seconds. Only **`ok:false`** is a real failure.
 - **Don't store** ephemeral chatter, secrets, or facts derivable from code/git.
 
-### 3. Capture at the end of each meaningful step
-After a fix, decision, or milestone, record the outcome so the next session
-inherits it.
+### 3. Capture AT the milestone, not at session end
+The trigger is an event, not a schedule: a fix landed, a test went green, a
+release shipped, a decision was made, a dead end was proven — `add_memory`
+it IN THAT MOMENT, one plain sentence with the what and the why. Sessions
+get cut off; a capture postponed to "the end" is a capture lost.
 
 ## Choosing the right retrieval tool
 

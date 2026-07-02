@@ -46,9 +46,13 @@ constraint, outcome, or gotcha**, store it:
   success, searchable in seconds. Only `ok:false` (`status:"failed"`) is a failure.
 - Don't store ephemeral chatter, secrets, or anything derivable from code/git.
 
-### 3. Record outcomes at the end of each meaningful step
-After a fix, decision, or milestone, write what was decided/done so the next
-session inherits it.
+### 3. Record outcomes AT the milestone, not at session end
+The trigger is an event, not a schedule: a fix landed, a test went green, a
+release shipped, a decision was made, a dead end was proven — `add_memory`
+it IN THAT MOMENT, one plain sentence with the what and the why. Sessions
+get cut off; a capture postponed to "the end" is a capture lost. If you
+just finished explaining an outcome to the user, that explanation is the
+memory — write it before moving on.
 
 ### 4. Reason with FastThink for multi-step analysis
 The trigger: the moment your plan is "search_memory, then decide" — open a

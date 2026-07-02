@@ -100,7 +100,7 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 
 1. **START OF CONVERSATION**: Call `search_memory(mode="recent")` to recall context from previous sessions
 2. **BEFORE MAJOR DECISIONS**: Use FastThink workflow for complex reasoning
-3. **AFTER COMPLETING TASKS**: Call `add_memory` to save key outcomes and decisions
+3. **AT EVERY MILESTONE** (fix landed / test green / release shipped / decision made / dead end proven): call `add_memory` in that moment — not at session end, which may never come
 4. **WHEN ASKED ABOUT PAST**: Always check memory first — never say "I don't remember"
 5. **WHEN CONTEXT IS LOST**: Recall your role and goals from memory immediately
 6. **MATCH COGNITIVE ROLE**: Activate appropriate role based on task triggers
