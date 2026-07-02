@@ -1,7 +1,7 @@
 //! Liveness oracle: exercise EVERY MCP Helixir tool end-to-end (#42 audit).
 //!
 //! "Compiles" does not prove a code path is live — only the running product
-//! does. This drives all 19 MCP tools through the real stdio transport and
+//! does. This drives all 20 MCP tools through the real stdio transport and
 //! proves write→read-back persistence, so it can serve as the gate for the
 //! dead-code deletion stages: after removing a suspected-dead module, this
 //! must stay green (not just `cargo check`).
@@ -110,6 +110,19 @@ fn mcp_full_surface_liveness() {
         swarm["available"].as_bool(),
         Some(false),
         "swarm_status must be gated off in Solo mode: {swarm}"
+    );
+
+    // Contradiction review: resolving a dispute that does not exist must be
+    // graceful (resolved:false), never an error — the end state was reached.
+    let (settled, _) = mcp.call_tool(
+        "resolve_contradiction",
+        json!({"from_id": "mem_oracle_bogus", "to_id": "mem_oracle_bogus2", "resolution": "confirm"}),
+    );
+    exercised.push("resolve_contradiction");
+    assert_eq!(
+        settled["resolved"].as_bool(),
+        Some(false),
+        "bogus dispute must settle gracefully: {settled}"
     );
 
     // A memory id to update: prefer the add result, else the listing.
@@ -310,12 +323,13 @@ fn mcp_full_surface_liveness() {
     );
 
     // ---- report -------------------------------------------------------------
-    const ALL: [&str; 19] = [
+    const ALL: [&str; 20] = [
         "add_memory",
         "search_memory",
         "list_memories",
         "list_users",
         "swarm_status",
+        "resolve_contradiction",
         "update_memory",
         "get_memory_graph",
         "search_by_concept",

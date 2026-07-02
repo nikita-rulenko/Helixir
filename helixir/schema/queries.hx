@@ -902,8 +902,8 @@ QUERY getUndeliveredNotices(user_id: String, limit: I64) =>
   notices <- N<MemoryNotice>::WHERE(AND(_::{user_id}::EQ(user_id), _::{delivered}::EQ(0)))::RANGE(0, limit)
   RETURN notices
 QUERY markNoticeDelivered(notice_id: String) =>
-  notice <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))::FIRST
-  updated <- notice::UPDATE({ delivered: 1 })
+  notices <- N<MemoryNotice>::WHERE(_::{notice_id}::EQ(notice_id))
+  updated <- notices::UPDATE({ delivered: 1 })
   RETURN updated
 // --- Clotho category dictionary queries — Moira #33 (additive) ---
 QUERY addCategory(category_id: String, name: String, kind: String, description: String, created_at: String) =>
@@ -948,4 +948,8 @@ QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limi
   RETURN memories
 QUERY dropConceptByInternalId(concept_internal_id: ID) =>
   DROP N<Concept>(concept_internal_id)
+  RETURN "deleted"
+
+QUERY dropCategoryByInternalId(category_internal_id: ID) =>
+  DROP N<Category>(category_internal_id)
   RETURN "deleted"

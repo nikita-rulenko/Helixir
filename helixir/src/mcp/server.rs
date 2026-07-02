@@ -102,8 +102,16 @@ pub async fn run_server() -> anyhow::Result<()> {
     info!("   📊 Instance: {}", client.config().instance);
 
     let server = HelixirMcpServer::new(client);
+    let fast_think = Arc::clone(&server.fast_think);
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
+
+    // The client hung up (one-shot agents do this constantly) — reasoning
+    // still in the scratchpad must not die with the process.
+    let saved = fast_think.save_all_interrupted("mcp shutdown").await;
+    if saved > 0 {
+        info!("Auto-saved {saved} interrupted FastThink session(s) on shutdown");
+    }
 
     Ok(())
 }

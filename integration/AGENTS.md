@@ -46,15 +46,25 @@ constraint, outcome, or gotcha**, store it:
   success, searchable in seconds. Only `ok:false` (`status:"failed"`) is a failure.
 - Don't store ephemeral chatter, secrets, or anything derivable from code/git.
 
-### 3. Record outcomes at the end of each meaningful step
-After a fix, decision, or milestone, write what was decided/done so the next
-session inherits it.
+### 3. Record outcomes AT the milestone, not at session end
+The trigger is an event, not a schedule: a fix landed, a test went green, a
+release shipped, a decision was made, a dead end was proven — `add_memory`
+it IN THAT MOMENT, one plain sentence with the what and the why. Sessions
+get cut off; a capture postponed to "the end" is a capture lost. If you
+just finished explaining an outcome to the user, that explanation is the
+memory — write it before moving on.
 
 ### 4. Reason with FastThink for multi-step analysis
-For non-trivial analysis/planning/decisions, use the scratchpad rather than many
-small writes: `think_start → think_add (build the tree) → think_recall
-(optional) → think_conclude (required before commit) → think_commit (persists;
-heavy, call once)`. Reuse one `session_id`; `think_discard` if it led nowhere.
+The trigger: the moment your plan is "search_memory, then decide" — open a
+FastThink session and do both inside it. Comparing options, diagnosing a
+cause, any judgement resting on recalled facts qualifies; a single plain fact
+does not (just `add_memory` it). What you gain over thinking silently:
+`think_recall` lands stored facts inside the reasoning tree, and
+`think_commit` persists ONE conclusion with SUPPORTS provenance edges from
+that evidence (fast — seconds), so the next session inherits the WHY.
+Flow: `think_start → think_add (build the tree) → think_recall →
+think_conclude (required) → think_commit` (once). Reuse one `session_id`;
+`think_discard` if it led nowhere.
 
 ### Pick the right retrieval tool
 - WHY / rationale → `search_reasoning_chain` (`chain_mode="causal"`).

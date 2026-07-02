@@ -17,7 +17,7 @@ use crate::toolkit::fast_think::{FastThinkError, ThoughtType};
 #[tool_router(router = think_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Begin a FastThink session — an isolated scratchpad for MULTI-STEP reasoning that you commit as ONE coherent memory at the end (not many tiny add_memory calls). Use it for non-trivial analysis or decisions; for a single fact just use add_memory. Workflow: think_start → think_add (build the reasoning tree) → optional think_recall (pull facts from main memory) → think_conclude (mark the answer) → think_commit (persist) OR think_discard (throw away). YOU choose the session_id and reuse it on every think_* call. Returns {session_id, root_thought_idx}."
+        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start → think_add steps → think_recall → think_conclude → think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Returns {session_id, root_thought_idx}."
     )]
     async fn think_start(
         &self,

@@ -66,9 +66,11 @@ add_memory(message="<one plain natural-language sentence>", user_id="claude")
   success, searchable in seconds. Only **`ok:false`** is a real failure.
 - **Don't store** ephemeral chatter, secrets, or facts derivable from code/git.
 
-### 3. Capture at the end of each meaningful step
-After a fix, decision, or milestone, record the outcome so the next session
-inherits it.
+### 3. Capture AT the milestone, not at session end
+The trigger is an event, not a schedule: a fix landed, a test went green, a
+release shipped, a decision was made, a dead end was proven — `add_memory`
+it IN THAT MOMENT, one plain sentence with the what and the why. Sessions
+get cut off; a capture postponed to "the end" is a capture lost.
 
 ## Choosing the right retrieval tool
 
@@ -86,15 +88,28 @@ corpus, retry with `mode="full"`.
 
 ## Reasoning with FastThink (multi-step analysis)
 
-Use the scratchpad instead of spamming `add_memory` with half-thoughts. Order:
+The trigger: if your next two moves would be `search_memory` and then a
+judgement (comparing options, diagnosing a cause, planning against known
+constraints) — open a FastThink session and do BOTH inside it. `think_recall`
+puts the stored facts inside your reasoning tree; `think_commit` persists ONE
+synthesized conclusion with SUPPORTS provenance edges from that evidence
+(fast — seconds), so the WHY survives, not just the answer. A single plain
+fact needs no session — `add_memory` it.
+
 ```
 think_start(session_id="<you choose>", initial_thought="<the question>")
 think_add(session_id, content="<a step>", parent_idx=<prev idx>)   # repeat
-think_recall(session_id, query="<known facts>", parent_idx=<idx>)  # optional
+think_recall(session_id, query="<known facts>", parent_idx=<idx>)  # evidence in
 think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...])  # REQUIRED before commit
-think_commit(session_id, user_id="claude")   # persists; HEAVY (tens of s) — call once
+think_commit(session_id, user_id="claude")   # persists once, in seconds
 ```
 Reuse one `session_id`. `think_discard(session_id)` throws it away unsaved.
+
+Worked episode: "pick a retry policy" → think_start with the question →
+think_add the observation ("outages last under a minute") → think_recall
+("aurora outages queue") pulls two known facts in → think_conclude
+("exponential backoff capped at 90s with jitter") → think_commit. Result:
+one memory whose SUPPORTS edges point at the recalled evidence.
 
 ## Principles
 - **Recall before you re-derive** — don't make the user repeat what's stored.

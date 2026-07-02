@@ -183,11 +183,16 @@ else
             docker start "$CONTAINER_NAME" >/dev/null
         else
             info "Starting HelixDB container..."
+            # -m 3g: OOM containment — a runaway spike restarts the container
+            # in seconds instead of OOM-killing the whole Docker VM (LMDB is
+            # durable, a restart loses no data). Raise for large corpora.
             docker run -d \
                 --name "$CONTAINER_NAME" \
                 -p "${HELIX_PORT}:${HELIX_PORT}" \
                 -v helixdb_data:/data \
                 --restart unless-stopped \
+                -m 3g --memory-swap 3g \
+                --log-opt max-size=20m --log-opt max-file=3 \
                 helixdb/helixdb:latest >/dev/null
         fi
 

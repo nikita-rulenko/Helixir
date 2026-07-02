@@ -171,7 +171,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         85,
-        "For multi-step reasoning use FastThink: think_start, then think_add steps, optional think_recall to pull known facts, think_conclude, and ONE think_commit at the end — the conclusion persists in seconds with SUPPORTS provenance edges from recalled evidence, and entity enrichment finishes in the background; think_discard throws the scratchpad away.",
+        "FastThink trigger: the moment the plan is search_memory-then-decide (comparing options, diagnosing a cause, judging against known constraints), open a FastThink session and do both inside it — think_recall lands stored facts inside the reasoning tree and ONE think_commit persists the conclusion in seconds with SUPPORTS provenance edges from that evidence, so the next agent inherits the why; a single plain fact needs no session, just add_memory.",
     ),
     (
         85,
