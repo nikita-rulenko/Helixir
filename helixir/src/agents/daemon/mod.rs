@@ -149,6 +149,7 @@ impl<'a> Daemon<'a> {
             if watchdog_on {
                 hygieia.check_db().await;
                 hygieia.check_memory().await;
+                hygieia.run_backup_duty().await;
             }
 
             // Drain contradiction debt — keep resolved=0 cross-user disputes

@@ -427,3 +427,245 @@ mod tests {
         assert_eq!(orphan_daemon(&roster3, now, 6 * 3600), None);
     }
 }
+
+// ── Autobackup duty (#65) ────────────────────────────────────────────────────
+
+/// Newest archive's age in hours, or None if the dir has no archives.
+pub fn newest_backup_age_hours(dir: &std::path::Path) -> Option<f64> {
+    let newest = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("helixir-data-"))
+        .filter_map(|e| e.metadata().ok()?.modified().ok())
+        .max()?;
+    Some(newest.elapsed().ok()?.as_secs_f64() / 3600.0)
+}
+
+/// Keep the newest `keep` archives, delete the rest. Returns pruned count.
+pub fn prune_backups(dir: &std::path::Path, keep: usize) -> usize {
+    let mut archives: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("helixir-data-"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    archives.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    let mut pruned = 0;
+    for (_, path) in archives.into_iter().skip(keep) {
+        if std::fs::remove_file(&path).is_ok() {
+            pruned += 1;
+        }
+    }
+    pruned
+}
+
+impl Hygieia<'_> {
+    /// The backup duty: when the newest archive is older than the configured
+    /// interval, tar the data dir into `backup_dir`. With a known container
+    /// the copy happens under `docker pause` — no writes land mid-copy, so
+    /// the LMDB snapshot is consistent; the pause lasts only as long as the
+    /// tar (a 32 MB corpus is sub-second). Journal on success, alert on
+    /// failure. No-op when `backup_source_dir` is empty.
+    pub async fn run_backup_duty(&mut self) {
+        let cfg = self.cfg().clone();
+        if cfg.backup_source_dir.is_empty() {
+            return;
+        }
+        let backup_dir = if cfg.backup_dir.is_empty() {
+            journal_path()
+                .parent()
+                .map(|p| p.join("backups"))
+                .unwrap_or_else(|| PathBuf::from("./helixir-backups"))
+        } else {
+            PathBuf::from(&cfg.backup_dir)
+        };
+        if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+            self.alert(
+                "backup_failed",
+                &format!("cannot create backup dir {}: {e}", backup_dir.display()),
+                serde_json::Value::Null,
+            )
+            .await;
+            return;
+        }
+        if let Some(age) = newest_backup_age_hours(&backup_dir) {
+            if age < cfg.backup_interval_hours {
+                return; // fresh enough
+            }
+        }
+
+        let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let archive = backup_dir.join(format!("helixir-data-{stamp}.tar.gz"));
+
+        let paused = if !cfg.container_name.is_empty() {
+            tokio::process::Command::new("docker")
+                .args(["pause", &cfg.container_name])
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let tar_ok = tokio::process::Command::new("tar")
+            .args([
+                "-czf",
+                &archive.to_string_lossy(),
+                "-C",
+                &cfg.backup_source_dir,
+                ".",
+            ])
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if paused {
+            let unpaused = tokio::process::Command::new("docker")
+                .args(["unpause", &cfg.container_name])
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !unpaused {
+                // A paused database is an outage — this must be LOUD.
+                self.alert(
+                    "backup_unpause_failed",
+                    &format!(
+                        "container {} is still PAUSED after backup — run `docker unpause {}` NOW",
+                        cfg.container_name, cfg.container_name
+                    ),
+                    serde_json::Value::Null,
+                )
+                .await;
+            }
+        }
+
+        if tar_ok {
+            let size_mib = std::fs::metadata(&archive)
+                .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                .unwrap_or(0.0);
+            let pruned = prune_backups(&backup_dir, cfg.backup_keep.max(1));
+            journal(&HealthEvent {
+                at: chrono::Utc::now().to_rfc3339(),
+                severity: "heal".into(),
+                kind: "backup_done".into(),
+                summary: format!(
+                    "{} written ({size_mib:.1} MiB, {} pruned, pause={})",
+                    archive.display(),
+                    pruned,
+                    paused
+                ),
+                detail: serde_json::Value::Null,
+            });
+            info!("hygieia: backup done — {}", archive.display());
+        } else {
+            let _ = std::fs::remove_file(&archive);
+            self.alert(
+                "backup_failed",
+                &format!(
+                    "tar of {} failed — the corpus has NO fresh backup",
+                    cfg.backup_source_dir
+                ),
+                serde_json::Value::Null,
+            )
+            .await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn retention_keeps_newest_n() {
+        let dir = std::env::temp_dir().join(format!("hyg_bak_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..5 {
+            let p = dir.join(format!("helixir-data-2026010{i}-000000.tar.gz"));
+            std::fs::write(&p, b"x").unwrap();
+            // Distinct mtimes so ordering is deterministic.
+            let t = filetime_from_secs(1_700_000_000 + i as i64 * 100);
+            let _ = set_mtime(&p, t);
+        }
+        // A non-archive bystander must survive.
+        std::fs::write(dir.join("notes.txt"), b"keep me").unwrap();
+
+        let pruned = prune_backups(&dir, 2);
+        assert_eq!(pruned, 3);
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(left.contains(&"notes.txt".to_string()));
+        assert_eq!(
+            left.iter()
+                .filter(|n| n.starts_with("helixir-data-"))
+                .count(),
+            2
+        );
+        assert!(newest_backup_age_hours(&dir).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn filetime_from_secs(secs: i64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64)
+    }
+    fn set_mtime(p: &std::path::Path, t: std::time::SystemTime) -> std::io::Result<()> {
+        // Portable-enough mtime bump via File::set_times (Rust 1.75+).
+        let f = std::fs::File::options().write(true).open(p)?;
+        let times = std::fs::FileTimes::new().set_modified(t);
+        f.set_times(times)
+    }
+}
+
+impl Hygieia<'_> {
+    /// The in-memory-storage trap (upstream HelixDB defaults newer builds to
+    /// ephemeral storage; a stop ERASES everything unless started with the
+    /// disk flag). Detector: the database serves data while the configured
+    /// data dir holds no LMDB file — the corpus lives only in RAM and will
+    /// die with the next restart. Loudest alert we have.
+    pub async fn check_storage_persistence(&mut self) {
+        let src = self.cfg().backup_source_dir.clone();
+        if src.is_empty() {
+            return;
+        }
+        let has_mdb = std::fs::read_dir(&src)
+            .map(|rd| {
+                rd.flatten().any(|e| {
+                    let n = e.file_name().to_string_lossy().to_lowercase();
+                    n.ends_with(".mdb") || n == "data.mdb" || n == "user"
+                })
+            })
+            .unwrap_or(false);
+        if has_mdb {
+            return;
+        }
+        // Only alarm when the DB actually answers — an empty dir next to a
+        // dead DB is a different (db_down) finding.
+        let alive = self
+            .tooling
+            .db
+            .execute_query::<serde_json::Value, _>(
+                "getAllCategories",
+                &serde_json::json!({"limit": 1}),
+            )
+            .await
+            .is_ok();
+        if alive {
+            self.alert(
+                "storage_not_persistent",
+                &format!(
+                    "database is SERVING but {src} holds no LMDB files — it may be running IN-MEMORY (newer HelixDB default); a restart will ERASE the corpus. Start it with disk persistence NOW."
+                ),
+                serde_json::Value::Null,
+            )
+            .await;
+        }
+    }
+}

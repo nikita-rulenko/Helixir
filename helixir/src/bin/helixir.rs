@@ -2021,6 +2021,8 @@ async fn watch_run(client: &HelixirClient, once: bool, interval: Option<u64>) ->
         let db_ok = hygieia.check_db().await;
         hygieia.check_memory().await;
         hygieia.check_orphan_daemons().await;
+        hygieia.check_storage_persistence().await;
+        hygieia.run_backup_duty().await;
         if once {
             println!("tick: db={}", if db_ok { "ok" } else { "DOWN" });
             return Ok(());

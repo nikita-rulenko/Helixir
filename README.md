@@ -108,6 +108,15 @@ make config         # Print MCP config to paste into your IDE
 
 - **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
+
+> ⚠️ **Storage-mode trap (data loss).** Newer HelixDB builds default to
+> **in-memory** storage — stopping the instance ERASES everything unless it
+> runs with disk persistence (`helix start dev --disk` for CLI-managed
+> instances; a mounted `HELIX_DATA_DIR` for containers, as our compose and
+> install script configure). After any HelixDB upgrade or fresh install,
+> verify persistence: write a memory, restart the instance, confirm it
+> survived. Hygieia's `storage_not_persistent` detector also alarms when a
+> serving database has no LMDB files in its data dir.
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
   - [DeepSeek](https://platform.deepseek.com) (cheap, ~$0.14/$0.28 per 1M tok)

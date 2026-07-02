@@ -634,6 +634,15 @@ pub struct WatchdogConfig {
     pub alert_users: Vec<String>,
     /// Re-alerting the same kind is suppressed for this long.
     pub alert_cooldown_secs: u64,
+    /// Autobackup duty (#65): tar the data dir on a schedule. Empty source
+    /// disables the duty. When `container_name` is set the container is
+    /// paused for the copy (a consistent LMDB snapshot), then unpaused.
+    pub backup_source_dir: String,
+    /// Where archives land. Default: ~/.helixir/backups.
+    pub backup_dir: String,
+    pub backup_interval_hours: f64,
+    /// Newest N archives survive pruning.
+    pub backup_keep: usize,
 }
 impl Default for WatchdogConfig {
     fn default() -> Self {
@@ -647,6 +656,10 @@ impl Default for WatchdogConfig {
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
             alert_cooldown_secs: 21_600,
+            backup_source_dir: String::new(),
+            backup_dir: String::new(),
+            backup_interval_hours: 24.0,
+            backup_keep: 7,
         }
     }
 }
