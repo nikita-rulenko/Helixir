@@ -400,6 +400,10 @@ helixir daemon status | stop           # inspect / stop the background daemon
 #   (1 = every pass, N = every Nth, 0 = never; defaults live in moira.daemon.* of helixir.toml)
 helixir merge --limit <n>              # run the NLI paraphrase backstop once (collective)
 helixir journal | insights             # activity + insight journals (with provenance)
+helixir watch start | run --once | stop | status   # Hygieia, the health watchdog:
+#   DB liveness (self-heals via docker restart when allowed), container memory
+#   pressure, orphaned daemons; alerts land as ops_alert notices IN the memory
+helixir health                         # recent health events (health.jsonl)
 ```
 
 `helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.

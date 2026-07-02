@@ -79,6 +79,16 @@ impl<'a> Daemon<'a> {
             cfg.clotho_every, cfg.insight_every, cfg.merge_every, cfg.reconcile_every
         );
 
+        // Hygieia rides along: flood brake + substrate checks each pass. The
+        // insights cadence is a LOCAL variable so her flood verdict can zero
+        // it for this daemon's lifetime without touching config.
+        let mut hygieia = crate::agents::hygieia::Hygieia::new(self.tooling);
+        let mut flood = crate::agents::hygieia::FloodTracker::default();
+        let mut insight_every = cfg.insight_every;
+        let atropos_cap = self.tooling.config.moira.atropos.max_persist_per_pass;
+        let flood_bar = self.tooling.config.watchdog.flood_passes_to_pause;
+        let watchdog_on = self.tooling.config.watchdog.enabled;
+
         let mut pass = 0u64;
         loop {
             pass += 1;
@@ -91,12 +101,54 @@ impl<'a> Daemon<'a> {
             }
             let mut pass_cfg = cfg.pass.clone();
             pass_cfg.run_clotho = due(cfg.clotho_every, pass);
-            pass_cfg.run_insights = due(cfg.insight_every, pass);
+            pass_cfg.run_insights = due(insight_every, pass);
             if pass_cfg.run_clotho || pass_cfg.run_insights {
                 match orchestrator.full_pass(&cfg.user, &pass_cfg).await {
-                    Ok(run) => on_pass(pass, &run),
+                    Ok(run) => {
+                        if watchdog_on && pass_cfg.run_insights {
+                            use crate::agents::hygieia::FloodVerdict;
+                            match flood.observe(run.persisted, atropos_cap, flood_bar) {
+                                FloodVerdict::PauseInsights => {
+                                    insight_every = 0;
+                                    crate::agents::hygieia::journal(
+                                        &crate::agents::hygieia::HealthEvent {
+                                            at: chrono::Utc::now().to_rfc3339(),
+                                            severity: "heal".into(),
+                                            kind: "insights_paused".into(),
+                                            summary: format!(
+                                                "insights stage paused after {flood_bar} consecutive capped passes (pass {pass})"
+                                            ),
+                                            detail: serde_json::Value::Null,
+                                        },
+                                    );
+                                    hygieia
+                                        .alert(
+                                            "insight_flood",
+                                            &format!(
+                                                "Atropos hit the persist cap {flood_bar} passes in a row — the insights stage is PAUSED for this daemon's lifetime. Restart the daemon to resume; consider whether the corpus is drifting or the cap is too low."
+                                            ),
+                                            serde_json::json!({"pass": pass, "cap": atropos_cap}),
+                                        )
+                                        .await;
+                                }
+                                FloodVerdict::Capped(n) => {
+                                    info!(
+                                        "daemon: persist cap hit ({n}/{flood_bar} toward flood pause)"
+                                    );
+                                }
+                                FloodVerdict::Ok => {}
+                            }
+                        }
+                        on_pass(pass, &run);
+                    }
                     Err(e) => warn!("daemon: pass {pass} failed: {e}"),
                 }
+            }
+
+            // Substrate vitals once per pass (cheap; alerts are cooldown-deduped).
+            if watchdog_on {
+                hygieia.check_db().await;
+                hygieia.check_memory().await;
             }
 
             // Drain contradiction debt — keep resolved=0 cross-user disputes

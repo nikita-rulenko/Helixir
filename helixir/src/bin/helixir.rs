@@ -161,6 +161,17 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DaemonCmd,
     },
+    /// Hygieia — the health watchdog: DB liveness, container memory,
+    /// orphaned daemons; self-heals where allowed, alerts through the memory.
+    Watch {
+        #[command(subcommand)]
+        cmd: WatchCmd,
+    },
+    /// Recent health events (Hygieia's journal, ~/.helixir/health.jsonl).
+    Health {
+        #[arg(long, default_value_t = 20)]
+        tail: usize,
+    },
     /// Configure Helixir + wire its MCP server into your agent clients
     /// (Claude Code, Claude Desktop, Cursor, Gemini CLI).
     Setup {
@@ -205,6 +216,28 @@ enum ModelCmd {
     Check,
     /// Print which ONNX variant would be downloaded for this host (no download).
     Which,
+}
+
+#[derive(Subcommand)]
+enum WatchCmd {
+    /// Run the watchdog loop in the FOREGROUND (Ctrl-C to stop; or --once).
+    Run {
+        /// One sampling tick, then exit (for smoke tests and cron).
+        #[arg(long)]
+        once: bool,
+        /// Sampling period in seconds. Default: config watchdog.sample_interval_secs.
+        #[arg(long)]
+        interval: Option<u64>,
+    },
+    /// Start a DETACHED background watchdog. Writes a PID file; `stop` ends it.
+    Start {
+        #[arg(long)]
+        interval: Option<u64>,
+    },
+    /// SIGTERM the background watchdog.
+    Stop,
+    /// Is the background watchdog alive?
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -380,6 +413,8 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
         Cmd::Swarm { .. } => "swarm",
         Cmd::Heartbeat { .. } => "heartbeat",
         Cmd::Debt { .. } => "debt",
+        Cmd::Watch { .. } => "watch",
+        Cmd::Health { .. } => "health",
         _ => "command",
     }
 }
@@ -459,6 +494,33 @@ async fn main() -> Result<()> {
             DaemonCmd::Run { .. } => {} // needs the client — fall through
         }
     }
+    if let Cmd::Watch { cmd } = &cli.cmd {
+        match cmd {
+            WatchCmd::Start { interval } => return watch_start(*interval),
+            WatchCmd::Stop => return stop_process("watch"),
+            WatchCmd::Status => {
+                let Some(state) = read_pid_state("watch") else {
+                    println!("watch: stopped (no pid file)");
+                    return Ok(());
+                };
+                let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                println!(
+                    "watch: {}  pid={pid}  journal={}",
+                    if is_alive(pid) {
+                        "running"
+                    } else {
+                        "STALE (process gone)"
+                    },
+                    helixir::agents::hygieia::journal_path().display()
+                );
+                return Ok(());
+            }
+            WatchCmd::Run { .. } => {} // needs the client — fall through
+        }
+    }
+    if let Cmd::Health { tail } = &cli.cmd {
+        return health_tail(*tail);
+    }
 
     // Gateway: Run serves over HTTP (its own mcp-style client init); Start/Stop/
     // Status are process management (no DB) — all handled before the shared init.
@@ -502,7 +564,15 @@ async fn main() -> Result<()> {
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
     mode_gate(&cli.cmd, client.config().mode)?;
-    client.initialize().await.context("initialize")?;
+    if matches!(&cli.cmd, Cmd::Watch { .. }) {
+        // The watchdog must survive a DEAD database — that is its job. A
+        // failed initialize is Hygieia's first finding, not a fatal error.
+        if let Err(e) = client.initialize().await {
+            eprintln!("hygieia: initialize failed ({e}) — proceeding, the patient looks down");
+        }
+    } else {
+        client.initialize().await.context("initialize")?;
+    }
 
     match cli.cmd {
         Cmd::Categories { limit } => categories(&client, limit).await?,
@@ -591,6 +661,11 @@ async fn main() -> Result<()> {
             }
             _ => unreachable!("daemon start/stop/status handled before client init"),
         },
+        Cmd::Watch { cmd } => match cmd {
+            WatchCmd::Run { once, interval } => watch_run(&client, once, interval).await?,
+            _ => unreachable!("watch start/stop/status handled before client init"),
+        },
+        Cmd::Health { .. } => unreachable!("health handled before client init"),
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
         Cmd::Mode => unreachable!("mode handled before client init"),
@@ -1924,6 +1999,77 @@ fn daemon_start(
         "daemon started (pid {pid}) for '{user}', every {interval}s; log: {}",
         log.display()
     );
+    Ok(())
+}
+
+/// Foreground watchdog loop: sample the substrate, alert/heal per config.
+async fn watch_run(client: &HelixirClient, once: bool, interval: Option<u64>) -> Result<()> {
+    let tooling = client.tooling();
+    let watchdog = client.config().watchdog.clone();
+    let period = interval.unwrap_or(watchdog.sample_interval_secs);
+    let mut hygieia = helixir::agents::hygieia::Hygieia::new(tooling);
+    println!(
+        "hygieia: watching every {period}s (container: {}) — journal {}",
+        if watchdog.container_name.is_empty() {
+            "none configured"
+        } else {
+            &watchdog.container_name
+        },
+        helixir::agents::hygieia::journal_path().display()
+    );
+    loop {
+        let db_ok = hygieia.check_db().await;
+        hygieia.check_memory().await;
+        hygieia.check_orphan_daemons().await;
+        if once {
+            println!("tick: db={}", if db_ok { "ok" } else { "DOWN" });
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(period)).await;
+    }
+}
+
+/// Detach `watch run` as a background service (pid file + log, like the daemon).
+fn watch_start(interval: Option<u64>) -> Result<()> {
+    let mut args: Vec<String> = vec!["watch".into(), "run".into()];
+    if let Some(i) = interval {
+        args.push("--interval".into());
+        args.push(i.to_string());
+    }
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (pid, log) = spawn_detached("watch", &args_ref, serde_json::json!({}))?;
+    println!("watch started (pid {pid}); log: {}", log.display());
+    Ok(())
+}
+
+/// Pretty-print the tail of Hygieia's health journal.
+fn health_tail(n: usize) -> Result<()> {
+    let path = helixir::agents::hygieia::journal_path();
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("no health journal yet at {}", path.display()))?;
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(n);
+    println!(
+        "health events (last {} of {}):",
+        lines.len() - start,
+        lines.len()
+    );
+    for line in &lines[start..] {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => println!(
+                "  {}  {:>5}  {:<20}  {}",
+                v.get("at")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .get(..16)
+                    .unwrap_or(""),
+                v.get("severity").and_then(|x| x.as_str()).unwrap_or(""),
+                v.get("kind").and_then(|x| x.as_str()).unwrap_or(""),
+                v.get("summary").and_then(|x| x.as_str()).unwrap_or("")
+            ),
+            Err(_) => println!("  {line}"),
+        }
+    }
     Ok(())
 }
 

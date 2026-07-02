@@ -18,6 +18,9 @@ use crate::toolkit::tooling_manager::types::ToolingError;
 pub struct PipelineRun {
     pub grow: GrowStats,
     pub insights: Vec<Insight>,
+    /// How many insights persist_insights actually stored this pass (after
+    /// the flood gate) — Hygieia's flood detector reads this.
+    pub persisted: usize,
 }
 
 /// Tunables for a pass. Defaults match the CLI.
@@ -127,6 +130,10 @@ impl<'a> Orchestrator<'a> {
             insights.len(),
             persisted
         );
-        Ok(PipelineRun { grow, insights })
+        Ok(PipelineRun {
+            grow,
+            insights,
+            persisted,
+        })
     }
 }

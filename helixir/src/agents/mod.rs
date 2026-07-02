@@ -17,5 +17,6 @@
 pub mod atropos;
 pub mod clotho;
 pub mod daemon;
+pub mod hygieia;
 pub mod lachesis;
 pub mod orchestrator;
