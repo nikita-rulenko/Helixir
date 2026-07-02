@@ -122,26 +122,11 @@ pub async fn vector_search_phase(
     let query_vector: Vec<f64> = query_embedding.iter().map(|&x| x as f64).collect();
 
     // #31 bi-temporality: the window filters on EVENT time (valid_from else
-    // created_at) — HQL can't express the coalesce, so the pushdown is off
+    // created_at) — HQL can't express the coalesce, so the cutoff pushdown
+    // (smartVectorSearchWithChunksCutoff, still in queries.hx) is not used
     // and the Rust-side filter below is authoritative. Explicit windows are
     // the rare path; the overfetch already covers the delta.
-    let hql_cutoff_active = false && profile.temporal_cutoff_in_hql() && temporal_cutoff.is_some();
-    let vector_response: VectorSearchResponse = if hql_cutoff_active {
-        let cutoff = temporal_cutoff.unwrap();
-        let params = serde_json::json!({
-            "query_vector": query_vector,
-            "limit": fetch_limit,
-            "cutoff_date": cutoff.to_rfc3339()
-        });
-        debug!(
-            "Phase 1 (algo_opt P0.1): pushing cutoff_date={} into HQL ::WHERE",
-            cutoff.to_rfc3339()
-        );
-        client
-            .execute_query("smartVectorSearchWithChunksCutoff", &params)
-            .await
-            .map_err(|e| TraversalError::Database(e.to_string()))?
-    } else {
+    let vector_response: VectorSearchResponse = {
         let params = serde_json::json!({
             "query_vector": query_vector,
             "limit": fetch_limit
