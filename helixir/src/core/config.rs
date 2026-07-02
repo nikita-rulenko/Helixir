@@ -324,6 +324,10 @@ pub struct AtroposConfig {
     pub quality_pmi_bar: f64,
     pub min_hops: usize,
     pub preference_labels: Vec<String>,
+    /// Insight-flood guard: at most this many NEW hypothesis memories persist
+    /// per pass. A daemon re-routing a drifting corpus every interval minted
+    /// 173 near-duplicate insights in one night without it.
+    pub max_persist_per_pass: usize,
 }
 impl Default for AtroposConfig {
     fn default() -> Self {
@@ -334,6 +338,7 @@ impl Default for AtroposConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            max_persist_per_pass: 6,
         }
     }
 }
