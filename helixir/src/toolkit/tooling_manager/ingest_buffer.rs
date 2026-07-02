@@ -399,7 +399,7 @@ impl ToolingManager {
 
     /// Write one item to the outbox (прихожая). Best-effort: a delivery that
     /// fails to persist is logged, never fatal to the worker.
-    async fn enqueue_notice(
+    pub(crate) async fn enqueue_notice(
         &self,
         user_id: &str,
         kind: &str,

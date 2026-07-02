@@ -605,6 +605,52 @@ impl Default for FastThinkConfig {
     }
 }
 
+/// Hygieia — the built-in health watchdog (the OOM incident of 2026-07-02
+/// institutionalized). Detectors sample the substrate; reactions climb a
+/// ladder: self-heal silently → alert through the memory itself (ops_alert
+/// notices + an ops-alert memory) → journal everything to health.jsonl.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatchdogConfig {
+    pub enabled: bool,
+    /// Standalone `helixir watch` sampling period.
+    pub sample_interval_secs: u64,
+    /// Docker container to watch/heal. Empty disables the memory detector
+    /// and the restart heal (HTTP liveness probes still run).
+    pub container_name: String,
+    /// Alert when container memory crosses this % of its limit.
+    pub mem_alert_pct: f64,
+    /// Allow `docker restart <container_name>` as a self-heal for a dead or
+    /// near-cap database. Conservative default: off.
+    pub allow_container_restart: bool,
+    /// Insight-flood brake: this many CONSECUTIVE passes hitting the Atropos
+    /// persist cap pauses the insights stage for the daemon's lifetime.
+    pub flood_passes_to_pause: u32,
+    /// A daemon still heartbeating while every other agent has been silent
+    /// this long is flagged as likely orphaned.
+    pub orphan_daemon_hours: f64,
+    /// Who receives ops_alert notices (delivered in pending_outcomes on
+    /// their next write — the memory alerts through the memory).
+    pub alert_users: Vec<String>,
+    /// Re-alerting the same kind is suppressed for this long.
+    pub alert_cooldown_secs: u64,
+}
+impl Default for WatchdogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sample_interval_secs: 60,
+            container_name: String::new(),
+            mem_alert_pct: 80.0,
+            allow_container_restart: false,
+            flood_passes_to_pause: 3,
+            orphan_daemon_hours: 6.0,
+            alert_users: vec!["helixir".to_string()],
+            alert_cooldown_secs: 21_600,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HelixirConfig {
@@ -666,6 +712,7 @@ pub struct HelixirConfig {
     pub retrieval: RetrievalConfig,
     #[serde(default)]
     pub moira: MoiraConfig,
+    pub watchdog: WatchdogConfig,
     #[serde(default)]
     pub write: WriteConfig,
     #[serde(default)]
@@ -731,6 +778,7 @@ impl HelixirConfig {
             retry: RetryConfig::default(),
             retrieval: RetrievalConfig::default(),
             moira: MoiraConfig::default(),
+            watchdog: WatchdogConfig::default(),
             write: WriteConfig::default(),
             ingest: IngestConfig::default(),
             chunking: ChunkingConfig::default(),

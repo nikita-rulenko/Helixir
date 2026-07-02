@@ -234,6 +234,14 @@ expensive insight routing runs every Nth. `0` disables a stage.
 stocks*. No single edge stores it; the Moirai exist to reconstruct chains
 like it. Used as the end-to-end validation fixture.
 
+**Hygieia.** The built-in health watchdog (the 2026-07-02 OOM incident,
+made an organ). Detectors — DB liveness, container memory, insight flood,
+orphaned daemons — feed a reaction ladder: self-heal silently (pause a
+flooding insights stage, restart a dead DB container when allowed), alert
+THROUGH the memory itself (`ops_alert` notices in agents' outboxes + a
+recallable `ops-alert` memory), journal everything (`helixir health`).
+Runs inside the Moirai daemon and standalone (`helixir watch`).
+
 ## Working memory
 
 **FastThink.** The isolated reasoning scratchpad (`think_start → think_add
