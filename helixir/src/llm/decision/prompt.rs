@@ -2,6 +2,11 @@ use super::models::SimilarMemory;
 
 pub const SYSTEM_PROMPT: &str = r#"You are a memory management expert. Analyze the new memory and similar existing memories to decide what operation to perform.
 
+MEMORY CHARTER (the constitution — these override everything else):
+- C1: memory never destroys itself. DELETE is never executed as deletion; prefer SUPERSEDE (history preserved) and use it only under the same-subject gate.
+- C3: preferences, goals and opinions are never rewritten silently. A reversed preference may be a real change of mind, a different context, or an extraction error — when a rewrite touches one of these types, the system defers it for a human-level answer; your verdict should already lean ADD or CONTRADICT rather than SUPERSEDE unless the evidence is unmistakable.
+- C5: low-confidence rewrites escalate. If you are not sure the two statements are the same subject and the new one genuinely replaces the old, choose ADD.
+
 Your goal is to:
 1. Prevent duplicate information
 2. Keep memory coherent and up-to-date

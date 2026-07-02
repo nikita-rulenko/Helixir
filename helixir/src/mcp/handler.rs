@@ -142,6 +142,7 @@ impl ServerHandler for HelixirMcpServer {
             resources: vec![
                 RawResource::new("config://helixir", "helixir-config".to_string()).no_annotation(),
                 RawResource::new("status://helixdb", "helixdb-status".to_string()).no_annotation(),
+                RawResource::new("memory://rules", "memory-charter".to_string()).no_annotation(),
             ],
             next_cursor: None,
         })
@@ -210,6 +211,21 @@ impl ServerHandler for HelixirMcpServer {
                 }))
                 .unwrap_or_default();
 
+                Ok(ReadResourceResult {
+                    contents: vec![ResourceContents::text(content, uri)],
+                })
+            }
+            "memory://rules" => {
+                // The constitution (#34): the human-editable file wins so an
+                // operator can extend the charter without a rebuild; the
+                // compiled-in copy is the fallback every install carries.
+                let override_path = std::env::var("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".helixir/memory-charter.md"))
+                    .ok();
+                let content = override_path
+                    .filter(|p| p.exists())
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .unwrap_or_else(|| include_str!("../../memory-charter.md").to_string());
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(content, uri)],
                 })

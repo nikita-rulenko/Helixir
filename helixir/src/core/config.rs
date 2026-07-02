@@ -431,6 +431,12 @@ pub struct WriteConfig {
     pub context_link_priority: i64,
     /// Charter C5: confidence below which a rewrite is escalated to the human.
     pub charter_low_confidence: u8,
+    /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
+    /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
+    /// executing — store the new fact alongside the old, record a
+    /// charter_deferred CONTRADICTS edge, and let the agent settle it with
+    /// resolve_contradiction (retract = the supersede happens then).
+    pub charter_blocking: bool,
 }
 impl Default for WriteConfig {
     fn default() -> Self {
@@ -450,6 +456,7 @@ impl Default for WriteConfig {
             fallback_importance: 50,
             context_link_priority: 50,
             charter_low_confidence: 70,
+            charter_blocking: true,
         }
     }
 }

@@ -216,26 +216,32 @@ impl ToolingManager {
             );
             let vector = &all_embeddings[i];
             let similar_memories = &recall[i];
-            let decision = decisions[i].clone();
+            let mut decision = decisions[i].clone();
 
             info!(
                 "Memory {} decision: {:?} (confidence={}, target={:?})",
                 i, decision.operation, decision.confidence, decision.target_memory_id
             );
 
-            // Charter escalation (memory-charter.md, flag-don't-block): the
-            // decision still executes below; the conflict is surfaced to the
-            // agent so it can ask the human or apply a learned rule.
-            let target_id = decision
+            // Charter escalation (memory-charter.md): surfaced to the agent;
+            // destructive verdicts additionally DEFER under charter_blocking.
+            let target_id: Option<String> = decision
                 .target_memory_id
-                .as_deref()
-                .or(decision.supersedes_memory_id.as_deref());
-            let target_type = target_id.and_then(|tid| {
+                .clone()
+                .or_else(|| decision.supersedes_memory_id.clone());
+            let target_type = target_id.as_deref().and_then(|tid| {
                 similar_memories
                     .iter()
                     .find(|m| m.id == tid)
                     .and_then(|m| m.memory_type.as_deref())
             });
+            // Charter increment 2 (#34): under blocking, a destructive verdict
+            // that the charter escalates is DEFERRED — the new fact is stored
+            // as an ADD next to the old one, the dispute lives on a
+            // charter_deferred CONTRADICTS edge, and resolve_contradiction
+            // settles it (retract = the supersede happens then). Nothing is
+            // rewritten until a human-level answer exists.
+            let mut deferred_target: Option<String> = None;
             if let Some(conflict_type) = crate::core::charter::escalation_reason(
                 &decision,
                 &memory.memory_type,
@@ -248,6 +254,24 @@ impl ToolingManager {
                         .find(|m| m.id == tid)
                         .map(|m| m.content.clone())
                 });
+                let blocking = self.config.write.charter_blocking
+                    && crate::core::charter::defers_under_blocking(&decision)
+                    && target_id.is_some();
+                let decision_taken = if blocking {
+                    let was = decision.operation;
+                    deferred_target = target_id.clone();
+                    info!(
+                        "Charter blocking: {:?} of {} DEFERRED ({conflict_type})",
+                        decision.operation,
+                        deferred_target.as_deref().unwrap_or("?")
+                    );
+                    decision.operation = crate::llm::decision::MemoryOperation::Add;
+                    format!(
+                        "DEFERRED (was {was:?}): both facts stored; settle with resolve_contradiction(from_id=<new>, to_id=<existing>, resolution=confirm|retract|preference)"
+                    )
+                } else {
+                    format!("{:?}", decision.operation)
+                };
                 clarifications.push(super::super::types::Clarification {
                     conflict_type: conflict_type.to_string(),
                     new_content: memory.text.clone(),
@@ -258,7 +282,7 @@ impl ToolingManager {
                         &memory.text,
                         existing_content.as_deref().unwrap_or(""),
                     ),
-                    decision_taken: format!("{:?}", decision.operation),
+                    decision_taken,
                     confidence: decision.confidence,
                 });
             }
@@ -286,6 +310,15 @@ impl ToolingManager {
             };
 
             stored_memory_ids.insert(i, memory_id.clone());
+
+            if let Some(old_id) = &deferred_target {
+                if let Err(e) = self
+                    .record_contradiction(&memory_id, old_id, "charter_deferred")
+                    .await
+                {
+                    warn!("Charter blocking: deferred edge {memory_id} -> {old_id} failed: {e}");
+                }
+            }
 
             entities_linked += self
                 .link_memory_semantics(&memory_id, memory, extracted_entities)
