@@ -40,6 +40,10 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: helixir-macos-arm64
+            # Lean core: ort's download-binaries step links flakily on the
+            # macOS arm64 runner (clang_rt.osx path varies by image) — the
+            # same reason CI's macos job builds --no-default-features.
+            flags: --no-default-features
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
