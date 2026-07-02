@@ -24,6 +24,17 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # OOM containment: a runaway query/index spike hits this cap and the
+    # container restarts in seconds instead of taking the whole Docker VM
+    # down with it (observed 2026-07-02: two kernel OOM kills). LMDB is
+    # durable — a restart loses no data.
+    mem_limit: 3g
+    memswap_limit: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   # Schema deployment (runs once)
   schema-deploy:
