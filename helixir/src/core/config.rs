@@ -593,6 +593,13 @@ pub struct FastThinkConfig {
     /// Strength of the SUPPORTS provenance edge written from each recalled
     /// evidence memory to the committed conclusion.
     pub commit_support_strength: u32,
+    /// Score floor for think_recall: rows below this combined score never
+    /// enter the session, even inside the top-K. Measured on the live store
+    /// (#81): seeds sit at 0.68–0.99, the graph-expansion tail flattens at
+    /// 0.41–0.55, and the knee lands at 0.60–0.65 on every query class —
+    /// the floor exists for THIN stores, where the top-K would otherwise
+    /// reach down into that noise floor. 0.0 disables.
+    pub recall_min_score: f32,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -608,6 +615,7 @@ impl Default for FastThinkConfig {
             commit_certainty: 75,
             commit_importance: 60,
             commit_support_strength: 60,
+            recall_min_score: 0.6,
         }
     }
 }

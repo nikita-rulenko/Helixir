@@ -229,6 +229,9 @@ impl HelixirMcpServer {
             "session_id": status.id,
             "status": status.status.to_string(),
             "thought_count": status.thought_count,
+            // #78: headroom before the thought cap — think_conclude still
+            // works at 0 (the conclusion is the exit, not another thought).
+            "thoughts_left": self.fast_think.max_thoughts().saturating_sub(status.thought_count),
             "entity_count": status.entity_count,
             "concept_count": status.concept_count,
             "current_depth": status.current_depth,

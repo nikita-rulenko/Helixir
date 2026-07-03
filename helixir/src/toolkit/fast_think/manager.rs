@@ -116,7 +116,10 @@ impl FastThinkManager {
         // never exceed max_recall_results regardless of engine behavior —
         // every recalled row becomes a session thought AND a SUPPORTS
         // provenance edge at commit, so an unclamped recall is both a
-        // context-window flood for the agent and a slow commit.
+        // context-window flood for the agent and a slow commit. The score
+        // floor guards the THIN-store case where the top-K itself reaches
+        // into the flat expansion tail (see recall_min_score in config).
+        memories.retain(|m| m.score >= self.limits.recall_min_score);
         memories.truncate(self.limits.max_recall_results);
 
         info!(
@@ -438,6 +441,12 @@ impl FastThinkManager {
 
         session.link_thoughts(from, to, edge_type)?;
         Ok(())
+    }
+
+    /// The session thought ceiling — exposed so surfaces (think_status) can
+    /// report headroom. think_conclude bypasses this cap by design.
+    pub fn max_thoughts(&self) -> usize {
+        self.limits.max_thoughts
     }
 
     pub fn get_session_status(&self, session_id: &str) -> Result<SessionInfo, FastThinkError> {
