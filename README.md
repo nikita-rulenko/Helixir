@@ -511,7 +511,7 @@ All settings are passed as environment variables.
 > (smart remote → cheap remote → local selfhost), and readopts the primary as
 > soon as it recovers. Tiers missing credentials are skipped at boot, so
 > without a DeepSeek key the chain simply degrades to local Ollama
-> (`qwen2.5:7b` by default). Tune via `llm_fallback_chain = ["deepseek",
+> (`llama3.2:3b` by default — the 2026-07 laptop bake-off winner: causal contract green at ~2x the speed and half the RAM of `qwen2.5:7b`). Tune via `llm_fallback_chain = ["deepseek",
 > "ollama"]` + `deepseek_api_key` in `helixir.toml`, or the env vars above.
 
 ### Provider presets
@@ -553,11 +553,11 @@ HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
 
 ```bash
 # Install Ollama: https://ollama.com
-ollama pull qwen2.5:7b
+ollama pull llama3.2:3b
 ollama pull nomic-embed-text
 
 HELIX_LLM_PROVIDER=ollama
-HELIX_LLM_MODEL=qwen2.5:7b
+HELIX_LLM_MODEL=llama3.2:3b
 HELIX_LLM_BASE_URL=http://localhost:11434
 
 HELIX_EMBEDDING_PROVIDER=ollama

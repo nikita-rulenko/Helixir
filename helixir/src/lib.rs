@@ -23,13 +23,14 @@ pub const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
 /// is the intended direction — this Cerebras id is a stopgap so a no-env install
 /// works out of the box.
 pub const DEFAULT_LLM_MODEL: &str = "gpt-oss-120b";
-/// Local fallback model when the remote primary (Cerebras/DeepSeek) errors.
-/// qwen2.5:7b is the validated floor: it passes the core write/read suite and
-/// closes the extraction-recall + categorisation gaps that the 3b drops
-/// (the 3b sits below the ~7-8B reliability cliff every memory project warns
-/// about). The deeper multi-step-reasoning feature (think_commit) degrades on
-/// any local model — that's a remote-only capability, not a model-size knob.
-pub const DEFAULT_LLM_FALLBACK_MODEL: &str = "qwen2.5:7b";
+/// Local fallback model when the remote chain (Cerebras/DeepSeek) errors.
+/// llama3.2:3b won the 2026-07 M1 bake-off (7 models, full add pipeline +
+/// causal-contract e2e): contract 2/2 in 95s vs 421s (qwen3.5:2b) and ~2×
+/// faster than qwen2.5:7b at 2GB, with no example-leak hallucination
+/// (qwen2.5:3b copied the prompt's worked example into a stored memory —
+/// disqualified). The deeper multi-step-reasoning feature (think_commit)
+/// degrades on any local model — remote-only capability, not a size knob.
+pub const DEFAULT_LLM_FALLBACK_MODEL: &str = "llama3.2:3b";
 /// OpenAI-compatible chat-completions endpoints for the hosted providers.
 pub const DEFAULT_CEREBRAS_URL: &str = "https://api.cerebras.ai/v1/chat/completions";
 pub const DEFAULT_DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
