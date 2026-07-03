@@ -19,7 +19,7 @@ use serde_json::json;
 mod common;
 use common::McpClient;
 
-const USER: &str = "bench";
+use common::golden::{GOLDEN_USER as USER, ensure_seeded, golden_set};
 
 fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
     if sorted_ms.is_empty() {
@@ -27,46 +27,6 @@ fn percentile(sorted_ms: &[f64], p: f64) -> f64 {
     }
     let k = ((sorted_ms.len() - 1) as f64 * p / 100.0).round() as usize;
     sorted_ms[k.min(sorted_ms.len() - 1)]
-}
-
-/// Same golden set as read_path_e2e.rs — keep the two in sync by hand.
-fn golden_set() -> Vec<(&'static str, Vec<&'static str>)> {
-    vec![
-        (
-            "flaky test Cyrillic",
-            vec!["mem_6d0c00cbb797", "mem_02e89bafeed2", "raw_02b063cbbd7a"],
-        ),
-        ("TestIntegrationProductSearch", vec!["mem_02e89bafeed2"]),
-        (
-            "repository interfaces",
-            vec!["mem_14f614cee843", "mem_c100418279dc", "mem_74c82048e8a9"],
-        ),
-        (
-            "ICU extension SQLite",
-            vec!["raw_3c52decc7930", "raw_02b063cbbd7a"],
-        ),
-        (
-            "Clean Architecture test isolation",
-            vec!["raw_97ec3e9ac5f9", "mem_4d3b50638e96"],
-        ),
-        ("test coverage repository sqlite", vec!["mem_c100418279dc"]),
-        (
-            "interfaces.go ProductRepository methods",
-            vec!["mem_14f614cee843", "mem_491ed67a50f4", "mem_c100418279dc"],
-        ),
-        (
-            "boilerplate trade-off",
-            vec!["mem_c100418279dc", "raw_97ec3e9ac5f9"],
-        ),
-        (
-            "setupTestDB isolated in-memory database",
-            vec!["mem_02e89bafeed2"],
-        ),
-        (
-            "SQLite LIKE case sensitivity Unicode",
-            vec!["mem_7ed1df043686", "mem_02e89bafeed2", "raw_3c52decc7930"],
-        ),
-    ]
 }
 
 #[test]
@@ -83,20 +43,19 @@ fn mcp_read_e2e() {
         "This suite validates the algo_opt read path"
     );
 
-    let (mut mcp, boot_ms) = McpClient::spawn();
-
-    // Fixture guard: the golden set pins EXACT memory ids from the recorded
-    // bench corpus. That corpus was lost with the bench data dir on
-    // 2026-06-30; without it every miss is a false alarm, not a read-path
-    // regression. Skip gracefully until the fixtures are re-recorded.
-    let (probe, _) = mcp.call_tool("list_memories", json!({"user_id": USER, "limit": 1}));
-    if probe.as_array().map(|a| a.is_empty()).unwrap_or(true) {
-        println!("\n==== mcp_read_e2e ====");
-        println!(
-            "SKIP: user '{USER}' has no corpus (historic golden fixtures lost with the bench data, 2026-06-30). Re-record golden_set() against a fresh corpus to re-enable."
-        );
-        return;
+    // #76: seed the deterministic corpus through the LIBRARY client (LLM-free
+    // add_prepared) before spawning the MCP binary under test.
+    {
+        let rt = tokio::runtime::Runtime::new().expect("rt");
+        rt.block_on(async {
+            let client = helixir::core::HelixirClient::from_env().expect("HelixirClient::from_env");
+            client.initialize().await.expect("initialize");
+            let seeded = ensure_seeded(&client).await;
+            println!("golden corpus: {seeded} atoms added this run");
+        });
     }
+
+    let (mut mcp, boot_ms) = McpClient::spawn();
 
     // ---------- search_memory over the golden set ----------
     let golden = golden_set();
@@ -116,9 +75,11 @@ fn mcp_read_e2e() {
         cold_ms.push(ms);
 
         let results = payload.as_array().cloned().unwrap_or_default();
-        let rank = results
-            .iter()
-            .position(|r| r["id"].as_str().is_some_and(|id| expected.contains(&id)));
+        let rank = results.iter().position(|r| {
+            r["content"]
+                .as_str()
+                .is_some_and(|c| expected.iter().any(|m| c.contains(m)))
+        });
         match rank {
             Some(r) => {
                 hits_at_5 += 1;
@@ -149,7 +110,7 @@ fn mcp_read_e2e() {
     let (chains, chain_ms) = mcp.call_tool(
         "search_reasoning_chain",
         json!({
-            "query": "repository interfaces clean architecture",
+            "query": "why did payments migrate from sqlite to postgres",
             "user_id": USER, "chain_mode": "both", "max_depth": 5, "limit": 5
         }),
     );
@@ -160,7 +121,7 @@ fn mcp_read_e2e() {
     let (concepts, concept_ms) = mcp.call_tool(
         "search_by_concept",
         json!({
-            "query": "flaky test decision", "user_id": USER,
+            "query": "payments service migrated postgres", "user_id": USER,
             "concept_type": "action", "limit": 5
         }),
     );
@@ -168,9 +129,23 @@ fn mcp_read_e2e() {
     assert!(concept_count > 0, "MCP concept search must not be empty");
 
     // ---------- get_memory_graph ----------
+    // Anchor resolved at runtime: ids are random per seed, content is ours.
+    let (anchor_rs, _) = mcp.call_tool(
+        "search_memory",
+        json!({"query": "payments service migrated sqlite postgres", "user_id": USER, "mode": "full", "limit": 3}),
+    );
+    let anchor = anchor_rs
+        .as_array()
+        .and_then(|a| {
+            a.iter()
+                .find(|r| r["content"].as_str().unwrap_or("").contains("GA1"))
+        })
+        .and_then(|r| r["id"].as_str())
+        .expect("GA1 must anchor the graph probe")
+        .to_string();
     let (graph, graph_ms) = mcp.call_tool(
         "get_memory_graph",
-        json!({"user_id": USER, "memory_id": "mem_c100418279dc", "depth": 2}),
+        json!({"user_id": USER, "memory_id": anchor, "depth": 2}),
     );
     let node_count = graph["nodes"].as_array().map_or(0, Vec::len);
     let edge_count = graph["edges"].as_array().map_or(0, Vec::len);

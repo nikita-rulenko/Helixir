@@ -1,7 +1,11 @@
 # Helixir Memory Charter
 
 > DRAFT v0.1 — awaiting owner approval. The write path currently runs in
-> "flag, don't block" mode: conflicts listed below are surfaced to the agent
+> "defer, don't destroy" mode (increment 2, #34): destructive verdicts on the
+> conflicts below are DEFERRED — both facts are stored, the dispute lives on a
+> charter_deferred CONTRADICTS edge, and `resolve_contradiction` settles it
+> (retract executes the supersede then, with history). Non-destructive
+> conflicts are surfaced to the agent
 > in `add_memory.needs_clarification`, but every decision still executes.
 > Blocking semantics activate only after this charter is approved.
 

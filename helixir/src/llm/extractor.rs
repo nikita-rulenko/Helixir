@@ -7,8 +7,14 @@ use super::providers::base::{LlmProvider, LlmProviderError};
 pub struct ExtractionResult {
     pub memories: Vec<ExtractedMemory>,
 
+    // Weak-model tolerance (observed live from the fallback tier): a missing
+    // top-level `entities`/`relations` array must not nuke the WHOLE
+    // extraction into the blob fallback — atoms without entities are still
+    // atoms.
+    #[serde(default)]
     pub entities: Vec<ExtractedEntity>,
 
+    #[serde(default)]
     pub relations: Vec<ExtractedRelation>,
 }
 
@@ -16,16 +22,98 @@ pub struct ExtractionResult {
 pub struct ExtractedMemory {
     pub text: String,
 
+    #[serde(default = "default_memory_type")]
     pub memory_type: String,
 
+    #[serde(default = "default_certainty_i32", deserialize_with = "lenient_i32")]
     pub certainty: i32,
 
+    #[serde(default = "default_importance_i32", deserialize_with = "lenient_i32")]
     pub importance: i32,
 
+    /// Weak models emit `["e1"]`, `[{"id":"e1",...}]` or omit the field —
+    /// all observed live; all accepted.
+    #[serde(default, deserialize_with = "lenient_string_vec")]
     pub entities: Vec<String>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_opt_string")]
     pub context: Option<String>,
+}
+
+fn default_memory_type() -> String {
+    "fact".to_string()
+}
+fn default_entity_type() -> String {
+    "Object".to_string()
+}
+fn default_certainty_i32() -> i32 {
+    70
+}
+fn default_importance_i32() -> i32 {
+    50
+}
+
+/// Accept an int, a float (0..=1 scales to 0..=100), or a numeric string.
+fn lenient_i32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i as i32
+            } else if let Some(f) = n.as_f64() {
+                if f <= 1.0 {
+                    (f * 100.0) as i32
+                } else {
+                    f as i32
+                }
+            } else {
+                70
+            }
+        }
+        serde_json::Value::String(s) => s.trim().parse::<f64>().map_or(70, |f| {
+            if f <= 1.0 {
+                (f * 100.0) as i32
+            } else {
+                f as i32
+            }
+        }),
+        _ => 70,
+    })
+}
+
+/// Accept `["a"]`, `[{"id":"a"}]`, `[{"name":"a"}]`, a bare `"a"`, or null.
+fn lenient_string_vec<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    let coerce = |item: &serde_json::Value| -> Option<String> {
+        match item {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Object(o) => o
+                .get("id")
+                .or_else(|| o.get("name"))
+                .and_then(|x| x.as_str())
+                .map(str::to_string),
+            _ => None,
+        }
+    };
+    Ok(match &v {
+        serde_json::Value::Array(a) => a.iter().filter_map(coerce).collect(),
+        serde_json::Value::String(_) => coerce(&v).into_iter().collect(),
+        _ => Vec::new(),
+    })
+}
+
+/// Accept a string, an object (take `name`/`value`), or anything else → None.
+fn lenient_opt_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Object(o) => o
+            .get("name")
+            .or_else(|| o.get("value"))
+            .and_then(|x| x.as_str())
+            .map(str::to_string),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,11 +126,16 @@ pub struct ExtractedEntityRelation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntity {
+    #[serde(default)]
     pub id: String,
 
     pub name: String,
 
-    #[serde(rename = "type")]
+    #[serde(
+        rename = "type",
+        alias = "entity_type",
+        default = "default_entity_type"
+    )]
     pub entity_type: String,
 
     #[serde(default)]
@@ -313,8 +406,32 @@ EXAMPLES (the pair -> the correct edge):
 - "Tests passed" / "The build is green"                   -> SUPPORTS
 - "The server crashed" / "The disk was full"              -> BECAUSE
 
+MANDATORY: if the input contains an explicit causal connective (because,
+therefore, so, since, потому что, так как, из-за, поэтому), you MUST split it
+into the cause atom and the effect atom AND emit the BECAUSE edge between
+them (cause -> effect). A causal sentence with no BECAUSE edge is an error.
+
 Emit an edge for EVERY related pair, even with only 2 memories. Use
-from_memory_index and to_memory_index (0-based)."#,
+from_memory_index and to_memory_index (0-based).
+
+WORKED EXAMPLE — copy this shape EXACTLY (every field, plain strings in
+memory "entities", ALL top-level keys present even when empty):
+
+Input: "The deploy failed because the auth token expired. I use ArgoCD."
+Output:
+{
+  "memories": [
+    {"text": "The deploy failed on the release pipeline", "memory_type": "action", "certainty": 85, "importance": 60, "entities": ["argocd"], "context": "work"},
+    {"text": "The auth token expired", "memory_type": "fact", "certainty": 85, "importance": 55, "entities": [], "context": "work"},
+    {"text": "I use ArgoCD for deployments", "memory_type": "fact", "certainty": 90, "importance": 50, "entities": ["argocd"], "context": "work"}
+  ],
+  "entities": [
+    {"id": "argocd", "name": "ArgoCD", "type": "system"}
+  ],
+  "relations": [
+    {"from_memory_index": 1, "to_memory_index": 0, "relation_type": "BECAUSE", "strength": 85, "confidence": 85, "explanation": "the expired token is the cause of the failed deploy"}
+  ]
+}"#,
             );
         } else {
             prompt.push_str(
@@ -377,5 +494,39 @@ mod tests {
 
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("preference"));
+    }
+}
+
+#[cfg(test)]
+mod tolerance_tests {
+    use super::*;
+
+    /// The two failures observed live from the fallback tier on 2026-07-02:
+    /// a missing top-level `entities` array, and objects where strings were
+    /// expected inside `memories[].entities`. Both must parse, not fall back
+    /// to the blob path.
+    #[test]
+    fn parses_weak_model_json_shapes() {
+        // Shape 1: no top-level entities/relations at all.
+        let r: ExtractionResult = serde_json::from_str(
+            r#"{"memories":[{"text":"the deploy failed","memory_type":"fact","certainty":80,"importance":50,"entities":[]}]}"#,
+        )
+        .expect("missing top-level arrays must default");
+        assert_eq!(r.memories.len(), 1);
+        assert!(r.entities.is_empty() && r.relations.is_empty());
+
+        // Shape 2: entity OBJECTS inside memory.entities + float certainty +
+        // context as an object + missing memory_type.
+        let r: ExtractionResult = serde_json::from_str(
+            r#"{"memories":[{"text":"the token expired","certainty":0.9,"importance":"60","entities":[{"id":"e1","name":"token"}],"context":{"name":"auth"}}],"entities":[{"name":"token"}],"relations":[]}"#,
+        )
+        .expect("weak-model shapes must parse");
+        let m = &r.memories[0];
+        assert_eq!(m.memory_type, "fact");
+        assert_eq!(m.certainty, 90);
+        assert_eq!(m.importance, 60);
+        assert_eq!(m.entities, vec!["e1".to_string()]);
+        assert_eq!(m.context.as_deref(), Some("auth"));
+        assert_eq!(r.entities[0].entity_type, "Object");
     }
 }

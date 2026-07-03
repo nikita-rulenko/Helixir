@@ -44,6 +44,8 @@ pub(crate) struct BatchNode {
     #[serde(default)]
     pub(crate) created_at: String,
     #[serde(default)]
+    pub(crate) valid_from: String,
+    #[serde(default)]
     pub(crate) user_id: String,
     #[serde(default)]
     pub(crate) memory_type: String,
@@ -345,8 +347,10 @@ pub async fn graph_expansion_phase_batched(
                 }
 
                 let graph_score = calculate_graph_score(eff_weight, *parent_score);
-                let temporal_score =
-                    calculate_temporal_freshness(&child.created_at, config.temporal_decay_days);
+                let temporal_score = calculate_temporal_freshness(
+                    super::scoring::event_time(&child.valid_from, &child.created_at),
+                    config.temporal_decay_days,
+                );
 
                 // Same as the legacy DFS: every unvisited neighbour becomes a
                 // result; the 0.5 placeholder is replaced by the P0.2 re-rank.

@@ -19,7 +19,8 @@ impl SearchMode {
             Self::Recent => SearchModeDefaults {
                 max_results: 10,
                 graph_depth: 1,
-                temporal_days: Some(0.167),
+                temporal_days: None,
+                temporal_weight: 0.45,
                 vector_weight: 0.7,
                 bm25_weight: 0.3,
                 include_relations: true,
@@ -32,7 +33,8 @@ impl SearchMode {
             Self::Contextual => SearchModeDefaults {
                 max_results: 20,
                 graph_depth: 2,
-                temporal_days: Some(30.0),
+                temporal_days: None,
+                temporal_weight: 0.30,
                 vector_weight: 0.6,
                 bm25_weight: 0.4,
                 include_relations: true,
@@ -45,7 +47,8 @@ impl SearchMode {
             Self::Deep => SearchModeDefaults {
                 max_results: 50,
                 graph_depth: 3,
-                temporal_days: Some(90.0),
+                temporal_days: None,
+                temporal_weight: 0.25,
                 vector_weight: 0.5,
                 bm25_weight: 0.5,
                 include_relations: true,
@@ -59,6 +62,7 @@ impl SearchMode {
                 max_results: 100,
                 graph_depth: 4,
                 temporal_days: None,
+                temporal_weight: 0.20,
                 vector_weight: 0.5,
                 bm25_weight: 0.5,
                 include_relations: true,
@@ -112,6 +116,11 @@ pub struct SearchModeDefaults {
     pub graph_depth: usize,
 
     pub temporal_days: Option<f64>,
+
+    /// Recency as ATTENTION (#31): per-mode weight of the temporal component
+    /// in ranking. Replaces the old implicit hard windows — no preset excludes
+    /// old facts anymore; `recent` just listens to freshness the loudest.
+    pub temporal_weight: f64,
 
     pub vector_weight: f64,
 

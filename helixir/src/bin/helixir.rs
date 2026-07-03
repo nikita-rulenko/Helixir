@@ -421,7 +421,9 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
 
 /// Print the effective privilege tier and what it permits.
 fn print_mode() -> Result<()> {
-    let mode = MemoryMode::parse(&std::env::var("HELIXIR_MODE").unwrap_or_default());
+    // Layered config (toml + env), same as the gates — a raw env read here
+    // showed "solo" while every gate honored the toml's Insights.
+    let mode = helixir::core::config::HelixirConfig::from_env().mode;
     let on = |b: bool| if b { "ON" } else { "off" };
     println!("Privilege tier: {} (HELIXIR_MODE)", mode.label());
     println!(
@@ -2021,6 +2023,8 @@ async fn watch_run(client: &HelixirClient, once: bool, interval: Option<u64>) ->
         let db_ok = hygieia.check_db().await;
         hygieia.check_memory().await;
         hygieia.check_orphan_daemons().await;
+        hygieia.check_storage_persistence().await;
+        hygieia.run_backup_duty().await;
         if once {
             println!("tick: db={}", if db_ok { "ok" } else { "DOWN" });
             return Ok(());

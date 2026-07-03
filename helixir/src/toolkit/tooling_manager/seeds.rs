@@ -97,7 +97,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "To upgrade HelixDB: run helix update for the CLI, then helix push <instance> from the workspace that owns the instance; archive the instance data volume first.",
+        "To upgrade HelixDB: run helix update for the CLI, then helix push <instance> from the workspace that owns the instance; archive the instance data volume first. CRITICAL: newer HelixDB builds default to IN-MEMORY storage — a stop erases everything unless the instance runs with disk persistence (helix start dev --disk); after ANY upgrade or fresh install, verify persistence by writing a marker, restarting, and confirming it survived.",
     ),
     (
         80,

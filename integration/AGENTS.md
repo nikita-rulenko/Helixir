@@ -66,6 +66,15 @@ Flow: `think_start → think_add (build the tree) → think_recall →
 think_conclude (required) → think_commit` (once). Reuse one `session_id`;
 `think_discard` if it led nowhere.
 
+### 5. You are part of a swarm
+Pass your stable `agent_id` on every `add_memory` — presence in the shared
+roster comes free with the write. `swarm_status` shows who else is working
+this memory right now (and exposes forgotten daemons); `list_users` orients
+identities. Watch `pending_outcomes`: `contradiction_review` means a dispute
+touches YOUR memory — settle it with `resolve_contradiction`
+(confirm/retract/preference, all non-destructive); `ops_alert` is the
+memory's own health watchdog speaking — relay it to your human.
+
 ### Pick the right retrieval tool
 - WHY / rationale → `search_reasoning_chain` (`chain_mode="causal"`).
 - How are A and B related → `connect_memories` (anchors = query or `memory_id`).

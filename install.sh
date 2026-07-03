@@ -204,6 +204,11 @@ else
             sleep 1
         done
         ok "HelixDB is running on port $HELIX_PORT"
+        info "Persistence check: data lives in the 'helixdb_data' volume."
+        info "  Newer HelixDB builds default to IN-MEMORY storage — if you ever"
+        info "  run an instance outside this script, use disk persistence"
+        info "  (helix start dev --disk) or a mounted HELIX_DATA_DIR, and verify"
+        info "  a written memory survives a restart before trusting it."
     fi
 
     info "Deploying schema..."

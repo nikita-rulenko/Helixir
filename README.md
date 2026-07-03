@@ -108,6 +108,15 @@ make config         # Print MCP config to paste into your IDE
 
 - **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
+
+> ⚠️ **Storage-mode trap (data loss).** Newer HelixDB builds default to
+> **in-memory** storage — stopping the instance ERASES everything unless it
+> runs with disk persistence (`helix start dev --disk` for CLI-managed
+> instances; a mounted `HELIX_DATA_DIR` for containers, as our compose and
+> install script configure). After any HelixDB upgrade or fresh install,
+> verify persistence: write a memory, restart the instance, confirm it
+> survived. Hygieia's `storage_not_persistent` detector also alarms when a
+> serving database has no LMDB files in its data dir.
 - **API key** — at least one LLM provider:
   - [Cerebras](https://cloud.cerebras.ai) (free tier, ~3000 tok/s)
   - [DeepSeek](https://platform.deepseek.com) (cheap, ~$0.14/$0.28 per 1M tok)
@@ -492,13 +501,18 @@ All settings are passed as environment variables.
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
 | `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
+| `HELIX_LLM_FALLBACK_CHAIN` | `deepseek,ollama` | Ordered fallback tiers after the primary; empty value disables fallback |
+| `HELIX_DEEPSEEK_API_KEY` | — | Credentials for the `deepseek` fallback tier |
 | `RUST_LOG` | `helixir=warn` | Log level |
 
-> **Automatic local fallback.** When the remote LLM provider (Cerebras /
-> DeepSeek) is unreachable, Helixir transparently retries the same request
-> against a local Ollama model (`qwen2.5:7b` by default) so a write never
-> fails on a remote outage. Enabled by default; tune via the `llm_fallback_*`
-> keys in `helixir.toml`.
+> **Automatic fallback chain.** When the primary LLM provider errors — a
+> network outage *or* an exhausted quota — Helixir transparently retries the
+> same request down an ordered chain, by default `deepseek → ollama`
+> (smart remote → cheap remote → local selfhost), and readopts the primary as
+> soon as it recovers. Tiers missing credentials are skipped at boot, so
+> without a DeepSeek key the chain simply degrades to local Ollama
+> (`llama3.2:3b` by default — the 2026-07 laptop bake-off winner: causal contract green at ~2x the speed and half the RAM of `qwen2.5:7b`). Tune via `llm_fallback_chain = ["deepseek",
+> "ollama"]` + `deepseek_api_key` in `helixir.toml`, or the env vars above.
 
 ### Provider presets
 
@@ -539,11 +553,11 @@ HELIX_EMBEDDING_API_KEY=sk-or-xxx   # https://openrouter.ai/keys
 
 ```bash
 # Install Ollama: https://ollama.com
-ollama pull qwen2.5:7b
+ollama pull llama3.2:3b
 ollama pull nomic-embed-text
 
 HELIX_LLM_PROVIDER=ollama
-HELIX_LLM_MODEL=qwen2.5:7b
+HELIX_LLM_MODEL=llama3.2:3b
 HELIX_LLM_BASE_URL=http://localhost:11434
 
 HELIX_EMBEDDING_PROVIDER=ollama

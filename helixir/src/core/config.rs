@@ -431,6 +431,12 @@ pub struct WriteConfig {
     pub context_link_priority: i64,
     /// Charter C5: confidence below which a rewrite is escalated to the human.
     pub charter_low_confidence: u8,
+    /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
+    /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
+    /// executing — store the new fact alongside the old, record a
+    /// charter_deferred CONTRADICTS edge, and let the agent settle it with
+    /// resolve_contradiction (retract = the supersede happens then).
+    pub charter_blocking: bool,
 }
 impl Default for WriteConfig {
     fn default() -> Self {
@@ -450,6 +456,7 @@ impl Default for WriteConfig {
             fallback_importance: 50,
             context_link_priority: 50,
             charter_low_confidence: 70,
+            charter_blocking: true,
         }
     }
 }
@@ -634,6 +641,15 @@ pub struct WatchdogConfig {
     pub alert_users: Vec<String>,
     /// Re-alerting the same kind is suppressed for this long.
     pub alert_cooldown_secs: u64,
+    /// Autobackup duty (#65): tar the data dir on a schedule. Empty source
+    /// disables the duty. When `container_name` is set the container is
+    /// paused for the copy (a consistent LMDB snapshot), then unpaused.
+    pub backup_source_dir: String,
+    /// Where archives land. Default: ~/.helixir/backups.
+    pub backup_dir: String,
+    pub backup_interval_hours: f64,
+    /// Newest N archives survive pruning.
+    pub backup_keep: usize,
 }
 impl Default for WatchdogConfig {
     fn default() -> Self {
@@ -647,6 +663,10 @@ impl Default for WatchdogConfig {
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
             alert_cooldown_secs: 21_600,
+            backup_source_dir: String::new(),
+            backup_dir: String::new(),
+            backup_interval_hours: 24.0,
+            backup_keep: 7,
         }
     }
 }
@@ -672,6 +692,15 @@ pub struct HelixirConfig {
     pub llm_fallback_enabled: bool,
     pub llm_fallback_url: String,
     pub llm_fallback_model: String,
+    /// Ordered provider names tried after the primary (smart → cheap → local).
+    /// Entries equal to the primary, unknown names, or tiers missing
+    /// credentials are skipped at boot with a warning — a partial chain still
+    /// boots. Env: `HELIX_LLM_FALLBACK_CHAIN` (comma-separated).
+    pub llm_fallback_chain: Vec<String>,
+    /// Credentials for the `deepseek` chain tier (the primary's key lives in
+    /// `llm_api_key`). Env: `HELIX_DEEPSEEK_API_KEY` / `HELIX_DEEPSEEK_MODEL`.
+    pub deepseek_api_key: Option<String>,
+    pub deepseek_model: String,
 
     pub embedding_provider: String,
     pub embedding_model: String,
@@ -749,6 +778,9 @@ impl HelixirConfig {
             llm_fallback_enabled: true,
             llm_fallback_url: crate::DEFAULT_OLLAMA_URL.to_string(),
             llm_fallback_model: crate::DEFAULT_LLM_FALLBACK_MODEL.to_string(),
+            llm_fallback_chain: vec!["deepseek".to_string(), "ollama".to_string()],
+            deepseek_api_key: None,
+            deepseek_model: crate::DEFAULT_DEEPSEEK_MODEL.to_string(),
 
             embedding_provider: "ollama".to_string(),
             embedding_model: crate::DEFAULT_EMBEDDING_MODEL.to_string(),
@@ -874,6 +906,22 @@ impl HelixirConfig {
         if let Ok(url) = std::env::var("HELIX_LLM_BASE_URL") {
             self.llm_base_url = Some(url);
         }
+        // Comma-separated tier names; an explicitly empty value clears the
+        // chain (fallback off without touching llm_fallback_enabled).
+        if let Ok(chain) = std::env::var("HELIX_LLM_FALLBACK_CHAIN") {
+            self.llm_fallback_chain = chain
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+        }
+        if let Ok(key) = std::env::var("HELIX_DEEPSEEK_API_KEY") {
+            self.deepseek_api_key = Some(key);
+        }
+        if let Ok(model) = std::env::var("HELIX_DEEPSEEK_MODEL") {
+            self.deepseek_model = model;
+        }
         if let Ok(provider) = std::env::var("HELIX_EMBEDDING_PROVIDER") {
             self.embedding_provider = provider;
         }
@@ -926,6 +974,28 @@ mod tests {
     fn test_default_has_no_base_url() {
         let config = HelixirConfig::default();
         assert!(config.llm_base_url.is_none());
+    }
+
+    #[test]
+    fn test_fallback_chain_env_parses_and_empty_clears() {
+        unsafe {
+            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", " deepseek , ollama ");
+        }
+        let config = HelixirConfig::from_env();
+        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+
+        unsafe {
+            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", "");
+        }
+        let config = HelixirConfig::from_env();
+        assert!(
+            config.llm_fallback_chain.is_empty(),
+            "explicit empty value must clear the chain"
+        );
+
+        unsafe {
+            std::env::remove_var("HELIX_LLM_FALLBACK_CHAIN");
+        }
     }
 
     #[test]

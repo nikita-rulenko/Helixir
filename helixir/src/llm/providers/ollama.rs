@@ -13,6 +13,11 @@ struct OllamaRequest {
     options: OllamaOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    /// Always false — mirrors the DeepSeek preset: thinking-mode models
+    /// (qwen3 family) would burn minutes of CoT before the JSON we asked
+    /// for. Non-thinking models accept and ignore the flag (verified on
+    /// ollama 0.18).
+    think: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,6 +121,7 @@ impl LlmProvider for OllamaProvider {
                 temperature: self.temperature,
             },
             format,
+            think: false,
         };
 
         let response = self

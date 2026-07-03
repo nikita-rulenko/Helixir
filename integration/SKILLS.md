@@ -111,6 +111,15 @@ think_add the observation ("outages last under a minute") → think_recall
 ("exponential backoff capped at 90s with jitter") → think_commit. Result:
 one memory whose SUPPORTS edges point at the recalled evidence.
 
+## The swarm (collective tier)
+
+Pass your stable `agent_id` on every `add_memory` — it heartbeats your
+presence into the shared roster for free. `swarm_status` = who else is
+here right now; `list_users` = which identities exist. In
+`pending_outcomes`: `contradiction_review` → settle with
+`resolve_contradiction(from_id, to_id, confirm|retract|preference)`;
+`ops_alert` → the memory's health watchdog (Hygieia) — tell your human.
+
 ## Principles
 - **Recall before you re-derive** — don't make the user repeat what's stored.
 - **The memory doesn't gaslight its owner** — surface `needs_clarification`,

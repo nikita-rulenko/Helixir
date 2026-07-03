@@ -1,23 +1,28 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{info, warn};
 
 use super::base::{LlmMetadata, LlmProvider, LlmProviderError};
 
-/// Wraps a primary [`LlmProvider`] with a secondary one used only when the
-/// primary errors. The fallback is injected (any `LlmProvider`), not hardwired
-/// to Ollama — the factory passes a local Ollama instance in production, tests
-/// pass mocks. This keeps the failover *decision* (the part that matters)
-/// verifiable without a live HTTP endpoint.
+/// Wraps a primary [`LlmProvider`] with an ordered chain of fallbacks, each
+/// tried in turn only when everything before it errored. Tiers are injected
+/// (any `LlmProvider`), not hardwired — the factory passes real providers in
+/// production (e.g. cerebras → deepseek → ollama), tests pass mocks. This
+/// keeps the failover *decision* (the part that matters) verifiable without
+/// live HTTP endpoints.
+///
+/// Every call retries from the primary, so a recovered tier is readopted
+/// automatically — the chain degrades under outage and heals on its own.
 pub struct LlmProviderWithFallback {
     primary: Arc<dyn LlmProvider>,
-    fallback: Arc<dyn LlmProvider>,
+    fallbacks: Vec<Arc<dyn LlmProvider>>,
     fallback_enabled: bool,
-    /// `"<provider> (fallback)"` — precomputed because `provider_name` returns
-    /// `&str` and can't format on the fly.
-    fallback_label: String,
-    using_fallback: AtomicBool,
+    /// `"<provider> (fallback)"` per tier — precomputed because
+    /// `provider_name` returns `&str` and can't format on the fly.
+    fallback_labels: Vec<String>,
+    /// 0 = primary answered last; i ≥ 1 = `fallbacks[i-1]` answered last.
+    active_tier: AtomicUsize,
     fallback_count: AtomicUsize,
     primary_failures: AtomicUsize,
 }
@@ -28,61 +33,100 @@ impl LlmProviderWithFallback {
         fallback_enabled: bool,
         fallback: Arc<dyn LlmProvider>,
     ) -> Self {
-        let fallback_label = format!("{} (fallback)", fallback.provider_name());
+        Self::new_chain(primary, fallback_enabled, vec![fallback])
+    }
+
+    pub fn new_chain(
+        primary: Arc<dyn LlmProvider>,
+        fallback_enabled: bool,
+        fallbacks: Vec<Arc<dyn LlmProvider>>,
+    ) -> Self {
+        let fallback_labels = fallbacks
+            .iter()
+            .map(|f| format!("{} (fallback)", f.provider_name()))
+            .collect();
         info!(
-            "LlmProviderWithFallback initialized: primary={}, fallback={}/{}",
+            "LlmProviderWithFallback initialized: primary={}, chain=[{}]",
             primary.provider_name(),
-            fallback.provider_name(),
-            fallback.model_name()
+            fallbacks
+                .iter()
+                .map(|f| format!("{}/{}", f.provider_name(), f.model_name()))
+                .collect::<Vec<_>>()
+                .join(" → ")
         );
 
         Self {
             primary,
-            fallback,
+            fallbacks,
             fallback_enabled,
-            fallback_label,
-            using_fallback: AtomicBool::new(false),
+            fallback_labels,
+            active_tier: AtomicUsize::new(0),
             fallback_count: AtomicUsize::new(0),
             primary_failures: AtomicUsize::new(0),
         }
     }
 
+    /// Walk the fallback chain in order after the primary failed. Success on
+    /// tier N annotates the metadata with the full trail of errors that led
+    /// there, so the write path can surface *why* a weaker model answered.
     async fn fallback_generate(
         &self,
         system_prompt: &str,
         user_prompt: &str,
         response_format: Option<&str>,
-        original_error: &LlmProviderError,
+        primary_error: LlmProviderError,
     ) -> Result<(String, LlmMetadata), LlmProviderError> {
+        let mut trail = vec![format!(
+            "{}: {}",
+            self.primary.provider_name(),
+            primary_error
+        )];
+        let mut last_error = primary_error;
+
+        for (i, tier) in self.fallbacks.iter().enumerate() {
+            warn!(
+                "Falling back to {} ({}) due to: {}",
+                tier.provider_name(),
+                tier.model_name(),
+                last_error
+            );
+
+            match tier
+                .generate(system_prompt, user_prompt, response_format)
+                .await
+            {
+                Ok((content, mut metadata)) => {
+                    metadata.fallback_used = true;
+                    metadata.original_provider = Some(self.primary.provider_name().to_string());
+                    metadata.original_error = Some(trail.join("; "));
+
+                    self.active_tier.store(i + 1, Ordering::SeqCst);
+                    self.fallback_count.fetch_add(1, Ordering::SeqCst);
+
+                    info!(
+                        "Fallback successful on {}! total_fallbacks={}",
+                        tier.provider_name(),
+                        self.fallback_count.load(Ordering::SeqCst)
+                    );
+                    return Ok((content, metadata));
+                }
+                Err(e) => {
+                    trail.push(format!("{}: {}", tier.provider_name(), e));
+                    last_error = e;
+                }
+            }
+        }
+
         warn!(
-            "Falling back to {} ({}) due to: {}",
-            self.fallback.provider_name(),
-            self.fallback.model_name(),
-            original_error
+            "All {} fallback tier(s) failed after the primary: {}",
+            self.fallbacks.len(),
+            trail.join("; ")
         );
-
-        let (content, mut metadata) = self
-            .fallback
-            .generate(system_prompt, user_prompt, response_format)
-            .await?;
-
-        metadata.fallback_used = true;
-        metadata.original_provider = Some(self.primary.provider_name().to_string());
-        metadata.original_error = Some(original_error.to_string());
-
-        self.using_fallback.store(true, Ordering::SeqCst);
-        self.fallback_count.fetch_add(1, Ordering::SeqCst);
-
-        info!(
-            "Fallback successful! total_fallbacks={}",
-            self.fallback_count.load(Ordering::SeqCst)
-        );
-
-        Ok((content, metadata))
+        Err(last_error)
     }
 
     pub fn is_using_fallback(&self) -> bool {
-        self.using_fallback.load(Ordering::SeqCst)
+        self.active_tier.load(Ordering::SeqCst) > 0
     }
 
     pub fn fallback_count(&self) -> usize {
@@ -94,7 +138,7 @@ impl LlmProviderWithFallback {
     }
 
     pub fn reset_fallback_state(&self) {
-        self.using_fallback.store(false, Ordering::SeqCst);
+        self.active_tier.store(0, Ordering::SeqCst);
         self.primary_failures.store(0, Ordering::SeqCst);
         info!("Fallback state reset");
     }
@@ -114,7 +158,7 @@ impl LlmProvider for LlmProviderWithFallback {
             .await
         {
             Ok((content, metadata)) => {
-                self.using_fallback.store(false, Ordering::SeqCst);
+                self.active_tier.store(0, Ordering::SeqCst);
                 self.primary_failures.store(0, Ordering::SeqCst);
                 Ok((content, metadata))
             }
@@ -127,7 +171,7 @@ impl LlmProvider for LlmProviderWithFallback {
                 );
 
                 if self.fallback_enabled {
-                    self.fallback_generate(system_prompt, user_prompt, response_format, &e)
+                    self.fallback_generate(system_prompt, user_prompt, response_format, e)
                         .await
                 } else {
                     Err(e)
@@ -137,18 +181,16 @@ impl LlmProvider for LlmProviderWithFallback {
     }
 
     fn provider_name(&self) -> &str {
-        if self.using_fallback.load(Ordering::SeqCst) {
-            &self.fallback_label
-        } else {
-            self.primary.provider_name()
+        match self.active_tier.load(Ordering::SeqCst) {
+            0 => self.primary.provider_name(),
+            i => &self.fallback_labels[i - 1],
         }
     }
 
     fn model_name(&self) -> &str {
-        if self.using_fallback.load(Ordering::SeqCst) {
-            self.fallback.model_name()
-        } else {
-            self.primary.model_name()
+        match self.active_tier.load(Ordering::SeqCst) {
+            0 => self.primary.model_name(),
+            i => self.fallbacks[i - 1].model_name(),
         }
     }
 }
@@ -318,5 +360,89 @@ mod tests {
         w.reset_fallback_state();
         assert!(!w.is_using_fallback());
         assert_eq!(w.primary_failures(), 0);
+    }
+
+    // ---- 3-tier chain (cerebras → deepseek → ollama) ----
+
+    #[tokio::test]
+    async fn chain_prefers_earlier_tier() {
+        // primary down, first fallback up: the second fallback is never asked.
+        let w = LlmProviderWithFallback::new_chain(
+            StubProvider::always_err("cerebras", "gpt-oss-120b"),
+            true,
+            vec![
+                StubProvider::always_ok("deepseek", "deepseek-v4-flash", "MID"),
+                StubProvider::always_err("ollama", "qwen2.5:7b"), // would error if called
+            ],
+        );
+        let (content, meta) = w.generate("s", "u", None).await.unwrap();
+        assert_eq!(content, "MID");
+        assert_eq!(w.provider_name(), "deepseek (fallback)");
+        assert_eq!(w.model_name(), "deepseek-v4-flash");
+        assert!(meta.fallback_used);
+        assert_eq!(meta.original_provider.as_deref(), Some("cerebras"));
+    }
+
+    #[tokio::test]
+    async fn chain_cascades_past_dead_middle_tier() {
+        // primary AND first fallback down: the last tier answers, and the
+        // metadata carries the full error trail that led there.
+        let w = LlmProviderWithFallback::new_chain(
+            StubProvider::always_err("cerebras", "gpt-oss-120b"),
+            true,
+            vec![
+                StubProvider::always_err("deepseek", "deepseek-v4-flash"),
+                StubProvider::always_ok("ollama", "qwen2.5:7b", "LAST"),
+            ],
+        );
+        let (content, meta) = w.generate("s", "u", None).await.unwrap();
+        assert_eq!(content, "LAST");
+        assert_eq!(w.provider_name(), "ollama (fallback)");
+        assert_eq!(w.model_name(), "qwen2.5:7b");
+        let trail = meta.original_error.unwrap();
+        assert!(
+            trail.contains("cerebras"),
+            "trail must name tier 1: {trail}"
+        );
+        assert!(
+            trail.contains("deepseek"),
+            "trail must name tier 2: {trail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_all_down_returns_last_error() {
+        let w = LlmProviderWithFallback::new_chain(
+            StubProvider::always_err("cerebras", "gpt-oss-120b"),
+            true,
+            vec![
+                StubProvider::always_err("deepseek", "deepseek-v4-flash"),
+                StubProvider::always_err("ollama", "qwen2.5:7b"),
+            ],
+        );
+        let e = w.generate("s", "u", None).await.unwrap_err();
+        assert!(e.to_string().contains("ollama"), "last tier's error: {e}");
+    }
+
+    #[tokio::test]
+    async fn chain_recovery_readopts_primary() {
+        // full outage window: chain bottoms out at ollama; next call the
+        // primary is back and the identity flips all the way home.
+        let w = LlmProviderWithFallback::new_chain(
+            StubProvider::fail_then_ok("cerebras", "gpt-oss-120b", "PRIMARY", 1),
+            true,
+            vec![
+                StubProvider::always_err("deepseek", "deepseek-v4-flash"),
+                StubProvider::always_ok("ollama", "qwen2.5:7b", "LAST"),
+            ],
+        );
+        let (c1, _) = w.generate("s", "u", None).await.unwrap();
+        assert_eq!(c1, "LAST");
+        assert_eq!(w.provider_name(), "ollama (fallback)");
+
+        let (c2, _) = w.generate("s", "u", None).await.unwrap();
+        assert_eq!(c2, "PRIMARY");
+        assert_eq!(w.provider_name(), "cerebras");
+        assert!(!w.is_using_fallback());
     }
 }

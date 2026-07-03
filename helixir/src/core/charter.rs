@@ -5,9 +5,12 @@
 //! See `memory-charter.md` at the crate root for the human-readable text;
 //! the constitution rules implemented here mirror its §1.
 //!
-//! Current mode: **flag, don't block** — decisions still execute, conflicts
-//! are reported in `add_memory.needs_clarification`. Blocking semantics are
-//! a later increment, after the charter text is approved.
+//! Current mode (increment 2, #34): **defer, don't destroy** — a destructive
+//! verdict that the charter escalates is NOT executed; the new fact is stored
+//! alongside the old, the dispute lives on a `charter_deferred` CONTRADICTS
+//! edge, and `resolve_contradiction` settles it (retract = the supersede
+//! happens then, with history). Non-destructive escalations stay flag-only.
+//! Opt out with `write.charter_blocking = false`.
 
 use crate::llm::decision::{MemoryDecision, MemoryOperation};
 
@@ -51,6 +54,18 @@ pub fn escalation_reason(
         }
         _ => None,
     }
+}
+
+/// Increment 2 (#34): conflicts whose pending operation is DESTRUCTIVE get
+/// DEFERRED under `write.charter_blocking` — the new fact is stored alongside
+/// the old one and a `charter_deferred` CONTRADICTS edge carries the dispute
+/// until `resolve_contradiction` settles it (retract = supersede then).
+/// Contradiction verdicts are already non-destructive; they stay flag-only.
+pub fn defers_under_blocking(decision: &MemoryDecision) -> bool {
+    matches!(
+        decision.operation,
+        MemoryOperation::Update | MemoryOperation::Supersede | MemoryOperation::Delete
+    )
 }
 
 /// A suggested question the agent can ask the user verbatim.

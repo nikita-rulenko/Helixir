@@ -3,6 +3,7 @@ use super::providers::fallback::LlmProviderWithFallback;
 use super::providers::ollama::OllamaProvider;
 use super::providers::openai_compat::OpenAiCompatProvider;
 use crate::{DEFAULT_CEREBRAS_URL, DEFAULT_DEEPSEEK_URL, DEFAULT_OLLAMA_URL};
+use tracing::{info, warn};
 
 pub struct LlmProviderFactory;
 
@@ -49,23 +50,92 @@ impl LlmProviderFactory {
         }
     }
 
+    /// Resolve `config.llm_fallback_chain` into concrete providers, in order.
+    /// The resilience strategy in one line: smart remote → cheap remote →
+    /// local selfhost — the agent survives quota exhaustion AND a network
+    /// outage. Skips (with a warning, never a boot failure): tiers equal to
+    /// the primary, tiers missing credentials, and unknown names.
     #[must_use]
-    pub fn create_with_fallback(
+    pub fn resolve_fallback_tiers(
+        config: &crate::core::config::HelixirConfig,
+    ) -> Vec<std::sync::Arc<dyn LlmProvider>> {
+        let mut tiers: Vec<std::sync::Arc<dyn LlmProvider>> = Vec::new();
+        if !config.llm_fallback_enabled {
+            return tiers;
+        }
+        let temperature = f64::from(config.llm_temperature);
+        let timeout = config.llm_runtime.request_timeout_secs;
+
+        for name in &config.llm_fallback_chain {
+            if *name == config.llm_provider {
+                info!("fallback tier '{name}' skipped: it is already the primary");
+                continue;
+            }
+            match name.as_str() {
+                "deepseek" => match config.deepseek_api_key.as_deref().filter(|k| !k.is_empty()) {
+                    Some(key) => tiers.push(
+                        Self::create(
+                            "deepseek",
+                            &config.deepseek_model,
+                            Some(key),
+                            None,
+                            temperature,
+                            timeout,
+                        )
+                        .into(),
+                    ),
+                    None => {
+                        warn!("fallback tier 'deepseek' skipped: HELIX_DEEPSEEK_API_KEY not set")
+                    }
+                },
+                "ollama" => tiers.push(
+                    Self::create(
+                        "ollama",
+                        &config.llm_fallback_model,
+                        None,
+                        Some(&config.llm_fallback_url),
+                        temperature,
+                        timeout,
+                    )
+                    .into(),
+                ),
+                // Cerebras-as-fallback reuses llm_api_key: it only makes sense
+                // when the primary is keyless (ollama), so the key is free.
+                "cerebras" => match config.llm_api_key.as_deref().filter(|k| !k.is_empty()) {
+                    Some(key) => tiers.push(
+                        Self::create(
+                            "cerebras",
+                            &config.llm_model,
+                            Some(key),
+                            None,
+                            temperature,
+                            timeout,
+                        )
+                        .into(),
+                    ),
+                    None => warn!("fallback tier 'cerebras' skipped: HELIX_LLM_API_KEY not set"),
+                },
+                other => warn!(
+                    "unknown fallback tier '{other}' skipped. Supported: cerebras, deepseek, ollama"
+                ),
+            }
+        }
+        tiers
+    }
+
+    /// Wrap the primary in the resolved fallback chain; identity passthrough
+    /// when no tier survived resolution (nothing to fall back to).
+    #[must_use]
+    pub fn create_chained(
         primary: std::sync::Arc<dyn LlmProvider>,
-        fallback_enabled: bool,
-        fallback_url: Option<&str>,
-        fallback_model: &str,
-        fallback_temperature: f64,
-    ) -> LlmProviderWithFallback {
-        // The local fallback is always Ollama in production; the wrapper takes
-        // it as an injected `LlmProvider` so the failover decision is unit-
-        // testable with mocks (see fallback.rs tests).
-        let fallback: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(OllamaProvider::new(
-            fallback_url.unwrap_or(DEFAULT_OLLAMA_URL).to_string(),
-            fallback_model.to_string(),
-            fallback_temperature,
-        ));
-        LlmProviderWithFallback::new(primary, fallback_enabled, fallback)
+        config: &crate::core::config::HelixirConfig,
+    ) -> std::sync::Arc<dyn LlmProvider> {
+        let tiers = Self::resolve_fallback_tiers(config);
+        if tiers.is_empty() {
+            primary
+        } else {
+            std::sync::Arc::new(LlmProviderWithFallback::new_chain(primary, true, tiers))
+        }
     }
 }
 
@@ -131,5 +201,59 @@ mod tests {
     #[should_panic(expected = "Unknown provider")]
     fn test_unknown_provider_panics() {
         let _ = LlmProviderFactory::create("unknown", "model", None, None, 0.5, 600);
+    }
+
+    // ---- fallback-chain resolution ----
+
+    use crate::core::config::HelixirConfig;
+
+    #[test]
+    fn chain_without_deepseek_key_degrades_to_ollama_only() {
+        // default chain is ["deepseek", "ollama"]; no key ⇒ deepseek skipped,
+        // NOT a boot failure.
+        let config = HelixirConfig::default();
+        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+        let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].provider_name(), "ollama");
+    }
+
+    #[test]
+    fn chain_with_deepseek_key_yields_both_tiers_in_order() {
+        let mut config = HelixirConfig::default();
+        config.deepseek_api_key = Some("test-key".to_string());
+        let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
+        let names: Vec<&str> = tiers.iter().map(|t| t.provider_name()).collect();
+        assert_eq!(names, vec!["deepseek", "ollama"]);
+        assert_eq!(tiers[0].model_name(), config.deepseek_model);
+    }
+
+    #[test]
+    fn chain_skips_tier_equal_to_primary_and_unknown_names() {
+        let mut config = HelixirConfig::default();
+        config.llm_provider = "ollama".to_string();
+        config.llm_fallback_chain = vec!["ollama".to_string(), "gpt5".to_string()];
+        let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
+        assert!(tiers.is_empty(), "primary-dup and unknown must both skip");
+    }
+
+    #[test]
+    fn chain_disabled_resolves_empty() {
+        let mut config = HelixirConfig::default();
+        config.deepseek_api_key = Some("test-key".to_string());
+        config.llm_fallback_enabled = false;
+        assert!(LlmProviderFactory::resolve_fallback_tiers(&config).is_empty());
+    }
+
+    #[test]
+    fn cerebras_tier_reuses_primary_key_when_primary_is_keyless() {
+        // ollama-primary users can chain up to a remote: ollama → cerebras.
+        let mut config = HelixirConfig::default();
+        config.llm_provider = "ollama".to_string();
+        config.llm_api_key = Some("cb-key".to_string());
+        config.llm_fallback_chain = vec!["cerebras".to_string()];
+        let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].provider_name(), "cerebras");
     }
 }

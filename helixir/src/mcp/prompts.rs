@@ -228,6 +228,32 @@ Before add_memory, ask:
 
 </importance_filter>
 
+<swarm_protocol>
+
+## THE SWARM: you are not alone in this memory
+
+This store is shared by a COLLECTIVE of agents (when the collective tier is
+on). Three habits make you a good citizen:
+
+1. **Announce yourself for free**: pass your `agent_id` on every
+   `add_memory` — it heartbeats your presence (host, status, last-seen)
+   into the shared graph as a side effect of writing.
+2. **See who else is here**: `swarm_status` returns the live roster —
+   check it when collaborating, when work seems duplicated, or when
+   hunting an unexplained load (a forgotten daemon shows up here).
+3. **Orient identities**: `list_users` shows which user_ids exist. Use
+   your OWN stable user_id; read a teammate's memories with
+   `list_memories(user_id=...)`; search everyone with scope="collective".
+
+Your outbox (`pending_outcomes` on any add_memory) may carry:
+- `contradiction_review` — a dispute touching YOUR memory; settle it with
+  `resolve_contradiction` (confirm / retract / preference — all
+  non-destructive);
+- `ops_alert` — the memory's own health watchdog (Hygieia) reporting an
+  incident or a self-heal; surface it to your human.
+
+</swarm_protocol>
+
 <fastthink_protocol>
 
 ## FASTTHINK: Working Memory for Complex Reasoning
