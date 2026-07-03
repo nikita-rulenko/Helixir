@@ -430,6 +430,26 @@ impl ToolingManager {
                         Ok(raw_id) => {
                             debug!("Raw source stored: {}", raw_id);
                             chunks_created += 1;
+                            // #82: family link — every atom points at the raw
+                            // it was extracted from, so search can collapse a
+                            // raw and its atoms into one result instead of
+                            // billing the same content twice.
+                            for atom_id in &added_ids {
+                                if let Err(e) = self
+                                    .add_typed_relation(
+                                        atom_id,
+                                        &raw_id,
+                                        crate::toolkit::mind_toolbox::reasoning::ReasoningType::PartOf,
+                                        self.config.write.raw_part_of_strength,
+                                    )
+                                    .await
+                                {
+                                    warn!(
+                                        "PART_OF link {} -> {} failed: {}",
+                                        atom_id, raw_id, e
+                                    );
+                                }
+                            }
                         }
                         Err(e) => warn!("Failed to store raw source: {}", e),
                     }

@@ -426,6 +426,10 @@ pub struct WriteConfig {
     pub raw_source_certainty: u8,
     pub raw_source_importance: u8,
     pub raw_source_min_chars: usize,
+    /// Strength of the atom→raw PART_OF edge written when a raw source is
+    /// stored (#82): the family link that lets search collapse a raw and its
+    /// atoms into one result instead of billing the same content twice.
+    pub raw_part_of_strength: i32,
     pub fallback_certainty: u8,
     pub fallback_importance: u8,
     pub context_link_priority: i64,
@@ -452,6 +456,7 @@ impl Default for WriteConfig {
             raw_source_certainty: 70,
             raw_source_importance: 40,
             raw_source_min_chars: 100,
+            raw_part_of_strength: 80,
             fallback_certainty: 50,
             fallback_importance: 50,
             context_link_priority: 50,

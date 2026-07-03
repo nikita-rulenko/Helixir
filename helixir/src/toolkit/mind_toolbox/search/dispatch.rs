@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
+use serde_json::json;
 use tracing::{debug, info};
 
 use crate::core::search_modes::SearchMode;
@@ -271,6 +272,125 @@ impl SearchEngine {
             scope
         );
         Ok(final_results)
+    }
+
+    /// #82: collapse raw+atom families inside one result window. For every
+    /// `raw_*` row present, fetch its incoming PART_OF edges (the atom→raw
+    /// family link written by the add pipeline) and, when family members
+    /// share the window, keep only the best-ranked one — annotated with the
+    /// folded ids under `metadata.collapsed`. Zero cost when no raw row is
+    /// in the window (the overwhelmingly common case).
+    /// NOTE: deliberately NOT called inside [`SearchEngine::search`] — the
+    /// write path's dedup recall (Phase A) needs the RAW candidates visible,
+    /// or the duplicate gate loses the very atom it must compare against.
+    /// The presentation layer (ToolingManager::search) calls this instead.
+    pub async fn collapse_raw_families(&self, results: &mut Vec<UnifiedSearchResult>) {
+        let raw_ids: Vec<String> = results
+            .iter()
+            .filter(|r| r.memory_id.starts_with("raw_"))
+            .map(|r| r.memory_id.clone())
+            .collect();
+        if raw_ids.is_empty() {
+            return;
+        }
+
+        let mut drop_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut annotations: Vec<(String, Vec<String>)> = Vec::new();
+
+        for raw_id in raw_ids {
+            // Two lookups joined on the internal node id: the EDGE projection
+            // carries relation_type but only internal from_node UUIDs, while
+            // the NODE projection carries memory_id + internal id. Both are
+            // existing queries — no schema change.
+            let edges: serde_json::Value = match self
+                .client
+                .execute_query("getMemoryIncomingRelations", &json!({"memory_id": &raw_id}))
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!("family edge lookup failed for {}: {}", raw_id, e);
+                    continue;
+                }
+            };
+            let part_of_nodes: std::collections::HashSet<String> = edges["relations_in"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|e| e["relation_type"].as_str() == Some("PART_OF"))
+                        .filter_map(|e| e["from_node"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if part_of_nodes.is_empty() {
+                continue;
+            }
+            let nodes: serde_json::Value = match self
+                .client
+                .execute_query(
+                    "getMemoryLogicalConnections",
+                    &json!({"memory_id": &raw_id}),
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!("family node lookup failed for {}: {}", raw_id, e);
+                    continue;
+                }
+            };
+            let family: std::collections::HashSet<String> = nodes["relation_in"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|n| {
+                            n["id"]
+                                .as_str()
+                                .is_some_and(|id| part_of_nodes.contains(id))
+                        })
+                        .filter_map(|n| n["memory_id"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if family.is_empty() {
+                continue;
+            }
+
+            // Members of this family present in the window, best score first
+            // (results are already rank-ordered).
+            let present: Vec<String> = results
+                .iter()
+                .filter(|r| r.memory_id == raw_id || family.contains(&r.memory_id))
+                .map(|r| r.memory_id.clone())
+                .collect();
+            if present.len() < 2 {
+                continue;
+            }
+            // Content-lossless folding only. Sibling ATOMS are distinct
+            // facts and must never fold into each other; the raw↔atom pair
+            // is the only true redundancy (atom content is contained in the
+            // raw). So: best member is an atom → fold ONLY the raw; best
+            // member is the raw → fold the present atoms (their content is
+            // inside the kept raw).
+            let keeper = present[0].clone();
+            let folded: Vec<String> = if keeper == raw_id {
+                present.into_iter().skip(1).collect()
+            } else {
+                vec![raw_id.clone()]
+            };
+            drop_ids.extend(folded.iter().cloned());
+            annotations.push((keeper, folded));
+        }
+
+        if drop_ids.is_empty() {
+            return;
+        }
+        results.retain(|r| !drop_ids.contains(&r.memory_id));
+        for (keeper, folded) in annotations {
+            if let Some(row) = results.iter_mut().find(|r| r.memory_id == keeper) {
+                row.metadata.insert("collapsed".to_string(), json!(folded));
+            }
+        }
     }
 
     pub async fn search_for_dedup(
