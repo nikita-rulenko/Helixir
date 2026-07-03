@@ -164,13 +164,29 @@ impl ReasoningEngine {
                 }
             };
 
-            let unvisited: Vec<_> = candidates
+            let mut unvisited: Vec<_> = candidates
                 .into_iter()
                 .filter(|(n, _, _)| !visited.contains(&n.memory_id))
                 .collect();
 
             if unvisited.is_empty() {
                 continue;
+            }
+
+            // A REASONING chain must prefer logical edges: in `both` mode the
+            // candidate pool mixes typed hops (BECAUSE/IMPLIES/CONTRADICTS)
+            // with generic MEMORY_RELATION ones (surfaced as SUPPORTS), and
+            // cosine-only selection happily follows a semantically-close
+            // SUPPORTS neighbor while a BECAUSE sits right there — the chain
+            // then explains nothing. When any typed hop exists, select within
+            // the typed subset; generic hops remain the fallback so sparse
+            // graphs still walk.
+            if !is_deep
+                && unvisited
+                    .iter()
+                    .any(|(_, t, _)| *t != ReasoningType::Supports)
+            {
+                unvisited.retain(|(_, t, _)| *t != ReasoningType::Supports);
             }
 
             if is_deep {
