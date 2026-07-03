@@ -20,6 +20,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: helixir-linux-x86_64
+            # Lean core since v0.8.0: ort's build script downloads ONNX
+            # Runtime prebuilts from cdn.pyke.io at build time — a third-party
+            # CDN outage (2026-07-03) broke the release pipeline. All five
+            # artifacts are lean now; NLI stays a compile-time opt-in (#80).
+            flags: --no-default-features
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -49,6 +54,9 @@ jobs:
             os: windows-latest
             artifact: helixir-windows-x86_64
             ext: .exe
+            # Lean core since v0.8.0 — same cdn.pyke.io outage as the
+            # linux-x86_64 entry above (#80).
+            flags: --no-default-features
 
     steps:
       - uses: actions/checkout@v4
