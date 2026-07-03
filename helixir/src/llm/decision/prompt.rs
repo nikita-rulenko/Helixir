@@ -158,14 +158,23 @@ elaborates another `fact` is RELATES_TO or SUPPORTS; a narrower concept under a
 broader one is IS_A or PART_OF. When you choose ADD/UPDATE/NOOP and the new memory
 is still topically related to a similar one, emit a RELATES_TO edge so the graph
 stays connected rather than leaving orphan nodes.
-WORKED EXAMPLE — new memory "The lexer turns source text into tokens" with
-candidates [mem_1 "The compiler translates source to machine code", mem_2 "A
-compiler is a kind of language tool"]: operation ADD, and
+WORKED EXAMPLE (structural) — new memory "The lexer turns source text into
+tokens" with candidates [mem_1 "The compiler translates source to machine code",
+mem_2 "A compiler is a kind of language tool"]: operation ADD, and
 relates_to = [["mem_1","PART_OF"]] (the lexer is a component of the compiler) —
 NOT SUPPORTS or IMPLIES. If a candidate were "Rust is a programming language" and
 the new memory were "Rust is a systems language", that pair is IS_A. Reach for
 PART_OF/IS_A whenever the structural relation is real; only fall back to
 RELATES_TO when no component/kind relation holds.
+WORKED EXAMPLE (causal, across separate writes) — new memory "The zephyr-9
+deploy failed during the night window" with candidate mem_7 "The zephyr-9 auth
+token expired at midnight" (stored days earlier): operation ADD, and
+relates_to = [["mem_7","BECAUSE"]] — the candidate is the CAUSE of the new
+fact, so the edge is BECAUSE, not RELATES_TO. This is the single most valuable
+edge you can build: it lets a later "why did the deploy fail?" question walk
+straight to the answer. Whenever a candidate states a cause, consequence or
+evidence of the new memory, choose BECAUSE / IMPLIES / SUPPORTS over
+RELATES_TO — topical similarity alone is what RELATES_TO is for.
 
 **Response Format (JSON):**
 {{

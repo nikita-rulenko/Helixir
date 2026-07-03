@@ -34,6 +34,40 @@ impl ReasoningEngine {
             )));
         }
 
+        // #83: reject causal 2-cycles. A BECAUSE B and B BECAUSE A cannot
+        // both be true (same for IMPLIES); the extractor produced exactly one
+        // such pair in the wild and the chain walker then presented the cycle
+        // as two contradictory chains. First writer wins; the reverse edge is
+        // soft-skipped like a duplicate — non-fatal for every caller.
+        if matches!(
+            relation_type,
+            ReasoningType::Because | ReasoningType::Implies
+        ) && self.edge_exists(to_id, from_id, relation_type).await
+        {
+            warn!(
+                "Rejecting causal 2-cycle: {} -> {} ({}) — reverse edge already exists",
+                crate::safe_truncate(from_id, 12),
+                crate::safe_truncate(to_id, 12),
+                relation_type.edge_name()
+            );
+            return Ok(ReasoningRelation {
+                peer_memory_id: String::new(),
+                peer_memory_content: String::new(),
+                relation_id: format!(
+                    "rel_cycle_skip_{}_{}",
+                    crate::safe_truncate(from_id, 8),
+                    crate::safe_truncate(to_id, 8)
+                ),
+                from_memory_id: from_id.to_string(),
+                to_memory_id: to_id.to_string(),
+                to_memory_content: String::new(),
+                from_memory_content: String::new(),
+                relation_type,
+                strength,
+                reasoning_id: reasoning_id.map(String::from),
+            });
+        }
+
         if self.edge_exists(from_id, to_id, relation_type).await {
             debug!(
                 "Skipping duplicate {} edge: {} -> {}",
