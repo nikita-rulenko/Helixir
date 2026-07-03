@@ -82,8 +82,19 @@ impl SearchEngine {
                         .await
                         .unwrap_or_default();
 
+                    // #81/#36: honest limit — graph expansion inflates the
+                    // seed set (depth 2 turned 8 seeds into 114 rows for a
+                    // think_recall) and, unlike the deep branch, nothing
+                    // clamped here. Dedup by memory_id first (the same memory
+                    // arrives as a seed AND as an expansion child, and dups
+                    // would eat slots of the clamped window); results are
+                    // sorted by combined score, so the first occurrence wins
+                    // and `take(limit)` keeps the best of seeds + expansion.
+                    let mut seen = std::collections::HashSet::new();
                     traversal_results
                         .into_iter()
+                        .filter(|r| seen.insert(r.memory_id.clone()))
+                        .take(limit)
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,
                             content: r.content,
@@ -124,8 +135,12 @@ impl SearchEngine {
                         .await
                         .unwrap_or_default();
 
+                    // Same dedup-before-clamp as the recent/contextual branch:
+                    // duplicate rows (seed + expansion) must not eat slots.
+                    let mut seen = std::collections::HashSet::new();
                     traversal_results
                         .into_iter()
+                        .filter(|r| seen.insert(r.memory_id.clone()))
                         .take(limit)
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,
@@ -171,8 +186,13 @@ impl SearchEngine {
                         .await
                         .unwrap_or_default();
 
+                    // Same dedup-before-clamp as the other traversal branches:
+                    // duplicate rows (seed + expansion) must not eat slots of
+                    // the clamped window.
+                    let mut seen = std::collections::HashSet::new();
                     traversal_results
                         .into_iter()
+                        .filter(|r| seen.insert(r.memory_id.clone()))
                         .take(limit)
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,

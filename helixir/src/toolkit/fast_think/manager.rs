@@ -99,7 +99,7 @@ impl FastThinkManager {
             session.owner_hint = Some(user_id.to_string());
         }
 
-        let memories = self
+        let mut memories = self
             .main_memory
             .search(
                 query,
@@ -112,6 +112,12 @@ impl FastThinkManager {
             )
             .await
             .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;
+        // #81 belt: the limit above bounds the search, but a recall must
+        // never exceed max_recall_results regardless of engine behavior —
+        // every recalled row becomes a session thought AND a SUPPORTS
+        // provenance edge at commit, so an unclamped recall is both a
+        // context-window flood for the agent and a slow commit.
+        memories.truncate(self.limits.max_recall_results);
 
         info!(
             session_id = session_id,
