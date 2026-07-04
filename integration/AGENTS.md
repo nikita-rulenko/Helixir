@@ -84,3 +84,15 @@ memory's own health watchdog speaking — relay it to your human.
 **Principle:** the memory does not gaslight its owner — surface
 `needs_clarification`, never silently overwrite a conflicting fact. Recall before
 you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
+
+### Reading what the memory returns
+
+- Results are **curated, not raw**: capped at the top-K by score, duplicates
+  and same-story repeats folded. A result whose metadata carries
+  `collapsed: [ids]` is one story shown once — the folded ids stay reachable
+  if you need exact wording. A thin recall means "ask sharper", not "empty".
+- Some BECAUSE edges are **stitched hypotheses**: a background pass (Lachesis)
+  connects old memories retroactively and tags the edge `lachesis-stitch`.
+  Present those as "the memory suspects a causal link", never as settled fact.
+- `think_status` returns `thoughts_left` — your headroom before the session
+  cap. `think_conclude` always works, even at 0: the conclusion is the exit.

@@ -168,7 +168,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine)."
+        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording."
     )]
     async fn search_memory(
         &self,
@@ -377,7 +377,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE if its last heartbeat is within active_window_secs (default from config, ~90s). Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
+        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE if its last heartbeat is within active_window_secs (default from config, ~90s). Agents silent past presence_ttl_secs (default 30 min) are presumed gone and hidden from the roster (hidden_stale counts them); their authorship provenance on memories is untouched. Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
     )]
     async fn swarm_status(
         &self,
@@ -405,6 +405,17 @@ impl HelixirMcpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let now = chrono::Utc::now();
+        // #84: roster hygiene — an agent silent past the TTL is presumed gone
+        // and HIDDEN from the roster (one-shot agents never say goodbye, so
+        // their stored status lies "working" forever). The Agent NODE stays:
+        // it anchors AGENT_CREATED provenance on every memory it wrote —
+        // pruning the view must never orphan authorship.
+        let ttl = self.client.config().swarm.presence_ttl_secs as i64;
+        let total_known = agents.len();
+        if ttl > 0 {
+            agents.retain(|a| a.age_seconds(now).map(|s| s <= ttl).unwrap_or(false));
+        }
+        let hidden_stale = total_known - agents.len();
         // Live first, then most-recently-seen.
         agents.sort_by_key(|a| {
             let age = a.age_seconds(now).unwrap_or(i64::MAX);
@@ -435,8 +446,10 @@ impl HelixirMcpServer {
         let payload = json!({
             "available": true,
             "active_window_secs": window,
+            "presence_ttl_secs": ttl,
             "active": active,
             "total": roster.len(),
+            "hidden_stale": hidden_stale,
             "agents": roster,
         });
         Ok(CallToolResult::success(vec![Content::text(

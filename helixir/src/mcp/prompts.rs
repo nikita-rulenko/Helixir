@@ -167,6 +167,17 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 | `both` | bidirectional | Full reasoning context |
 | `deep` | multi-hop | Deep logical inference |
 
+### Reading chains and results — what the annotations mean:
+- A BECAUSE edge whose provenance is `lachesis-stitch` was built RETROACTIVELY
+  by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
+  provenance, not asserted truth — trust it like a colleague's "I think these
+  are connected", and say so when you present it to the user.
+- A search result whose metadata has `collapsed: [ids]` is one story shown
+  once: a raw source and its extracted atoms never coexist in a window. The
+  folded ids stay reachable — fetch one explicitly if you need exact wording.
+- Recalls are CAPPED (top-K by score with a floor). If a recall looks thin,
+  ask a sharper question or raise `limit` — do not assume the memory is empty.
+
 </tool_selection>
 
 <keyword_triggers>

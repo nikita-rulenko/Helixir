@@ -540,6 +540,12 @@ impl Default for ChunkingConfig {
 #[serde(default)]
 pub struct SwarmConfig {
     pub active_window_secs: u64,
+    /// #84: agents silent longer than this are hidden from swarm_status
+    /// (presumed gone — one-shots never say goodbye). Deliberately larger
+    /// than the daemon pass interval (~600s) so healthy daemons don't flap.
+    /// 0 disables hiding. The Agent node itself is never deleted: it anchors
+    /// AGENT_CREATED authorship provenance.
+    pub presence_ttl_secs: u64,
     pub default_role: String,
     pub default_status: String,
 }
@@ -547,6 +553,7 @@ impl Default for SwarmConfig {
     fn default() -> Self {
         Self {
             active_window_secs: 90,
+            presence_ttl_secs: 1800,
             default_role: "developer".to_string(),
             default_status: "idle".to_string(),
         }

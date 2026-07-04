@@ -126,3 +126,12 @@ here right now; `list_users` = which identities exist. In
   never silently overwrite.
 - **One identity** — same `user_id` everywhere.
 - **Write durable facts, not trivia.**
+
+## Reading curated results
+
+Search results are capped and deduplicated. `metadata.collapsed` on a result
+lists same-story ids folded under it (content reachable by id — never lost).
+BECAUSE edges tagged `lachesis-stitch` are retroactive hypotheses from a
+background pass — present them as suspected links, not settled facts.
+`think_status.thoughts_left` shows session headroom; `think_conclude` works
+even at 0.

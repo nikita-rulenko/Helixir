@@ -214,7 +214,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Inspect a FastThink session without changing it — useful to check progress or whether a conclusion exists yet. Returns {status, thought_count, depth, has_conclusion, elapsed_ms}. Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
+        description = "Inspect a FastThink session without changing it — useful to check progress or whether a conclusion exists yet. Returns {status, thought_count, thoughts_left, depth, has_conclusion, elapsed_ms}; thoughts_left is your headroom before the session's thought cap — and think_conclude STILL works at 0 (the conclusion is the exit, not another thought). Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
     )]
     async fn think_status(
         &self,
