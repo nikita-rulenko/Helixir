@@ -167,6 +167,15 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 | `both` | bidirectional | Full reasoning context |
 | `deep` | multi-hop | Deep logical inference |
 
+### Writing for the graph — explicit wording builds guaranteed edges:
+When you store a memory, explicit connectives are honored DETERMINISTICALLY:
+- "X because Y" / "X потому что Y" → a BECAUSE edge is guaranteed.
+- "X is part of Y" / "X является частью Y" → a PART_OF edge is guaranteed.
+- "X is a kind of Y" / "X это разновидность Y" → an IS_A edge is guaranteed.
+Prefer stating causes and structure explicitly over implying them — the graph
+cannot see inside an atom, and a typed edge is what later answers "why" and
+"what is this made of" without an LLM call.
+
 ### Reading chains and results — what the annotations mean:
 - A BECAUSE edge whose provenance is `lachesis-stitch` was built RETROACTIVELY
   by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
@@ -395,7 +404,7 @@ pub fn get_server_instructions() -> String {
      ALWAYS: \
      (1) Call search_memory at the start of a conversation to recall context. If it returns nothing for your user_id, \
      re-run it with scope='collective' BEFORE concluding you have no memory — the store is shared, not per-agent. \
-     (2) Save decisions and outcomes with add_memory. If it returns needs_clarification, surface those questions to the user; \
+     (2) Save decisions and outcomes with add_memory; state causes and structure EXPLICITLY (\"because\", \"is part of\", \"is a kind of\") — explicit connectives guarantee typed edges the whole swarm can later walk. If it returns needs_clarification, surface those questions to the user; \
      never resolve a flagged conflict silently. \
      (3) Use the FastThink tools (think_start → think_add → think_recall → think_conclude → think_commit) for complex, multi-step reasoning. \
      (4) Activate the cognitive role matching the task (researcher / architect / developer / mentor / creative / analyst). \

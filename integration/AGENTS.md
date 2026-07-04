@@ -100,3 +100,7 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   conversation was not (extraction historically normalized). If a recall in
   the conversation's language comes back thin, retry the same query in
   English before concluding anything.
+- **Write for the graph**: explicit connectives build guaranteed typed edges —
+  "X because Y" → BECAUSE, "X is part of Y" → PART_OF, "X is a kind of Y" →
+  IS_A (English and Russian both work). Prefer stating causes and structure
+  explicitly over implying them: the graph cannot see inside an atom.
