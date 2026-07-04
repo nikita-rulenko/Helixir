@@ -24,13 +24,6 @@ N::Agent {
   last_seen: String DEFAULT "",
   status: String DEFAULT "idle"
 }
-E::IN_SESSION {
-  From: User,
-  To: Session,
-  Properties: {
-    role: String
-  }
-}
 N::Memory {
   memory_id: String,
   INDEX content_key: String DEFAULT "",
@@ -85,13 +78,6 @@ E::INSTANCE_OF {
   To: Concept,
   Properties: {
     confidence: I64
-  }
-}
-E::BELONGS_TO_CATEGORY {
-  From: Memory,
-  To: Concept,
-  Properties: {
-    relevance: I64
   }
 }
 E::MENTIONS {
@@ -174,18 +160,6 @@ E::VALID_IN {
     exclusive: I64
   }
 }
-E::APPLIES_IN {
-  From: Constraint,
-  To: Context,
-  Properties: {}
-}
-E::OCCURRED_IN {
-  From: Memory,
-  To: Context,
-  Properties: {
-    timestamp: String
-  }
-}
 E::CREATED_IN {
   From: Memory,
   To: Session,
@@ -219,18 +193,6 @@ E::HAS_CHUNK {
   To: MemoryChunk,
   Properties: {
     chunk_index: I64
-  }
-}
-E::NEXT_CHUNK {
-  From: MemoryChunk,
-  To: MemoryChunk,
-  Properties: {}
-}
-E::CHUNK_HAS_EMBEDDING {
-  From: MemoryChunk,
-  To: MemoryEmbedding,
-  Properties: {
-    embedding_model: String
   }
 }
 E::MEMORY_RELATION {
@@ -327,22 +289,10 @@ N::ErrorCode {
     solution: String,
     created_at: Date DEFAULT NOW
 }
-E::PAGE_TO_CHUNK {
-    From: DocPage,
-    To: DocChunk,
-    Properties: {}
-}
 E::CHUNK_TO_EMBEDDING {
     From: DocChunk,
     To: ChunkEmbedding,
     Properties: {}
-}
-E::CHUNK_MENTIONS_CONCEPT {
-    From: DocChunk,
-    To: Concept,
-    Properties: {
-        relevance_score: F64
-    }
 }
 E::CONCEPT_RELATED_TO {
     From: Concept,
@@ -350,21 +300,6 @@ E::CONCEPT_RELATED_TO {
     Properties: {
         relation_type: String
     }
-}
-E::CHUNK_HAS_EXAMPLE {
-    From: DocChunk,
-    To: CodeExample,
-    Properties: {}
-}
-E::CONCEPT_HAS_EXAMPLE {
-    From: Concept,
-    To: CodeExample,
-    Properties: {}
-}
-E::ERROR_REFERENCES_CONCEPT {
-    From: ErrorCode,
-    To: Concept,
-    Properties: {}
 }
 V::ChunkEmbedding {
     embedding: [F64]
@@ -406,13 +341,6 @@ N::Category {
 }
 V::CategoryEmbedding {
   name: String
-}
-E::CATEGORY_HAS_EMBEDDING {
-  From: Category,
-  To: CategoryEmbedding,
-  Properties: {
-    embedding_model: String
-  }
 }
 E::SUBCATEGORY_OF {
   From: Category,

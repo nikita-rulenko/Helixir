@@ -160,19 +160,6 @@ QUERY addReasoningRelation(relation_id: String, from_memory_id: String, to_memor
   to_mem <- N<Memory>::WHERE(_::{memory_id}::EQ(to_memory_id))::FIRST
   relation <- AddE<MEMORY_RELATION>({ relation_type: relation_type, strength: strength, created_at: created_at, metadata: "" })::From(from_mem)::To(to_mem)
   RETURN relation
-QUERY addMemoryToContext(memory_id: String, context_id: String, timestamp: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
-  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
-  link <- AddE<OCCURRED_IN>({ timestamp: timestamp })::From(memory)::To(context)
-  RETURN link
-QUERY getMemoryContext(memory_id: ID) =>
-  memory <- N<Memory>(memory_id)
-  context <- memory::Out<OCCURRED_IN>
-  RETURN context
-QUERY getContextMemories(context_id: ID) =>
-  context <- N<Context>(context_id)
-  memories <- context::In<OCCURRED_IN>
-  RETURN memories
 QUERY addMemoryEmbedding(memory_id: ID, vector_data: [F64], embedding_model: String, created_at: Date) =>
   embedding <- AddV<MemoryEmbedding>(vector_data, { created_at: created_at })
   link <- AddE<HAS_EMBEDDING>({ embedding_model: embedding_model })::From(memory_id)::To(embedding)
@@ -216,11 +203,6 @@ QUERY linkMemoryToInstanceOf(memory_id: String, concept_id: String, confidence: 
   concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
   link <- AddE<INSTANCE_OF>({ confidence: confidence })::From(memory)::To(concept)
   RETURN link
-QUERY linkMemoryToCategory(memory_id: String, concept_id: String, relevance: I64) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
-  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
-  link <- AddE<BELONGS_TO_CATEGORY>({ relevance: relevance })::From(memory)::To(concept)
-  RETURN link
 QUERY searchSimilarMemories(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   RETURN embeddings
@@ -241,11 +223,6 @@ QUERY searchMemoriesByBm25(text: String, limit: I64) =>
 QUERY searchSimilarEntities(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<EntityEmbedding>(query_vector, limit)
   RETURN embeddings
-QUERY searchMemoriesByContext(query_vector: [F64], context_id: ID, limit: I64) =>
-  context <- N<Context>(context_id)
-  context_memories <- context::In<OCCURRED_IN>
-  embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
-  RETURN embeddings
 QUERY searchRecentMemories(query_vector: [F64], limit: I64, cutoff_date: Date) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)::WHERE(_::{created_at}::GTE(cutoff_date))
   RETURN embeddings
@@ -257,11 +234,6 @@ QUERY addMemoryChunk(chunk_id: String, parent_memory_id: String, position: I64, 
 QUERY addDocPage(url: String, title: String, category: String, word_count: I64) =>
   page <- AddN<DocPage>({ url: url, title: title, category: category, word_count: word_count })
   RETURN page
-QUERY addDocChunk(chunk_id: String, content: String, chunk_index: I64, word_count: I64, section_title: String, page_url: String) =>
-  chunk <- AddN<DocChunk>({ chunk_id: chunk_id, content: content, chunk_index: chunk_index, word_count: word_count, section_title: section_title })
-  page <- N<DocPage>::WHERE(_::{url}::EQ(page_url))::FIRST
-  link <- AddE<PAGE_TO_CHUNK>::From(page)::To(chunk)
-  RETURN chunk
 QUERY addChunkEmbedding(chunk_id: String, vector_data: [F64]) =>
   chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
   embedding <- AddV<ChunkEmbedding>(vector_data)
@@ -270,18 +242,9 @@ QUERY addChunkEmbedding(chunk_id: String, vector_data: [F64]) =>
 QUERY searchDocChunks(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<ChunkEmbedding>(query_vector, limit)
   RETURN embeddings
-QUERY getDocChunksByPage(page_url: String) =>
-  page <- N<DocPage>::WHERE(_::{url}::EQ(page_url))::FIRST
-  chunks <- page::Out<PAGE_TO_CHUNK>
-  RETURN chunks
 QUERY addCodeExample(example_id: String, code: String, language: String, description: String) =>
   example <- AddN<CodeExample>({ example_id: example_id, code: code, language: language, description: description })
   RETURN example
-QUERY linkChunkToExample(chunk_id: String, example_id: String) =>
-  chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
-  example <- N<CodeExample>::WHERE(_::{example_id}::EQ(example_id))::FIRST
-  link <- AddE<CHUNK_HAS_EXAMPLE>::From(chunk)::To(example)
-  RETURN link
 QUERY searchConceptsByName(name: String) =>
   concepts <- N<Concept>::WHERE(_::{name}::EQ(name))
   RETURN concepts
@@ -515,12 +478,6 @@ QUERY linkMemoryToChunk(memory_id: String, chunk_id: String, chunk_index: I64) =
   link <- AddE<HAS_CHUNK>({ chunk_index: chunk_index })::From(memory)::To(chunk)
   RETURN link
 
-QUERY linkChunkToNext(from_chunk_id: String, to_chunk_id: String) =>
-  from_chunk <- N<MemoryChunk>::WHERE(_::{chunk_id}::EQ(from_chunk_id))::FIRST
-  to_chunk <- N<MemoryChunk>::WHERE(_::{chunk_id}::EQ(to_chunk_id))::FIRST
-  link <- AddE<NEXT_CHUNK>::From(from_chunk)::To(to_chunk)
-  RETURN link
-
 QUERY getMemoryChunks(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   chunks <- memory::Out<HAS_CHUNK>
@@ -530,11 +487,6 @@ QUERY getMemoryWithChunks(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   chunks <- memory::Out<HAS_CHUNK>
   RETURN memory, chunks
-
-QUERY addChunkEmbeddingByID(chunk_internal_id: ID, vector_data: [F64], content: String, embedding_model: String, created_at: Date) =>
-  embedding <- AddV<MemoryEmbedding>(vector_data, { content: content, created_at: created_at })
-  link <- AddE<CHUNK_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(chunk_internal_id)::To(embedding)
-  RETURN embedding
 
 QUERY getUserMemories(user_id: String, limit: I64) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
@@ -559,7 +511,7 @@ QUERY getMemoriesByEntity(entity_id: String, exclude_memory_id: String, limit: I
 QUERY getMemoryConcepts(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   instance_of <- memory::Out<INSTANCE_OF>
-  belongs_to <- memory::Out<BELONGS_TO_CATEGORY>
+  belongs_to <- memory::Out<TAGGED_AS>
   RETURN instance_of, belongs_to
 
 QUERY getMemoryReasoningRelations(memory_id: String) =>
@@ -586,7 +538,7 @@ QUERY getMemoryGraphStats(memory_id: String) =>
   entities <- memory::Out<EXTRACTED_ENTITY>
   mentions <- memory::Out<MENTIONS>
   concepts <- memory::Out<INSTANCE_OF>
-  categories <- memory::Out<BELONGS_TO_CATEGORY>
+  categories <- memory::Out<TAGGED_AS>
   reasoning_out <- memory::Out<MEMORY_RELATION>
   reasoning_in <- memory::In<MEMORY_RELATION>
   RETURN memory, entities, mentions, concepts, categories, reasoning_out, reasoning_in
@@ -649,22 +601,6 @@ QUERY globalVectorSearch(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<MemoryEmbedding>(query_vector, limit)
   memories <- embeddings::In<HAS_EMBEDDING>
   RETURN memories
-
-QUERY addUserToSession(user_id: String, session_id: String, role: String) =>
-  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
-  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
-  link <- AddE<IN_SESSION>({ role: role })::From(user)::To(session)
-  RETURN link
-
-QUERY getUserSessions(user_id: String) =>
-  user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
-  sessions <- user::Out<IN_SESSION>
-  RETURN sessions
-
-QUERY getSessionUsers(session_id: String) =>
-  session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
-  users <- session::In<IN_SESSION>
-  RETURN users
 
 QUERY linkMemoryToSession(memory_id: String, session_id: String, sequence: I64) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
@@ -744,17 +680,6 @@ QUERY getRelatedConcepts(concept_id: String) =>
   related <- concept::Out<CONCEPT_RELATED_TO>
   RETURN related
 
-QUERY linkConceptToExample(concept_id: String, example_id: String) =>
-  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
-  example <- N<CodeExample>::WHERE(_::{example_id}::EQ(example_id))::FIRST
-  link <- AddE<CONCEPT_HAS_EXAMPLE>::From(concept)::To(example)
-  RETURN link
-
-QUERY getConceptExamples(concept_id: String) =>
-  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
-  examples <- concept::Out<CONCEPT_HAS_EXAMPLE>
-  RETURN examples
-
 QUERY addEntityRelation(from_id: String, to_id: String, relationship_type: String, strength: I64, bidirectional: I64) =>
   from_entity <- N<Entity>::WHERE(_::{entity_id}::EQ(from_id))::FIRST
   to_entity <- N<Entity>::WHERE(_::{entity_id}::EQ(to_id))::FIRST
@@ -803,17 +728,6 @@ QUERY addConstraint(constraint_id: String, rule: String, constraint_type: String
   constraint <- AddN<Constraint>({ constraint_id: constraint_id, rule: rule, constraint_type: constraint_type, priority: priority, active: active })
   RETURN constraint
 
-QUERY addConstraintToContext(constraint_id: String, context_id: String) =>
-  constraint <- N<Constraint>::WHERE(_::{constraint_id}::EQ(constraint_id))::FIRST
-  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
-  link <- AddE<APPLIES_IN>::From(constraint)::To(context)
-  RETURN link
-
-QUERY getContextConstraints(context_id: String) =>
-  context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
-  constraints <- context::In<APPLIES_IN>
-  RETURN constraints
-
 QUERY addMemoryHistoryEvent(memory_id: String, event_id: String, action: String, old_value: String, new_value: String, timestamp: String, actor: String) =>
   event <- AddN<HistoryEvent>({ event_id: event_id, memory_id: memory_id, action: action, old_value: old_value, new_value: new_value, timestamp: timestamp, actor: actor })
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
@@ -825,31 +739,10 @@ QUERY getMemoryHistory(memory_id: String) =>
   history <- memory::Out<HAS_HISTORY>
   RETURN history
 
-QUERY linkDocChunkToConcept(chunk_id: String, concept_id: String, relevance_score: F64) =>
-  chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
-  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
-  link <- AddE<CHUNK_MENTIONS_CONCEPT>({ relevance_score: relevance_score })::From(chunk)::To(concept)
-  RETURN link
-
-QUERY getChunkConcepts(chunk_id: String) =>
-  chunk <- N<DocChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
-  concepts <- chunk::Out<CHUNK_MENTIONS_CONCEPT>
-  RETURN concepts
-
 QUERY addErrorCode(code: String, title: String, description: String, solution: String) =>
   error <- AddN<ErrorCode>({ code: code, title: title, description: description, solution: solution })
   RETURN error
 
-QUERY linkErrorToConcept(code: String, concept_id: String) =>
-  error <- N<ErrorCode>::WHERE(_::{code}::EQ(code))::FIRST
-  concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
-  link <- AddE<ERROR_REFERENCES_CONCEPT>::From(error)::To(concept)
-  RETURN link
-
-QUERY getErrorConcepts(code: String) =>
-  error <- N<ErrorCode>::WHERE(_::{code}::EQ(code))::FIRST
-  concepts <- error::Out<ERROR_REFERENCES_CONCEPT>
-  RETURN concepts
 QUERY getConnectionsLevelBatch(memory_ids: [String]) =>
   memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
   implies_out_e <- memories::OutE<IMPLIES>
@@ -915,11 +808,6 @@ QUERY getCategoryByName(name: String) =>
 QUERY getAllCategories(limit: I64) =>
   categories <- N<Category>::RANGE(0, limit)
   RETURN categories
-QUERY addCategoryEmbedding(category_id: String, vector_data: [F64], content: String, embedding_model: String) =>
-  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
-  embedding <- AddV<CategoryEmbedding>(vector_data, { name: content })
-  link <- AddE<CATEGORY_HAS_EMBEDDING>({ embedding_model: embedding_model })::From(category)::To(embedding)
-  RETURN embedding
 QUERY searchSimilarCategories(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<CategoryEmbedding>(query_vector, limit)
   RETURN embeddings
@@ -955,8 +843,13 @@ QUERY dropCategoryByInternalId(category_internal_id: ID) =>
   RETURN "deleted"
 
 QUERY dropMemoryCascadeByInternalId(memory_internal_id: ID) =>
-  DROP N<Memory>(memory_internal_id)::Out<HAS_CHUNK>::Out<CHUNK_HAS_EMBEDDING>
   DROP N<Memory>(memory_internal_id)::Out<HAS_CHUNK>
   DROP N<Memory>(memory_internal_id)::Out<HAS_EMBEDDING>
   DROP N<Memory>(memory_internal_id)
   RETURN "deleted"
+
+QUERY getCategoryAliases(category_id: String) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  aliases_out <- category::Out<ALIAS_OF>
+  aliases_in <- category::In<ALIAS_OF>
+  RETURN aliases_out, aliases_in
