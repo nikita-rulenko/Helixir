@@ -100,3 +100,21 @@ impl FastThinkLimits {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #81: the recall floor must flow from the layered config into the
+    /// limits the recall path actually consults — a silently-dropped mapping
+    /// here would resurrect the unbounded-recall bug with green builds.
+    #[test]
+    fn from_config_carries_recall_knobs() {
+        let mut c = crate::core::config::FastThinkConfig::default();
+        c.max_recall_results = 3;
+        c.recall_min_score = 0.42;
+        let limits = FastThinkLimits::from_config(&c);
+        assert_eq!(limits.max_recall_results, 3);
+        assert!((limits.recall_min_score - 0.42).abs() < f32::EPSILON);
+    }
+}
