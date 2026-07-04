@@ -291,3 +291,26 @@ Tiers missing credentials are skipped at boot with a warning, never a boot
 failure; the write result's metadata carries the full error trail that led
 to the answering tier. Configured by `llm_fallback_chain` (or
 `HELIX_LLM_FALLBACK_CHAIN`); an empty chain disables fallback.
+
+**Causal stitching (lachesis-stitch).** Lachesis's second duty: a bounded
+background pass over one user's recent memories that proposes candidate
+pairs by entity overlap, asks an LLM judge whether an EXPLICIT causal
+relation holds (conservative by prompt: co-occurrence is not causation),
+and persists survivors as `BECAUSE` edges tagged `lachesis-stitch` —
+hypothesis-grade provenance per the apophenia guardrail. Capped per pass
+(window / judged / persisted) and convergent: already-linked pairs are
+skipped, so re-running adds nothing.
+
+**Family collapse.** Search-time compaction: a raw source and its extracted
+atoms (linked by atom→raw `PART_OF` edges at write time) never coexist in
+one result window. The best-ranked family member is kept; the folded ids
+ride its `metadata.collapsed` and stay reachable. Either direction is legal
+and content-lossless: atoms fold into a kept raw (their text is inside it),
+or the raw folds under a kept atom (sibling atoms — distinct facts — stay).
+
+**Presence TTL.** Roster hygiene for the swarm: agents silent past
+`swarm.presence_ttl_secs` (default 30 min — above the daemon pass interval,
+so healthy daemons don't flap) are presumed gone and hidden from
+`swarm_status`, reported as `hidden_stale`. The Agent node itself is never
+deleted: it anchors `AGENT_CREATED` authorship provenance on every memory
+the agent wrote.
