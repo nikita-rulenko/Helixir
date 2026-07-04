@@ -401,7 +401,8 @@ pub fn get_server_instructions() -> String {
      (4) Activate the cognitive role matching the task (researcher / architect / developer / mentor / creative / analyst). \
      (5) Read results as CURATED, not raw: they are capped at the top-K by score; metadata.collapsed on a result lists \
      same-story ids folded under it (content reachable by id, never lost); a thin recall means ask a sharper question, \
-     not that the memory is empty. BECAUSE edges tagged 'lachesis-stitch' are retroactive hypotheses from a background \
+     not that the memory is empty (older memories may be stored in English even when the conversation was not — \
+     if a recall in the conversation's language is thin, retry the same query in English). BECAUSE edges tagged 'lachesis-stitch' are retroactive hypotheses from a background \
      pass — present them as suspected links, not settled facts. \
      Your memory is your identity.".to_string()
 }

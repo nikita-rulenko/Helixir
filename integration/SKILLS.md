@@ -135,3 +135,7 @@ BECAUSE edges tagged `lachesis-stitch` are retroactive hypotheses from a
 background pass — present them as suspected links, not settled facts.
 `think_status.thoughts_left` shows session headroom; `think_conclude` works
 even at 0.
+
+If a recall in the conversation's language is thin, retry the query in
+English — older memories may be stored in English regardless of source
+language.

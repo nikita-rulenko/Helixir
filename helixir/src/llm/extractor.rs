@@ -445,6 +445,7 @@ Output:
 
 Rules:
 - Each memory must be SELF-CONTAINED and INFORMATIVE — a reader must understand it without seeing the original text.
+- Write each memory in the SAME LANGUAGE as the input. The example above is English because the example input is English — a Russian input yields Russian memories.
 - Preserve key context: names, numbers, versions, dates, relationships. BAD: "X is a test". GOOD: "Integration test TestProductCRUD validates CRUD operations against SQLite".
 - Split ONLY when the input contains genuinely distinct topics. Do NOT split a single coherent statement into trivial fragments.
 - Example of GOOD splitting: "I like Rust for systems and Python for ML" → two memories with context.

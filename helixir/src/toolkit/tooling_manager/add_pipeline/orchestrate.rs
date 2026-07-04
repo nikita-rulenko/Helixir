@@ -43,11 +43,46 @@ impl ToolingManager {
             extraction.relations.len()
         );
 
-        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
+        // #79: example-leak firewall — drop atoms that resemble a prompt's
+        // worked example while being ungrounded in the user's actual message
+        // (the signature of a fabricated memory; observed live from a weak
+        // model). Relation indices are remapped over the survivors.
+        let mut index_map: Vec<Option<usize>> = Vec::with_capacity(extraction.memories.len());
+        let mut kept = Vec::with_capacity(extraction.memories.len());
+        for m in extraction.memories {
+            if crate::llm::example_guard::is_example_leak(&m.text, message) {
+                warn!(
+                    "example-leak atom dropped (ungrounded copy of a worked example): '{}'",
+                    crate::safe_truncate(&m.text, 80)
+                );
+                index_map.push(None);
+            } else {
+                index_map.push(Some(kept.len()));
+                kept.push(m);
+            }
+        }
+        let relations: Vec<crate::llm::extractor::ExtractedRelation> = extraction
+            .relations
+            .into_iter()
+            .filter_map(|mut r| {
+                let from = *index_map.get(r.from_memory_index?)?;
+                let to = *index_map.get(r.to_memory_index?)?;
+                match (from, to) {
+                    (Some(f), Some(t)) => {
+                        r.from_memory_index = Some(f);
+                        r.to_memory_index = Some(t);
+                        Some(r)
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let memories_to_store = self.prepare_memories_for_storage(kept, message);
         self.run_add_pipeline(
             memories_to_store,
             &extraction.entities,
-            &extraction.relations,
+            &relations,
             Some(message),
             user_id,
             agent_id,
