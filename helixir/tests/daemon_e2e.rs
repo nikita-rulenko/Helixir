@@ -54,6 +54,9 @@ async fn daemon_on_call_runs_exactly_one_pass() {
         insight_every: 1,
         merge_every: 1,
         reconcile_every: 1,
+        // 0 = never: this e2e asserts the pre-stitch pipeline stages; the
+        // stitch stage has its own suite (stitch_e2e).
+        stitch_every: 0,
     };
 
     let mut passes = 0u64;
