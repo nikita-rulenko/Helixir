@@ -303,6 +303,14 @@ pub struct LachesisConfig {
     pub dfs_budget: usize,
     pub witnesses_per_hop: usize,
     pub snippet_len: usize,
+    /// #83 stitching: how many recent memories one pass scans.
+    pub stitch_window: usize,
+    /// Max candidate pairs sent to the LLM judge per pass.
+    pub stitch_max_judged: usize,
+    /// Max BECAUSE edges persisted per pass (the OOM flood lesson).
+    pub stitch_max_persist: usize,
+    /// Judge confidence below this is discarded.
+    pub stitch_min_confidence: u32,
 }
 impl Default for LachesisConfig {
     fn default() -> Self {
@@ -313,6 +321,10 @@ impl Default for LachesisConfig {
             dfs_budget: 200_000,
             witnesses_per_hop: 3,
             snippet_len: 110,
+            stitch_window: 40,
+            stitch_max_judged: 12,
+            stitch_max_persist: 6,
+            stitch_min_confidence: 70,
         }
     }
 }
@@ -384,6 +396,8 @@ pub struct MoiraDaemonConfig {
     pub insight_every_passes: u64,
     pub merge_every_passes: u64,
     pub reconcile_every_passes: u64,
+    /// #83 retroactive causal stitching cadence (0 = never).
+    pub stitch_every_passes: u64,
 }
 impl Default for MoiraDaemonConfig {
     fn default() -> Self {
@@ -394,6 +408,7 @@ impl Default for MoiraDaemonConfig {
             merge_cosine_threshold: 0.82,
             clotho_every_passes: 1,
             insight_every_passes: 1,
+            stitch_every_passes: 4,
             merge_every_passes: 1,
             reconcile_every_passes: 1,
         }

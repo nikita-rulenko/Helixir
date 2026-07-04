@@ -21,6 +21,8 @@ pub struct PipelineRun {
     /// How many insights persist_insights actually stored this pass (after
     /// the flood gate) — Hygieia's flood detector reads this.
     pub persisted: usize,
+    /// #83: what the retroactive causal stitching stage did.
+    pub stitch: crate::agents::lachesis::stitch::StitchStats,
 }
 
 /// Tunables for a pass. Defaults match the CLI.
@@ -35,6 +37,8 @@ pub struct PassConfig {
     /// empty stats. Both default to true (a bare full_pass runs everything).
     pub run_clotho: bool,
     pub run_insights: bool,
+    /// #83: cadence gate for the retroactive causal stitching stage.
+    pub run_stitch: bool,
 }
 
 impl Default for PassConfig {
@@ -55,6 +59,7 @@ impl PassConfig {
             max_hops: o.max_hops,
             run_clotho: true,
             run_insights: true,
+            run_stitch: true,
         }
     }
 }
@@ -113,6 +118,21 @@ impl<'a> Orchestrator<'a> {
             Vec::new()
         };
 
+        // 3) #83: retroactive causal stitching — connect OLD memories whose
+        // causal relation only became visible after both existed. Bounded and
+        // hypothesis-grade (edges tagged lachesis-stitch).
+        let stitch = if cfg.run_stitch {
+            crate::agents::lachesis::stitch::Stitcher::new(self.tooling)
+                .stitch_pass(user)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("stitch stage failed (non-fatal): {e}");
+                    Default::default()
+                })
+        } else {
+            Default::default()
+        };
+
         // Close the hive loop: curated hypotheses become first-class memories
         // (user `helixir`, SUPPORTS provenance) so any agent can recall them.
         let persisted = if insights.is_empty() {
@@ -134,6 +154,7 @@ impl<'a> Orchestrator<'a> {
             grow,
             insights,
             persisted,
+            stitch,
         })
     }
 }

@@ -36,6 +36,8 @@ pub struct DaemonConfig {
     pub insight_every: u64,
     pub merge_every: u64,
     pub reconcile_every: u64,
+    /// #83 retroactive causal stitching cadence.
+    pub stitch_every: u64,
 }
 
 /// The daemon. Borrows the toolkit; constructs the orchestrator per run.
@@ -102,6 +104,7 @@ impl<'a> Daemon<'a> {
             let mut pass_cfg = cfg.pass.clone();
             pass_cfg.run_clotho = due(cfg.clotho_every, pass);
             pass_cfg.run_insights = due(insight_every, pass);
+            pass_cfg.run_stitch = due(cfg.stitch_every, pass);
             if pass_cfg.run_clotho || pass_cfg.run_insights {
                 match orchestrator.full_pass(&cfg.user, &pass_cfg).await {
                     Ok(run) => {

@@ -705,6 +705,7 @@ async fn daemon_run(
         insight_every: insight_every.unwrap_or(d.insight_every_passes),
         merge_every: merge_every.unwrap_or(d.merge_every_passes),
         reconcile_every: reconcile_every.unwrap_or(d.reconcile_every_passes),
+        stitch_every: d.stitch_every_passes,
     };
     client
         .daemon()
