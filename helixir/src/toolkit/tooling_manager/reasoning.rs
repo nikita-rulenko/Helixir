@@ -30,6 +30,24 @@ impl ToolingManager {
             .map_err(|e| ToolingError::Database(e.to_string()))
     }
 
+    /// Does this memory carry any typed causal edge (BECAUSE/IMPLIES, either
+    /// direction)? Used to aim chain seeds at causal-bearing candidates.
+    async fn has_causal_edges(&self, memory_id: &str) -> bool {
+        let resp: Result<serde_json::Value, _> = self
+            .db
+            .execute_query(
+                "getMemoryLogicalConnections",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await;
+        match resp {
+            Ok(v) => ["because_out", "because_in", "implies_out", "implies_in"]
+                .iter()
+                .any(|k| v[k].as_array().map(|a| !a.is_empty()).unwrap_or(false)),
+            Err(_) => false,
+        }
+    }
+
     pub async fn search_reasoning_chain(
         &self,
         query: &str,
@@ -52,13 +70,19 @@ impl ToolingManager {
             .await
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
 
+        // #82 follow-up (aim): for a "why" question the best seed is not the
+        // most similar TEXT but the most similar text that HAS causal edges —
+        // a seed without BECAUSE/IMPLIES can only yield mechanics, the agent
+        // re-queries, and the tokens are spent twice. Overfetch, then prefer
+        // causal-bearing candidates (score order preserved within groups).
+        let seed_overfetch = (limit * 3).clamp(limit, 15);
         let mut seed_results = self
             .search_engine
             .search(
                 query,
                 &query_embedding,
                 user_id,
-                limit,
+                seed_overfetch,
                 "contextual",
                 None,
                 None,
@@ -78,13 +102,33 @@ impl ToolingManager {
                     query,
                     &query_embedding,
                     user_id,
-                    limit,
+                    seed_overfetch,
                     "full",
                     None,
                     None,
                     "personal",
                 )
                 .await?;
+        }
+
+        if seed_results.len() > limit {
+            let mut causal = Vec::new();
+            let mut plain = Vec::new();
+            for s in seed_results {
+                if self.has_causal_edges(&s.memory_id).await {
+                    causal.push(s);
+                } else {
+                    plain.push(s);
+                }
+            }
+            let picked_causal = causal.len().min(limit);
+            seed_results = causal.into_iter().chain(plain).take(limit).collect();
+            debug!(
+                "seed ranking: {} causal-bearing of {} kept (limit {})",
+                picked_causal,
+                seed_results.len(),
+                limit
+            );
         }
 
         if seed_results.is_empty() {
