@@ -1,5 +1,26 @@
 # Upgrading Helixir
 
+> ⚠️ **Before ANY upgrade that touches HelixDB itself:** newer HelixDB builds
+> default to **in-memory storage** — stopping the instance ERASES everything
+> unless it runs with disk persistence (`helix start dev --disk`, or a mounted
+> `HELIX_DATA_DIR` for containers as our compose/install configure). After the
+> upgrade, verify: write a memory, restart the instance, confirm it survived.
+
+## v0.4.x → v0.9.0 — all drop-in
+
+Every release from v0.5.0 through v0.9.0 upgrades in place: update the
+binary, restart your MCP client, done. New config keys are optional with
+safe defaults. Version-by-version notes, newest first:
+
+| Version | Theme | Worth knowing when upgrading |
+|:--------|:------|:------------------------------|
+| **v0.9.0** | Curation | Read output is now capped/deduped/folded (`metadata.collapsed`). Raw sources written before v0.9.0 carry no family edges, so collapse benefits new writes. Lachesis gains retroactive causal stitching (`moira.daemon.stitch_every_passes`, default every 4th pass). Swarm roster hides agents silent past `swarm.presence_ttl_secs` (30 min). |
+| **v0.8.0** | Resilience | LLM fallback is now an ordered chain (`llm_fallback_chain = ["deepseek", "ollama"]`, `HELIX_DEEPSEEK_API_KEY`). The local floor changed **qwen2.5:7b → llama3.2:3b** — `ollama pull llama3.2:3b`, or pin `llm_fallback_model = "qwen2.5:7b"`. Release artifacts are lean (no NLI); build from source for the NLI judge. |
+| **v0.7.0** | Hygieia | Built-in health watchdog (`[watchdog]` config, `helixir watch`/`health` CLI) with autobackup. Off-by-default actions (container restart) are opt-in. |
+| **v0.6.x** | The hive | Insights persist as first-class memories; swarm rendezvous (`swarm_status`, `list_users`, auto-heartbeat via `agent_id`). 0.6.1/0.6.2 added container memory caps + the Atropos flood gate — re-run `install.sh` or update your compose to pick up the 3g limits. |
+| **v0.5.0** | Substrate | Typed-edge arsenal, ontology self-heal, layered `~/.helixir/helixir.toml` config, `helixir` CLI on PATH. |
+
+
 ## v0.3.x → v0.4.0 (the `algo_opt` read path)
 
 **As of v0.4.0 the `algo_opt` profile is the DEFAULT.** Set

@@ -274,7 +274,7 @@ client surfaces these as real errors (#53); any raw probe script must check
 the body, not the status code.
 
 **MCP — Model Context Protocol.** The interface agents speak to Helixir:
-a stdio (or streamable-HTTP via the gateway) server exposing the 19 tools.
+a stdio (or streamable-HTTP via the gateway) server exposing the 20 tools.
 Any MCP client — Claude Code, Claude Desktop, Cursor, zeroclaw — connects
 with a few lines of config; `helixir setup` writes them for you.
 

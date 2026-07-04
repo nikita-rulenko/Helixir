@@ -32,8 +32,8 @@
   - [One-command install](#one-command-install)
   - [Prerequisites](#prerequisites)
 - [How It Works](#how-it-works)
-  - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
   - [Architecture](#architecture)
+  - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
 - [**Generative memory — the Moirai**](#generative-memory--the-moirai) — Clotho · Lachesis · Atropos
 - [Ontology](#ontology)
 - [Graph Schema](#graph-schema)
@@ -43,7 +43,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — v0.3.x → v0.4.0 migration
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.9)
 
 ---
 
