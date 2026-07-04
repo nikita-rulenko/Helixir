@@ -10,7 +10,7 @@
 
 mod dictionary;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::llm::providers::base::LlmProvider;
 use crate::toolkit::tooling_manager::ToolingManager;
@@ -50,6 +50,8 @@ pub struct GrowStats {
     pub minted: usize,
     /// Tagged by a category minted earlier in THIS pass (reuse — convergence).
     pub reused_mint: usize,
+    /// ALIAS_OF edges wired between near-synonym categories this pass.
+    pub aliased: usize,
     pub failed: usize,
 }
 
@@ -256,7 +258,7 @@ impl<'a> Clotho<'a> {
             }
 
             // Miss → mint a category via the LLM, tag, and add it to the dict.
-            match self.mint_category(content).await {
+            match self.mint_category(content, &dict).await {
                 Ok(Some((cid, name, emb))) => {
                     let _ = self
                         .tooling
@@ -273,9 +275,16 @@ impl<'a> Clotho<'a> {
             }
         }
 
+        stats.aliased = self.alias_pass(&dict).await;
+
         info!(
-            "clotho.grow_pass: scanned={} matched={} minted={} reused={} failed={}",
-            stats.scanned, stats.tagged_by_match, stats.minted, stats.reused_mint, stats.failed
+            "clotho.grow_pass: scanned={} matched={} minted={} reused={} aliased={} failed={}",
+            stats.scanned,
+            stats.tagged_by_match,
+            stats.minted,
+            stats.reused_mint,
+            stats.aliased,
+            stats.failed
         );
         Ok(stats)
     }
@@ -287,6 +296,7 @@ impl<'a> Clotho<'a> {
     async fn mint_category(
         &self,
         content: &str,
+        dict: &[(String, String, Vec<f32>)],
     ) -> Result<Option<(String, String, Vec<f32>)>, ToolingError> {
         const SYS: &str = "You are Clotho, a librarian maintaining a small controlled vocabulary \
             of BROAD, reusable domain categories for a memory graph. Given a memory, return the \
@@ -319,17 +329,97 @@ impl<'a> Clotho<'a> {
             .unwrap_or("")
             .trim()
             .to_string();
-        let cid = self
-            .tooling
-            .ensure_category(&name, "concept", &desc)
-            .await?;
         let text = if desc.is_empty() {
             name.clone()
         } else {
             format!("{name}: {desc}")
         };
         let emb = self.tooling.embed_text(&text).await.unwrap_or_default();
+
+        // #66 follow-up: mint-time synonym convergence. If the LLM's
+        // candidate is a near-duplicate of an existing category (weak models
+        // fragment the vocabulary: "graph db" next to "graph databases"),
+        // reuse the existing entry instead of minting a synonym.
+        let bar = self.tooling.config.moira.clotho.alias_threshold;
+        if !emb.is_empty() {
+            if let Some((cid, cname, cemb)) = dict
+                .iter()
+                .map(|(cid, cname, cemb)| (cid, cname, cemb, cosine(&emb, cemb)))
+                .filter(|(_, _, _, s)| *s >= bar)
+                .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(cid, cname, cemb, _)| (cid.clone(), cname.clone(), cemb.clone()))
+            {
+                debug!("mint convergence: '{name}' reuses existing category '{cname}'");
+                return Ok(Some((cid, cname, cemb)));
+            }
+        }
+
+        let cid = self
+            .tooling
+            .ensure_category(&name, "concept", &desc)
+            .await?;
         Ok(Some((cid, name, emb)))
+    }
+
+    /// #66 follow-up: wire ALIAS_OF edges between near-synonym categories
+    /// already in the dictionary — the retroactive counterpart of mint-time
+    /// convergence. Canonical is the lexicographically smaller category_id
+    /// (deterministic); existing links are skipped via getCategoryAliases, so
+    /// the pass CONVERGES (the flood lesson). Returns edges wired.
+    pub async fn alias_pass(&self, dict: &[(String, String, Vec<f32>)]) -> usize {
+        let cc = &self.tooling.config.moira.clotho;
+        let mut wired = 0usize;
+        'outer: for i in 0..dict.len() {
+            for j in (i + 1)..dict.len() {
+                if wired >= cc.alias_max_per_pass {
+                    break 'outer;
+                }
+                let (id_a, name_a, emb_a) = &dict[i];
+                let (id_b, name_b, emb_b) = &dict[j];
+                if cosine(emb_a, emb_b) < cc.alias_threshold {
+                    continue;
+                }
+                let (canonical, alias) = if id_a < id_b {
+                    (id_a, id_b)
+                } else {
+                    (id_b, id_a)
+                };
+                // Idempotence: skip when the alias already points anywhere.
+                let existing: Result<serde_json::Value, _> = self
+                    .tooling
+                    .db
+                    .execute_query(
+                        "getCategoryAliases",
+                        &serde_json::json!({"category_id": alias}),
+                    )
+                    .await;
+                if let Ok(v) = &existing {
+                    let already = v["aliases_out"]
+                        .as_array()
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false);
+                    if already {
+                        continue;
+                    }
+                }
+                let res: Result<serde_json::Value, _> = self
+                    .tooling
+                    .db
+                    .execute_query(
+                        "addCategoryAlias",
+                        &serde_json::json!({"alias_id": alias, "canonical_id": canonical}),
+                    )
+                    .await;
+                if res.is_ok() {
+                    wired += 1;
+                    info!(
+                        "clotho.alias_pass: ALIAS_OF {} -> {} ('{}' ~ '{}')",
+                        alias, canonical, name_b, name_a
+                    );
+                }
+            }
+        }
+        wired
     }
 }
 

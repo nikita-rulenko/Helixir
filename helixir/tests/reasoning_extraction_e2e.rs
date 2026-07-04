@@ -224,3 +224,73 @@ fn associative_edges_built_on_fresh_write() {
         println!("associative (PART_OF/IS_A/RELATES_TO): {associative:?}");
     }
 }
+
+/// #66: the structural contract — an explicit "is part of" / "is a kind of"
+/// statement MUST yield the corresponding edge. Deterministic thanks to the
+/// structural-connective backstop (the LLM path goes first; the backstop
+/// wires the edge whenever the model didn't).
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn structural_edges_guaranteed_on_explicit_statement() {
+    assert_eq!(
+        std::env::var("HELIX_E2E").unwrap_or_default(),
+        "1",
+        "Set HELIX_E2E=1 when running this test with --ignored"
+    );
+    assert_ne!(
+        std::env::var("HELIXIR_INGEST_BUFFER").unwrap_or_default(),
+        "1",
+        "this test runs the synchronous path — do NOT set HELIXIR_INGEST_BUFFER"
+    );
+
+    let (mut mcp, _boot) = McpClient::spawn();
+    let run = token();
+
+    for (label, message, expected) in [
+        (
+            "part_of",
+            format!(
+                "The invoicer_{run} worker is part of the payports_{run} platform. \
+                 The worker renders and sends every customer invoice nightly."
+            ),
+            "PART_OF",
+        ),
+        (
+            "is_a",
+            format!(
+                "The graphlet_{run} store is a kind of embedded database. \
+                 It keeps the whole index in a single memory-mapped file."
+            ),
+            "IS_A",
+        ),
+    ] {
+        let user = format!("struct_{label}_{run}");
+        let (add, _ms) = mcp.call_tool(
+            "add_memory",
+            serde_json::json!({ "message": message, "user_id": user }),
+        );
+        let ids: Vec<String> = add["memory_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            ids.len() >= 2,
+            "{label}: structural statement must split into >=2 atoms: {add}"
+        );
+
+        let mut all_edges: Vec<String> = Vec::new();
+        for id in &ids {
+            all_edges.extend(common::db_edge_types_out(id));
+        }
+        assert!(
+            all_edges.iter().any(|t| t == expected),
+            "{label}: explicit structural statement must persist a {expected} edge \
+             (backstop guarantees the floor); got: {all_edges:?}"
+        );
+        println!("==== structural[{label}] ==== edges: {all_edges:?}");
+    }
+}

@@ -279,6 +279,13 @@ pub struct ClothoConfig {
     pub tag_top_k: i64,
     pub mint_confidence: i64,
     pub dict_load_cap: i64,
+    /// #66 follow-up: mint-time synonym convergence + ALIAS_OF wiring. A
+    /// candidate (or existing pair of) categories closer than this cosine
+    /// are treated as one vocabulary entry — weak models fragment the
+    /// dictionary with synonyms, and fragmented subsets blind Lachesis.
+    pub alias_threshold: f64,
+    /// ALIAS_OF edges wired per pass (bounded like every Moira duty).
+    pub alias_max_per_pass: usize,
 }
 impl Default for ClothoConfig {
     fn default() -> Self {
@@ -289,6 +296,8 @@ impl Default for ClothoConfig {
             tag_top_k: 5,
             mint_confidence: 70,
             dict_load_cap: 2000,
+            alias_threshold: 0.86,
+            alias_max_per_pass: 4,
         }
     }
 }

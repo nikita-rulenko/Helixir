@@ -1,4 +1,5 @@
 pub mod decision;
+pub mod example_guard;
 
 pub mod embeddings;
 pub mod extractor;

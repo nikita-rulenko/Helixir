@@ -311,47 +311,45 @@ conflict — with `resolved` / `resolution_strategy` for the reconcile pass).
 
 ### Edge types (active)
 
-The other edge types used in the current pipeline:
+Every type below is verified against the code: it has a writer query AND a
+Rust caller. (An edge type earns its place by three tests: a read-path
+algorithm walks it to answer a distinct question class; it has a reliable
+producer; and without it the reader would need an LLM call. Types that
+failed those tests were removed in v0.9.x — see UPGRADING.)
 
 | Edge | From → To | What it means |
 |:-----|:----------|:--------------|
 | **HAS_MEMORY** | User → Memory | User owns this memory (consensus `user_count` derives from these) |
 | **INSTANCE_OF** | Memory → Concept | Memory is of this ontology type |
-| **BELONGS_TO_CATEGORY** | Memory → Concept | Memory belongs to this category |
+| **TAGGED_AS** | Memory → Category | Clotho's category tag (the Moirai substrate) |
 | **MENTIONS** | Memory → Entity | Memory mentions this entity |
 | **EXTRACTED_ENTITY** | Memory → Entity | Entity was LLM-extracted from this memory |
 | **RELATES_TO** | Entity → Entity | Two entities are related (typed: works_at, uses, etc.) |
+| **PART_OF** | Entity → Entity | Hierarchical entity relations |
 | **VALID_IN** | Memory → Context | Memory applies in this context (work, personal...) |
-| **AGENT_CREATED** | Agent → Memory | This agent created the memory |
+| **CREATED_IN** | Memory → Session | Which session created this memory |
+| **AGENT_CREATED** | Agent → Memory | Authorship provenance: this agent wrote it |
 | **HAS_HISTORY** | Memory → HistoryEvent | Audit trail: who changed what and when |
 | **HAS_CHUNK** | Memory → MemoryChunk | Memory split into chunks (long texts) |
-| **NEXT_CHUNK** | MemoryChunk → MemoryChunk | Sequential chunk ordering |
-| **CHUNK_HAS_EMBEDDING** | MemoryChunk → MemoryEmbedding | Chunk's vector index |
 | **HAS_EMBEDDING** | Memory → MemoryEmbedding | Memory's vector index for semantic search |
-| **ENTITY_HAS_EMBEDDING** | Entity → EntityEmbedding | Entity's vector index |
 | **HAS_SUBTYPE** | Concept → Concept | Ontology hierarchy (Attribute → Skill) |
-| **TAGGED_AS** | Memory → Category | Clotho's category tag (the Moirai substrate) |
+| **IS_A** | Concept → Concept | Dynamic ontology extension |
+| **CONCEPT_RELATED_TO** | Concept → Concept | Cross-concept links |
+| **ALIAS_OF** | Category → Category | Vocabulary convergence: near-synonym categories point at their canonical (Clotho wires these; mint-time convergence prevents new synonyms) |
 
-### Edge types (reserved)
+### Edge types (in development)
 
-These edge types are defined in the schema with HQL queries ready, but not
-yet called from the Rust pipeline. They are infrastructure for planned
-features. (Dedicated `IMPLIES` / `BECAUSE` / `SUPPORTS` edge declarations
-also remain in the schema, but the pipeline persists those types via
-`MEMORY_RELATION.relation_type` — see above.)
+Declared in the schema with a named producer, not yet wired end-to-end:
 
-| Edge | From → To | Planned use |
-|:-----|:----------|:------------|
-| OCCURRED_IN | Memory → Context | Event-time context linking |
-| IN_SESSION | User → Session | Session tracking |
-| CREATED_IN | Memory → Session | Which session created this memory |
-| IS_A | Concept → Concept | Dynamic ontology extension |
-| CONCEPT_RELATED_TO | Concept → Concept | Cross-concept links |
-| PART_OF | Entity → Entity | Hierarchical entity relations |
-| APPLIES_IN | Constraint → Context | Constraint scoping |
-| CHUNK_MENTIONS_CONCEPT | DocChunk → Concept | Documentation ↔ ontology links |
-| CONCEPT_HAS_EXAMPLE | Concept → CodeExample | Code examples per concept |
-| ERROR_REFERENCES_CONCEPT | ErrorCode → Concept | Error catalog |
+| Edge | From → To | Planned producer |
+|:-----|:----------|:-----------------|
+| ENTITY_HAS_EMBEDDING | Entity → EntityEmbedding | Entity-resolution v2: persisted vectors for cross-session entity dedup (fragmented entities break graph hubs) |
+| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Document ingestion; the memory-chunk vector design question is tracked in #12 |
+
+Everything else that used to sit in a "reserved" list — duplicate twins and
+an unbuilt documentation-ingestion subsystem — was removed from the schema
+in v0.9.x rather than left as fiction: a type without a producer misleads
+more than it reserves.
 
 ---
 

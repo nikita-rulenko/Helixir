@@ -43,11 +43,46 @@ impl ToolingManager {
             extraction.relations.len()
         );
 
-        let memories_to_store = self.prepare_memories_for_storage(extraction.memories, message);
+        // #79: example-leak firewall — drop atoms that resemble a prompt's
+        // worked example while being ungrounded in the user's actual message
+        // (the signature of a fabricated memory; observed live from a weak
+        // model). Relation indices are remapped over the survivors.
+        let mut index_map: Vec<Option<usize>> = Vec::with_capacity(extraction.memories.len());
+        let mut kept = Vec::with_capacity(extraction.memories.len());
+        for m in extraction.memories {
+            if crate::llm::example_guard::is_example_leak(&m.text, message) {
+                warn!(
+                    "example-leak atom dropped (ungrounded copy of a worked example): '{}'",
+                    crate::safe_truncate(&m.text, 80)
+                );
+                index_map.push(None);
+            } else {
+                index_map.push(Some(kept.len()));
+                kept.push(m);
+            }
+        }
+        let relations: Vec<crate::llm::extractor::ExtractedRelation> = extraction
+            .relations
+            .into_iter()
+            .filter_map(|mut r| {
+                let from = *index_map.get(r.from_memory_index?)?;
+                let to = *index_map.get(r.to_memory_index?)?;
+                match (from, to) {
+                    (Some(f), Some(t)) => {
+                        r.from_memory_index = Some(f);
+                        r.to_memory_index = Some(t);
+                        Some(r)
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let memories_to_store = self.prepare_memories_for_storage(kept, message);
         self.run_add_pipeline(
             memories_to_store,
             &extraction.entities,
-            &extraction.relations,
+            &relations,
             Some(message),
             user_id,
             agent_id,
@@ -404,6 +439,50 @@ impl ToolingManager {
                                 );
                             }
                             Err(err) => warn!("connective backstop failed: {err}"),
+                        }
+                    }
+                }
+            }
+        }
+
+        // #66: structural-connective backstop — "X is part of Y" / "X is a
+        // kind of Y" states the edge in plain words, so it must exist
+        // regardless of the model's mood. Fires whenever the connective is
+        // present and two atoms align; add_relation's duplicate guard makes
+        // it a no-op when the LLM already built the edge.
+        if stored_memory_ids.len() >= 2 {
+            if let Some(message) = raw_message {
+                if let Some((edge_type, from_text, to_text)) =
+                    super::connective_backstop::split_structural(message)
+                {
+                    let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
+                    idx.sort_unstable();
+                    let atom_texts: Vec<&str> = idx
+                        .iter()
+                        .map(|i| memories_to_store[*i].text.as_str())
+                        .collect();
+                    if let Some((f, t)) = super::connective_backstop::pick_cause_effect(
+                        &atom_texts,
+                        &from_text,
+                        &to_text,
+                    ) {
+                        let from = &stored_memory_ids[&idx[f]];
+                        let to = &stored_memory_ids[&idx[t]];
+                        match self
+                            .reasoning_engine
+                            .add_relation(from, to, edge_type, 60, None)
+                            .await
+                        {
+                            Ok(_) => {
+                                relations_created += 1;
+                                info!(
+                                    "structural backstop: {} {} -> {} (explicit connective in the input)",
+                                    edge_type.edge_name(),
+                                    safe_truncate(from, 12),
+                                    safe_truncate(to, 12)
+                                );
+                            }
+                            Err(e) => debug!("structural backstop skipped: {e}"),
                         }
                     }
                 }

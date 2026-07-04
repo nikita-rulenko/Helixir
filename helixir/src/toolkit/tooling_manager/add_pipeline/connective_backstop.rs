@@ -125,3 +125,88 @@ mod tests {
         );
     }
 }
+
+// ── #66: structural connectives — the same deterministic floor for the
+// associative arsenal. "X is part of Y" / "X is a kind of Y" states the
+// edge in plain words; whether it exists must not depend on the model's
+// mood. Unlike the causal backstop this does NOT wait for zero relations:
+// an explicit structural statement means the edge MUST exist, and
+// add_relation's duplicate guard soft-skips when the LLM already built it.
+
+use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
+
+/// (connective, edge type). Direction is always first-clause → second-clause:
+/// "X is part of Y" wires X -PART_OF-> Y (component → whole), and
+/// "X is a kind of Y" wires X -IS_A-> Y (narrow → broad).
+const STRUCTURAL_CONNECTIVES: &[(&str, ReasoningType)] = &[
+    (" is part of ", ReasoningType::PartOf),
+    (" is a component of ", ReasoningType::PartOf),
+    (" is a module of ", ReasoningType::PartOf),
+    (" является частью ", ReasoningType::PartOf),
+    (" входит в состав ", ReasoningType::PartOf),
+    (" is a kind of ", ReasoningType::IsA),
+    (" is a type of ", ReasoningType::IsA),
+    (" is a variety of ", ReasoningType::IsA),
+    (" это разновидность ", ReasoningType::IsA),
+    (" это вид ", ReasoningType::IsA),
+];
+
+/// Split `message` at the first structural connective. Returns
+/// `(edge_type, from_text, to_text)` — from is the part/narrow side.
+pub(super) fn split_structural(message: &str) -> Option<(ReasoningType, String, String)> {
+    let lower = message.to_lowercase();
+    for (conn, edge) in STRUCTURAL_CONNECTIVES {
+        if let Some(pos) = lower.find(conn) {
+            let first = message[..pos]
+                .trim()
+                .trim_end_matches([',', ';'])
+                .to_string();
+            let second = message[pos + conn.len()..].trim().to_string();
+            if first.is_empty() || second.is_empty() {
+                return None;
+            }
+            return Some((*edge, first, second));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod structural_tests {
+    use super::*;
+
+    #[test]
+    fn splits_part_of_and_is_a_in_both_languages() {
+        let (t, from, to) =
+            split_structural("The billing worker is part of the payments platform").unwrap();
+        assert_eq!(t, ReasoningType::PartOf);
+        assert_eq!(from, "The billing worker");
+        assert_eq!(to, "the payments platform");
+
+        let (t, from, to) =
+            split_structural("Сшивка это разновидность фоновой курации графа").unwrap();
+        assert_eq!(t, ReasoningType::IsA);
+        assert_eq!(from, "Сшивка");
+        assert_eq!(to, "фоновой курации графа");
+
+        assert!(split_structural("nothing structural here").is_none());
+    }
+
+    #[test]
+    fn alignment_reuses_the_causal_picker() {
+        let atoms = vec![
+            "The payments platform hosts every money-touching service.",
+            "The billing worker sends the invoices.",
+        ];
+        let picked = pick_cause_effect(
+            &atoms.iter().map(|s| *s).collect::<Vec<_>>(),
+            "the billing worker",
+            "the payments platform",
+        );
+        assert_eq!(
+            picked,
+            Some((1, 0)),
+            "part=billing atom, whole=platform atom"
+        );
+    }
+}

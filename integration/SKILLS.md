@@ -135,3 +135,12 @@ BECAUSE edges tagged `lachesis-stitch` are retroactive hypotheses from a
 background pass — present them as suspected links, not settled facts.
 `think_status.thoughts_left` shows session headroom; `think_conclude` works
 even at 0.
+
+If a recall in the conversation's language is thin, retry the query in
+English — older memories may be stored in English regardless of source
+language.
+
+Explicit connectives in add_memory guarantee typed edges: "because" →
+BECAUSE, "is part of" → PART_OF, "is a kind of" → IS_A (EN and RU). State
+causes and structure explicitly — that is what later answers "why" without
+an LLM call.
