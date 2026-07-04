@@ -111,6 +111,13 @@ impl ToolingManager {
             }
         };
 
+        // #82: presentation-layer family collapse — a raw source and its
+        // extracted atoms in one window bill the same content twice. Done
+        // HERE and not inside SearchEngine::search so internal consumers
+        // (the write path's dedup recall) keep seeing raw candidates.
+        let mut results = results;
+        self.search_engine.collapse_raw_families(&mut results).await;
+
         self.emit_search_executed(user_id, mode, results.len())
             .await;
 

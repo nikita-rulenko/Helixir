@@ -147,3 +147,77 @@ fn edges_persisted_with_correct_types_db() {
         println!("associative (PART_OF/IS_A/RELATES_TO): {associative:?}");
     }
 }
+
+/// #83: the causal 2-cycle guard — A BECAUSE B and B BECAUSE A cannot both
+/// be true. The first writer wins; the reverse write is a soft no-op. Verified
+/// against DB ground truth, not the API return value.
+#[tokio::test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings"]
+async fn causal_two_cycle_rejected_db() {
+    assert_eq!(
+        std::env::var("HELIX_E2E").unwrap_or_default(),
+        "1",
+        "Set HELIX_E2E=1 when running this test with --ignored"
+    );
+
+    let client = helixir::core::helixir_client::HelixirClient::from_env().expect("client from env");
+    client.initialize().await.expect("initialize");
+
+    let run = token();
+    let user = format!("cycle_{run}");
+    let atoms: Vec<helixir::llm::extractor::ExtractedMemory> = [
+        format!("cycle test {run}: the pump_{run} overheated"),
+        format!("cycle test {run}: the coolant_{run} valve was stuck"),
+    ]
+    .into_iter()
+    .map(|text| helixir::llm::extractor::ExtractedMemory {
+        text,
+        memory_type: "fact".to_string(),
+        certainty: 90,
+        importance: 50,
+        entities: vec![],
+        context: None,
+    })
+    .collect();
+    let r = client
+        .add_prepared(atoms, &user, None, Some("cycle-guard-e2e"))
+        .await
+        .expect("prepared add");
+    assert_eq!(r.memories_added, 2, "two atoms expected: {r:?}");
+    let (a, b) = (&r.memory_ids[0], &r.memory_ids[1]);
+
+    // Forward causal edge lands...
+    client
+        .tooling()
+        .add_typed_relation(
+            a,
+            b,
+            helixir::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
+            80,
+        )
+        .await
+        .expect("forward BECAUSE");
+    // ...the reverse one must be soft-skipped (Ok, but NOT persisted).
+    client
+        .tooling()
+        .add_typed_relation(
+            b,
+            a,
+            helixir::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
+            80,
+        )
+        .await
+        .expect("reverse call itself must not error");
+
+    let b_out = db_edge_types_out(b);
+    assert!(
+        !b_out.contains(&"BECAUSE".to_string()),
+        "reverse BECAUSE must NOT persist (b outgoing: {b_out:?})"
+    );
+    let a_out = db_edge_types_out(a);
+    assert!(
+        a_out.contains(&"BECAUSE".to_string()),
+        "forward BECAUSE must persist (a outgoing: {a_out:?})"
+    );
+    println!("==== causal_two_cycle_rejected_db ==== forward kept, reverse rejected");
+}

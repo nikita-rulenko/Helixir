@@ -22,6 +22,8 @@
 //! Later increments fold in category specificity (a thick axis like raw-material
 //! is a weak bridge) and an LLM coherence judge for the borderline survivors.
 
+pub mod stitch;
+
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;

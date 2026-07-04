@@ -177,6 +177,13 @@ Engine  Reasoning Manager    |
 
 ### Read path (zero LLM calls)
 
+> **Curated output.** Results are compacted before they reach the agent:
+> capped at an honest top-K, deduplicated, and a raw source never coexists
+> with its own extracted atoms in one window — the family collapses into its
+> best-ranked member, with the folded ids kept reachable under
+> `metadata.collapsed`. Compaction of redundancy, never of content: the goal
+> is spending the agent's context window on distinct facts, not repeats.
+
 ```
 Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ──┐
                                └──> BM25 keyword (SearchBM25)  ──┤
@@ -200,7 +207,7 @@ Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on 
 The chain *Rajasthan weather → guar harvest → guar gum → fracking cost → shale stocks* is never a single stored edge — it runs through layers of abstraction. Helixir's next step is to **generate** those connections itself: three background agents, named for the Fates, spin a second axis over the flat graph and surface non-obvious cross-domain links — always as **hypotheses with provenance**, never asserted truth (the charter, extended from stored facts to generated connections).
 
 - **Clotho — the Spinner.** Tags memories from a controlled, self-growing category vocabulary (embedding-match; on a miss it mints a fitting category via the LLM). Shared tags weave distant memories into subsets — a category layer that accretes over the graph from the corpus itself.
-- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it.
+- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it. Her second duty is **retroactive causal stitching**: a bounded pass proposes entity-overlapping pairs of *old* memories, an LLM judge conservatively confirms explicit causation, and survivors become `BECAUSE` edges tagged `lachesis-stitch` — causality the write path could not see because the two facts arrived days apart.
 - **Atropos — the Cutter.** Curates the survivors into ranked, deduplicated **insights** carrying provenance and a lifecycle (`proposed → verified → refuted`).
 
 The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli), with a per-Moira cadence (tag every pass, route insights every Nth). Each surviving insight is journaled **and persisted back into the graph** as a first-class hypothesis-memory under `user_id=helixir`, with `SUPPORTS` edges from its witness memories — so any connected agent can recall generated knowledge the same way it recalls stored facts. Drive and watch it all with the [`helixir` CLI](#cli).

@@ -9,6 +9,8 @@ pub struct FastThinkLimits {
     pub thinking_timeout: Duration,
     pub session_ttl: Duration,
     pub max_recall_results: usize,
+    /// Score floor for recalls (see `FastThinkConfig::recall_min_score`).
+    pub recall_min_score: f32,
 }
 
 impl Default for FastThinkLimits {
@@ -21,6 +23,7 @@ impl Default for FastThinkLimits {
             thinking_timeout: Duration::from_secs(30),
             session_ttl: Duration::from_secs(300),
             max_recall_results: 5,
+            recall_min_score: 0.6,
         }
     }
 }
@@ -36,6 +39,7 @@ impl FastThinkLimits {
             thinking_timeout: Duration::from_secs(c.thinking_timeout_secs),
             session_ttl: Duration::from_secs(c.session_ttl_secs),
             max_recall_results: c.max_recall_results,
+            recall_min_score: c.recall_min_score,
         }
     }
 
@@ -48,6 +52,7 @@ impl FastThinkLimits {
             thinking_timeout: Duration::from_secs(60),
             session_ttl: Duration::from_secs(600),
             max_recall_results: 10,
+            recall_min_score: 0.6,
         }
     }
 
@@ -63,6 +68,7 @@ impl FastThinkLimits {
             thinking_timeout: Duration::from_secs(90),
             session_ttl: Duration::from_secs(600),
             max_recall_results: 8,
+            recall_min_score: 0.6,
         }
     }
 
@@ -75,6 +81,7 @@ impl FastThinkLimits {
             thinking_timeout: Duration::from_secs(15),
             session_ttl: Duration::from_secs(120),
             max_recall_results: 3,
+            recall_min_score: 0.6,
         }
     }
 
@@ -91,5 +98,23 @@ impl FastThinkLimits {
     pub fn with_max_depth(mut self, depth: usize) -> Self {
         self.max_depth = depth;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #81: the recall floor must flow from the layered config into the
+    /// limits the recall path actually consults — a silently-dropped mapping
+    /// here would resurrect the unbounded-recall bug with green builds.
+    #[test]
+    fn from_config_carries_recall_knobs() {
+        let mut c = crate::core::config::FastThinkConfig::default();
+        c.max_recall_results = 3;
+        c.recall_min_score = 0.42;
+        let limits = FastThinkLimits::from_config(&c);
+        assert_eq!(limits.max_recall_results, 3);
+        assert!((limits.recall_min_score - 0.42).abs() < f32::EPSILON);
     }
 }
