@@ -445,6 +445,50 @@ impl ToolingManager {
             }
         }
 
+        // #66: structural-connective backstop — "X is part of Y" / "X is a
+        // kind of Y" states the edge in plain words, so it must exist
+        // regardless of the model's mood. Fires whenever the connective is
+        // present and two atoms align; add_relation's duplicate guard makes
+        // it a no-op when the LLM already built the edge.
+        if stored_memory_ids.len() >= 2 {
+            if let Some(message) = raw_message {
+                if let Some((edge_type, from_text, to_text)) =
+                    super::connective_backstop::split_structural(message)
+                {
+                    let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
+                    idx.sort_unstable();
+                    let atom_texts: Vec<&str> = idx
+                        .iter()
+                        .map(|i| memories_to_store[*i].text.as_str())
+                        .collect();
+                    if let Some((f, t)) = super::connective_backstop::pick_cause_effect(
+                        &atom_texts,
+                        &from_text,
+                        &to_text,
+                    ) {
+                        let from = &stored_memory_ids[&idx[f]];
+                        let to = &stored_memory_ids[&idx[t]];
+                        match self
+                            .reasoning_engine
+                            .add_relation(from, to, edge_type, 60, None)
+                            .await
+                        {
+                            Ok(_) => {
+                                relations_created += 1;
+                                info!(
+                                    "structural backstop: {} {} -> {} (explicit connective in the input)",
+                                    edge_type.edge_name(),
+                                    safe_truncate(from, 12),
+                                    safe_truncate(to, 12)
+                                );
+                            }
+                            Err(e) => debug!("structural backstop skipped: {e}"),
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(message) = raw_message
             .filter(|m| m.len() > self.config.write.raw_source_min_chars && added_ids.len() > 1)
         {

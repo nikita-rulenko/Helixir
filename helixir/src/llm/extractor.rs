@@ -411,6 +411,16 @@ therefore, so, since, потому что, так как, из-за, поэто�
 into the cause atom and the effect atom AND emit the BECAUSE edge between
 them (cause -> effect). A causal sentence with no BECAUSE edge is an error.
 
+MANDATORY: the same applies to explicit STRUCTURAL statements. "X is part
+of Y" / "X является частью Y" -> split into an atom about X and an atom
+about Y, plus a PART_OF edge (X -> Y). "X is a kind/type of Y" / "X — это
+разновидность Y" -> the same split plus an IS_A edge (X -> Y). Example:
+"The billing worker is part of the payments platform" -> atoms ["The
+billing worker handles invoicing within the platform", "The payments
+platform hosts the money-touching services"] + relation {from: 0, to: 1,
+relation_type: "PART_OF"}. A structural sentence captured as ONE atom with
+no edge is an error — the graph cannot see inside an atom.
+
 Emit an edge for EVERY related pair, even with only 2 memories. Use
 from_memory_index and to_memory_index (0-based).
 
