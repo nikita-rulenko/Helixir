@@ -26,6 +26,17 @@ jobs:
         working-directory: helixir
         run: cargo fmt --all -- --check
 
+  docs-lint:
+    name: docs freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # #85: catches the drift classes that shipped on 2026-07-04 — stale
+      # TOC anchors/order, wrong "N tools" claims, a release without a
+      # migration note. Milliseconds, no dependencies.
+      - name: docs lint
+        run: python3 .github/scripts/docs_lint.py
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
