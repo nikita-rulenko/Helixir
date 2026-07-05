@@ -17,60 +17,39 @@ use super::super::types::ToolingError;
 use crate::safe_truncate;
 
 impl ToolingManager {
-    /// One relation-inference LLM call for a freshly stored memory, persisting
-    /// whatever it finds. Separated from the store loop so the orchestrator can
-    /// run these independent calls CONCURRENTLY — sequential per-atom inference
-    /// used to stack K× model latency onto every multi-atom write.
-    pub(super) async fn infer_and_persist_relations(
+    /// #96 Lever 1: persist the relations produced by ONE batched
+    /// `infer_relations_batch` call — was one infer LLM call + persist per atom
+    /// (`infer_and_persist_relations`), now a single call for the whole write.
+    pub(super) async fn persist_inferred_relations(
         &self,
-        memory_id: &str,
-        memory_text: &str,
-        context_pairs: &[(String, String)],
+        inferred: &[crate::toolkit::mind_toolbox::reasoning::ReasoningRelation],
     ) -> usize {
         let mut relations_created = 0usize;
-
-        info!(
-            "Calling infer_relations with {} context pairs for {}",
-            context_pairs.len(),
-            safe_truncate(memory_id, 12)
-        );
-
-        match self
-            .reasoning_engine
-            .infer_relations(memory_id, memory_text, context_pairs)
-            .await
-        {
-            Ok(inferred) => {
-                info!("infer_relations returned {} relations", inferred.len());
-                for rel in &inferred {
-                    match self
-                        .reasoning_engine
-                        .add_relation(
-                            &rel.from_memory_id,
-                            &rel.to_memory_id,
-                            rel.relation_type,
-                            rel.strength,
-                            rel.reasoning_id.as_deref(),
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            relations_created += 1;
-                            info!(
-                                "Persisted {} relation: {} -> {} (strength={})",
-                                rel.relation_type.edge_name(),
-                                safe_truncate(memory_id, 12),
-                                safe_truncate(&rel.to_memory_id, 12),
-                                rel.strength
-                            );
-                        }
-                        Err(e) => warn!("Failed to persist inferred relation: {}", e),
-                    }
+        for rel in inferred {
+            match self
+                .reasoning_engine
+                .add_relation(
+                    &rel.from_memory_id,
+                    &rel.to_memory_id,
+                    rel.relation_type,
+                    rel.strength,
+                    rel.reasoning_id.as_deref(),
+                )
+                .await
+            {
+                Ok(_) => {
+                    relations_created += 1;
+                    info!(
+                        "Persisted {} relation: {} -> {} (strength={})",
+                        rel.relation_type.edge_name(),
+                        safe_truncate(&rel.from_memory_id, 12),
+                        safe_truncate(&rel.to_memory_id, 12),
+                        rel.strength
+                    );
                 }
+                Err(e) => warn!("Failed to persist inferred relation: {}", e),
             }
-            Err(e) => warn!("Relation inference failed: {}", e),
         }
-
         relations_created
     }
 

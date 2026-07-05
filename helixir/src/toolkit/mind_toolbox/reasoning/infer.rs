@@ -123,6 +123,31 @@ Rules:
             }
         }
     }
+
+    /// #96 Lever 1: infer relations for MANY new atoms in ONE LLM call instead
+    /// of one call per atom. Each atom carries its OWN candidate list; the model
+    /// returns `{"relations":[{"atom":i,"candidate":j,"type":..,"strength":..}]}`.
+    /// Chunked (<=12 atoms/call) so a huge write spills to a few calls, not one
+    /// giant prompt. Same edges as the per-atom path; O(1) calls instead of O(N).
+    pub async fn infer_relations_batch(
+        &self,
+        items: &[(String, String, Vec<(String, String)>)],
+    ) -> Result<Vec<ReasoningRelation>, ReasoningError> {
+        let Some(ref llm) = self.llm_provider else {
+            return Ok(Vec::new());
+        };
+        let active: Vec<&(String, String, Vec<(String, String)>)> =
+            items.iter().filter(|(_, _, c)| !c.is_empty()).collect();
+        if active.is_empty() {
+            return Ok(Vec::new());
+        }
+        const BATCH_MAX: usize = 12;
+        let mut out: Vec<ReasoningRelation> = Vec::new();
+        for chunk in active.chunks(BATCH_MAX) {
+            out.extend(infer_relations_chunk(&**llm, chunk).await);
+        }
+        Ok(out)
+    }
 }
 
 /// Parse an `infer_relations` model response into relations.
@@ -185,6 +210,123 @@ fn parse_relations_response(
             })
             .collect(),
     )
+}
+
+/// Extract a JSON array from a model response — the object-wrapper
+/// `{"relations":[...]}` (json_object mode, #95), a bare array, the
+/// `results`/`data` keys, or an array embedded in prose. `None` = unparseable
+/// (worth one retry); `Some([])` = a real empty answer (no retry).
+fn extract_json_array(response: &str) -> Option<Vec<serde_json::Value>> {
+    serde_json::from_str::<Vec<serde_json::Value>>(response)
+        .ok()
+        .or_else(|| {
+            let obj = serde_json::from_str::<serde_json::Value>(response).ok()?;
+            obj.get("relations")
+                .or_else(|| obj.get("results"))
+                .or_else(|| obj.get("data"))
+                .and_then(|v| v.as_array())
+                .cloned()
+        })
+        .or_else(|| {
+            let start = response.find('[')?;
+            let end = response.rfind(']')?;
+            serde_json::from_str::<Vec<serde_json::Value>>(&response[start..=end]).ok()
+        })
+}
+
+/// One batched relation-inference call over a chunk of new atoms, each with its
+/// OWN candidate list. Backs [`ReasoningEngine::infer_relations_batch`].
+async fn infer_relations_chunk(
+    llm: &dyn crate::llm::providers::base::LlmProvider,
+    chunk: &[&(String, String, Vec<(String, String)>)],
+) -> Vec<ReasoningRelation> {
+    let system_prompt = r#"You connect NEW memories to their candidate existing memories with typed logical edges.
+
+For EACH new atom, decide which of ITS OWN candidates carry a relationship, and of what type:
+- SUPPORTS: same topic / reinforce / evidence for the same conclusion (most common)
+- IMPLIES: one logically leads to or suggests the other
+- BECAUSE: one is a cause/reason for the other
+- CONTRADICTS: they conflict or are incompatible
+
+Output ONLY a JSON object: {"relations":[{"atom":0,"candidate":0,"type":"SUPPORTS","strength":70}]}
+- "atom" indexes the NEW atoms; "candidate" indexes THAT atom's own candidate list.
+- Include relations with strength >= 40. Omit an atom entirely if none of its candidates relate.
+- If nothing relates at all, output {"relations":[]}. No markdown, no prose."#;
+
+    let mut ctx = String::new();
+    for (ai, (_, content, cands)) in chunk.iter().enumerate() {
+        ctx.push_str(&format!("[atom {ai}] {content}\n"));
+        for (ci, (_, cc)) in cands.iter().enumerate() {
+            ctx.push_str(&format!("   candidate {ci}: {cc}\n"));
+        }
+    }
+    let user_prompt = format!("NEW atoms and their candidates:\n{ctx}");
+
+    let build = |arr: Vec<serde_json::Value>| -> Vec<ReasoningRelation> {
+        arr.iter()
+            .filter_map(|r| {
+                let ai = r.get("atom")?.as_u64()? as usize;
+                let ci = r.get("candidate")?.as_u64()? as usize;
+                let (new_id, new_content, cands) = chunk.get(ai)?;
+                let (target_id, target_content) = cands.get(ci)?;
+                Some(ReasoningRelation {
+                    peer_memory_id: String::new(),
+                    peer_memory_content: String::new(),
+                    relation_id: format!(
+                        "inferred_{}_{}",
+                        crate::safe_truncate(new_id, 8),
+                        crate::safe_truncate(target_id, 8)
+                    ),
+                    from_memory_id: new_id.clone(),
+                    to_memory_id: target_id.clone(),
+                    to_memory_content: target_content.clone(),
+                    from_memory_content: new_content.clone(),
+                    relation_type: match r.get("type").and_then(|t| t.as_str()) {
+                        Some("IMPLIES") => ReasoningType::Implies,
+                        Some("BECAUSE") => ReasoningType::Because,
+                        Some("CONTRADICTS") => ReasoningType::Contradicts,
+                        _ => ReasoningType::Supports,
+                    },
+                    strength: r.get("strength").and_then(|s| s.as_i64()).unwrap_or(60) as i32,
+                    reasoning_id: Some("llm_inferred".to_string()),
+                })
+            })
+            .collect()
+    };
+
+    match llm
+        .generate(system_prompt, &user_prompt, Some("json_object"))
+        .await
+    {
+        Ok((response, _)) => match extract_json_array(&response) {
+            Some(arr) => {
+                let rels = build(arr);
+                info!(
+                    "infer_relations_batch: {} relations for {} atoms (1 call)",
+                    rels.len(),
+                    chunk.len()
+                );
+                rels
+            }
+            None => {
+                warn!("infer_relations_batch: unparseable response, retrying");
+                let retry = format!(
+                    "{user_prompt}\n\nIMPORTANT: Output ONLY a JSON object like {{\"relations\":[{{\"atom\":0,\"candidate\":0,\"type\":\"SUPPORTS\",\"strength\":70}}]}}. No markdown, no prose."
+                );
+                match llm.generate(system_prompt, &retry, Some("json_object")).await {
+                    Ok((r2, _)) => extract_json_array(&r2).map(build).unwrap_or_default(),
+                    Err(e) => {
+                        warn!("infer_relations_batch retry failed: {e}");
+                        Vec::new()
+                    }
+                }
+            }
+        },
+        Err(e) => {
+            warn!("infer_relations_batch failed: {e}");
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

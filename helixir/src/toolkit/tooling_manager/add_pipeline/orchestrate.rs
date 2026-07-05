@@ -424,18 +424,16 @@ impl ToolingManager {
             }
         }
 
-        // Phase D: relation inference — one independent LLM call per stored
-        // atom. These used to run sequentially inside the store loop, stacking
-        // K× model latency onto every multi-atom write; concurrent, the
-        // wall-clock cost is the slowest single call.
+        // Phase D: relation inference — #96 Lever 1 batches ALL new atoms into
+        // ONE LLM call (was one independent call per atom, run concurrently).
+        // O(1) model calls per write instead of O(N); the edges are identical.
         if !infer_jobs.is_empty() {
-            let inferred = futures::future::join_all(
-                infer_jobs
-                    .iter()
-                    .map(|(id, text, pairs)| self.infer_and_persist_relations(id, text, pairs)),
-            )
-            .await;
-            relations_created += inferred.into_iter().sum::<usize>();
+            let inferred = self
+                .reasoning_engine
+                .infer_relations_batch(&infer_jobs)
+                .await
+                .unwrap_or_default();
+            relations_created += self.persist_inferred_relations(&inferred).await;
         }
 
         relations_created += self
