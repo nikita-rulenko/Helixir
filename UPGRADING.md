@@ -6,14 +6,16 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
-## v0.4.x → v0.9.0 — all drop-in
+## v0.4.x → v0.9.2 — all drop-in
 
-Every release from v0.5.0 through v0.9.0 upgrades in place: update the
+Every release from v0.5.0 through v0.9.2 upgrades in place: update the
 binary, restart your MCP client, done. New config keys are optional with
 safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.9.2** | Flashbacks | `search_memory` gains `time_from`/`time_to` event-time windows; out-of-window rows reachable via edges return flagged `flashback` (cap `retrieval.flashback_max`, 3). Restart your MCP client — it caches tool schemas. Rerank on dense graphs is capped (`retrieval.rerank_max_rows`, 128). `think_recall` gains an annotated weak-evidence fallback (`fast_think.recall_fallback_*`). Hygieia cache valve is opt-in (`watchdog.allow_cache_reclaim` — spawns a privileged helper). Old compose files reference a Docker Hub image that never existed — re-run `install.sh` or take the new compose. |
+| **v0.9.1** | The honest arsenal | 12 dead edge types cut from the schema; self-hosted deployments should redeploy the schema (`helix check` → push, volume preserved). Explicit "is part of"/"is a kind of" (EN+RU) now guarantee PART_OF/IS_A edges; the example-leak firewall drops prompt-example fabrications; extraction keeps the input language. |
 | **v0.9.0** | Curation | Read output is now capped/deduped/folded (`metadata.collapsed`). Raw sources written before v0.9.0 carry no family edges, so collapse benefits new writes. Lachesis gains retroactive causal stitching (`moira.daemon.stitch_every_passes`, default every 4th pass). Swarm roster hides agents silent past `swarm.presence_ttl_secs` (30 min). |
 | **v0.8.0** | Resilience | LLM fallback is now an ordered chain (`llm_fallback_chain = ["deepseek", "ollama"]`, `HELIX_DEEPSEEK_API_KEY`). The local floor changed **qwen2.5:7b → llama3.2:3b** — `ollama pull llama3.2:3b`, or pin `llm_fallback_model = "qwen2.5:7b"`. Release artifacts are lean (no NLI); build from source for the NLI judge. |
 | **v0.7.0** | Hygieia | Built-in health watchdog (`[watchdog]` config, `helixir watch`/`health` CLI) with autobackup. Off-by-default actions (container restart) are opt-in. |
