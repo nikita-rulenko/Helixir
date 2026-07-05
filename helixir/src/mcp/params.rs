@@ -152,6 +152,14 @@ pub struct SearchMemoryParams {
     pub mode: Option<SearchMode>,
     #[schemars(description = "Override the mode's time window, in days.")]
     pub temporal_days: Option<f64>,
+    #[schemars(
+        description = "Start of an explicit EVENT-time window: RFC3339 or YYYY-MM-DD. Overrides temporal_days. Results linked via the graph but outside the window still return, flagged metadata.flashback=true with their event_date."
+    )]
+    pub time_from: Option<String>,
+    #[schemars(
+        description = "End of the explicit EVENT-time window (inclusive): RFC3339 or YYYY-MM-DD. May be used alone for a 'before this date' recall."
+    )]
+    pub time_to: Option<String>,
     #[schemars(description = "Override graph-expansion depth (1–4).")]
     pub graph_depth: Option<i32>,
     #[schemars(

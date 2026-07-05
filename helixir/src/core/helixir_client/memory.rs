@@ -168,12 +168,40 @@ impl HelixirClient {
         graph_depth: Option<usize>,
         scope: Option<&str>,
     ) -> Result<Vec<SearchResult>, HelixirClientError> {
+        self.search_windowed(
+            query,
+            user_id,
+            limit,
+            search_mode,
+            temporal_days,
+            graph_depth,
+            scope,
+            crate::core::TimeWindow::default(),
+        )
+        .await
+    }
+
+    /// #87: search bounded by an explicit two-sided EVENT-time window.
+    /// Out-of-window rows reachable through the graph come back flagged
+    /// as flashbacks (`metadata.flashback` + `event_date`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_windowed(
+        &self,
+        query: &str,
+        user_id: &str,
+        limit: Option<usize>,
+        search_mode: Option<&str>,
+        temporal_days: Option<f64>,
+        graph_depth: Option<usize>,
+        scope: Option<&str>,
+        window: crate::core::TimeWindow,
+    ) -> Result<Vec<SearchResult>, HelixirClientError> {
         self.ensure_initialized().await?;
 
         let mode = search_mode.unwrap_or(&self.config.default_search_mode);
         let results = self
             .tooling_manager
-            .search_memory(
+            .search_memory_windowed(
                 query,
                 user_id,
                 limit,
@@ -181,6 +209,7 @@ impl HelixirClient {
                 temporal_days,
                 graph_depth,
                 scope.unwrap_or("personal"),
+                window,
             )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;

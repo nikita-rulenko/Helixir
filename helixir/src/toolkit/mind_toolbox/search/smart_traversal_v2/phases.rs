@@ -1,10 +1,9 @@
 use super::models::{SearchConfig, SearchResult};
 use super::rrf;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
-use crate::core::RetrievalProfile;
+use crate::core::{RetrievalProfile, TimeWindow};
 use crate::db::HelixClient;
 use crate::utils::nullable_string;
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -107,7 +106,7 @@ pub async fn vector_search_phase(
     query_embedding: &[f32],
     user_id: Option<&str>,
     config: &SearchConfig,
-    temporal_cutoff: Option<DateTime<Utc>>,
+    window: &TimeWindow,
     profile: RetrievalProfile,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     let top_k = config.vector_top_k;
@@ -226,15 +225,14 @@ pub async fn vector_search_phase(
         }
         seen_ids.insert(memory.memory_id.clone());
 
-        // Defence in depth (P0.1): the HQL cutoff covers only the vector
-        // query — BM25 rows arrive unfiltered, so the Rust filter must stay
-        // active even when hql_cutoff_active.
-        if let Some(cutoff) = &temporal_cutoff {
+        // #87: the window hard-filters SEEDS only — expansion is exempt and
+        // out-of-window rows return as flagged flashbacks instead. Rust-side
+        // filter is authoritative for both arms (BM25 rows arrive unfiltered
+        // from HQL anyway — P0.1 defence in depth).
+        if window.is_active() {
             let when = super::scoring::event_time(&memory.valid_from, &memory.created_at);
-            if let Ok(t) = DateTime::parse_from_rfc3339(when) {
-                if t.with_timezone(&Utc) < *cutoff {
-                    continue;
-                }
+            if !window.contains_rfc3339(when) {
+                continue;
             }
         }
 
@@ -255,6 +253,7 @@ pub async fn vector_search_phase(
             config.temporal_weight,
         );
         result.created_at = Some(memory.created_at.clone());
+        result.valid_from = Some(memory.valid_from.clone());
 
         let mut meta = HashMap::new();
         if !memory.user_id.is_empty() {
@@ -539,7 +538,7 @@ fn process_edge_collection(
 
         let semantic_sim = 0.5;
 
-        let result = SearchResult::from_graph_weighted(
+        let mut result = SearchResult::from_graph_weighted(
             &mem.memory_id,
             &mem.content,
             semantic_sim,
@@ -551,6 +550,8 @@ fn process_edge_collection(
             graph_w,
             temporal_w,
         );
+        result.created_at = Some(mem.created_at.clone());
+        result.valid_from = Some(mem.valid_from.clone());
 
         results.push(result);
         neighbors.push((mem.memory_id.clone(), graph_score));

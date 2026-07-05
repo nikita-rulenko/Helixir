@@ -367,6 +367,7 @@ pub async fn graph_expansion_phase_batched(
                     config.graph_temporal_weight,
                 );
                 result.created_at = Some(child.created_at.clone());
+                result.valid_from = Some(child.valid_from.clone());
 
                 // Provenance (elder-brain #6): make the chain visible to the
                 // agent — which parent pulled this in, via which edge, how far.

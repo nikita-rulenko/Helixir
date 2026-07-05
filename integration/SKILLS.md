@@ -144,3 +144,9 @@ Explicit connectives in add_memory guarantee typed edges: "because" →
 BECAUSE, "is part of" → PART_OF, "is a kind of" → IS_A (EN and RU). State
 causes and structure explicitly — that is what later answers "why" without
 an LLM call.
+
+To recall a period, pass `time_from`/`time_to` (RFC3339 or `YYYY-MM-DD`) to
+`search_memory`. Direct answers stay inside the window (event time); linked
+memories from outside return flagged `flashback: true` with their
+`event_date` — present them as dated associations, not as events of that
+period.

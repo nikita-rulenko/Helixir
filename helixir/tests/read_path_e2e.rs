@@ -162,9 +162,17 @@ async fn read_path_e2e() {
         );
     }
 
-    // 3b. An EXPLICIT 30-day window is a hard filter on EVENT time:
-    // GOLDOLD (created AND valid 2025) is out; GOLDEVENT (ingested 2025 but
-    // valid_from 2026-06-20) survives — the bi-temporal discriminator.
+    // 3b. An EXPLICIT 30-day window is a hard filter on EVENT time for
+    // SEEDS: GOLDOLD (created AND valid 2025) may NOT rank as an ordinary
+    // row; since #87 it MAY come back as a graph flashback, but then it MUST
+    // wear the flag. GOLDEVENT (ingested 2025 but valid_from 2026-06-20)
+    // survives as a seed — the bi-temporal discriminator.
+    let is_flashback = |r: &helixir::core::helixir_client::SearchResult| {
+        r.metadata
+            .get("flashback")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
     let windowed_old = client
         .search(
             q_old,
@@ -178,8 +186,10 @@ async fn read_path_e2e() {
         .await
         .expect("windowed search (old)");
     assert!(
-        !hits(&windowed_old, "GOLDOLD"),
-        "explicit temporal_days=30 must exclude GOLDOLD (event time 2025) — it WAS top-ranked for this query without the window: {:?}",
+        !windowed_old
+            .iter()
+            .any(|r| r.content.contains("GOLDOLD") && !is_flashback(r)),
+        "explicit temporal_days=30 must not rank GOLDOLD (event time 2025) as an ordinary row — unflagged, it WAS top-ranked for this query without the window: {:?}",
         windowed_old.iter().map(|r| &r.content).collect::<Vec<_>>()
     );
     let windowed_event = client
@@ -201,6 +211,68 @@ async fn read_path_e2e() {
             .iter()
             .map(|r| &r.content)
             .collect::<Vec<_>>()
+    );
+
+    // 3c. #87 flashbacks: a two-sided EVENT-time window that admits only
+    // GOLDEVENT, plus a causal edge GOLDEVENT→GOLDOLD, must bring GOLDOLD
+    // back THROUGH THE GRAPH — flagged as a flashback with its event date,
+    // never hidden and never disguised as an in-window row.
+    let _ = client
+        .tooling()
+        .add_typed_relation(
+            "gold_aged_event",
+            "gold_aged_created",
+            helixir::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
+            80,
+        )
+        .await; // idempotent: the duplicate guard makes re-runs a no-op
+    let window = helixir::core::TimeWindow {
+        from: Some(
+            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        ),
+        to: None,
+    };
+    let flash_rs = client
+        .search_windowed(
+            q_event,
+            USER,
+            Some(10),
+            Some("full"),
+            None,
+            None,
+            Some("personal"),
+            window,
+        )
+        .await
+        .expect("windowed search (flashback)");
+    assert!(
+        hits(&flash_rs, "GOLDEVENT"),
+        "3c: in-window GOLDEVENT must seed the windowed search: {:?}",
+        flash_rs.iter().map(|r| &r.content).collect::<Vec<_>>()
+    );
+    let goldold_row = flash_rs.iter().find(|r| r.content.contains("GOLDOLD"));
+    let goldold_row = goldold_row.unwrap_or_else(|| {
+        panic!(
+            "3c: GOLDOLD must return as a graph flashback (edge GOLDEVENT→GOLDOLD exists): {:?}",
+            flash_rs.iter().map(|r| &r.content).collect::<Vec<_>>()
+        )
+    });
+    assert!(
+        is_flashback(goldold_row),
+        "3c: the out-of-window GOLDOLD row must be FLAGGED flashback: {:?}",
+        goldold_row.metadata
+    );
+    assert!(
+        goldold_row
+            .metadata
+            .get("event_date")
+            .and_then(|v| v.as_str())
+            .map(|d| d.starts_with("2025"))
+            .unwrap_or(false),
+        "3c: the flashback must carry its true event date (2025-…): {:?}",
+        goldold_row.metadata
     );
 
     // ---------- 4. search_reasoning_chain: relations without an LLM ----------
@@ -437,7 +509,9 @@ async fn read_path_e2e() {
         concepts.len(),
         concept_ms
     );
-    println!("temporal contract: reachable in every mode; explicit window bi-temporal");
+    println!(
+        "temporal contract: reachable in every mode; explicit window bi-temporal; flashbacks flagged (#87)"
+    );
 
     // Quality bars: loose enough to survive corpus drift, tight enough to
     // catch real regressions.

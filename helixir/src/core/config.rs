@@ -208,6 +208,10 @@ pub struct RetrievalConfig {
     pub collective_user_count_boost: f64,
     pub cross_user_cache_capacity: u64,
     pub cross_user_cache_ttl_secs: u64,
+    /// #87: max out-of-window rows graph expansion may return as flagged
+    /// flashbacks per search — a separate allowance so associations never
+    /// crowd in-window rows.
+    pub flashback_max: usize,
     pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
@@ -224,6 +228,7 @@ impl Default for RetrievalConfig {
             collective_user_count_boost: 0.1,
             cross_user_cache_capacity: 1000,
             cross_user_cache_ttl_secs: 60,
+            flashback_max: 3,
             search_modes: SearchModesConfig::default(),
         }
     }

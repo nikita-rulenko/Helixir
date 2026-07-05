@@ -132,6 +132,20 @@ search returns almost nothing: it suggests retrying with
 `scope="collective"` before concluding the memory is empty — the store is
 shared, and your identity may simply be new.
 
+**Time window.** An explicit event-time bound on `search_memory`
+(`time_from`/`time_to`, RFC3339 or `YYYY-MM-DD`; either side may be open).
+It hard-filters the *seeds* — the direct answers — on event time
+(`valid_from`, else `created_at`). `temporal_days` is the one-sided
+shorthand for the same thing.
+
+**Flashback.** A memory from *outside* the requested time window that graph
+expansion pulled back in through an edge to an in-window result. Never
+hidden, never disguised: flagged `flashback: true` with its `event_date`,
+and capped by a separate allowance (`retrieval.flashback_max`, default 3)
+so associations never crowd the period's own rows. The recall analogue of a
+human flashback — thinking about last week surfaces last year, and you know
+it's old.
+
 ## Write path
 
 **Content key / content-addressed dedup.** A normalized hash of (content,

@@ -104,3 +104,10 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   "X because Y" → BECAUSE, "X is part of Y" → PART_OF, "X is a kind of Y" →
   IS_A (English and Russian both work). Prefer stating causes and structure
   explicitly over implying them: the graph cannot see inside an atom.
+- **Time windows and flashbacks**: to recall a period, pass `time_from` /
+  `time_to` (RFC3339 or `YYYY-MM-DD`) to `search_memory`. The window bounds
+  direct answers by EVENT time; memories outside it that are linked to
+  in-window results still return with `flashback: true` and their
+  `event_date` — associations across time, like human memory. Present a
+  flashback as dated context ("related, from 2025-05"), never as an event
+  of the requested period.

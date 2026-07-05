@@ -27,6 +27,12 @@ pub struct SearchResult {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+
+    /// Event time (#31): when the fact happened, as opposed to when it was
+    /// ingested. Carried so the flashback flagger (#87) can judge window
+    /// membership without refetching the node.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
 }
 
 impl SearchResult {
@@ -65,6 +71,7 @@ impl SearchResult {
             edge_path: None,
             metadata: None,
             created_at: None,
+            valid_from: None,
         }
     }
 
@@ -123,6 +130,7 @@ impl SearchResult {
             edge_path: Some(edge_path),
             metadata: None,
             created_at: None,
+            valid_from: None,
         }
     }
 

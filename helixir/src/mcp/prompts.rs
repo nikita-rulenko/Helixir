@@ -186,6 +186,12 @@ cannot see inside an atom, and a typed edge is what later answers "why" and
   folded ids stay reachable — fetch one explicitly if you need exact wording.
 - Recalls are CAPPED (top-K by score with a floor). If a recall looks thin,
   ask a sharper question or raise `limit` — do not assume the memory is empty.
+- To recall a PERIOD ("what happened in June", "before the migration"), pass
+  `time_from`/`time_to` (RFC3339 or YYYY-MM-DD) to search_memory. The window
+  bounds direct answers by EVENT time; memories OUTSIDE it that are linked to
+  in-window results still return with `flashback: true` and their `event_date`
+  — associations across time, like human memory. Present flashbacks as older
+  (or newer) context, dated, never as events of the requested period.
 
 </tool_selection>
 
@@ -413,5 +419,7 @@ pub fn get_server_instructions() -> String {
      not that the memory is empty (older memories may be stored in English even when the conversation was not — \
      if a recall in the conversation's language is thin, retry the same query in English). BECAUSE edges tagged 'lachesis-stitch' are retroactive hypotheses from a background \
      pass — present them as suspected links, not settled facts. \
+     (6) To recall a PERIOD, pass time_from/time_to to search_memory; rows outside the window that the graph pulled in \
+     arrive flagged flashback with their event_date — present them as dated associations, not as events of that period. \
      Your memory is your identity.".to_string()
 }

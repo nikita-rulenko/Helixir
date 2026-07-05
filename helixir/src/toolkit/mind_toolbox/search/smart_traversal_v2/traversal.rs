@@ -3,10 +3,9 @@ use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::ppr::personalized_pagerank;
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
-use crate::core::RetrievalProfile;
+use crate::core::{RetrievalProfile, TimeWindow};
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
-use chrono::{DateTime, Utc};
 use lru::LruCache;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -70,10 +69,9 @@ impl SmartTraversalV2 {
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: SearchConfig,
-        temporal_cutoff: Option<DateTime<Utc>>,
+        window: TimeWindow,
     ) -> Result<Vec<SearchResult>, TraversalError> {
-        let cache_key =
-            self.make_cache_key(query, query_embedding, user_id, &config, temporal_cutoff);
+        let cache_key = self.make_cache_key(query, query_embedding, user_id, &config, &window);
 
         {
             let mut cache = self.cache.write().await;
@@ -120,7 +118,7 @@ impl SmartTraversalV2 {
             query_embedding,
             user_id,
             &config,
-            temporal_cutoff,
+            &window,
             self.profile,
         )
         .await?;
@@ -245,6 +243,32 @@ impl SmartTraversalV2 {
             );
         }
 
+        // #87: graph expansion is EXEMPT from the window — rows it pulled
+        // from outside come back as flagged flashbacks (with their event
+        // date) instead of being hidden. Seeds are in-window by construction.
+        if window.is_active() {
+            let mut flashbacks = 0usize;
+            for result in graph_results.iter_mut() {
+                let when = match result.valid_from.as_deref() {
+                    Some(v) if !v.is_empty() => v.to_string(),
+                    _ => result.created_at.clone().unwrap_or_default(),
+                };
+                if when.is_empty() || window.contains_rfc3339(&when) {
+                    continue;
+                }
+                let meta = result.metadata.get_or_insert_with(Default::default);
+                meta.insert("flashback".to_string(), serde_json::Value::Bool(true));
+                meta.insert("event_date".to_string(), serde_json::Value::String(when));
+                flashbacks += 1;
+            }
+            if flashbacks > 0 {
+                info!(
+                    "Window flashbacks: {} expansion rows outside [{:?}..{:?}] flagged",
+                    flashbacks, window.from, window.to
+                );
+            }
+        }
+
         let mut all_results = vector_hits;
         all_results.extend(graph_results);
 
@@ -331,7 +355,7 @@ impl SmartTraversalV2 {
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: &SearchConfig,
-        temporal_cutoff: Option<DateTime<Utc>>,
+        window: &TimeWindow,
     ) -> String {
         let mut hasher = Sha256::new();
 
@@ -360,10 +384,11 @@ impl SmartTraversalV2 {
 
         if self.profile.cache_correctness_fixes() {
             hasher.update(self.profile.tag().as_bytes());
-            if let Some(cutoff) = temporal_cutoff {
-                hasher.update(cutoff.timestamp_millis().to_le_bytes());
-            } else {
-                hasher.update(b"no-cutoff");
+            for bound in [&window.from, &window.to] {
+                match bound {
+                    Some(t) => hasher.update(t.timestamp_millis().to_le_bytes()),
+                    None => hasher.update(b"open"),
+                }
             }
         }
 
