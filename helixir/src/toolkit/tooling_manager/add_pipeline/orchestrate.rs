@@ -270,6 +270,44 @@ impl ToolingManager {
                     .find(|m| m.id == tid)
                     .and_then(|m| m.memory_type.as_deref())
             });
+
+            // Charter guard (#93): the decision engine over-eagerly labels an
+            // atom that merely SHARES A SUBJECT with a neighbour as a
+            // Contradict/rewrite, producing false clarifications. A real
+            // conflict is a same-subject NEAR restatement (high similarity); an
+            // elaboration or an unrelated neighbour is not. Downgrade the false
+            // ones to a plain ADD — both facts stay, no spurious CONTRADICTS
+            // edge, no needless clarification. Genuine reversals / value
+            // contradictions (high similarity + shared subject) are untouched,
+            // so the anti-gaslight property holds.
+            if let Some(tid) = target_id.as_deref() {
+                use crate::llm::decision::MemoryOperation as Op;
+                let touches_protected = crate::core::charter::PROTECTED_TYPES
+                    .contains(&memory.memory_type.as_str())
+                    || target_type
+                        .is_some_and(|t| crate::core::charter::PROTECTED_TYPES.contains(&t));
+                let is_conflict = matches!(decision.operation, Op::Contradict)
+                    || (matches!(decision.operation, Op::Update | Op::Supersede)
+                        && touches_protected);
+                if is_conflict {
+                    let target = similar_memories.iter().find(|m| m.id == tid);
+                    let sim = target.map_or(0.0, |m| m.score);
+                    let shares = target.is_some_and(|m| {
+                        crate::core::charter::shares_subject(&memory.text, &m.content)
+                    });
+                    if !crate::core::charter::is_genuine_conflict(shares, sim) {
+                        info!(
+                            "Charter guard (#93): {:?} of {tid} downgraded to ADD \
+                             (shares_subject={shares}, sim={sim:.3}) — not a genuine conflict",
+                            decision.operation
+                        );
+                        decision.operation = Op::Add;
+                        decision.target_memory_id = None;
+                        decision.supersedes_memory_id = None;
+                        decision.contradicts_memory_id = None;
+                    }
+                }
+            }
             // Charter increment 2 (#34): under blocking, a destructive verdict
             // that the charter escalates is DEFERRED — the new fact is stored
             // as an ADD next to the old one, the dispute lives on a
