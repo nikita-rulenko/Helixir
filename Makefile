@@ -65,6 +65,12 @@ config: ## Print MCP config for Cursor
 	@echo '  }'
 	@echo '}'
 
+mem-reclaim: ## Shed reclaimable page cache charged to the HelixDB container (#89)
+	python3 tools/memprobe.py helix-helixir-local-bench_app --reclaim
+
+mem-probe: ## Profile where the container's memory actually goes (#89)
+	python3 tools/memprobe.py helix-helixir-local-bench_app
+
 docker-up: ## Start HelixDB container
 	@if docker ps --format '{{.Names}}' | grep -q '^helixdb$$'; then \
 		echo "  HelixDB already running"; \

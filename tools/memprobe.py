@@ -8,18 +8,27 @@ every mapping, so the verdict names WHAT is resident — live heap, reserved
 arenas, file maps — instead of one scary total.
 
 Usage:
-    python3 tools/memprobe.py [container-name]
+    python3 tools/memprobe.py [container-name]            # profile (read-only)
+    python3 tools/memprobe.py [container-name] --reclaim [MiB]
+        # open the cache valve: ask the kernel to shed reclaimable memory
+        # (page cache) charged to the container via cgroup memory.reclaim.
+        # Live heap is never touched. Default step: 1024 MiB.
     (default container: helix-helixir-local-bench_app)
 
-Read-only: only /proc and cgroup files are read through `docker exec`.
-No ptrace, no core dumps, no impact on the server.
+Profiling is read-only (/proc + cgroup through `docker exec`). The valve
+spawns a short-lived privileged alpine helper in the host cgroup namespace,
+because cgroupfs is read-only from inside the container.
 """
 
 import json
 import subprocess
 import sys
 
-CONTAINER = sys.argv[1] if len(sys.argv) > 1 else "helix-helixir-local-bench_app"
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+flags = [a for a in sys.argv[1:] if a.startswith("--")]
+CONTAINER = args[0] if args else "helix-helixir-local-bench_app"
+RECLAIM = "--reclaim" in flags
+RECLAIM_MIB = int(args[1]) if RECLAIM and len(args) > 1 else 1024
 
 KB = 1024
 MB = 1024 * 1024
@@ -95,7 +104,34 @@ def smaps():
 
 # ------------------------------------------------------------------ analysis
 
+def reclaim():
+    cid = sh(["docker", "inspect", "-f", "{{.Id}}", CONTAINER]).strip()
+    if not cid:
+        print(f"container '{CONTAINER}' not found")
+        sys.exit(1)
+    before = cgroup().get("memory.current", 0)
+    script = (
+        f"for p in /sys/fs/cgroup/docker/{cid} /sys/fs/cgroup/system.slice/docker-{cid}.scope; do "
+        f'if [ -f "$p/memory.reclaim" ]; then echo {RECLAIM_MIB}M > "$p/memory.reclaim" || true; exit 0; fi; '
+        f"done; exit 1"
+    )
+    r = subprocess.run(
+        ["docker", "run", "--rm", "--privileged", "--pid=host", "--cgroupns=host",
+         "alpine", "sh", "-c", script],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print("reclaim failed: no memory.reclaim found in either cgroup layout")
+        sys.exit(1)
+    after = cgroup().get("memory.current", 0)
+    print(f"cache valve: asked {RECLAIM_MIB}MiB, charge {human(before)} -> {human(after)}")
+    print("(live heap untouched — only reclaimable pages were shed)")
+
+
 def main():
+    if RECLAIM:
+        reclaim()
+        return
     stats = docker_stats()
     status = proc_status()
     cg = cgroup()

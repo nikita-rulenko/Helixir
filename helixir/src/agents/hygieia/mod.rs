@@ -290,19 +290,60 @@ impl<'a> Hygieia<'a> {
         let Some(sample) = sample_container_memory(&name).await else {
             return;
         };
-        if sample.pct() >= self.cfg().mem_alert_pct {
-            self.alert(
-                "mem_pressure",
-                &format!(
-                    "container {name} at {:.0}% of its memory limit ({:.0}/{:.0} MiB)",
-                    sample.pct(),
-                    sample.used_mib,
-                    sample.limit_mib
-                ),
-                serde_json::json!({"used_mib": sample.used_mib, "limit_mib": sample.limit_mib}),
-            )
-            .await;
+        if sample.pct() < self.cfg().mem_alert_pct {
+            return;
         }
+
+        // #89: before crying wolf, open the cache valve. The docker-stats
+        // number charges reclaimable page cache to the container (observed
+        // live: 2.58GiB reported, ~414MiB true heap); cgroup memory.reclaim
+        // sheds exactly the reclaimable part without touching live heap.
+        // Only if the number stays high AFTER reclaim is the pressure real.
+        if self.cfg().allow_cache_reclaim {
+            let step = self.cfg().reclaim_step_mib;
+            if reclaim_container_cache(&name, step).await {
+                if let Some(after) = sample_container_memory(&name).await {
+                    if after.pct() < self.cfg().mem_alert_pct {
+                        journal(&HealthEvent {
+                            at: chrono::Utc::now().to_rfc3339(),
+                            severity: "heal".into(),
+                            kind: "cache_reclaimed".into(),
+                            summary: format!(
+                                "container {name} memory was cache-bloated: {:.0} -> {:.0} MiB after reclaiming up to {step} MiB of page cache",
+                                sample.used_mib, after.used_mib
+                            ),
+                            detail: serde_json::json!({
+                                "before_mib": sample.used_mib,
+                                "after_mib": after.used_mib,
+                                "limit_mib": sample.limit_mib,
+                            }),
+                        });
+                        info!(
+                            "hygieia: cache valve — {name} {:.0} -> {:.0} MiB, no real pressure",
+                            sample.used_mib, after.used_mib
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.alert(
+            "mem_pressure",
+            &format!(
+                "container {name} at {:.0}% of its memory limit ({:.0}/{:.0} MiB){}",
+                sample.pct(),
+                sample.used_mib,
+                sample.limit_mib,
+                if self.cfg().allow_cache_reclaim {
+                    " — persists after a cache reclaim, this is live heap"
+                } else {
+                    ""
+                }
+            ),
+            serde_json::json!({"used_mib": sample.used_mib, "limit_mib": sample.limit_mib}),
+        )
+        .await;
     }
 
     /// A daemon still heartbeating while every OTHER agent has been silent
@@ -365,6 +406,52 @@ pub async fn sample_container_memory(name: &str) -> Option<MemSample> {
 async fn restart_container(name: &str) -> bool {
     tokio::process::Command::new("docker")
         .args(["restart", name])
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// #89: ask the kernel to shed reclaimable memory (page cache) charged to
+/// the container's cgroup — targeted and safe: live heap is never touched.
+/// cgroupfs is read-only inside the container, so the write goes through a
+/// short-lived privileged helper in the host's cgroup namespace. Covers
+/// both layouts: Docker Desktop (`/sys/fs/cgroup/docker/<id>`) and native
+/// Linux (`system.slice/docker-<id>.scope`). The kernel returns EAGAIN when
+/// it reclaims less than asked — the `|| true` keeps that a success; the
+/// caller's re-sample is the judge of whether it helped.
+async fn reclaim_container_cache(name: &str, step_mib: u64) -> bool {
+    let Ok(out) = tokio::process::Command::new("docker")
+        .args(["inspect", "-f", "{{.Id}}", name])
+        .output()
+        .await
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    let script = format!(
+        "for p in /sys/fs/cgroup/docker/{id} /sys/fs/cgroup/system.slice/docker-{id}.scope; do \
+           if [ -f \"$p/memory.reclaim\" ]; then echo {step_mib}M > \"$p/memory.reclaim\" || true; exit 0; fi; \
+         done; exit 1"
+    );
+    tokio::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--privileged",
+            "--pid=host",
+            "--cgroupns=host",
+            "alpine",
+            "sh",
+            "-c",
+            &script,
+        ])
         .output()
         .await
         .map(|o| o.status.success())

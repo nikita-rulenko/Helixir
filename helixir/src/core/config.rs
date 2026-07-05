@@ -695,6 +695,14 @@ pub struct WatchdogConfig {
     /// Allow `docker restart <container_name>` as a self-heal for a dead or
     /// near-cap database. Conservative default: off.
     pub allow_container_restart: bool,
+    /// #89: when the memory detector fires, first try shedding reclaimable
+    /// page cache via cgroup `memory.reclaim` (a short-lived privileged
+    /// helper container — the docker-stats number counts cache as usage).
+    /// Only pressure that SURVIVES the reclaim alerts as real. Off by
+    /// default: it spawns a privileged container, the operator opts in.
+    pub allow_cache_reclaim: bool,
+    /// How much to ask the kernel to reclaim per valve opening, in MiB.
+    pub reclaim_step_mib: u64,
     /// Insight-flood brake: this many CONSECUTIVE passes hitting the Atropos
     /// persist cap pauses the insights stage for the daemon's lifetime.
     pub flood_passes_to_pause: u32,
@@ -724,6 +732,8 @@ impl Default for WatchdogConfig {
             container_name: String::new(),
             mem_alert_pct: 80.0,
             allow_container_restart: false,
+            allow_cache_reclaim: false,
+            reclaim_step_mib: 1024,
             flood_passes_to_pause: 3,
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
