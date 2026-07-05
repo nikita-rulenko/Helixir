@@ -122,10 +122,39 @@ impl FastThinkManager {
         memories.retain(|m| m.score >= self.limits.recall_min_score);
         memories.truncate(self.limits.max_recall_results);
 
+        // #90: the belt's failure mode must not be a silent zero. A strong
+        // model sharpens its query on an empty recall; a weak one concludes
+        // "no evidence exists" and reasons unsupported. One fallback pass:
+        // whole store (contextual is 30d — evidence for decisions is often
+        // older), relaxed floor, a cap SMALLER than the primary — and every
+        // fallback row is annotated as weak evidence, so the tree and the
+        // SUPPORTS provenance stay honest about its quality.
+        let mut weak_evidence = false;
+        if memories.is_empty() && self.limits.recall_fallback_max > 0 {
+            let mut wide = self
+                .main_memory
+                .search(
+                    query,
+                    user_id,
+                    Some(self.limits.recall_fallback_max),
+                    Some("full"),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;
+            wide.retain(|m| m.score >= self.limits.recall_fallback_min_score);
+            wide.truncate(self.limits.recall_fallback_max);
+            weak_evidence = !wide.is_empty();
+            memories = wide;
+        }
+
         info!(
             session_id = session_id,
             query = query,
             results = memories.len(),
+            weak_evidence = weak_evidence,
             "Recalled from main memory"
         );
 
@@ -143,8 +172,16 @@ impl FastThinkManager {
                     break;
                 }
 
+                let content = if weak_evidence {
+                    format!(
+                        "[weak recall, score {:.2} — below the primary evidence bar] {}",
+                        memory.score, memory.content
+                    )
+                } else {
+                    memory.content.clone()
+                };
                 let node = session.add_recalled_thought(
-                    &memory.content,
+                    &content,
                     &memory.id,
                     memory.score,
                     parent_thought,

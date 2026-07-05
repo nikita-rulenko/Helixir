@@ -182,18 +182,39 @@ else
             info "Starting existing HelixDB container..."
             docker start "$CONTAINER_NAME" >/dev/null
         else
+            # There is NO public helixdb/helixdb image: the server image is
+            # built locally by the HelixDB CLI, which compiles our schema
+            # INTO it. Build it if missing, then run with the proven flags.
+            if ! docker image inspect helix-helixir-dev:latest >/dev/null 2>&1; then
+                if ! command -v helix >/dev/null 2>&1; then
+                    info "Installing HelixDB CLI (helix)..."
+                    cargo install helix-cli --quiet || {
+                        err "helix CLI missing and cargo install failed — install it manually: cargo install helix-cli"
+                        exit 1
+                    }
+                fi
+                info "Building the HelixDB image from schema (helix build)..."
+                (cd "$INSTALL_DIR/helixir/schema" && helix check && helix build -i dev) || {
+                    err "helix build failed — see output above"
+                    exit 1
+                }
+            fi
             info "Starting HelixDB container..."
             # -m 3g: OOM containment — a runaway spike restarts the container
             # in seconds instead of OOM-killing the whole Docker VM (LMDB is
             # durable, a restart loses no data). Raise for large corpora.
+            # HELIX_DATA_DIR + the volume = disk persistence (newer HelixDB
+            # defaults to IN-MEMORY; without this a stop ERASES the data).
             docker run -d \
                 --name "$CONTAINER_NAME" \
                 -p "${HELIX_PORT}:${HELIX_PORT}" \
                 -v helixdb_data:/data \
+                -e "HELIX_PORT=${HELIX_PORT}" \
+                -e "HELIX_DATA_DIR=/data" \
                 --restart unless-stopped \
                 -m 3g --memory-swap 3g \
                 --log-opt max-size=20m --log-opt max-file=3 \
-                helixdb/helixdb:latest >/dev/null
+                helix-helixir-dev:latest >/dev/null
         fi
 
         info "Waiting for HelixDB to be ready..."

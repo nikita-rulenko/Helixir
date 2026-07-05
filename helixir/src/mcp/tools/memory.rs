@@ -168,7 +168,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording."
+        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'time_from'/'time_to' (RFC3339 or YYYY-MM-DD) bound recall to an explicit EVENT-time window; memories outside the window that are linked to in-window results via the graph still return as FLASHBACKS — flagged metadata.flashback=true with their event_date, capped separately so they never crowd in-window rows. 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording."
     )]
     async fn search_memory(
         &self,
@@ -191,15 +191,39 @@ impl HelixirMcpServer {
             "personal"
         };
 
+        // #87: explicit event-time window. A malformed bound is the caller's
+        // error — reject loudly instead of silently searching unbounded.
+        let mut window = crate::core::TimeWindow::default();
+        if let Some(ref s) = params.time_from {
+            window.from = Some(
+                crate::core::time_window::parse_time_bound(s, false)
+                    .map_err(|e| McpError::invalid_params(format!("time_from: {e}"), None))?,
+            );
+        }
+        if let Some(ref s) = params.time_to {
+            window.to = Some(
+                crate::core::time_window::parse_time_bound(s, true)
+                    .map_err(|e| McpError::invalid_params(format!("time_to: {e}"), None))?,
+            );
+        }
+        if let (Some(f), Some(t)) = (&window.from, &window.to) {
+            if f > t {
+                return Err(McpError::invalid_params(
+                    format!("empty window: time_from {f} is after time_to {t}"),
+                    None,
+                ));
+            }
+        }
+
         let query_preview: String = params.query.chars().take(50).collect();
         info!(
-            "🔍 Searching: '{}' [mode={}, limit={:?}, scope={}]",
-            query_preview, mode, limit, scope
+            "🔍 Searching: '{}' [mode={}, limit={:?}, scope={}, window={:?}..{:?}]",
+            query_preview, mode, limit, scope, window.from, window.to
         );
 
         let results = self
             .client
-            .search(
+            .search_windowed(
                 &params.query,
                 &params.user_id,
                 limit,
@@ -207,6 +231,7 @@ impl HelixirMcpServer {
                 params.temporal_days,
                 params.graph_depth.map(|d| d as usize),
                 Some(scope),
+                window,
             )
             .await
             .map_err(Self::convert_error)?;

@@ -62,12 +62,42 @@ impl ToolingManager {
         graph_depth: Option<usize>,
         scope: &str,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
+        self.search_memory_windowed(
+            query,
+            user_id,
+            limit,
+            mode,
+            temporal_days,
+            graph_depth,
+            scope,
+            crate::core::TimeWindow::default(),
+        )
+        .await
+    }
+
+    /// #87: search with an explicit two-sided EVENT-time window. The window
+    /// hard-filters seeds; graph expansion may pull out-of-window rows back
+    /// in as flagged flashbacks (`metadata.flashback` + `event_date`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_memory_windowed(
+        &self,
+        query: &str,
+        user_id: &str,
+        limit: Option<usize>,
+        mode: &str,
+        temporal_days: Option<f64>,
+        graph_depth: Option<usize>,
+        scope: &str,
+        window: crate::core::TimeWindow,
+    ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
         info!(
-            "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, scope={}]",
+            "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, window={:?}..{:?}, scope={}]",
             safe_truncate(query, 50),
             mode,
             limit,
             temporal_days,
+            window.from,
+            window.to,
             scope
         );
 
@@ -80,36 +110,24 @@ impl ToolingManager {
         let graph_depth = graph_depth.map(|d| d as u32);
         let effective_limit = limit.unwrap_or(self.config.default_search_limit);
 
-        let results = match scope {
-            "collective" | "all" => {
-                self.search_engine
-                    .search(
-                        query,
-                        &query_embedding,
-                        user_id,
-                        effective_limit,
-                        mode,
-                        temporal_days,
-                        graph_depth,
-                        scope,
-                    )
-                    .await?
-            }
-            _ => {
-                self.search_engine
-                    .search(
-                        query,
-                        &query_embedding,
-                        user_id,
-                        effective_limit,
-                        mode,
-                        temporal_days,
-                        graph_depth,
-                        "personal",
-                    )
-                    .await?
-            }
+        let effective_scope = match scope {
+            "collective" | "all" => scope,
+            _ => "personal",
         };
+        let results = self
+            .search_engine
+            .search_windowed(
+                query,
+                &query_embedding,
+                user_id,
+                effective_limit,
+                mode,
+                temporal_days,
+                graph_depth,
+                effective_scope,
+                window,
+            )
+            .await?;
 
         // #82: presentation-layer family collapse — a raw source and its
         // extracted atoms in one window bill the same content twice. Done

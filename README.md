@@ -108,6 +108,9 @@ make config         # Print MCP config to paste into your IDE
 
 - **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
+- **HelixDB CLI** — `cargo install helix-cli`. There is no public HelixDB
+  image: the CLI builds the server image locally, compiling this repo's
+  schema into it (`install.sh` does this for you)
 
 > ⚠️ **Storage-mode trap (data loss).** Newer HelixDB builds default to
 > **in-memory** storage — stopping the instance ERASES everything unless it
@@ -199,6 +202,8 @@ Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ─
 ```
 
 Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on the same machinery — the read path works identically with no LLM configured at all.
+
+> **Time windows & flashbacks.** `search_memory` takes an explicit event-time window (`time_from` / `time_to`, RFC3339 or `YYYY-MM-DD`). The window hard-filters the *seeds* — the direct answers — but graph expansion stays exempt: a memory from outside the window that is linked to an in-window result returns anyway, flagged `flashback: true` with its `event_date`, capped by a separate small allowance (`retrieval.flashback_max`, default 3) so associations never crowd the period's own rows. Like human memory: thinking about last week can surface last year — but you know it's old.
 
 ---
 

@@ -27,6 +27,12 @@ pub struct SearchResult {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+
+    /// Event time (#31): when the fact happened, as opposed to when it was
+    /// ingested. Carried so the flashback flagger (#87) can judge window
+    /// membership without refetching the node.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
 }
 
 impl SearchResult {
@@ -65,6 +71,7 @@ impl SearchResult {
             edge_path: None,
             metadata: None,
             created_at: None,
+            valid_from: None,
         }
     }
 
@@ -123,6 +130,7 @@ impl SearchResult {
             edge_path: Some(edge_path),
             metadata: None,
             created_at: None,
+            valid_from: None,
         }
     }
 
@@ -137,6 +145,11 @@ pub struct SearchConfig {
     pub vector_top_k: usize,
 
     pub graph_depth: u32,
+
+    /// #36: children per parent that survive into the next expansion
+    /// frontier (was a hardcoded top-3). Sourced from
+    /// retrieval.graph.expansion_children_per_parent.
+    pub beam_width: usize,
 
     pub min_vector_score: f64,
 
@@ -159,6 +172,12 @@ pub struct SearchConfig {
     pub rank_decay: f64,
     pub edge_weights: crate::core::config::EdgeWeights,
     pub edge_damping: crate::core::config::EdgeDamping,
+
+    /// #88: at most this many expansion rows get the real-cosine re-rank
+    /// (top-N by pre-rerank score); the tail keeps the neutral 0.5
+    /// placeholder. Bounds embedding cost on dense graphs — a full-mode
+    /// search once expanded 9 seeds into 1709 rows and embedded them all.
+    pub rerank_max_rows: usize,
 }
 
 impl Default for SearchConfig {
@@ -166,6 +185,7 @@ impl Default for SearchConfig {
         Self {
             vector_top_k: 10,
             graph_depth: 2,
+            beam_width: 3,
             min_vector_score: 0.5,
             min_combined_score: 0.3,
             edge_types: Some(vec![
@@ -185,6 +205,7 @@ impl Default for SearchConfig {
             rank_decay: 0.92,
             edge_weights: crate::core::config::EdgeWeights::default(),
             edge_damping: crate::core::config::EdgeDamping::default(),
+            rerank_max_rows: 128,
         }
     }
 }

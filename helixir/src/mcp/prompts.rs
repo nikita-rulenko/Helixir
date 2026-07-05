@@ -127,6 +127,7 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 | Store new info | `add_memory` | "Remember we chose Rust for performance" |
 | Check async write status | `get_add_status` | After `add_memory` returned a `pending_id` (async buffer on) |
 | Recall context | `search_memory` | "What were we working on?" |
+| Recall a PERIOD | `search_memory` + `time_from`/`time_to` | "What happened in June?" |
 | Browse / count everything | `list_memories` | Exhaustive scan, no semantic query |
 | Find by type | `search_by_concept` | "What are my coding preferences?" |
 | Understand WHY | `search_reasoning_chain` | "Why did we make that decision?" |
@@ -143,6 +144,41 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 | `contextual` | 30 days | Balanced search |
 | `deep` | 90 days | Historical research |
 | `full` | All time | Complete archive |
+
+## TIME WINDOWS & FLASHBACKS (recalling a period)
+
+When the user names a PERIOD — "in June", "last quarter", "before the
+migration", "что было на прошлой неделе" — pass an explicit window instead
+of picking a mode:
+
+| Parameter | Format | Meaning |
+|-----------|--------|---------|
+| `time_from` | RFC3339 or `YYYY-MM-DD` | earliest EVENT time (inclusive) |
+| `time_to` | RFC3339 or `YYYY-MM-DD` | latest EVENT time (inclusive); usable alone for "before X" |
+
+- The window runs on EVENT time (when the fact happened), not ingestion
+  time, and overrides `temporal_days`.
+- Direct answers come only from inside the window. Memories OUTSIDE it that
+  are graph-linked to an in-window result still return — as **flashbacks**:
+  `metadata.flashback: true` plus `metadata.event_date`. They are capped
+  separately, so they never displace in-window rows.
+- Reading rule: a flashback is an ASSOCIATION across time, not an event of
+  the period. Present it dated ("related, from 2025-05: ..."), the way a
+  human says "that reminds me of last year".
+
+Worked call — "what happened with deploys in June 2026?":
+```
+search_memory(query="deploys", user_id="claude",
+              time_from="2026-06-01", time_to="2026-06-30")
+-> [
+  {content: "June: deploy failed on the release pipeline", ...},          # in window
+  {content: "May: auth token rotation policy changed",                    # linked cause
+   metadata: {flashback: true, event_date: "2026-05-12T...", edge: "BECAUSE"}}
+]
+```
+Correct presentation: "In June the deploy failed on the release pipeline.
+Related context from May 12: the auth token rotation policy changed —
+the graph links it as the cause."
 
 ## SEARCH SCOPE
 
@@ -186,6 +222,12 @@ cannot see inside an atom, and a typed edge is what later answers "why" and
   folded ids stay reachable — fetch one explicitly if you need exact wording.
 - Recalls are CAPPED (top-K by score with a floor). If a recall looks thin,
   ask a sharper question or raise `limit` — do not assume the memory is empty.
+- To recall a PERIOD ("what happened in June", "before the migration"), pass
+  `time_from`/`time_to` (RFC3339 or YYYY-MM-DD) to search_memory. The window
+  bounds direct answers by EVENT time; memories OUTSIDE it that are linked to
+  in-window results still return with `flashback: true` and their `event_date`
+  — associations across time, like human memory. Present flashbacks as older
+  (or newer) context, dated, never as events of the requested period.
 
 </tool_selection>
 
@@ -199,6 +241,7 @@ When user message contains these patterns, IMMEDIATELY recall before responding:
 |-----------|--------|-----|
 | "remember", "recall", "earlier" | `search_memory(mode="contextual")` | User expects you to remember |
 | "we discussed", "last time", "before" | `search_memory(mode="deep")` | Reference to past conversation |
+| "in June", "last month", "between X and Y", "before the migration" | `search_memory(time_from=..., time_to=...)` | Named PERIOD → explicit window; flashbacks carry the linked context |
 | "why did we", "what was the reason" | `search_reasoning_chain(chain_mode="causal")` | Needs reasoning context |
 | "what's next", "plan", "todo" | `search_memory(query="plan tasks TODO")` | Needs task context |
 | "like before", "as usual", "preference" | `search_by_concept(concept_type="preference")` | Needs preferences |
@@ -379,6 +422,13 @@ search_incomplete_thoughts(limit=3)
 3. Breaks into digestible steps
 4. Checks: "Does this make sense so far?"
 
+**User**: "What went wrong with the rollouts in June?"
+**Agent**:
+1. *calls search_memory(query="rollout failures", time_from="2026-06-01", time_to="2026-06-30")*
+2. Reads the results: two rows from June, plus one row flagged `flashback: true, event_date: 2026-05-12`
+3. Answers: "In June two rollouts failed: [...]. Related context from May 12 (the graph links it as the cause): the token rotation policy changed."
+<- The flashback is presented DATED and as linked context — not as a June event.
+
 ## BAD EXAMPLES
 
 **User**: "What did we discuss last time?"
@@ -392,6 +442,14 @@ search_incomplete_thoughts(limit=3)
 **User**: "What do you know about our deployment setup?"
 **Agent**: *search_memory returns nothing for the default personal scope* "I have no memory of that."
 <- WRONG! Personal was empty — re-run with scope='collective'. The store is shared; another agent may have saved it.
+
+**User**: "What happened in June?"
+**Agent**: *search_memory returns a row flagged flashback with event_date 2026-05-12* "In June: [...], and also the token rotation policy changed."
+<- WRONG! That row is a flashback from May — presenting it as a June event corrupts the timeline. Say "related, from May 12: ..." instead.
+
+**User**: "Что было до миграции на postgres?"
+**Agent**: *calls search_memory(mode="full")* and manually filters by dates in content
+<- WRONG! Use the window: search_memory(time_to="2026-03-01") — the engine filters by EVENT time and still surfaces linked context as flagged flashbacks.
 
 </examples>
 
@@ -413,5 +471,7 @@ pub fn get_server_instructions() -> String {
      not that the memory is empty (older memories may be stored in English even when the conversation was not — \
      if a recall in the conversation's language is thin, retry the same query in English). BECAUSE edges tagged 'lachesis-stitch' are retroactive hypotheses from a background \
      pass — present them as suspected links, not settled facts. \
+     (6) To recall a PERIOD, pass time_from/time_to to search_memory; rows outside the window that the graph pulled in \
+     arrive flagged flashback with their event_date — present them as dated associations, not as events of that period. \
      Your memory is your identity.".to_string()
 }

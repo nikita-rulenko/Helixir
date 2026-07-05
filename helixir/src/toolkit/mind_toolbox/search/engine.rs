@@ -88,6 +88,7 @@ impl SearchEngine {
         SearchConfig {
             vector_top_k,
             graph_depth,
+            beam_width: self.config.retrieval.graph.expansion_children_per_parent,
             min_vector_score,
             min_combined_score,
             edge_types: Some(vec![
@@ -107,6 +108,7 @@ impl SearchEngine {
             rank_decay: self.config.retrieval.rank_decay,
             edge_weights: self.config.retrieval.graph.edge_weights,
             edge_damping: self.config.retrieval.graph.edge_damping,
+            rerank_max_rows: self.config.retrieval.rerank_max_rows,
         }
     }
 

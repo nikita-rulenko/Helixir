@@ -3,10 +3,9 @@ use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::ppr::personalized_pagerank;
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
-use crate::core::RetrievalProfile;
+use crate::core::{RetrievalProfile, TimeWindow};
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
-use chrono::{DateTime, Utc};
 use lru::LruCache;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -70,10 +69,9 @@ impl SmartTraversalV2 {
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: SearchConfig,
-        temporal_cutoff: Option<DateTime<Utc>>,
+        window: TimeWindow,
     ) -> Result<Vec<SearchResult>, TraversalError> {
-        let cache_key =
-            self.make_cache_key(query, query_embedding, user_id, &config, temporal_cutoff);
+        let cache_key = self.make_cache_key(query, query_embedding, user_id, &config, &window);
 
         {
             let mut cache = self.cache.write().await;
@@ -120,7 +118,7 @@ impl SmartTraversalV2 {
             query_embedding,
             user_id,
             &config,
-            temporal_cutoff,
+            &window,
             self.profile,
         )
         .await?;
@@ -245,6 +243,32 @@ impl SmartTraversalV2 {
             );
         }
 
+        // #87: graph expansion is EXEMPT from the window — rows it pulled
+        // from outside come back as flagged flashbacks (with their event
+        // date) instead of being hidden. Seeds are in-window by construction.
+        if window.is_active() {
+            let mut flashbacks = 0usize;
+            for result in graph_results.iter_mut() {
+                let when = match result.valid_from.as_deref() {
+                    Some(v) if !v.is_empty() => v.to_string(),
+                    _ => result.created_at.clone().unwrap_or_default(),
+                };
+                if when.is_empty() || window.contains_rfc3339(&when) {
+                    continue;
+                }
+                let meta = result.metadata.get_or_insert_with(Default::default);
+                meta.insert("flashback".to_string(), serde_json::Value::Bool(true));
+                meta.insert("event_date".to_string(), serde_json::Value::String(when));
+                flashbacks += 1;
+            }
+            if flashbacks > 0 {
+                info!(
+                    "Window flashbacks: {} expansion rows outside [{:?}..{:?}] flagged",
+                    flashbacks, window.from, window.to
+                );
+            }
+        }
+
         let mut all_results = vector_hits;
         all_results.extend(graph_results);
 
@@ -294,11 +318,31 @@ impl SmartTraversalV2 {
         config: &SearchConfig,
     ) {
         let rerank_start = Instant::now();
-        let texts: Vec<&str> = graph_results.iter().map(|r| r.content.as_str()).collect();
+
+        // #88: on a dense graph the expansion can dwarf the final window
+        // (observed: 9 seeds -> 1709 rows, all embedded, tens of seconds on
+        // local embeddings). Embed only the top rows by pre-rerank score;
+        // the tail keeps the neutral 0.5 placeholder and stays reachable —
+        // PPR can still lift a deep-but-coherent row. Cost is bounded,
+        // reachability is not.
+        let scores: Vec<f64> = graph_results.iter().map(|r| r.combined_score).collect();
+        let chosen = top_rerank_indices(&scores, config.rerank_max_rows.max(1));
+        if chosen.len() < graph_results.len() {
+            info!(
+                "Re-rank capped: embedding top {} of {} expansion rows (retrieval.rerank_max_rows)",
+                chosen.len(),
+                graph_results.len()
+            );
+        }
+        let texts: Vec<&str> = chosen
+            .iter()
+            .map(|&i| graph_results[i].content.as_str())
+            .collect();
 
         match self.embedder.generate_batch(&texts, true).await {
             Ok(embeddings) => {
-                for (result, emb) in graph_results.iter_mut().zip(embeddings.iter()) {
+                for (&i, emb) in chosen.iter().zip(embeddings.iter()) {
+                    let result = &mut graph_results[i];
                     let real_sim = cosine_score(query_embedding, emb);
                     result.vector_score = real_sim;
                     result.combined_score = calculate_graph_combined_score_weighted(
@@ -312,7 +356,7 @@ impl SmartTraversalV2 {
                 }
                 info!(
                     "Re-ranked {} graph-expanded results with real cosine in {}ms (algo_opt P0.2)",
-                    graph_results.len(),
+                    chosen.len(),
                     rerank_start.elapsed().as_millis()
                 );
             }
@@ -331,7 +375,7 @@ impl SmartTraversalV2 {
         query_embedding: &[f32],
         user_id: Option<&str>,
         config: &SearchConfig,
-        temporal_cutoff: Option<DateTime<Utc>>,
+        window: &TimeWindow,
     ) -> String {
         let mut hasher = Sha256::new();
 
@@ -360,13 +404,52 @@ impl SmartTraversalV2 {
 
         if self.profile.cache_correctness_fixes() {
             hasher.update(self.profile.tag().as_bytes());
-            if let Some(cutoff) = temporal_cutoff {
-                hasher.update(cutoff.timestamp_millis().to_le_bytes());
-            } else {
-                hasher.update(b"no-cutoff");
+            for bound in [&window.from, &window.to] {
+                match bound {
+                    Some(t) => hasher.update(t.timestamp_millis().to_le_bytes()),
+                    None => hasher.update(b"open"),
+                }
             }
         }
 
         format!("{:x}", hasher.finalize())
+    }
+}
+
+/// #88: indices of the top `cap` rows by score, descending. Pure so the
+/// selection contract is unit-tested without an embedder.
+fn top_rerank_indices(scores: &[f64], cap: usize) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..scores.len()).collect();
+    idx.sort_by(|&a, &b| {
+        scores[b]
+            .partial_cmp(&scores[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    idx.truncate(cap);
+    idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::top_rerank_indices;
+
+    #[test]
+    fn cap_larger_than_input_keeps_everything() {
+        assert_eq!(top_rerank_indices(&[0.1, 0.9, 0.5], 10), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn cap_selects_best_scores_not_first_rows() {
+        // Discovery order is depth-order — the best candidates may sit late.
+        let scores = [0.2, 0.1, 0.95, 0.3, 0.9];
+        assert_eq!(top_rerank_indices(&scores, 2), vec![2, 4]);
+    }
+
+    #[test]
+    fn nan_scores_do_not_panic_or_win() {
+        let scores = [f64::NAN, 0.8, 0.4];
+        let top = top_rerank_indices(&scores, 2);
+        assert_eq!(top.len(), 2);
+        assert!(top.contains(&1));
     }
 }

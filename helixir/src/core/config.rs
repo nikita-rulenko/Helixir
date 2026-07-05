@@ -208,6 +208,15 @@ pub struct RetrievalConfig {
     pub collective_user_count_boost: f64,
     pub cross_user_cache_capacity: u64,
     pub cross_user_cache_ttl_secs: u64,
+    /// #87: max out-of-window rows graph expansion may return as flagged
+    /// flashbacks per search — a separate allowance so associations never
+    /// crowd in-window rows.
+    pub flashback_max: usize,
+    /// #88: at most this many expansion rows get the real-cosine re-rank
+    /// per search (top-N by pre-rerank score). Bounds embedding cost on
+    /// dense graphs; rows past the cap keep rank-based scores and remain
+    /// reachable via PPR.
+    pub rerank_max_rows: usize,
     pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
@@ -224,6 +233,8 @@ impl Default for RetrievalConfig {
             collective_user_count_boost: 0.1,
             cross_user_cache_capacity: 1000,
             cross_user_cache_ttl_secs: 60,
+            flashback_max: 3,
+            rerank_max_rows: 128,
             search_modes: SearchModesConfig::default(),
         }
     }
@@ -636,6 +647,14 @@ pub struct FastThinkConfig {
     /// the floor exists for THIN stores, where the top-K would otherwise
     /// reach down into that noise floor. 0.0 disables.
     pub recall_min_score: f32,
+    /// #90: when the primary recall pass returns ZERO rows, one fallback
+    /// pass runs in `full` mode with this relaxed floor. The belt's failure
+    /// mode must not be a silent zero — a weak model reads that as "no
+    /// evidence exists" and reasons unsupported.
+    pub recall_fallback_min_score: f32,
+    /// #90: hard cap on fallback rows (smaller than max_recall_results —
+    /// weak evidence never floods the tree). 0 disables the fallback.
+    pub recall_fallback_max: usize,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -652,6 +671,8 @@ impl Default for FastThinkConfig {
             commit_importance: 60,
             commit_support_strength: 60,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 3,
         }
     }
 }
@@ -674,6 +695,14 @@ pub struct WatchdogConfig {
     /// Allow `docker restart <container_name>` as a self-heal for a dead or
     /// near-cap database. Conservative default: off.
     pub allow_container_restart: bool,
+    /// #89: when the memory detector fires, first try shedding reclaimable
+    /// page cache via cgroup `memory.reclaim` (a short-lived privileged
+    /// helper container — the docker-stats number counts cache as usage).
+    /// Only pressure that SURVIVES the reclaim alerts as real. Off by
+    /// default: it spawns a privileged container, the operator opts in.
+    pub allow_cache_reclaim: bool,
+    /// How much to ask the kernel to reclaim per valve opening, in MiB.
+    pub reclaim_step_mib: u64,
     /// Insight-flood brake: this many CONSECUTIVE passes hitting the Atropos
     /// persist cap pauses the insights stage for the daemon's lifetime.
     pub flood_passes_to_pause: u32,
@@ -703,6 +732,8 @@ impl Default for WatchdogConfig {
             container_name: String::new(),
             mem_alert_pct: 80.0,
             allow_container_restart: false,
+            allow_cache_reclaim: false,
+            reclaim_step_mib: 1024,
             flood_passes_to_pause: 3,
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
