@@ -111,3 +111,15 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   `event_date` — associations across time, like human memory. Present a
   flashback as dated context ("related, from 2025-05"), never as an event
   of the requested period.
+
+  ```
+  # "what happened with deploys in June?"
+  search_memory(query="deploys", user_id="claude",
+                time_from="2026-06-01", time_to="2026-06-30")
+  -> June rows, plus:
+     {content: "the token rotation policy changed",
+      metadata: {flashback: true, event_date: "2026-05-12T...", edge: "BECAUSE"}}
+  # RIGHT: "In June the deploy failed [...]. Related, from May 12: the token
+  #         rotation policy changed — the graph links it as the cause."
+  # WRONG: listing the May fact as a June event.
+  ```

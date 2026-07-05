@@ -145,7 +145,9 @@ of these.
 
 Tools today: `add_memory` (returns charter escalations in
 `needs_clarification` under `algo_opt`), `search_memory` (modes `recent /
-contextual / deep / full`; scopes `personal / collective / all`; results carry
+contextual / deep / full`; scopes `personal / collective / all`; explicit
+event-time windows via `time_from`/`time_to`, out-of-window graph rows come
+back as flagged flashbacks; results carry
 provenance), `connect_memories` (path between two concepts), `search_by_concept`
 (8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`,
 LLM-free under `algo_opt`), `list_memories`, `get_memory_graph`,
