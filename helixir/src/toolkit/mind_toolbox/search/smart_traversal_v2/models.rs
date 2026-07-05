@@ -138,6 +138,11 @@ pub struct SearchConfig {
 
     pub graph_depth: u32,
 
+    /// #36: children per parent that survive into the next expansion
+    /// frontier (was a hardcoded top-3). Sourced from
+    /// retrieval.graph.expansion_children_per_parent.
+    pub beam_width: usize,
+
     pub min_vector_score: f64,
 
     pub min_combined_score: f64,
@@ -166,6 +171,7 @@ impl Default for SearchConfig {
         Self {
             vector_top_k: 10,
             graph_depth: 2,
+            beam_width: 3,
             min_vector_score: 0.5,
             min_combined_score: 0.3,
             edge_types: Some(vec![

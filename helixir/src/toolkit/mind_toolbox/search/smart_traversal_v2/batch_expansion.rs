@@ -411,11 +411,12 @@ pub async fn graph_expansion_phase_batched(
             }
         }
 
-        // Top-3 children per parent move to the next frontier (legacy take(3)).
+        // #36: the best beam_width children per parent move to the next
+        // frontier (configurable; the historic hardcoded value was 3).
         let mut next_frontier: HashMap<String, f64> = HashMap::new();
         for (_, mut children) in children_by_parent {
             children.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (child, graph_score, _) in children.into_iter().take(3) {
+            for (child, graph_score, _) in children.into_iter().take(config.beam_width.max(1)) {
                 if visited.insert(child.memory_id.clone()) {
                     let entry = next_frontier
                         .entry(child.memory_id.clone())

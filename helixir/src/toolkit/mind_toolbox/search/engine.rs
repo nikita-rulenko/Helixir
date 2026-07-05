@@ -88,6 +88,7 @@ impl SearchEngine {
         SearchConfig {
             vector_top_k,
             graph_depth,
+            beam_width: self.config.retrieval.graph.expansion_children_per_parent,
             min_vector_score,
             min_combined_score,
             edge_types: Some(vec![
