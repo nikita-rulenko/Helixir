@@ -11,6 +11,11 @@ pub struct FastThinkLimits {
     pub max_recall_results: usize,
     /// Score floor for recalls (see `FastThinkConfig::recall_min_score`).
     pub recall_min_score: f32,
+    /// #90: relaxed floor for the one-shot fallback pass when the primary
+    /// recall returns zero rows (see `FastThinkConfig::recall_fallback_min_score`).
+    pub recall_fallback_min_score: f32,
+    /// #90: hard cap on fallback rows; 0 disables the fallback.
+    pub recall_fallback_max: usize,
 }
 
 impl Default for FastThinkLimits {
@@ -24,6 +29,8 @@ impl Default for FastThinkLimits {
             session_ttl: Duration::from_secs(300),
             max_recall_results: 5,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 3,
         }
     }
 }
@@ -40,6 +47,8 @@ impl FastThinkLimits {
             session_ttl: Duration::from_secs(c.session_ttl_secs),
             max_recall_results: c.max_recall_results,
             recall_min_score: c.recall_min_score,
+            recall_fallback_min_score: c.recall_fallback_min_score,
+            recall_fallback_max: c.recall_fallback_max,
         }
     }
 
@@ -53,6 +62,8 @@ impl FastThinkLimits {
             session_ttl: Duration::from_secs(600),
             max_recall_results: 10,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 3,
         }
     }
 
@@ -69,6 +80,8 @@ impl FastThinkLimits {
             session_ttl: Duration::from_secs(600),
             max_recall_results: 8,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 3,
         }
     }
 
@@ -82,6 +95,8 @@ impl FastThinkLimits {
             session_ttl: Duration::from_secs(120),
             max_recall_results: 3,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 1,
         }
     }
 
@@ -113,8 +128,27 @@ mod tests {
         let mut c = crate::core::config::FastThinkConfig::default();
         c.max_recall_results = 3;
         c.recall_min_score = 0.42;
+        c.recall_fallback_min_score = 0.33;
+        c.recall_fallback_max = 2;
         let limits = FastThinkLimits::from_config(&c);
         assert_eq!(limits.max_recall_results, 3);
         assert!((limits.recall_min_score - 0.42).abs() < f32::EPSILON);
+        assert!((limits.recall_fallback_min_score - 0.33).abs() < f32::EPSILON);
+        assert_eq!(limits.recall_fallback_max, 2);
+    }
+
+    /// #90: the fallback cap must stay SMALLER than the primary cap in every
+    /// preset — weak evidence must never flood the tree the belt protects.
+    #[test]
+    fn fallback_cap_is_smaller_than_primary_everywhere() {
+        for limits in [
+            FastThinkLimits::default(),
+            FastThinkLimits::relaxed(),
+            FastThinkLimits::mcp(),
+            FastThinkLimits::strict(),
+        ] {
+            assert!(limits.recall_fallback_max < limits.max_recall_results);
+            assert!(limits.recall_fallback_min_score < limits.recall_min_score);
+        }
     }
 }

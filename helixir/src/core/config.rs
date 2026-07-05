@@ -647,6 +647,14 @@ pub struct FastThinkConfig {
     /// the floor exists for THIN stores, where the top-K would otherwise
     /// reach down into that noise floor. 0.0 disables.
     pub recall_min_score: f32,
+    /// #90: when the primary recall pass returns ZERO rows, one fallback
+    /// pass runs in `full` mode with this relaxed floor. The belt's failure
+    /// mode must not be a silent zero — a weak model reads that as "no
+    /// evidence exists" and reasons unsupported.
+    pub recall_fallback_min_score: f32,
+    /// #90: hard cap on fallback rows (smaller than max_recall_results —
+    /// weak evidence never floods the tree). 0 disables the fallback.
+    pub recall_fallback_max: usize,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -663,6 +671,8 @@ impl Default for FastThinkConfig {
             commit_importance: 60,
             commit_support_strength: 60,
             recall_min_score: 0.6,
+            recall_fallback_min_score: 0.45,
+            recall_fallback_max: 3,
         }
     }
 }
