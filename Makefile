@@ -72,8 +72,11 @@ docker-up: ## Start HelixDB container
 		docker run -d --name helixdb \
 			-p $(HELIX_PORT):$(HELIX_PORT) \
 			-v helixdb_data:/data \
+			-e HELIX_PORT=$(HELIX_PORT) \
+			-e HELIX_DATA_DIR=/data \
 			--restart unless-stopped \
-			helixdb/helixdb:latest 2>/dev/null || \
+			-m 3g --memory-swap 3g \
+			helix-helixir-dev:latest 2>/dev/null || \
 		docker start helixdb; \
 		echo "  HelixDB started on port $(HELIX_PORT)"; \
 	fi

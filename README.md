@@ -108,6 +108,9 @@ make config         # Print MCP config to paste into your IDE
 
 - **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
+- **HelixDB CLI** — `cargo install helix-cli`. There is no public HelixDB
+  image: the CLI builds the server image locally, compiling this repo's
+  schema into it (`install.sh` does this for you)
 
 > ⚠️ **Storage-mode trap (data loss).** Newer HelixDB builds default to
 > **in-memory** storage — stopping the instance ERASES everything unless it

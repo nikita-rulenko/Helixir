@@ -1,23 +1,36 @@
 # ============================================================================
-# Helixir-RS Docker Compose
-# 
-# Full stack: HelixDB + Helixir MCP Server
+# Helixir Docker Compose — HelixDB only.
+#
+# IMPORTANT — how the image gets here: there is NO public helixdb/helixdb
+# image on Docker Hub. The HelixDB server image is built LOCALLY by the
+# HelixDB CLI, which compiles this repo's schema/queries INTO the server:
+#
+#   cargo install helix-cli            # once
+#   cd helixir/schema && helix check && helix build -i dev
+#
+# That produces the local image `helix-helixir-dev:latest` used below.
+# Schema changes require a rebuild + container swap (no hot reload).
+#
+# The MCP server is NOT a compose service: MCP speaks stdio and is spawned
+# by your MCP client (Claude Desktop / Cursor / zeroclaw) — point it at
+# ~/.helixir/bin/helixir-mcp (`make install`). For a network-reachable
+# endpoint use `helixir gateway` (streamable HTTP) on the host.
 # ============================================================================
 
-version: '3.8'
-
 services:
-  # HelixDB - Graph database for memory storage
   helixdb:
-    image: helixdb/helixdb:latest
+    image: helix-helixir-dev:latest
     container_name: helixdb
     ports:
       - "6969:6969"
     volumes:
+      # ⚠️ Persistence: newer HelixDB defaults to IN-MEMORY storage — without
+      # HELIX_DATA_DIR pointing at a mounted volume, stopping the container
+      # ERASES everything. Keep both lines.
       - helixdb_data:/data
-      - ./schema:/schema:ro
     environment:
-      - HELIX_LOG_LEVEL=info
+      - HELIX_PORT=6969
+      - HELIX_DATA_DIR=/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6969/health"]
       interval: 10s
@@ -36,64 +49,5 @@ services:
         max-size: "20m"
         max-file: "3"
 
-  # Schema deployment (runs once)
-  schema-deploy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: helixir-schema-deploy
-    entrypoint: ["helixir-deploy"]
-    command: ["--host", "helixdb", "--port", "6969"]
-    depends_on:
-      helixdb:
-        condition: service_healthy
-    restart: "no"
-
-  # Helixir MCP Server
-  # Note: MCP uses stdio, so this is for testing/development
-  # In production, run helixir-mcp directly on the host
-  helixir-mcp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: helixir-mcp
-    environment:
-      - HELIX_HOST=helixdb
-      - HELIX_PORT=6969
-      - HELIX_LLM_PROVIDER=${HELIX_LLM_PROVIDER:-cerebras}
-      - HELIX_LLM_MODEL=${HELIX_LLM_MODEL:-llama-3.3-70b}
-      - HELIX_LLM_API_KEY=${HELIX_LLM_API_KEY}
-      - HELIX_LLM_BASE_URL=${HELIX_LLM_BASE_URL:-}
-      - HELIX_EMBEDDING_PROVIDER=${HELIX_EMBEDDING_PROVIDER:-openai}
-      - HELIX_EMBEDDING_MODEL=${HELIX_EMBEDDING_MODEL:-sentence-transformers/all-mpnet-base-v2}
-      - HELIX_EMBEDDING_URL=${HELIX_EMBEDDING_URL:-https://openrouter.ai/api/v1}
-      - HELIX_EMBEDDING_API_KEY=${HELIX_EMBEDDING_API_KEY}
-      - RUST_LOG=helixir=warn,helixir::mcp=info
-    depends_on:
-      helixdb:
-        condition: service_healthy
-      schema-deploy:
-        condition: service_completed_successfully
-    # stdin_open: true  # For MCP stdio
-    # tty: true
-    restart: unless-stopped
-
 volumes:
   helixdb_data:
-    driver: local
-
-# ============================================================================
-# Usage:
-#
-# 1. Create .env file with API keys:
-#    HELIX_LLM_API_KEY=your_cerebras_key
-#    HELIX_EMBEDDING_API_KEY=your_openrouter_key
-#
-# 2. Start services:
-#    docker-compose up -d
-#
-# 3. For MCP in Cursor, run helixir-mcp directly on host:
-#    HELIX_HOST=localhost cargo run --release --bin helixir-mcp
-#
-# ============================================================================
-
