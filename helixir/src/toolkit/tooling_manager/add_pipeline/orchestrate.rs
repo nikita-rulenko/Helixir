@@ -277,6 +277,7 @@ impl ToolingManager {
             // settles it (retract = the supersede happens then). Nothing is
             // rewritten until a human-level answer exists.
             let mut deferred_target: Option<String> = None;
+            let mut clar_idx: Option<usize> = None;
             if let Some(conflict_type) = crate::core::charter::escalation_reason(
                 &decision,
                 &memory.memory_type,
@@ -307,11 +308,13 @@ impl ToolingManager {
                 } else {
                     format!("{:?}", decision.operation)
                 };
+                clar_idx = Some(clarifications.len());
                 clarifications.push(super::super::types::Clarification {
                     conflict_type: conflict_type.to_string(),
                     new_content: memory.text.clone(),
                     existing_memory_id: decision.target_memory_id.clone(),
                     existing_content: existing_content.clone(),
+                    new_memory_id: None,
                     suggested_question: crate::core::charter::suggested_question(
                         conflict_type,
                         &memory.text,
@@ -345,6 +348,15 @@ impl ToolingManager {
             };
 
             stored_memory_ids.insert(i, memory_id.clone());
+
+            // Backfill the from_id so resolve_contradiction(from_id, to_id) is
+            // callable deterministically. Under charter_blocking the new atom
+            // was stored as an ADD, so `memory_id` IS that new fact.
+            if let Some(ci) = clar_idx {
+                if let Some(c) = clarifications.get_mut(ci) {
+                    c.new_memory_id = Some(memory_id.clone());
+                }
+            }
 
             if let Some(old_id) = &deferred_target {
                 if let Err(e) = self

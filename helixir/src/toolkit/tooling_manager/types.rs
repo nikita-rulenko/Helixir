@@ -40,6 +40,13 @@ pub struct Clarification {
     pub existing_memory_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_content: Option<String>,
+    /// Id of the NEW atom that raised this dispute — the `from_id` for
+    /// resolve_contradiction. Backfilled after the atom is stored (meaningful
+    /// under charter_blocking, where the new fact is stored as an ADD next to
+    /// the old one). None when there is no distinct new atom (e.g. Clotho's
+    /// no-category-match escalation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_memory_id: Option<String>,
     /// Question the agent can ask the user verbatim.
     pub suggested_question: String,
     /// What the engine decided (and already did) on its own.
