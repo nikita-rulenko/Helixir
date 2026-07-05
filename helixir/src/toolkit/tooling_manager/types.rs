@@ -108,3 +108,37 @@ pub enum ToolingError {
     #[error("Database error: {0}")]
     Database(String),
 }
+
+#[cfg(test)]
+mod clarification_tests {
+    use super::Clarification;
+
+    /// #93: the from_id (the new atom's id) must reach the agent so
+    /// `resolve_contradiction(from_id, to_id, …)` is callable, and must be
+    /// OMITTED (not null-noise) when there is no distinct new atom.
+    #[test]
+    fn from_id_is_emitted_when_present_and_skipped_when_none() {
+        let c = Clarification {
+            conflict_type: "protected_type_rewrite".to_string(),
+            new_content: "new".to_string(),
+            existing_memory_id: Some("mem_old".to_string()),
+            existing_content: Some("old".to_string()),
+            new_memory_id: Some("mem_new".to_string()),
+            suggested_question: "q?".to_string(),
+            decision_taken: "DEFERRED".to_string(),
+            confidence: 88,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["new_memory_id"], "mem_new");
+
+        let none = Clarification {
+            new_memory_id: None,
+            ..c
+        };
+        let v = serde_json::to_value(&none).unwrap();
+        assert!(
+            v.get("new_memory_id").is_none(),
+            "a None from_id must be skipped, not serialized as null"
+        );
+    }
+}
