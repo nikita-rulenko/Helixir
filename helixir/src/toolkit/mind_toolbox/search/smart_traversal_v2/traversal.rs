@@ -318,11 +318,31 @@ impl SmartTraversalV2 {
         config: &SearchConfig,
     ) {
         let rerank_start = Instant::now();
-        let texts: Vec<&str> = graph_results.iter().map(|r| r.content.as_str()).collect();
+
+        // #88: on a dense graph the expansion can dwarf the final window
+        // (observed: 9 seeds -> 1709 rows, all embedded, tens of seconds on
+        // local embeddings). Embed only the top rows by pre-rerank score;
+        // the tail keeps the neutral 0.5 placeholder and stays reachable —
+        // PPR can still lift a deep-but-coherent row. Cost is bounded,
+        // reachability is not.
+        let scores: Vec<f64> = graph_results.iter().map(|r| r.combined_score).collect();
+        let chosen = top_rerank_indices(&scores, config.rerank_max_rows.max(1));
+        if chosen.len() < graph_results.len() {
+            info!(
+                "Re-rank capped: embedding top {} of {} expansion rows (retrieval.rerank_max_rows)",
+                chosen.len(),
+                graph_results.len()
+            );
+        }
+        let texts: Vec<&str> = chosen
+            .iter()
+            .map(|&i| graph_results[i].content.as_str())
+            .collect();
 
         match self.embedder.generate_batch(&texts, true).await {
             Ok(embeddings) => {
-                for (result, emb) in graph_results.iter_mut().zip(embeddings.iter()) {
+                for (&i, emb) in chosen.iter().zip(embeddings.iter()) {
+                    let result = &mut graph_results[i];
                     let real_sim = cosine_score(query_embedding, emb);
                     result.vector_score = real_sim;
                     result.combined_score = calculate_graph_combined_score_weighted(
@@ -336,7 +356,7 @@ impl SmartTraversalV2 {
                 }
                 info!(
                     "Re-ranked {} graph-expanded results with real cosine in {}ms (algo_opt P0.2)",
-                    graph_results.len(),
+                    chosen.len(),
                     rerank_start.elapsed().as_millis()
                 );
             }
@@ -393,5 +413,43 @@ impl SmartTraversalV2 {
         }
 
         format!("{:x}", hasher.finalize())
+    }
+}
+
+/// #88: indices of the top `cap` rows by score, descending. Pure so the
+/// selection contract is unit-tested without an embedder.
+fn top_rerank_indices(scores: &[f64], cap: usize) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..scores.len()).collect();
+    idx.sort_by(|&a, &b| {
+        scores[b]
+            .partial_cmp(&scores[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    idx.truncate(cap);
+    idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::top_rerank_indices;
+
+    #[test]
+    fn cap_larger_than_input_keeps_everything() {
+        assert_eq!(top_rerank_indices(&[0.1, 0.9, 0.5], 10), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn cap_selects_best_scores_not_first_rows() {
+        // Discovery order is depth-order — the best candidates may sit late.
+        let scores = [0.2, 0.1, 0.95, 0.3, 0.9];
+        assert_eq!(top_rerank_indices(&scores, 2), vec![2, 4]);
+    }
+
+    #[test]
+    fn nan_scores_do_not_panic_or_win() {
+        let scores = [f64::NAN, 0.8, 0.4];
+        let top = top_rerank_indices(&scores, 2);
+        assert_eq!(top.len(), 2);
+        assert!(top.contains(&1));
     }
 }

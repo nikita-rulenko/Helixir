@@ -212,6 +212,11 @@ pub struct RetrievalConfig {
     /// flashbacks per search — a separate allowance so associations never
     /// crowd in-window rows.
     pub flashback_max: usize,
+    /// #88: at most this many expansion rows get the real-cosine re-rank
+    /// per search (top-N by pre-rerank score). Bounds embedding cost on
+    /// dense graphs; rows past the cap keep rank-based scores and remain
+    /// reachable via PPR.
+    pub rerank_max_rows: usize,
     pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
@@ -229,6 +234,7 @@ impl Default for RetrievalConfig {
             cross_user_cache_capacity: 1000,
             cross_user_cache_ttl_secs: 60,
             flashback_max: 3,
+            rerank_max_rows: 128,
             search_modes: SearchModesConfig::default(),
         }
     }

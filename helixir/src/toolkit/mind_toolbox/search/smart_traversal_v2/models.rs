@@ -172,6 +172,12 @@ pub struct SearchConfig {
     pub rank_decay: f64,
     pub edge_weights: crate::core::config::EdgeWeights,
     pub edge_damping: crate::core::config::EdgeDamping,
+
+    /// #88: at most this many expansion rows get the real-cosine re-rank
+    /// (top-N by pre-rerank score); the tail keeps the neutral 0.5
+    /// placeholder. Bounds embedding cost on dense graphs — a full-mode
+    /// search once expanded 9 seeds into 1709 rows and embedded them all.
+    pub rerank_max_rows: usize,
 }
 
 impl Default for SearchConfig {
@@ -199,6 +205,7 @@ impl Default for SearchConfig {
             rank_decay: 0.92,
             edge_weights: crate::core::config::EdgeWeights::default(),
             edge_damping: crate::core::config::EdgeDamping::default(),
+            rerank_max_rows: 128,
         }
     }
 }

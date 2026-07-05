@@ -108,6 +108,7 @@ impl SearchEngine {
             rank_decay: self.config.retrieval.rank_decay,
             edge_weights: self.config.retrieval.graph.edge_weights,
             edge_damping: self.config.retrieval.graph.edge_damping,
+            rerank_max_rows: self.config.retrieval.rerank_max_rows,
         }
     }
 
