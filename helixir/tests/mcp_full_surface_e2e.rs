@@ -357,3 +357,112 @@ fn mcp_full_surface_liveness() {
         "every MCP tool must be exercised: missed {missed:?}"
     );
 }
+
+/// #96 guard — relation inference ACROSS writes. When a write follows a related
+/// fact, `infer_relations` must connect the new atoms to the existing one. That
+/// is the O(N)-per-atom step #96 proposes to batch into a single call, so this
+/// oracle pins the contract the batched version must preserve: a **cross-write**
+/// typed edge gets built (an edge between a different-extraction pair can only
+/// come from inference, never the extractor's intra-batch relations). A batched
+/// re-implementation that silently stopped linking would fail here.
+#[test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
+fn oracle_relation_inference_across_writes() {
+    assert_eq!(
+        std::env::var("HELIX_E2E").unwrap_or_default(),
+        "1",
+        "Set HELIX_E2E=1 when running this test with --ignored"
+    );
+    assert_ne!(
+        std::env::var("HELIXIR_INGEST_BUFFER").unwrap_or_default(),
+        "1",
+        "this oracle runs the synchronous path — do NOT set HELIXIR_INGEST_BUFFER"
+    );
+
+    let (mut mcp, _boot) = McpClient::spawn();
+    let run = token();
+
+    let ids_of = |v: &serde_json::Value| -> std::collections::HashSet<String> {
+        v["memory_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // Per-write inference is probabilistic (#66) — retry with fresh users until
+    // the cross-write edge lands, guarding the feature without flaking on the
+    // model's per-write variance.
+    let mut linked = false;
+    let mut seen_edges: Vec<String> = Vec::new();
+    for attempt in 0..3 {
+        let user = format!("oracle_rel_{run}_{attempt}");
+
+        // 1. Seed a fact so the follow-up write has an existing CANDIDATE to be
+        //    inferred against (a fresh user's first write has no candidates).
+        let (seed, _) = mcp.call_tool(
+            "add_memory",
+            json!({
+                "message": format!("The atlas_{user} pipeline ingests clickstream events into the analytics warehouse."),
+                "user_id": user
+            }),
+        );
+        let seed_ids = ids_of(&seed);
+        assert!(!seed_ids.is_empty(), "seed write must persist an atom: {seed}");
+
+        // 2. A related follow-up write in a SEPARATE extraction.
+        let (follow, _) = mcp.call_tool(
+            "add_memory",
+            json!({
+                "message": format!(
+                    "The atlas_{user} pipeline was slow because the warehouse loader ran single-threaded. \
+                     The atlas_{user} pipeline now loads events in parallel batches."
+                ),
+                "user_id": user
+            }),
+        );
+        let new_ids = ids_of(&follow);
+        assert!(
+            !new_ids.is_empty(),
+            "follow-up write must persist atoms: {follow}"
+        );
+
+        // 3. A cross-write edge (new atom <-> seed atom) can only come from
+        //    inference — the exact thing #96 batches.
+        let (graph, _) = mcp.call_tool("get_memory_graph", json!({"user_id": user}));
+        let edges = graph["edges"].as_array().cloned().unwrap_or_default();
+        let cross: Vec<String> = edges
+            .iter()
+            .filter_map(|e| {
+                let s = e["source"].as_str()?;
+                let t = e["target"].as_str()?;
+                let bridges = (new_ids.contains(s) && seed_ids.contains(t))
+                    || (seed_ids.contains(s) && new_ids.contains(t));
+                bridges.then(|| e["edge_type"].as_str().unwrap_or("?").to_string())
+            })
+            .collect();
+
+        if !cross.is_empty() {
+            linked = true;
+            seen_edges = cross;
+            break;
+        }
+        seen_edges = edges
+            .iter()
+            .filter_map(|e| e["edge_type"].as_str().map(str::to_string))
+            .collect();
+    }
+
+    assert!(
+        linked,
+        "a write following a related fact must build a CROSS-WRITE inferred edge \
+         within 3 attempts — the O(N) inference #96 batches must keep linking; \
+         graph edges seen: {seen_edges:?}"
+    );
+
+    println!("\n==== oracle_relation_inference_across_writes ====");
+    println!("cross-write inferred edge type(s): {seen_edges:?}");
+}
