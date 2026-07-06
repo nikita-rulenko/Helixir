@@ -217,6 +217,11 @@ pub struct RetrievalConfig {
     /// dense graphs; rows past the cap keep rank-based scores and remain
     /// reachable via PPR.
     pub rerank_max_rows: usize,
+    /// #92: score multiplier for rows with an incoming SUPERSEDES edge — a
+    /// stale hub must rank below its own corrections, while staying fully
+    /// reachable (and honestly flagged `superseded` in metadata). 1.0
+    /// disables the demotion.
+    pub superseded_penalty: f64,
     pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
@@ -235,6 +240,7 @@ impl Default for RetrievalConfig {
             cross_user_cache_ttl_secs: 60,
             flashback_max: 3,
             rerank_max_rows: 128,
+            superseded_penalty: 0.6,
             search_modes: SearchModesConfig::default(),
         }
     }
@@ -470,6 +476,17 @@ pub struct WriteConfig {
     pub context_link_priority: i64,
     /// Charter C5: confidence below which a rewrite is escalated to the human.
     pub charter_low_confidence: u8,
+    /// #34 increment 2b: after this many IDENTICAL contradiction-review
+    /// verdicts (same new-type/old-type/strategy shape), resolve_contradiction
+    /// proposes a standing rule. 0 disables precedent learning.
+    pub rule_propose_after: usize,
+    /// #96 Lever 2: route SUPPORTS/CONTRADICTS relation inference through the
+    /// local NLI judge instead of the LLM (self-gating: a lean build or a
+    /// missing model silently keeps everything on the LLM).
+    pub nli_route: bool,
+    /// Minimum NLI softmax probability for a routed edge; unconfident pairs
+    /// stay with the LLM.
+    pub nli_route_min_prob: f32,
     /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
     /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
     /// executing — store the new fact alongside the old, record a
@@ -496,6 +513,9 @@ impl Default for WriteConfig {
             fallback_importance: 50,
             context_link_priority: 50,
             charter_low_confidence: 70,
+            rule_propose_after: 3,
+            nli_route: true,
+            nli_route_min_prob: 0.85,
             charter_blocking: true,
         }
     }

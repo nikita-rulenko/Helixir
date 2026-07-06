@@ -43,7 +43,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.9)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.10)
 
 ---
 
@@ -75,6 +75,8 @@ Three principles drive every design decision; the long version lives in [`helixi
 **The writer pays, the reader flies.** All expensive work — extraction, dedup decisions, relation inference — happens at write time. Reading is pure math over precomputed structure: no LLM, no re-embedding when warm. This is what makes a fully local setup (ollama + HelixDB) practical.
 
 **The memory does not gaslight its owner.** Writes that conflict with what is already known — a reversed preference, a contradiction, anything destructive — are not resolved silently. They come back in `add_memory.needs_clarification` as ready-to-ask questions, governed by a human-editable [memory charter](helixir/memory-charter.md): a constitution of rules the engine may never override.
+
+**And the charter learns.** Every `resolve_contradiction` verdict becomes a precedent; after several identical verdicts the memory *proposes a standing rule* back to the agent (`rule_proposal`), ready to adopt with one `add_memory` call. Adopted rules render in the `memory://rules` resource beside the constitution — which itself never self-learns — and silence future questions of that shape. Corrections also win: a superseded fact ranks below its successor and returns flagged `superseded: true` with `superseded_by` naming the current version — history, honestly labelled, never hidden.
 
 ---
 

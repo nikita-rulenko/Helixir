@@ -212,6 +212,19 @@ Prefer stating causes and structure explicitly over implying them — the graph
 cannot see inside an atom, and a typed edge is what later answers "why" and
 "what is this made of" without an LLM call.
 
+### Writing for the ontology — typed memories are findable memories:
+`search_by_concept` and the charter's protections only work when the TYPE
+lands, and the type lands when the wording is explicit. Don't flatten
+everything into fact-speak — say what kind of thing it is:
+- "I prefer X over Y" → preference (protected from silent rewrites)
+- "I can / I'm able to X" → skill
+- "My goal is X" / "I want to X" → goal (protected)
+- "I think / in my view X" → opinion (protected)
+- "Doing X, I realized/noticed Y" → experience (your reflections matter)
+- "I completed/built/shipped X" → achievement; bare "I did X" → action
+A store that is 85% `fact` (observed live) is a store where "what are my
+preferences?" and "what have I learned from experience?" return nothing.
+
 ### Reading chains and results — what the annotations mean:
 - A BECAUSE edge whose provenance is `lachesis-stitch` was built RETROACTIVELY
   by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
@@ -222,6 +235,9 @@ cannot see inside an atom, and a typed edge is what later answers "why" and
   folded ids stay reachable — fetch one explicitly if you need exact wording.
 - Recalls are CAPPED (top-K by score with a floor). If a recall looks thin,
   ask a sharper question or raise `limit` — do not assume the memory is empty.
+- A result with `superseded: true` is OUTDATED — a newer memory replaced it
+  (`superseded_by` names it). It stays reachable for history, but never act
+  on it as current truth; prefer the successor.
 - To recall a PERIOD ("what happened in June", "before the migration"), pass
   `time_from`/`time_to` (RFC3339 or YYYY-MM-DD) to search_memory. The window
   bounds direct answers by EVENT time; memories OUTSIDE it that are linked to
@@ -314,6 +330,14 @@ Your outbox (`pending_outcomes` on any add_memory) may carry:
   non-destructive);
 - `ops_alert` — the memory's own health watchdog (Hygieia) reporting an
   incident or a self-heal; surface it to your human.
+
+The charter LEARNS from your verdicts: each resolve is recorded as a
+precedent, and after several identical verdicts `resolve_contradiction`
+returns a `rule_proposal` — a standing rule ready to adopt with the exact
+add_memory call it dictates (or show it to your human first). Adopted
+rules appear in the `memory://rules` resource beside the constitution and
+silence future questions of that shape. The constitution itself never
+self-learns — only these rules do.
 
 </swarm_protocol>
 

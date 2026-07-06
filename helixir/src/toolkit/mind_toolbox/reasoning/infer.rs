@@ -28,8 +28,9 @@ impl ReasoningEngine {
 
         let system_prompt = r#"You are a reasoning engine that finds logical connections between memories. You MUST find at least one relationship if the memories share ANY topic, entity, or context.
 
-Output a JSON array. Each element:
+Output a JSON OBJECT with a single key "relations" whose value is an array. Each element:
 {"existing_index": 0, "type": "IMPLIES|BECAUSE|CONTRADICTS|SUPPORTS", "strength": 0-100}
+Example: {"relations": [{"existing_index": 0, "type": "SUPPORTS", "strength": 75}]}
 
 Relation types:
 - SUPPORTS: they share the same topic, reinforce each other, or provide evidence for the same conclusion (MOST COMMON — use when in doubt)
@@ -42,8 +43,8 @@ Rules:
 - If one memory is a consequence of another → IMPLIES (strength 60-90)
 - If one memory explains why another is true → BECAUSE (strength 60-90)
 - Include relations with strength >= 40
-- Output ONLY a valid JSON array, no markdown, no explanation
-- If truly no connection exists (completely unrelated topics), output []"#;
+- Output ONLY a valid JSON object {"relations": [...]}, no markdown, no explanation
+- If truly no connection exists (completely unrelated topics), output {"relations": []}"#;
 
         let context_str: String = similar_memories
             .iter()
@@ -57,63 +58,6 @@ Rules:
             new_memory_content, context_str
         );
 
-        let parse_relations = |response: &str| -> Vec<ReasoningRelation> {
-            let parsed = serde_json::from_str::<Vec<serde_json::Value>>(response).or_else(|_| {
-                if let Ok(obj) = serde_json::from_str::<serde_json::Value>(response) {
-                    if let Some(arr) = obj
-                        .get("relations")
-                        .or_else(|| obj.get("results"))
-                        .or_else(|| obj.get("data"))
-                    {
-                        if let Some(arr) = arr.as_array() {
-                            return Ok(arr.clone());
-                        }
-                    }
-                }
-                if let Some(start) = response.find('[') {
-                    if let Some(end) = response.rfind(']') {
-                        return serde_json::from_str(&response[start..=end]);
-                    }
-                }
-                Err(serde_json::Error::io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "no array",
-                )))
-            });
-
-            match parsed {
-                Ok(inferred) => inferred
-                    .iter()
-                    .filter_map(|r| {
-                        let idx = r.get("existing_index")?.as_u64()? as usize;
-                        let (target_id, target_content) = similar_memories.get(idx)?;
-                        Some(ReasoningRelation {
-                            peer_memory_id: String::new(),
-                            peer_memory_content: String::new(),
-                            relation_id: format!(
-                                "inferred_{}_{}",
-                                crate::safe_truncate(new_memory_id, 8),
-                                crate::safe_truncate(target_id, 8)
-                            ),
-                            from_memory_id: new_memory_id.to_string(),
-                            to_memory_id: target_id.clone(),
-                            to_memory_content: target_content.clone(),
-                            from_memory_content: new_memory_content.to_string(),
-                            relation_type: match r.get("type")?.as_str()? {
-                                "IMPLIES" => ReasoningType::Implies,
-                                "BECAUSE" => ReasoningType::Because,
-                                "CONTRADICTS" => ReasoningType::Contradicts,
-                                _ => ReasoningType::Supports,
-                            },
-                            strength: r.get("strength")?.as_i64()? as i32,
-                            reasoning_id: Some("llm_inferred".to_string()),
-                        })
-                    })
-                    .collect(),
-                Err(_) => Vec::new(),
-            }
-        };
-
         match llm
             .generate(system_prompt, &user_prompt, Some("json_object"))
             .await
@@ -124,33 +68,52 @@ Rules:
                     response.len(),
                     &response.chars().take(200).collect::<String>()
                 );
-                let relations = parse_relations(&response);
-                if !relations.is_empty() {
-                    info!(
-                        "LLM inferred {} relations for {}",
-                        relations.len(),
-                        crate::safe_truncate(new_memory_id, 12)
-                    );
-                    return Ok(relations);
-                }
-
-                warn!("First infer_relations attempt returned 0 relations, retrying");
-                let retry_prompt = format!(
-                    "{}\n\nIMPORTANT: Output ONLY a valid JSON array. No markdown, no explanation. Example: [{{\"existing_index\":0,\"type\":\"SUPPORTS\",\"strength\":75}}]",
-                    user_prompt
-                );
-                match llm
-                    .generate(system_prompt, &retry_prompt, Some("json_object"))
-                    .await
-                {
-                    Ok((retry_response, _)) => {
-                        let retry_relations = parse_relations(&retry_response);
-                        debug!("LLM inferred {} relations (retry)", retry_relations.len());
-                        Ok(retry_relations)
+                match parse_relations_response(
+                    &response,
+                    similar_memories,
+                    new_memory_id,
+                    new_memory_content,
+                ) {
+                    // Parsed a relation list (possibly empty). An empty list is a
+                    // genuine "no connection" answer — NOT a failure, so no retry.
+                    Some(relations) => {
+                        info!(
+                            "LLM inferred {} relations for {}",
+                            relations.len(),
+                            crate::safe_truncate(new_memory_id, 12)
+                        );
+                        Ok(relations)
                     }
-                    Err(e) => {
-                        warn!("LLM inference retry failed: {}", e);
-                        Ok(Vec::new())
+                    // Could not parse a relation list at all — one stricter retry.
+                    None => {
+                        warn!(
+                            "infer_relations: unparseable response, retrying (first 200b: {})",
+                            &response.chars().take(200).collect::<String>()
+                        );
+                        let retry_prompt = format!(
+                            "{}\n\nIMPORTANT: Output ONLY a valid JSON object of the form {{\"relations\": [...]}}. No markdown, no explanation. Example: {{\"relations\":[{{\"existing_index\":0,\"type\":\"SUPPORTS\",\"strength\":75}}]}}",
+                            user_prompt
+                        );
+                        match llm
+                            .generate(system_prompt, &retry_prompt, Some("json_object"))
+                            .await
+                        {
+                            Ok((retry_response, _)) => {
+                                let retry_relations = parse_relations_response(
+                                    &retry_response,
+                                    similar_memories,
+                                    new_memory_id,
+                                    new_memory_content,
+                                )
+                                .unwrap_or_default();
+                                debug!("LLM inferred {} relations (retry)", retry_relations.len());
+                                Ok(retry_relations)
+                            }
+                            Err(e) => {
+                                warn!("LLM inference retry failed: {}", e);
+                                Ok(Vec::new())
+                            }
+                        }
                     }
                 }
             }
@@ -159,5 +122,290 @@ Rules:
                 Ok(Vec::new())
             }
         }
+    }
+
+    /// #96 Lever 1: infer relations for MANY new atoms in ONE LLM call instead
+    /// of one call per atom. Each atom carries its OWN candidate list; the model
+    /// returns `{"relations":[{"atom":i,"candidate":j,"type":..,"strength":..}]}`.
+    /// Chunked (<=12 atoms/call) so a huge write spills to a few calls, not one
+    /// giant prompt. Same edges as the per-atom path; O(1) calls instead of O(N).
+    pub async fn infer_relations_batch(
+        &self,
+        items: &[(String, String, Vec<(String, String)>)],
+    ) -> Result<Vec<ReasoningRelation>, ReasoningError> {
+        let Some(ref llm) = self.llm_provider else {
+            return Ok(Vec::new());
+        };
+        let active: Vec<&(String, String, Vec<(String, String)>)> =
+            items.iter().filter(|(_, _, c)| !c.is_empty()).collect();
+        if active.is_empty() {
+            return Ok(Vec::new());
+        }
+        const BATCH_MAX: usize = 12;
+        let mut out: Vec<ReasoningRelation> = Vec::new();
+        for chunk in active.chunks(BATCH_MAX) {
+            out.extend(infer_relations_chunk(&**llm, chunk).await);
+        }
+        Ok(out)
+    }
+}
+
+/// Parse an `infer_relations` model response into relations.
+///
+/// Returns `None` ONLY when the response cannot be parsed as a relation list at
+/// all — that is the sole case worth a retry. `Some(vec)`, INCLUDING an empty
+/// vec, means the model answered; a genuine "no relations" (`{"relations": []}`)
+/// is therefore NOT retried, saving a wasted LLM round-trip. Accepts the object
+/// form `{"relations": [...]}` (what `json_object` mode forces DeepSeek/OpenAI to
+/// return — see #95), a bare array (back-compat), the `results`/`data` keys, or
+/// an array embedded in surrounding prose.
+fn parse_relations_response(
+    response: &str,
+    similar_memories: &[(String, String)],
+    new_memory_id: &str,
+    new_memory_content: &str,
+) -> Option<Vec<ReasoningRelation>> {
+    let arr: Vec<serde_json::Value> = serde_json::from_str::<Vec<serde_json::Value>>(response)
+        .ok()
+        .or_else(|| {
+            let obj = serde_json::from_str::<serde_json::Value>(response).ok()?;
+            obj.get("relations")
+                .or_else(|| obj.get("results"))
+                .or_else(|| obj.get("data"))
+                .and_then(|v| v.as_array())
+                .cloned()
+        })
+        .or_else(|| {
+            let start = response.find('[')?;
+            let end = response.rfind(']')?;
+            serde_json::from_str::<Vec<serde_json::Value>>(&response[start..=end]).ok()
+        })?;
+
+    Some(
+        arr.iter()
+            .filter_map(|r| {
+                let idx = r.get("existing_index")?.as_u64()? as usize;
+                let (target_id, target_content) = similar_memories.get(idx)?;
+                Some(ReasoningRelation {
+                    peer_memory_id: String::new(),
+                    peer_memory_content: String::new(),
+                    relation_id: format!(
+                        "inferred_{}_{}",
+                        crate::safe_truncate(new_memory_id, 8),
+                        crate::safe_truncate(target_id, 8)
+                    ),
+                    from_memory_id: new_memory_id.to_string(),
+                    to_memory_id: target_id.clone(),
+                    to_memory_content: target_content.clone(),
+                    from_memory_content: new_memory_content.to_string(),
+                    relation_type: match r.get("type")?.as_str()? {
+                        "IMPLIES" => ReasoningType::Implies,
+                        "BECAUSE" => ReasoningType::Because,
+                        "CONTRADICTS" => ReasoningType::Contradicts,
+                        _ => ReasoningType::Supports,
+                    },
+                    strength: r.get("strength")?.as_i64()? as i32,
+                    reasoning_id: Some("llm_inferred".to_string()),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Extract a JSON array from a model response — the object-wrapper
+/// `{"relations":[...]}` (json_object mode, #95), a bare array, the
+/// `results`/`data` keys, or an array embedded in prose. `None` = unparseable
+/// (worth one retry); `Some([])` = a real empty answer (no retry).
+fn extract_json_array(response: &str) -> Option<Vec<serde_json::Value>> {
+    serde_json::from_str::<Vec<serde_json::Value>>(response)
+        .ok()
+        .or_else(|| {
+            let obj = serde_json::from_str::<serde_json::Value>(response).ok()?;
+            obj.get("relations")
+                .or_else(|| obj.get("results"))
+                .or_else(|| obj.get("data"))
+                .and_then(|v| v.as_array())
+                .cloned()
+        })
+        .or_else(|| {
+            let start = response.find('[')?;
+            let end = response.rfind(']')?;
+            serde_json::from_str::<Vec<serde_json::Value>>(&response[start..=end]).ok()
+        })
+}
+
+/// One batched relation-inference call over a chunk of new atoms, each with its
+/// OWN candidate list. Backs [`ReasoningEngine::infer_relations_batch`].
+async fn infer_relations_chunk(
+    llm: &dyn crate::llm::providers::base::LlmProvider,
+    chunk: &[&(String, String, Vec<(String, String)>)],
+) -> Vec<ReasoningRelation> {
+    let system_prompt = r#"You connect NEW memories to their candidate existing memories with typed logical edges.
+
+For EACH new atom, decide which of ITS OWN candidates carry a relationship, and of what type:
+- SUPPORTS: same topic / reinforce / evidence for the same conclusion (most common)
+- IMPLIES: one logically leads to or suggests the other
+- BECAUSE: one is a cause/reason for the other
+- CONTRADICTS: they conflict or are incompatible
+
+Output ONLY a JSON object: {"relations":[{"atom":0,"candidate":0,"type":"SUPPORTS","strength":70}]}
+- "atom" indexes the NEW atoms; "candidate" indexes THAT atom's own candidate list.
+- Include relations with strength >= 40. Omit an atom entirely if none of its candidates relate.
+- If nothing relates at all, output {"relations":[]}. No markdown, no prose."#;
+
+    let mut ctx = String::new();
+    for (ai, (_, content, cands)) in chunk.iter().enumerate() {
+        ctx.push_str(&format!("[atom {ai}] {content}\n"));
+        for (ci, (_, cc)) in cands.iter().enumerate() {
+            ctx.push_str(&format!("   candidate {ci}: {cc}\n"));
+        }
+    }
+    let user_prompt = format!("NEW atoms and their candidates:\n{ctx}");
+
+    let build = |arr: Vec<serde_json::Value>| -> Vec<ReasoningRelation> {
+        arr.iter()
+            .filter_map(|r| {
+                let ai = r.get("atom")?.as_u64()? as usize;
+                let ci = r.get("candidate")?.as_u64()? as usize;
+                let (new_id, new_content, cands) = chunk.get(ai)?;
+                let (target_id, target_content) = cands.get(ci)?;
+                Some(ReasoningRelation {
+                    peer_memory_id: String::new(),
+                    peer_memory_content: String::new(),
+                    relation_id: format!(
+                        "inferred_{}_{}",
+                        crate::safe_truncate(new_id, 8),
+                        crate::safe_truncate(target_id, 8)
+                    ),
+                    from_memory_id: new_id.clone(),
+                    to_memory_id: target_id.clone(),
+                    to_memory_content: target_content.clone(),
+                    from_memory_content: new_content.clone(),
+                    relation_type: match r.get("type").and_then(|t| t.as_str()) {
+                        Some("IMPLIES") => ReasoningType::Implies,
+                        Some("BECAUSE") => ReasoningType::Because,
+                        Some("CONTRADICTS") => ReasoningType::Contradicts,
+                        _ => ReasoningType::Supports,
+                    },
+                    strength: r.get("strength").and_then(|s| s.as_i64()).unwrap_or(60) as i32,
+                    reasoning_id: Some("llm_inferred".to_string()),
+                })
+            })
+            .collect()
+    };
+
+    match llm
+        .generate(system_prompt, &user_prompt, Some("json_object"))
+        .await
+    {
+        Ok((response, _)) => match extract_json_array(&response) {
+            Some(arr) => {
+                let rels = build(arr);
+                info!(
+                    "infer_relations_batch: {} relations for {} atoms (1 call)",
+                    rels.len(),
+                    chunk.len()
+                );
+                rels
+            }
+            None => {
+                warn!("infer_relations_batch: unparseable response, retrying");
+                let retry = format!(
+                    "{user_prompt}\n\nIMPORTANT: Output ONLY a JSON object like {{\"relations\":[{{\"atom\":0,\"candidate\":0,\"type\":\"SUPPORTS\",\"strength\":70}}]}}. No markdown, no prose."
+                );
+                match llm
+                    .generate(system_prompt, &retry, Some("json_object"))
+                    .await
+                {
+                    Ok((r2, _)) => extract_json_array(&r2).map(build).unwrap_or_default(),
+                    Err(e) => {
+                        warn!("infer_relations_batch retry failed: {e}");
+                        Vec::new()
+                    }
+                }
+            }
+        },
+        Err(e) => {
+            warn!("infer_relations_batch failed: {e}");
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::ReasoningType;
+    use super::parse_relations_response;
+
+    fn cands() -> Vec<(String, String)> {
+        vec![
+            (
+                "mem_a".to_string(),
+                "Rust is a systems language".to_string(),
+            ),
+            (
+                "mem_b".to_string(),
+                "The compiler enforces ownership".to_string(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn parses_object_wrapper() {
+        // The json_object shape DeepSeek is forced to return (#95).
+        let rels = parse_relations_response(
+            r#"{"relations":[{"existing_index":1,"type":"BECAUSE","strength":80}]}"#,
+            &cands(),
+            "mem_new",
+            "new",
+        )
+        .expect("object wrapper must parse");
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].to_memory_id, "mem_b");
+        assert_eq!(rels[0].relation_type, ReasoningType::Because);
+        assert_eq!(rels[0].strength, 80);
+    }
+
+    #[test]
+    fn parses_bare_array_backcompat() {
+        let rels = parse_relations_response(
+            r#"[{"existing_index":0,"type":"SUPPORTS","strength":60}]"#,
+            &cands(),
+            "mem_new",
+            "new",
+        )
+        .expect("bare array must still parse");
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].relation_type, ReasoningType::Supports);
+    }
+
+    #[test]
+    fn empty_relations_is_an_answer_not_a_failure() {
+        // {"relations": []} is a genuine "no connection" — Some(empty), no retry.
+        let r = parse_relations_response(r#"{"relations":[]}"#, &cands(), "m", "n");
+        assert!(r.is_some(), "empty list must NOT trigger a retry");
+        assert!(r.unwrap().is_empty());
+    }
+
+    #[test]
+    fn unparseable_is_none_and_triggers_retry() {
+        assert!(parse_relations_response("not json at all", &cands(), "m", "n").is_none());
+        assert!(
+            parse_relations_response("{}", &cands(), "m", "n").is_none(),
+            "an object with no relation list is a parse miss, worth a retry"
+        );
+    }
+
+    #[test]
+    fn alternative_key_and_out_of_range_index_are_tolerated() {
+        // 'results' key is accepted; an out-of-range index is skipped, not fatal.
+        let rels = parse_relations_response(
+            r#"{"results":[{"existing_index":9,"type":"SUPPORTS","strength":50}]}"#,
+            &cands(),
+            "m",
+            "n",
+        )
+        .expect("parsed even though the index is bogus");
+        assert!(rels.is_empty());
     }
 }

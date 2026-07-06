@@ -222,10 +222,21 @@ impl ServerHandler for HelixirMcpServer {
                 let override_path = std::env::var("HOME")
                     .map(|h| std::path::PathBuf::from(h).join(".helixir/memory-charter.md"))
                     .ok();
-                let content = override_path
+                let mut content = override_path
                     .filter(|p| p.exists())
                     .and_then(|p| std::fs::read_to_string(p).ok())
                     .unwrap_or_else(|| include_str!("../../memory-charter.md").to_string());
+                // #34 2b: learned rules render BESIDE the constitution, never
+                // inside it — the constitution is immune to self-learning.
+                let learned = self.client.tooling().learned_charter_rules().await;
+                if !learned.is_empty() {
+                    content.push_str(
+                        "\n\n## Learned rules (adopted from contradiction-review precedents)\n\n",
+                    );
+                    for rule in learned {
+                        content.push_str(&format!("- {rule}\n"));
+                    }
+                }
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(content, uri)],
                 })

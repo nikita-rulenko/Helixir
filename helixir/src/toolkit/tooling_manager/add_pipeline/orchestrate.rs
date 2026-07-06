@@ -30,11 +30,30 @@ impl ToolingManager {
         );
 
         debug!("Step 1: LLM extraction");
-        let extraction = self
-            .extractor
-            .extract(message, user_id, true, true)
-            .await
-            .map_err(|e| ToolingError::Extraction(e.to_string()))?;
+        // #34 2b: an adopted charter rule is a VERBATIM artifact, not a story
+        // to atomize — extraction would rephrase it and the rule tag (stamped
+        // by prefix in decide.rs) would never land. Deterministic single-atom
+        // path, no LLM.
+        let extraction = if message.trim_start().starts_with("Charter rule [") {
+            info!("charter-rule write: verbatim single-atom path (no extraction)");
+            crate::llm::extractor::ExtractionResult {
+                memories: vec![crate::llm::extractor::ExtractedMemory {
+                    text: message.trim().to_string(),
+                    memory_type: "fact".to_string(),
+                    certainty: 95,
+                    importance: 70,
+                    entities: vec![],
+                    context: None,
+                }],
+                entities: vec![],
+                relations: vec![],
+            }
+        } else {
+            self.extractor
+                .extract(message, user_id, true, true)
+                .await
+                .map_err(|e| ToolingError::Extraction(e.to_string()))?
+        };
 
         info!(
             "Extracted {} memories, {} entities, {} relations",
@@ -270,6 +289,44 @@ impl ToolingManager {
                     .find(|m| m.id == tid)
                     .and_then(|m| m.memory_type.as_deref())
             });
+
+            // Charter guard (#93): the decision engine over-eagerly labels an
+            // atom that merely SHARES A SUBJECT with a neighbour as a
+            // Contradict/rewrite, producing false clarifications. A real
+            // conflict is a same-subject NEAR restatement (high similarity); an
+            // elaboration or an unrelated neighbour is not. Downgrade the false
+            // ones to a plain ADD — both facts stay, no spurious CONTRADICTS
+            // edge, no needless clarification. Genuine reversals / value
+            // contradictions (high similarity + shared subject) are untouched,
+            // so the anti-gaslight property holds.
+            if let Some(tid) = target_id.as_deref() {
+                use crate::llm::decision::MemoryOperation as Op;
+                let touches_protected = crate::core::charter::PROTECTED_TYPES
+                    .contains(&memory.memory_type.as_str())
+                    || target_type
+                        .is_some_and(|t| crate::core::charter::PROTECTED_TYPES.contains(&t));
+                let is_conflict = matches!(decision.operation, Op::Contradict)
+                    || (matches!(decision.operation, Op::Update | Op::Supersede)
+                        && touches_protected);
+                if is_conflict {
+                    let target = similar_memories.iter().find(|m| m.id == tid);
+                    let sim = target.map_or(0.0, |m| m.score);
+                    let shares = target.is_some_and(|m| {
+                        crate::core::charter::shares_subject(&memory.text, &m.content)
+                    });
+                    if !crate::core::charter::is_genuine_conflict(shares, sim) {
+                        info!(
+                            "Charter guard (#93): {:?} of {tid} downgraded to ADD \
+                             (shares_subject={shares}, sim={sim:.3}) — not a genuine conflict",
+                            decision.operation
+                        );
+                        decision.operation = Op::Add;
+                        decision.target_memory_id = None;
+                        decision.supersedes_memory_id = None;
+                        decision.contradicts_memory_id = None;
+                    }
+                }
+            }
             // Charter increment 2 (#34): under blocking, a destructive verdict
             // that the charter escalates is DEFERRED — the new fact is stored
             // as an ADD next to the old one, the dispute lives on a
@@ -277,6 +334,7 @@ impl ToolingManager {
             // settles it (retract = the supersede happens then). Nothing is
             // rewritten until a human-level answer exists.
             let mut deferred_target: Option<String> = None;
+            let mut clar_idx: Option<usize> = None;
             if let Some(conflict_type) = crate::core::charter::escalation_reason(
                 &decision,
                 &memory.memory_type,
@@ -307,11 +365,13 @@ impl ToolingManager {
                 } else {
                     format!("{:?}", decision.operation)
                 };
+                clar_idx = Some(clarifications.len());
                 clarifications.push(super::super::types::Clarification {
                     conflict_type: conflict_type.to_string(),
                     new_content: memory.text.clone(),
                     existing_memory_id: decision.target_memory_id.clone(),
                     existing_content: existing_content.clone(),
+                    new_memory_id: None,
                     suggested_question: crate::core::charter::suggested_question(
                         conflict_type,
                         &memory.text,
@@ -346,6 +406,15 @@ impl ToolingManager {
 
             stored_memory_ids.insert(i, memory_id.clone());
 
+            // Backfill the from_id so resolve_contradiction(from_id, to_id) is
+            // callable deterministically. Under charter_blocking the new atom
+            // was stored as an ADD, so `memory_id` IS that new fact.
+            if let Some(ci) = clar_idx {
+                if let Some(c) = clarifications.get_mut(ci) {
+                    c.new_memory_id = Some(memory_id.clone());
+                }
+            }
+
             if let Some(old_id) = &deferred_target {
                 if let Err(e) = self
                     .record_contradiction(&memory_id, old_id, "charter_deferred")
@@ -374,18 +443,44 @@ impl ToolingManager {
             }
         }
 
-        // Phase D: relation inference — one independent LLM call per stored
-        // atom. These used to run sequentially inside the store loop, stacking
-        // K× model latency onto every multi-atom write; concurrent, the
-        // wall-clock cost is the slowest single call.
+        // Phase D: relation inference — #96 Lever 1 batches ALL new atoms into
+        // ONE LLM call (was one independent call per atom, run concurrently).
+        // O(1) model calls per write instead of O(N); the edges are identical.
         if !infer_jobs.is_empty() {
-            let inferred = futures::future::join_all(
-                infer_jobs
-                    .iter()
-                    .map(|(id, text, pairs)| self.infer_and_persist_relations(id, text, pairs)),
-            )
-            .await;
-            relations_created += inferred.into_iter().sum::<usize>();
+            // #96 Lever 2: the local NLI judge takes the SUPPORTS/CONTRADICTS
+            // pairs (sync CPU — block_in_place keeps the runtime honest);
+            // only the residual pairs, where implicit causality may hide,
+            // still pay the LLM. Often the residual is empty.
+            let enabled = self.config.write.nli_route;
+            let min_prob = self.config.write.nli_route_min_prob;
+            let jobs_backup = infer_jobs.clone();
+            let (routed, residual) = match tokio::task::spawn_blocking(move || {
+                super::nli_route::route_jobs(infer_jobs, enabled, min_prob)
+            })
+            .await
+            {
+                Ok(split) => split,
+                Err(e) => {
+                    warn!("NLI routing task failed ({e}); all pairs go to the LLM");
+                    (Vec::new(), jobs_backup)
+                }
+            };
+            if !routed.is_empty() {
+                info!(
+                    "NLI routed {} relation(s) off the LLM ({} residual job(s))",
+                    routed.len(),
+                    residual.len()
+                );
+                relations_created += self.persist_inferred_relations(&routed).await;
+            }
+            if !residual.is_empty() {
+                let inferred = self
+                    .reasoning_engine
+                    .infer_relations_batch(&residual)
+                    .await
+                    .unwrap_or_default();
+                relations_created += self.persist_inferred_relations(&inferred).await;
+            }
         }
 
         relations_created += self

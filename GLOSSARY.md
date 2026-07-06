@@ -138,6 +138,11 @@ It hard-filters the *seeds* — the direct answers — on event time
 (`valid_from`, else `created_at`). `temporal_days` is the one-sided
 shorthand for the same thing.
 
+**Superseded flag.** A search result with `superseded: true` has been
+replaced by a newer memory (`superseded_by` names it). It ranks below its
+successor (score × `retrieval.superseded_penalty`, default 0.6) but stays
+fully reachable — history, honestly labelled, never hidden.
+
 **Flashback.** A memory from *outside* the requested time window that graph
 expansion pulled back in through an edge to an in-window result. Never
 hidden, never disguised: flagged `flashback: true` with its `event_date`,
@@ -145,6 +150,24 @@ and capped by a separate allowance (`retrieval.flashback_max`, default 3)
 so associations never crowd the period's own rows. The recall analogue of a
 human flashback — thinking about last week surfaces last year, and you know
 it's old.
+
+**Charter precedent.** One settled contradiction review, remembered: an
+episode memory under `user_id=helixir` tagged with the dispute's shape
+(new-type / old-type / verdict), SUPPORTS-linked to both disputed
+memories. "Why does this rule exist" walks to the evidence.
+
+**Learned rule.** After `write.rule_propose_after` identical precedents
+(default 3), `resolve_contradiction` returns a ready-to-adopt
+`rule_proposal`. Adoption is an explicit verbatim `add_memory`
+("Charter rule [shape]: …", stored without LLM rephrasing). Adopted rules
+render in `memory://rules` BESIDE the constitution — which itself never
+self-learns — and silence further proposals of their shape.
+
+**NLI edge router.** A local cross-encoder (deberta) that types confident
+SUPPORTS (bidirectional entailment) and CONTRADICTS (same-subject
+contradiction) edges before the LLM is consulted — part of making the
+write path cheap (#96). Neutral or unconfident pairs still go to the
+model; lean builds without the `nli` feature route everything to the LLM.
 
 ## Write path
 

@@ -195,7 +195,19 @@ impl LlmProvider for OpenAiCompatProvider {
             .json::<ChatResponse>()
             .await?;
 
-        self.parse_response(response)
+        let (content, metadata) = self.parse_response(response)?;
+        // #96 cost instrument: exactly one line per REAL LLM call, with token
+        // counts, so the write-path LLM cost is measurable before/after the
+        // batching optimization. Filter with RUST_LOG=helixir::llm::cost=info.
+        tracing::info!(
+            target: "helixir::llm::cost",
+            "llm_call provider={} model={} ptok={} ctok={}",
+            self.name,
+            self.model,
+            metadata.tokens_prompt.unwrap_or(0),
+            metadata.tokens_completion.unwrap_or(0)
+        );
+        Ok((content, metadata))
     }
 
     fn provider_name(&self) -> &str {

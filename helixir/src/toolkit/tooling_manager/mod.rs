@@ -1,5 +1,6 @@
 mod add_pipeline;
 pub mod categories;
+pub mod charter_rules;
 pub mod consolidate;
 pub mod content_key;
 pub mod contradictions;

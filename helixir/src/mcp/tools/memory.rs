@@ -168,7 +168,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'time_from'/'time_to' (RFC3339 or YYYY-MM-DD) bound recall to an explicit EVENT-time window; memories outside the window that are linked to in-window results via the graph still return as FLASHBACKS — flagged metadata.flashback=true with their event_date, capped separately so they never crowd in-window rows. 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording."
+        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'time_from'/'time_to' (RFC3339 or YYYY-MM-DD) bound recall to an explicit EVENT-time window; memories outside the window that are linked to in-window results via the graph still return as FLASHBACKS — flagged metadata.flashback=true with their event_date, capped separately so they never crowd in-window rows. 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording. A result with 'superseded: true' is OUTDATED (ranked down, kept for history) — 'superseded_by' names the current version; never act on a superseded row as current truth."
     )]
     async fn search_memory(
         &self,
@@ -483,7 +483,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Answer a contradiction_review notice: settle a dispute between two memories. Pass the notice's from_id/to_id and your verdict — 'confirm' (my memory stands; both records stay, dispute retired), 'retract' (my memory is outdated; the disputing memory SUPERSEDES it — history preserved, nothing deleted), or 'preference' (both are valid viewpoints; they coexist). Non-destructive in every branch. Once resolved the dispute stops re-surfacing in reconcile passes. Returns {resolved, from_id, to_id, strategy}."
+        description = "Answer a contradiction_review notice: settle a dispute between two memories. Pass the notice's from_id/to_id and your verdict — 'confirm' (my memory stands; both records stay, dispute retired), 'retract' (my memory is outdated; the disputing memory SUPERSEDES it — history preserved, nothing deleted), or 'preference' (both are valid viewpoints; they coexist). Non-destructive in every branch. Once resolved the dispute stops re-surfacing in reconcile passes. Every verdict is recorded as a charter PRECEDENT; after enough identical verdicts the result carries a 'rule_proposal' — a ready-to-adopt standing rule (adopt it verbatim via the add_memory call it dictates, or surface it to your human; adopted rules appear in memory://rules and silence further questions of that shape). Returns {resolved, from_id, to_id, strategy, rule_proposal?}."
     )]
     async fn resolve_contradiction(
         &self,
@@ -535,13 +535,33 @@ impl HelixirMcpServer {
             Err(e) => return Err(McpError::internal_error(e.to_string(), None)),
         };
 
-        let json = Self::result_to_json(json!({
+        // #34 2b: every settled dispute is a PRECEDENT. Record the episode
+        // (best-effort) and, when enough identical verdicts accumulate,
+        // hand the agent a ready-to-adopt rule proposal.
+        let rule_proposal = if resolved {
+            self.client
+                .tooling()
+                .record_charter_precedent(&params.from_id, &params.to_id, strategy)
+                .await
+        } else {
+            None
+        };
+
+        let mut payload = json!({
             "resolved": resolved,
             "from_id": params.from_id,
             "to_id": params.to_id,
             "strategy": strategy,
             "note": if resolved { "dispute retired; it will not re-surface" } else { "no open dispute found for from_id (already resolved?)" },
-        }))?;
+        });
+        if let Some(p) = rule_proposal {
+            payload["rule_proposal"] = json!({
+                "shape": p.shape,
+                "precedents": p.precedents,
+                "proposal": p.proposal,
+            });
+        }
+        let json = Self::result_to_json(payload)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 

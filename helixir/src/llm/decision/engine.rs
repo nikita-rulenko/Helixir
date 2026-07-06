@@ -338,11 +338,17 @@ impl LLMDecisionEngine {
                 gray.len(),
                 items.len() - gray.len()
             );
+            // #96 Lever 1.5: the prompt shows DENSE LOCAL indices 0..n-1.
+            // Gating makes the original indices sparse, and models renumber
+            // sparse lists — every mismatched index used to dump an item into
+            // a per-item call (N extra calls; measured costlier than the
+            // whole infer phase). Local index -> original slot via `gray`.
             let prompt_items: Vec<(usize, &str, &[SimilarMemory])> = gray
                 .iter()
-                .map(|(i, text, cands)| (*i, *text, cands.as_slice()))
+                .enumerate()
+                .map(|(local, (_, text, cands))| (local, *text, cands.as_slice()))
                 .collect();
-            let prompt = super::prompt::build_batch_decision_prompt(&prompt_items, user_id);
+            let base_prompt = super::prompt::build_batch_decision_prompt(&prompt_items, user_id);
 
             #[derive(serde::Deserialize)]
             struct BatchItem {
@@ -355,32 +361,76 @@ impl LLMDecisionEngine {
                 decisions: Vec<BatchItem>,
             }
 
-            let parsed: Option<BatchResponse> = match self
-                .llm
-                .generate(SYSTEM_PROMPT, &prompt, Some("json_object"))
-                .await
-            {
-                Ok((response, _)) => serde_json::from_str(&response)
-                    .map_err(|e| warn!("Batch decision parse failed: {e}"))
-                    .ok(),
-                Err(e) => {
-                    warn!("Batch decision LLM call failed: {e}");
-                    None
-                }
-            };
-
-            if let Some(batch) = parsed {
-                for item in batch.decisions {
-                    let Some((_, _, highly_similar)) = gray.iter().find(|(gi, _, _)| *gi == item.i)
-                    else {
-                        continue;
-                    };
-                    let mut decision = item.decision;
-                    if self.validate_decision(&mut decision, highly_similar)
-                        && decisions.get(item.i).is_some_and(Option::is_none)
-                    {
-                        decisions[item.i] = Some(decision);
+            // Two batched attempts (initial + ONE repair naming the missing
+            // items) before any per-item fallback: a repair retry costs one
+            // call, N per-item fallbacks cost N.
+            let mut prompt = base_prompt.clone();
+            for attempt in 0..2u8 {
+                let parsed: Option<BatchResponse> = match self
+                    .llm
+                    .generate(SYSTEM_PROMPT, &prompt, Some("json_object"))
+                    .await
+                {
+                    Ok((response, _)) => match serde_json::from_str(&response) {
+                        Ok(batch) => Some(batch),
+                        Err(e) => {
+                            // The raw body is the diagnosis — a blind
+                            // fallback here costs more than the whole
+                            // infer phase (#96).
+                            warn!(
+                                "Batch decision parse failed (attempt {attempt}): {e}; response: {}",
+                                crate::safe_truncate(&response, 600)
+                            );
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Batch decision LLM call failed (attempt {attempt}): {e}");
+                        None
                     }
+                };
+
+                if let Some(batch) = parsed {
+                    for item in batch.decisions {
+                        let Some((orig, _, highly_similar)) = gray.get(item.i) else {
+                            warn!(
+                                "Batch decision: response index {} out of range (0..{})",
+                                item.i,
+                                gray.len()
+                            );
+                            continue;
+                        };
+                        let mut decision = item.decision;
+                        if self.validate_decision(&mut decision, highly_similar)
+                            && decisions.get(*orig).is_some_and(Option::is_none)
+                        {
+                            decisions[*orig] = Some(decision);
+                        }
+                    }
+                }
+
+                let missing: Vec<usize> = gray
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (orig, _, _))| decisions[*orig].is_none())
+                    .map(|(local, _)| local)
+                    .collect();
+                if missing.is_empty() {
+                    break;
+                }
+                if attempt == 0 {
+                    self.retry_count.fetch_add(1, Ordering::Relaxed);
+                    info!(
+                        "Batch decision: {} item(s) unresolved after attempt 0, one batched repair",
+                        missing.len()
+                    );
+                    prompt = format!(
+                        "{base_prompt}\n\nIMPORTANT: your previous response was invalid or \
+                         incomplete for item number(s) {missing:?}. Respond again with the \
+                         COMPLETE decisions array — every item number from 0 to {} exactly \
+                         once, valid JSON only, no markdown fences.",
+                        gray.len() - 1
+                    );
                 }
             }
         }
@@ -604,5 +654,132 @@ mod tests {
         assert!(!prompt.contains("LINK_EXISTING"));
         assert!(!prompt.contains("CROSS_CONTRADICT"));
         assert!(!prompt.contains("DIFFERENT USER"));
+    }
+
+    /// #96 Lever 1.5: a scripted provider returning queued responses, with a
+    /// call counter — proves batch reliability without a live LLM.
+    struct ScriptedProvider {
+        responses: std::sync::Mutex<Vec<String>>,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::llm::providers::base::LlmProvider for ScriptedProvider {
+        async fn generate(
+            &self,
+            _system_prompt: &str,
+            _user_prompt: &str,
+            _response_format: Option<&str>,
+        ) -> Result<
+            (String, crate::llm::providers::base::LlmMetadata),
+            crate::llm::providers::base::LlmProviderError,
+        > {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let mut q = self.responses.lock().unwrap();
+            let body = if q.is_empty() {
+                panic!("ScriptedProvider exhausted — more LLM calls than the contract allows")
+            } else {
+                q.remove(0)
+            };
+            Ok((body, crate::llm::providers::base::LlmMetadata::default()))
+        }
+
+        fn provider_name(&self) -> &str {
+            "scripted"
+        }
+
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    fn scripted_engine(responses: Vec<&str>) -> (LLMDecisionEngine, Arc<ScriptedProvider>) {
+        let provider = Arc::new(ScriptedProvider {
+            responses: std::sync::Mutex::new(responses.into_iter().map(String::from).collect()),
+            calls: AtomicUsize::new(0),
+        });
+        (
+            LLMDecisionEngine::with_thresholds(
+                Arc::clone(&provider) as Arc<dyn crate::llm::providers::base::LlmProvider>,
+                0.70,
+                0.98,
+            ),
+            provider,
+        )
+    }
+
+    fn batch_items(specs: &[(&str, f64)]) -> Vec<(String, String, Vec<SimilarMemory>)> {
+        specs
+            .iter()
+            .enumerate()
+            .map(|(n, (text, score))| {
+                (
+                    (*text).to_string(),
+                    "fact".to_string(),
+                    vec![similar(&format!("mem_c{n}"), *score)],
+                )
+            })
+            .collect()
+    }
+
+    /// Gating makes the original indices sparse (item 0 gated here), and the
+    /// model answers with DENSE indices 0..n-1 — exactly what used to dump
+    /// every item into a per-item call. One call must now resolve all three.
+    #[tokio::test]
+    async fn sparse_gray_indices_resolve_in_one_call() {
+        let (engine, provider) = scripted_engine(vec![
+            r#"{"decisions":[
+                {"i":0,"operation":"ADD","confidence":80,"reasoning":"a"},
+                {"i":1,"operation":"ADD","confidence":80,"reasoning":"b"},
+                {"i":2,"operation":"UPDATE","target_memory_id":"mem_c3","confidence":85,"reasoning":"c","merged_content":"m"}
+            ]}"#,
+        ]);
+        // Item 0 gated (exact dup), items 1..3 gray -> local indices 0..2.
+        let items = batch_items(&[
+            ("dup", 0.99),
+            ("gray one", 0.85),
+            ("gray two", 0.85),
+            ("gray three", 0.85),
+        ]);
+        let decisions = engine.decide_batch(&items, "u").await;
+
+        assert_eq!(
+            provider.calls.load(Ordering::Relaxed),
+            1,
+            "one batched call"
+        );
+        assert_eq!(decisions[0].operation, MemoryOperation::Noop); // gated
+        assert_eq!(decisions[1].operation, MemoryOperation::Add);
+        assert_eq!(decisions[2].operation, MemoryOperation::Add);
+        assert_eq!(decisions[3].operation, MemoryOperation::Update);
+        assert_eq!(decisions[3].target_memory_id.as_deref(), Some("mem_c3"));
+    }
+
+    /// An incomplete first response is repaired by ONE batched retry — never
+    /// by N per-item calls (a per-item call would exhaust the script and
+    /// panic, and the call counter pins the total at 2).
+    #[tokio::test]
+    async fn incomplete_batch_repairs_in_one_batched_retry() {
+        let (engine, provider) = scripted_engine(vec![
+            r#"{"decisions":[{"i":0,"operation":"ADD","confidence":80,"reasoning":"only one"}]}"#,
+            r#"{"decisions":[
+                {"i":0,"operation":"ADD","confidence":80,"reasoning":"a"},
+                {"i":1,"operation":"ADD","confidence":80,"reasoning":"b"},
+                {"i":2,"operation":"ADD","confidence":80,"reasoning":"c"}
+            ]}"#,
+        ]);
+        let items = batch_items(&[("g1", 0.85), ("g2", 0.85), ("g3", 0.85)]);
+        let decisions = engine.decide_batch(&items, "u").await;
+
+        assert_eq!(
+            provider.calls.load(Ordering::Relaxed),
+            2,
+            "initial + one batched repair, zero per-item calls"
+        );
+        assert!(
+            decisions
+                .iter()
+                .all(|d| d.operation == MemoryOperation::Add)
+        );
     }
 }

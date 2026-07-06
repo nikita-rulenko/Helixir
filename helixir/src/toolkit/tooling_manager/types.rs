@@ -40,6 +40,13 @@ pub struct Clarification {
     pub existing_memory_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_content: Option<String>,
+    /// Id of the NEW atom that raised this dispute — the `from_id` for
+    /// resolve_contradiction. Backfilled after the atom is stored (meaningful
+    /// under charter_blocking, where the new fact is stored as an ADD next to
+    /// the old one). None when there is no distinct new atom (e.g. Clotho's
+    /// no-category-match escalation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_memory_id: Option<String>,
     /// Question the agent can ask the user verbatim.
     pub suggested_question: String,
     /// What the engine decided (and already did) on its own.
@@ -100,4 +107,38 @@ pub enum ToolingError {
     Search(#[from] SearchError),
     #[error("Database error: {0}")]
     Database(String),
+}
+
+#[cfg(test)]
+mod clarification_tests {
+    use super::Clarification;
+
+    /// #93: the from_id (the new atom's id) must reach the agent so
+    /// `resolve_contradiction(from_id, to_id, …)` is callable, and must be
+    /// OMITTED (not null-noise) when there is no distinct new atom.
+    #[test]
+    fn from_id_is_emitted_when_present_and_skipped_when_none() {
+        let c = Clarification {
+            conflict_type: "protected_type_rewrite".to_string(),
+            new_content: "new".to_string(),
+            existing_memory_id: Some("mem_old".to_string()),
+            existing_content: Some("old".to_string()),
+            new_memory_id: Some("mem_new".to_string()),
+            suggested_question: "q?".to_string(),
+            decision_taken: "DEFERRED".to_string(),
+            confidence: 88,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["new_memory_id"], "mem_new");
+
+        let none = Clarification {
+            new_memory_id: None,
+            ..c
+        };
+        let v = serde_json::to_value(&none).unwrap();
+        assert!(
+            v.get("new_memory_id").is_none(),
+            "a None from_id must be skipped, not serialized as null"
+        );
+    }
 }
