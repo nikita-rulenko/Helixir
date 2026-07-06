@@ -313,7 +313,10 @@ Output ONLY a JSON object: {"relations":[{"atom":0,"candidate":0,"type":"SUPPORT
                 let retry = format!(
                     "{user_prompt}\n\nIMPORTANT: Output ONLY a JSON object like {{\"relations\":[{{\"atom\":0,\"candidate\":0,\"type\":\"SUPPORTS\",\"strength\":70}}]}}. No markdown, no prose."
                 );
-                match llm.generate(system_prompt, &retry, Some("json_object")).await {
+                match llm
+                    .generate(system_prompt, &retry, Some("json_object"))
+                    .await
+                {
                     Ok((r2, _)) => extract_json_array(&r2).map(build).unwrap_or_default(),
                     Err(e) => {
                         warn!("infer_relations_batch retry failed: {e}");
@@ -331,12 +334,15 @@ Output ONLY a JSON object: {"relations":[{"atom":0,"candidate":0,"type":"SUPPORT
 
 #[cfg(test)]
 mod tests {
-    use super::parse_relations_response;
     use super::super::types::ReasoningType;
+    use super::parse_relations_response;
 
     fn cands() -> Vec<(String, String)> {
         vec![
-            ("mem_a".to_string(), "Rust is a systems language".to_string()),
+            (
+                "mem_a".to_string(),
+                "Rust is a systems language".to_string(),
+            ),
             (
                 "mem_b".to_string(),
                 "The compiler enforces ownership".to_string(),

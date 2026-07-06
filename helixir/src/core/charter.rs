@@ -117,8 +117,8 @@ pub fn is_genuine_conflict(shares_subject: bool, target_similarity: f64) -> bool
 pub fn shares_subject(a: &str, b: &str) -> bool {
     fn tokens(s: &str) -> std::collections::HashSet<String> {
         const FILLER: [&str; 12] = [
-            "this", "that", "with", "from", "have", "been", "were", "will", "which",
-            "would", "should", "there",
+            "this", "that", "with", "from", "have", "been", "were", "will", "which", "would",
+            "should", "there",
         ];
         s.split(|c: char| !c.is_alphanumeric())
             .filter(|w| w.chars().count() >= 4)
@@ -225,5 +225,30 @@ mod tests {
         ));
         // Permissive: nothing significant to compare on -> not suppressed.
         assert!(shares_subject("a b c", "totally different"));
+    }
+
+    /// Regression fixtures from the live incidents of 2026-07-05 (#93): the
+    /// pre-guard charter deferred all three of these as conflicts within one
+    /// working day. Pinned verbatim so the guard's decision table provably
+    /// downgrades each to a plain ADD.
+    #[test]
+    fn live_false_positives_of_2026_07_05_are_downgraded() {
+        // Incident 3: completely unrelated content, embedding-adjacent only —
+        // no shared subject token, so similarity is irrelevant.
+        assert!(!shares_subject(
+            "Self-seed Helixir's own principles under user_id=helixir",
+            "The write goes through a short-lived privileged Alpine helper \
+             with pid=host and cgroupns=host"
+        ));
+
+        // Incidents 1+2: a goal and the fact reporting its fulfilment DO
+        // share the subject — the guard must rest on the similarity floor.
+        // Live cosine for goal-vs-outcome elaborations sits in ~0.80-0.86,
+        // under the 0.88 near-restatement floor.
+        assert!(shares_subject(
+            "Goal: implement search with time_from and time_to filters on event time",
+            "Helixir search_memory now accepts time_from and time_to bounds on event time"
+        ));
+        assert!(!is_genuine_conflict(true, 0.86));
     }
 }

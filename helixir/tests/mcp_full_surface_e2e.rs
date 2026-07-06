@@ -411,7 +411,10 @@ fn oracle_relation_inference_across_writes() {
             }),
         );
         let seed_ids = ids_of(&seed);
-        assert!(!seed_ids.is_empty(), "seed write must persist an atom: {seed}");
+        assert!(
+            !seed_ids.is_empty(),
+            "seed write must persist an atom: {seed}"
+        );
 
         // 2. A related follow-up write in a SEPARATE extraction.
         let (follow, _) = mcp.call_tool(
