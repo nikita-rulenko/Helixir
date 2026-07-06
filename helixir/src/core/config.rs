@@ -474,6 +474,13 @@ pub struct WriteConfig {
     /// verdicts (same new-type/old-type/strategy shape), resolve_contradiction
     /// proposes a standing rule. 0 disables precedent learning.
     pub rule_propose_after: usize,
+    /// #96 Lever 2: route SUPPORTS/CONTRADICTS relation inference through the
+    /// local NLI judge instead of the LLM (self-gating: a lean build or a
+    /// missing model silently keeps everything on the LLM).
+    pub nli_route: bool,
+    /// Minimum NLI softmax probability for a routed edge; unconfident pairs
+    /// stay with the LLM.
+    pub nli_route_min_prob: f32,
     /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
     /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
     /// executing — store the new fact alongside the old, record a
@@ -501,6 +508,8 @@ impl Default for WriteConfig {
             context_link_priority: 50,
             charter_low_confidence: 70,
             rule_propose_after: 3,
+            nli_route: true,
+            nli_route_min_prob: 0.85,
             charter_blocking: true,
         }
     }

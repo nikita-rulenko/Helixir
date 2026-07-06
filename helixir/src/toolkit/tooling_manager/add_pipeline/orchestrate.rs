@@ -447,12 +447,28 @@ impl ToolingManager {
         // ONE LLM call (was one independent call per atom, run concurrently).
         // O(1) model calls per write instead of O(N); the edges are identical.
         if !infer_jobs.is_empty() {
-            let inferred = self
-                .reasoning_engine
-                .infer_relations_batch(&infer_jobs)
-                .await
-                .unwrap_or_default();
-            relations_created += self.persist_inferred_relations(&inferred).await;
+            // #96 Lever 2: the local NLI judge takes the SUPPORTS/CONTRADICTS
+            // pairs (sync CPU — block_in_place keeps the runtime honest);
+            // only the residual pairs, where implicit causality may hide,
+            // still pay the LLM. Often the residual is empty.
+            let (routed, residual) =
+                tokio::task::block_in_place(|| self.route_relations_nli(infer_jobs));
+            if !routed.is_empty() {
+                info!(
+                    "NLI routed {} relation(s) off the LLM ({} residual job(s))",
+                    routed.len(),
+                    residual.len()
+                );
+                relations_created += self.persist_inferred_relations(&routed).await;
+            }
+            if !residual.is_empty() {
+                let inferred = self
+                    .reasoning_engine
+                    .infer_relations_batch(&residual)
+                    .await
+                    .unwrap_or_default();
+                relations_created += self.persist_inferred_relations(&inferred).await;
+            }
         }
 
         relations_created += self

@@ -29,6 +29,7 @@ mod cross_user;
 mod decide;
 mod enrich;
 mod entity_links;
+mod nli_route;
 mod orchestrate;
 mod prepare;
 mod recall;
