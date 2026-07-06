@@ -451,8 +451,20 @@ impl ToolingManager {
             // pairs (sync CPU — block_in_place keeps the runtime honest);
             // only the residual pairs, where implicit causality may hide,
             // still pay the LLM. Often the residual is empty.
-            let (routed, residual) =
-                tokio::task::block_in_place(|| self.route_relations_nli(infer_jobs));
+            let enabled = self.config.write.nli_route;
+            let min_prob = self.config.write.nli_route_min_prob;
+            let jobs_backup = infer_jobs.clone();
+            let (routed, residual) = match tokio::task::spawn_blocking(move || {
+                super::nli_route::route_jobs(infer_jobs, enabled, min_prob)
+            })
+            .await
+            {
+                Ok(split) => split,
+                Err(e) => {
+                    warn!("NLI routing task failed ({e}); all pairs go to the LLM");
+                    (Vec::new(), jobs_backup)
+                }
+            };
             if !routed.is_empty() {
                 info!(
                     "NLI routed {} relation(s) off the LLM ({} residual job(s))",

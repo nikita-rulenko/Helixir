@@ -151,6 +151,12 @@ experience, "I shipped X" → achievement. Typed memories are findable
 memories — `search_by_concept` and the charter's protections only work
 when the type lands.
 
+Every `resolve_contradiction` verdict teaches the charter: after several
+identical verdicts the result carries a `rule_proposal` — adopt it with the
+`add_memory` call it dictates; adopted rules render in `memory://rules` and
+silence that question shape. A result with `superseded: true` is history —
+`superseded_by` names the current version; never act on it as current truth.
+
 To recall a period, pass `time_from`/`time_to` (RFC3339 or `YYYY-MM-DD`) to
 `search_memory`. Direct answers stay inside the window (event time); linked
 memories from outside return flagged `flashback: true` with their

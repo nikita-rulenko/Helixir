@@ -203,6 +203,16 @@ impl McpClient {
         self.stdin.flush().expect("flush");
     }
 
+    /// Read an MCP resource and return its text content (#34 2b tests).
+    #[allow(dead_code)] // each e2e binary compiles common/ separately
+    pub fn read_resource(&mut self, uri: &str) -> String {
+        let result = self.request("resources/read", json!({"uri": uri}));
+        result["contents"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("resource {uri}: no text content in {result}"))
+            .to_string()
+    }
+
     /// Calls a tool and returns (parsed inner JSON payload, wall ms).
     pub fn call_tool(&mut self, name: &str, arguments: Value) -> (Value, f64) {
         let t0 = Instant::now();

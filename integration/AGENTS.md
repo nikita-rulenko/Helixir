@@ -109,6 +109,14 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   skill, "my goal is X" → goal, "I think X" → opinion, "doing X, I realized
   Y" → experience, "I shipped X" → achievement. `search_by_concept` and the
   charter's rewrite protections only work when the type lands.
+- **The charter learns from your verdicts**: every `resolve_contradiction`
+  becomes a precedent; after several identical verdicts the result carries a
+  `rule_proposal` — adopt it with the exact `add_memory` call it dictates
+  (or show it to your human first). Adopted rules appear in `memory://rules`
+  and silence future questions of that shape.
+- **Superseded results are history**: a result with `superseded: true` was
+  replaced (`superseded_by` names the current version). Never act on it as
+  current truth — prefer the successor.
 - **Time windows and flashbacks**: to recall a period, pass `time_from` /
   `time_to` (RFC3339 or `YYYY-MM-DD`) to `search_memory`. The window bounds
   direct answers by EVENT time; memories outside it that are linked to

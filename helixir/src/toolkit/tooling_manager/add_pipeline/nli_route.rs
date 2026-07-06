@@ -17,8 +17,6 @@ use crate::toolkit::mind_toolbox::reasoning::ReasoningRelation;
 #[cfg(feature = "nli")]
 use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
 
-use super::super::ToolingManager;
-
 /// (new_id, new_content, candidates[(id, content)]) — the Phase D job shape.
 pub(super) type InferJob = (String, String, Vec<(String, String)>);
 
@@ -55,15 +53,18 @@ mod judge {
     }
 }
 
-impl ToolingManager {
-    /// Split the Phase D jobs: pairs the NLI judge decides confidently come
-    /// back as ready relations; everything else returns as residual jobs
-    /// for the LLM. Synchronous CPU — call inside `block_in_place`.
-    pub(super) fn route_relations_nli(
-        &self,
-        jobs: Vec<InferJob>,
-    ) -> (Vec<ReasoningRelation>, Vec<InferJob>) {
-        if !self.config.write.nli_route {
+/// Split the Phase D jobs: pairs the NLI judge decides confidently come
+/// back as ready relations; everything else returns as residual jobs for
+/// the LLM. Synchronous CPU — a free fn with owned inputs so callers can
+/// run it on `spawn_blocking` (NOT `block_in_place`, which panics on a
+/// current-thread runtime — caught by nli_route_e2e under #[tokio::test]).
+pub(super) fn route_jobs(
+    jobs: Vec<InferJob>,
+    enabled: bool,
+    #[cfg_attr(not(feature = "nli"), allow(unused_variables))] min_prob: f32,
+) -> (Vec<ReasoningRelation>, Vec<InferJob>) {
+    {
+        if !enabled {
             return (Vec::new(), jobs);
         }
         #[cfg(not(feature = "nli"))]
@@ -75,7 +76,6 @@ impl ToolingManager {
             let Some(judge) = judge::get() else {
                 return (Vec::new(), jobs);
             };
-            let min_prob = self.config.write.nli_route_min_prob;
             let mut routed = Vec::new();
             let mut residual = Vec::new();
 
