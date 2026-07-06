@@ -16,6 +16,8 @@
 pub mod merge;
 pub mod reconcile;
 
+pub mod verify;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tracing::{info, warn};

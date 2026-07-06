@@ -710,6 +710,7 @@ async fn daemon_run(
         merge_every: merge_every.unwrap_or(d.merge_every_passes),
         reconcile_every: reconcile_every.unwrap_or(d.reconcile_every_passes),
         stitch_every: d.stitch_every_passes,
+        verify_every: d.verify_every_passes,
     };
     client
         .daemon()
