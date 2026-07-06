@@ -165,7 +165,7 @@ impl SearchEngine {
                             controversy: None,
                         })
                         .collect();
-                    clamp_with_flashbacks(mapped, limit, flashback_max)
+                    mapped
                 } else {
                     self.vector_search_unified(query, effective_user_id, limit)
                         .await?
@@ -204,7 +204,7 @@ impl SearchEngine {
                             controversy: None,
                         })
                         .collect();
-                    clamp_with_flashbacks(mapped, limit, flashback_max)
+                    mapped
                 } else {
                     self.vector_search_unified(query, effective_user_id, limit)
                         .await?
@@ -248,7 +248,7 @@ impl SearchEngine {
                             controversy: None,
                         })
                         .collect();
-                    clamp_with_flashbacks(mapped, limit, flashback_max)
+                    mapped
                 } else {
                     debug!("SmartTraversal not available, returning empty for full mode");
                     Vec::new()
@@ -261,7 +261,12 @@ impl SearchEngine {
             }
         };
 
-        let mut final_results = results;
+        // #92: an append-only store must not let a stale high-PPR hub outrank
+        // its own corrections forever. Demote superseded rows BEFORE the
+        // honest clamp, so the successor wins the window.
+        let mut results = results;
+        self.demote_superseded(&mut results, limit).await;
+        let mut final_results = clamp_with_flashbacks(results, limit, flashback_max);
 
         if (scope == "collective" || scope == "all") && !final_results.is_empty() {
             let enrichment_futures: Vec<_> = final_results
@@ -433,6 +438,109 @@ impl SearchEngine {
             if let Some(row) = results.iter_mut().find(|r| r.memory_id == keeper) {
                 row.metadata.insert("collapsed".to_string(), json!(folded));
             }
+        }
+    }
+
+    /// #92: superseded rows lose ranking priority. A densely-linked stale
+    /// hub carries PPR mass its own corrections cannot beat (observed live:
+    /// stale fact at 0.926/ppr=1.0 above two explicit corrections) — so a
+    /// row with an incoming SUPERSEDES edge gets its score multiplied by
+    /// `retrieval.superseded_penalty` and an honest `superseded: true` +
+    /// `superseded_by` in metadata. Reachability is untouched: the row still
+    /// returns, ranked below its successor. Checked only for the top window
+    /// (a stale hub is by definition ranked high); best-effort — a DB error
+    /// leaves ranking as-is.
+    async fn demote_superseded(&self, results: &mut Vec<UnifiedSearchResult>, limit: usize) {
+        let penalty = self.config.retrieval.superseded_penalty;
+        if penalty >= 1.0 || results.is_empty() {
+            return;
+        }
+        let window = (limit * 3).clamp(limit, 60).min(results.len());
+        let ids: Vec<&str> = results[..window]
+            .iter()
+            .map(|r| r.memory_id.as_str())
+            .collect();
+
+        #[derive(serde::Deserialize)]
+        struct Node {
+            #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+            id: String,
+            #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+            memory_id: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Edge {
+            #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+            from_node: String,
+            #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+            to_node: String,
+        }
+        #[derive(serde::Deserialize, Default)]
+        struct Resp {
+            #[serde(default)]
+            memories: Vec<Node>,
+            #[serde(default)]
+            superseded_edges: Vec<Edge>,
+            #[serde(default)]
+            successors: Vec<Node>,
+        }
+
+        let resp: Resp = match self
+            .client
+            .execute_query("getSupersededBatch", &json!({ "memory_ids": ids }))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                debug!("superseded check skipped ({e})");
+                return;
+            }
+        };
+        if resp.superseded_edges.is_empty() {
+            return;
+        }
+
+        let mut uuid_to_mid: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for n in resp.memories.iter().chain(resp.successors.iter()) {
+            if !n.id.is_empty() && !n.memory_id.is_empty() {
+                uuid_to_mid.insert(n.id.as_str(), n.memory_id.as_str());
+            }
+        }
+
+        let mut demoted = 0usize;
+        for edge in &resp.superseded_edges {
+            let Some(stale_mid) = uuid_to_mid.get(edge.to_node.as_str()) else {
+                continue;
+            };
+            let successor_mid = uuid_to_mid.get(edge.from_node.as_str()).copied();
+            if let Some(row) = results[..window]
+                .iter_mut()
+                .find(|r| r.memory_id == *stale_mid)
+            {
+                // Idempotent under multiple SUPERSEDES edges: penalize once.
+                if row.metadata.contains_key("superseded") {
+                    continue;
+                }
+                row.score *= penalty as f32;
+                row.metadata
+                    .insert("superseded".to_string(), serde_json::Value::Bool(true));
+                if let Some(succ) = successor_mid {
+                    row.metadata.insert(
+                        "superseded_by".to_string(),
+                        serde_json::Value::String(succ.to_string()),
+                    );
+                }
+                demoted += 1;
+            }
+        }
+        if demoted > 0 {
+            info!("Superseded demotion (#92): {demoted} stale row(s) penalized x{penalty}");
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
     }
 

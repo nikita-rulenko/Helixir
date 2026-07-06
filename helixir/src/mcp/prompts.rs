@@ -235,6 +235,9 @@ preferences?" and "what have I learned from experience?" return nothing.
   folded ids stay reachable — fetch one explicitly if you need exact wording.
 - Recalls are CAPPED (top-K by score with a floor). If a recall looks thin,
   ask a sharper question or raise `limit` — do not assume the memory is empty.
+- A result with `superseded: true` is OUTDATED — a newer memory replaced it
+  (`superseded_by` names it). It stays reachable for history, but never act
+  on it as current truth; prefer the successor.
 - To recall a PERIOD ("what happened in June", "before the migration"), pass
   `time_from`/`time_to` (RFC3339 or YYYY-MM-DD) to search_memory. The window
   bounds direct answers by EVENT time; memories OUTSIDE it that are linked to

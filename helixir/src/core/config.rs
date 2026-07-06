@@ -217,6 +217,11 @@ pub struct RetrievalConfig {
     /// dense graphs; rows past the cap keep rank-based scores and remain
     /// reachable via PPR.
     pub rerank_max_rows: usize,
+    /// #92: score multiplier for rows with an incoming SUPERSEDES edge — a
+    /// stale hub must rank below its own corrections, while staying fully
+    /// reachable (and honestly flagged `superseded` in metadata). 1.0
+    /// disables the demotion.
+    pub superseded_penalty: f64,
     pub search_modes: SearchModesConfig,
 }
 impl Default for RetrievalConfig {
@@ -235,6 +240,7 @@ impl Default for RetrievalConfig {
             cross_user_cache_ttl_secs: 60,
             flashback_max: 3,
             rerank_max_rows: 128,
+            superseded_penalty: 0.6,
             search_modes: SearchModesConfig::default(),
         }
     }

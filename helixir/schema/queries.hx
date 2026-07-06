@@ -139,6 +139,11 @@ QUERY getSupersededMemories(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   superseded <- memory::Out<SUPERSEDES>
   RETURN superseded
+QUERY getSupersededBatch(memory_ids: [String]) =>
+  memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
+  superseded_edges <- memories::InE<SUPERSEDES>
+  successors <- memories::In<SUPERSEDES>
+  RETURN memories, superseded_edges, successors
 QUERY getSupersedingMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   superseding <- memory::In<SUPERSEDES>
