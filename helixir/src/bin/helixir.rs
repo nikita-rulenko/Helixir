@@ -40,6 +40,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Memory charter review: adopted learned rules + precedent counts (#34).
+    Charter,
     /// List categories with member counts (tag coverage / subset sizes).
     Categories {
         #[arg(long, default_value_t = 500)]
@@ -414,6 +416,7 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
         Cmd::Heartbeat { .. } => "heartbeat",
         Cmd::Debt { .. } => "debt",
         Cmd::Watch { .. } => "watch",
+        Cmd::Charter => "charter",
         Cmd::Health { .. } => "health",
         _ => "command",
     }
@@ -577,6 +580,7 @@ async fn main() -> Result<()> {
     }
 
     match cli.cmd {
+        Cmd::Charter => charter_review(&client).await?,
         Cmd::Categories { limit } => categories(&client, limit).await?,
         Cmd::Clotho { cmd } => match cmd {
             ClothoCmd::Seed => clotho_seed(&client).await?,
@@ -813,6 +817,39 @@ async fn atropos_run(
         "run",
         &format!("seeds={} insights={}", seeds.len(), insights.len()),
     );
+    Ok(())
+}
+
+async fn charter_review(client: &HelixirClient) -> Result<()> {
+    let tooling = client.tooling();
+    let threshold = client.config().write.rule_propose_after;
+    let rules = tooling.learned_charter_rules().await;
+    let precedents = tooling.charter_precedent_counts().await;
+
+    println!("Memory charter — constitution + learned rules");
+    println!("  constitution: helixir/memory-charter.md (override: ~/.helixir/memory-charter.md)");
+    println!("  full text with learned rules: MCP resource memory://rules\n");
+
+    println!("Adopted rules: {}", rules.len());
+    for r in &rules {
+        println!("  - {}", r.chars().take(120).collect::<String>());
+    }
+
+    println!("\nPrecedents by shape (proposal after {threshold} identical verdicts):");
+    if precedents.is_empty() {
+        println!("  (none yet — precedents accumulate from resolve_contradiction verdicts)");
+    }
+    for (shape, n) in &precedents {
+        let adopted = rules.iter().any(|r| r.contains(&format!("[{shape}]")));
+        let status = if adopted {
+            "rule adopted".to_string()
+        } else if *n >= threshold {
+            "proposal ripe — next identical verdict returns it".to_string()
+        } else {
+            format!("{} more to a proposal", threshold - n)
+        };
+        println!("  {shape}: {n} episode(s) — {status}");
+    }
     Ok(())
 }
 

@@ -207,6 +207,44 @@ impl ToolingManager {
         })
     }
 
+    /// Precedent episode counts grouped by shape — the review surface for
+    /// `helixir charter` ("N more identical verdicts to a proposal").
+    pub async fn charter_precedent_counts(&self) -> Vec<(String, usize)> {
+        #[derive(Deserialize)]
+        struct Row {
+            #[serde(default)]
+            content: String,
+            #[serde(default)]
+            context_tags: String,
+        }
+        #[derive(Deserialize)]
+        struct Rows {
+            #[serde(default)]
+            memories: Vec<Row>,
+        }
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        if let Ok(rows) = self
+            .db
+            .execute_query::<Rows, _>(
+                "searchMemoriesByBm25",
+                &serde_json::json!({"text": "Charter precedent", "limit": 500}),
+            )
+            .await
+        {
+            for r in rows.memories {
+                if r.content.starts_with("Charter precedent")
+                    && r.context_tags.starts_with(PRECEDENT_TAG_PREFIX)
+                {
+                    let shape = r.context_tags[PRECEDENT_TAG_PREFIX.len()..].to_string();
+                    *counts.entry(shape).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut v: Vec<(String, usize)> = counts.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        v
+    }
+
     /// Adopted learned rules, for the `memory://rules` resource — rendered
     /// beside (never inside) the constitution.
     pub async fn learned_charter_rules(&self) -> Vec<String> {
