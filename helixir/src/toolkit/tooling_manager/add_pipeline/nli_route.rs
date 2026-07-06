@@ -13,7 +13,9 @@
 //! a source build may lack the downloaded model — in both cases the router
 //! is a no-op and every pair flows to the LLM as before.
 
-use crate::toolkit::mind_toolbox::reasoning::{ReasoningRelation, ReasoningType};
+use crate::toolkit::mind_toolbox::reasoning::ReasoningRelation;
+#[cfg(feature = "nli")]
+use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
 
 use super::super::ToolingManager;
 
