@@ -12,3 +12,5 @@ pub use decision::{LLMDecisionEngine, MemoryDecision, MemoryOperation, SimilarMe
 
 pub use embeddings::{EmbeddingConfig, EmbeddingGenerator};
 pub use extractor::LlmExtractor;
+pub use factory::LlmProviderFactory;
+pub use providers::base::LlmProvider;
