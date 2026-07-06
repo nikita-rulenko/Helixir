@@ -133,6 +133,9 @@ Search results are capped and deduplicated. `metadata.collapsed` on a result
 lists same-story ids folded under it (content reachable by id — never lost).
 BECAUSE edges tagged `lachesis-stitch` are retroactive hypotheses from a
 background pass — present them as suspected links, not settled facts.
+Generated insights carry lifecycle labels: `HYPOTHESIS (generated, ...)` =
+unverified, `VERIFIED (generated, ...)` = survived witness review,
+`RETIRED hypothesis` = failed review (demoted, kept for history).
 `think_status.thoughts_left` shows session headroom; `think_conclude` works
 even at 0.
 

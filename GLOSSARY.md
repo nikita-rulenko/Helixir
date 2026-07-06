@@ -169,6 +169,19 @@ contradiction) edges before the LLM is consulted — part of making the
 write path cheap (#96). Neutral or unconfident pairs still go to the
 model; lean builds without the `nli` feature route everything to the LLM.
 
+**Polysemy guard.** Lachesis' defence against apophenia hubs (#91): a
+routed thread truncates at a pivot category whose neighbours sit in
+different communities (label propagation over the PMI adjacency) with no
+direct link between them — one word bridging two unrelated senses
+("benchmarking": finance vs software). Genuine cross-domain links pass.
+(`lachesis.polysemy_guard`)
+
+**Verification duty.** Atropos' answer to insight debt (#91): aging
+hypotheses get an adversarial review against their witness memories —
+promote (relabelled `VERIFIED`), retire (superseded by a retirement note,
+auto-demoted in search), or keep. Witness-less hypotheses retire as
+unverifiable past `atropos.verify_unverifiable_age_hours`.
+
 ## Write path
 
 **Content key / content-addressed dedup.** A normalized hash of (content,

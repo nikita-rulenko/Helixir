@@ -230,6 +230,11 @@ preferences?" and "what have I learned from experience?" return nothing.
   by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
   provenance, not asserted truth — trust it like a colleague's "I think these
   are connected", and say so when you present it to the user.
+- Generated insights carry their lifecycle in the text: `HYPOTHESIS
+  (generated, requires verification)` = an unverified lead; `VERIFIED
+  (generated, confirmed by review)` = it survived an adversarial check
+  against its witness memories; `RETIRED hypothesis` = it failed review
+  (kept for history, demoted in ranking). Trust accordingly.
 - A search result whose metadata has `collapsed: [ids]` is one story shown
   once: a raw source and its extracted atoms never coexist in a window. The
   folded ids stay reachable — fetch one explicitly if you need exact wording.
