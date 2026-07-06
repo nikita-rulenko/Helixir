@@ -309,14 +309,15 @@ Each extracted memory MUST have a memory_type from EXACTLY one of these 8 types:
   Example: "My goal is to become a grandmaster" or "I want to build a database engine"
 - "opinion": A subjective belief, judgment, or viewpoint.
   Example: "In my opinion, Rust is the best language" or "I think chess is the ultimate test"
-- "experience": A past event, situation, or something that happened to the person.
-  Example: "I lived in Tokyo for two years" or "I went through a career change"
+- "experience": A past event, situation, or something lived through, observed, or felt by the person OR the agent — especially a first-person REFLECTION or PERCEPTION, not a bare action.
+  Example (human): "I lived in Tokyo for two years" or "I went through a career change"
+  Example (agent): "Auditing my own memory, I realized I was reading notes left by a past instance of myself" or "Running the migration, I noticed the schema was already wrong"
 - "achievement": A specific accomplishment, milestone, or completed goal.
   Example: "I achieved winning a tournament" or "I built a working compiler"
   NOTE: "I achieved X" or "I built/completed/finished X" is ALWAYS an achievement, never an experience.
 - "action": A specific action performed, a task executed, or an operation carried out.
   Example: "I deployed the server" or "I ran the database migration"
-  NOTE: "I did X", "I ran X", "I executed X", "I performed X" is ALWAYS an action, not an experience or fact.
+  NOTE: a BARE "I did/ran/executed/performed X" is an action. BUT if the sentence centers on what was NOTICED, REALIZED, or FELT while doing it ("running X, I realized Y"), classify that reflective statement as an experience, not an action.
 
 Output JSON with this structure:
 {
@@ -464,7 +465,8 @@ Rules:
 - Use ALL 8 memory_type values when appropriate. Do not collapse skill/achievement into fact/experience, and do not collapse action into experience.
 - "skilled at", "can", "able to", "expert in" → always "skill".
 - "achieved", "built", "completed", "finished", "won" → always "achievement".
-- When uncertain between two types, prefer the more specific one (skill > fact, achievement > experience).
+- "noticed", "realized", "observed", "felt", "witnessed", "went through", "found myself" → prefer "experience" (a reflection/perception, not a bare action or fact).
+- When uncertain between two types, prefer the more specific one (skill > fact, achievement > experience) — EXCEPT a first-person reflective/perceptual past statement ("I realized…", "it felt like…") is an experience even when it also mentions an accomplishment.
 - Extract entities for EVERY named thing: people, tools, languages, frameworks, systems, projects.
 - If you see causal or logical connections between extracted memories (cause→effect, evidence→conclusion, contradiction), you MUST include them in the "relations" array.
 

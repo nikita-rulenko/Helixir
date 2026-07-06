@@ -323,6 +323,44 @@ async fn read_path_e2e() {
         "causal mode must restore at least one BECAUSE cause with content"
     );
 
+    // ---------- 4f. relation-inference baseline (guards #96 batch-infer) ----------
+    // The golden corpus is built through the write pipeline's relation
+    // inference. Pin, read-side and LLM-free, that inference does NOT collapse
+    // the graph-of-why to a single edge type: a batched re-implementation (#96),
+    // re-seeded onto a fresh store, must still yield MULTIPLE typed relations.
+    const TYPED: [&str; 7] = [
+        "BECAUSE",
+        "IMPLIES",
+        "SUPPORTS",
+        "CONTRADICTS",
+        "RELATES_TO",
+        "PART_OF",
+        "IS_A",
+    ];
+    let infer_chains = client
+        .search_reasoning_chain(
+            "postgres sqlite migration checkout latency metrics",
+            USER,
+            Some("both"),
+            Some(8),
+            Some(6),
+        )
+        .await
+        .expect("relation-inference chains");
+    let rel_types: std::collections::HashSet<String> = infer_chains
+        .chains
+        .iter()
+        .flat_map(|c| c.nodes.iter())
+        .map(|n| n.relation.clone())
+        .filter(|r| TYPED.contains(&r.as_str()))
+        .collect();
+    assert!(
+        rel_types.len() >= 2,
+        "relation inference must not collapse the golden graph-of-why to one \
+         edge type (guards #96 batch-infer); got {rel_types:?}"
+    );
+    println!("relation-inference: golden chains expose types {rel_types:?}");
+
     // ---------- 4c. collective scope (Hive shared graph) ----------
     let t0 = Instant::now();
     let collective = client

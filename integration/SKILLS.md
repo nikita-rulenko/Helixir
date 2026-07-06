@@ -145,6 +145,12 @@ BECAUSE, "is part of" → PART_OF, "is a kind of" → IS_A (EN and RU). State
 causes and structure explicitly — that is what later answers "why" without
 an LLM call.
 
+Write for the ontology too: "I prefer X" → preference, "I can X" → skill,
+"my goal is X" → goal, "I think X" → opinion, "doing X, I realized Y" →
+experience, "I shipped X" → achievement. Typed memories are findable
+memories — `search_by_concept` and the charter's protections only work
+when the type lands.
+
 To recall a period, pass `time_from`/`time_to` (RFC3339 or `YYYY-MM-DD`) to
 `search_memory`. Direct answers stay inside the window (event time); linked
 memories from outside return flagged `flashback: true` with their

@@ -92,6 +92,47 @@ pub fn suggested_question(conflict_type: &str, new_content: &str, existing: &str
     }
 }
 
+/// A Contradict/rewrite verdict is a GENUINE conflict only when the new atom
+/// and its target are about the same subject AND the new atom NEARLY restates
+/// the target (high similarity) — i.e. a value reversal or a direct
+/// contradiction. A complementary elaboration shares the subject but adds new
+/// content (lower similarity); an unrelated neighbour shares no subject. Both
+/// are over-eager charter flags (#93) that the write path downgrades to a plain
+/// ADD. Kept a const invariant on purpose, like [`PROTECTED_TYPES`].
+pub const CONFLICT_SIMILARITY_FLOOR: f64 = 0.88;
+
+/// See [`CONFLICT_SIMILARITY_FLOOR`]. `target_similarity` is the retrieval
+/// score of the memory being contradicted/rewritten.
+#[must_use]
+pub fn is_genuine_conflict(shares_subject: bool, target_similarity: f64) -> bool {
+    shares_subject && target_similarity >= CONFLICT_SIMILARITY_FLOOR
+}
+
+/// Cheap subject-overlap test — a deterministic stand-in for entity overlap
+/// that needs no graph lookup: do the two contents share a significant token
+/// (case-folded, length >= 4, minus a few structural fillers)? Kept PERMISSIVE
+/// on purpose — when there is nothing to compare it returns true, so the guard
+/// errs toward keeping an escalation rather than suppressing a real conflict.
+#[must_use]
+pub fn shares_subject(a: &str, b: &str) -> bool {
+    fn tokens(s: &str) -> std::collections::HashSet<String> {
+        const FILLER: [&str; 12] = [
+            "this", "that", "with", "from", "have", "been", "were", "will", "which", "would",
+            "should", "there",
+        ];
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.chars().count() >= 4)
+            .map(str::to_lowercase)
+            .filter(|w| !FILLER.contains(&w.as_str()))
+            .collect()
+    }
+    let ta = tokens(a);
+    if ta.is_empty() {
+        return true;
+    }
+    ta.intersection(&tokens(b)).next().is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +200,55 @@ mod tests {
             escalation_reason(&decision(MemoryOperation::Noop, 10), "preference", None, 70),
             None
         );
+    }
+
+    #[test]
+    fn genuine_conflict_needs_shared_subject_and_high_similarity() {
+        // Real reversal / value contradiction: same subject, near restatement.
+        assert!(is_genuine_conflict(true, 0.96));
+        // Complementary elaboration (#93): same subject, only moderate similarity.
+        assert!(!is_genuine_conflict(true, 0.80));
+        // Unrelated neighbour: no shared subject, however similar the embedding.
+        assert!(!is_genuine_conflict(false, 0.99));
+    }
+
+    #[test]
+    fn shares_subject_spots_overlap_and_absence() {
+        // Anti-gaslight case must still count as shared-subject (→ escalates).
+        assert!(shares_subject(
+            "lithium is 10-20% of cathode cost",
+            "lithium is 5-8% of cell cost"
+        ));
+        assert!(!shares_subject(
+            "the deployment pipeline uses ArgoCD",
+            "cats enjoy sleeping near warm radiators"
+        ));
+        // Permissive: nothing significant to compare on -> not suppressed.
+        assert!(shares_subject("a b c", "totally different"));
+    }
+
+    /// Regression fixtures from the live incidents of 2026-07-05 (#93): the
+    /// pre-guard charter deferred all three of these as conflicts within one
+    /// working day. Pinned verbatim so the guard's decision table provably
+    /// downgrades each to a plain ADD.
+    #[test]
+    fn live_false_positives_of_2026_07_05_are_downgraded() {
+        // Incident 3: completely unrelated content, embedding-adjacent only —
+        // no shared subject token, so similarity is irrelevant.
+        assert!(!shares_subject(
+            "Self-seed Helixir's own principles under user_id=helixir",
+            "The write goes through a short-lived privileged Alpine helper \
+             with pid=host and cgroupns=host"
+        ));
+
+        // Incidents 1+2: a goal and the fact reporting its fulfilment DO
+        // share the subject — the guard must rest on the similarity floor.
+        // Live cosine for goal-vs-outcome elaborations sits in ~0.80-0.86,
+        // under the 0.88 near-restatement floor.
+        assert!(shares_subject(
+            "Goal: implement search with time_from and time_to filters on event time",
+            "Helixir search_memory now accepts time_from and time_to bounds on event time"
+        ));
+        assert!(!is_genuine_conflict(true, 0.86));
     }
 }

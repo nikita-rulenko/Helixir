@@ -131,6 +131,7 @@ impl<'a> Clotho<'a> {
                 new_content: content.chars().take(200).collect(),
                 existing_memory_id: Some(memory_id.to_string()),
                 existing_content: None,
+                new_memory_id: None,
                 suggested_question: format!(
                     "No dictionary category fits this memory above the {threshold:.2} \
                      similarity bar. Create a new category for it, or leave it untagged?"
