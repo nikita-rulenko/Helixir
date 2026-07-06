@@ -212,6 +212,19 @@ Prefer stating causes and structure explicitly over implying them — the graph
 cannot see inside an atom, and a typed edge is what later answers "why" and
 "what is this made of" without an LLM call.
 
+### Writing for the ontology — typed memories are findable memories:
+`search_by_concept` and the charter's protections only work when the TYPE
+lands, and the type lands when the wording is explicit. Don't flatten
+everything into fact-speak — say what kind of thing it is:
+- "I prefer X over Y" → preference (protected from silent rewrites)
+- "I can / I'm able to X" → skill
+- "My goal is X" / "I want to X" → goal (protected)
+- "I think / in my view X" → opinion (protected)
+- "Doing X, I realized/noticed Y" → experience (your reflections matter)
+- "I completed/built/shipped X" → achievement; bare "I did X" → action
+A store that is 85% `fact` (observed live) is a store where "what are my
+preferences?" and "what have I learned from experience?" return nothing.
+
 ### Reading chains and results — what the annotations mean:
 - A BECAUSE edge whose provenance is `lachesis-stitch` was built RETROACTIVELY
   by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
