@@ -328,6 +328,14 @@ Your outbox (`pending_outcomes` on any add_memory) may carry:
 - `ops_alert` — the memory's own health watchdog (Hygieia) reporting an
   incident or a self-heal; surface it to your human.
 
+The charter LEARNS from your verdicts: each resolve is recorded as a
+precedent, and after several identical verdicts `resolve_contradiction`
+returns a `rule_proposal` — a standing rule ready to adopt with the exact
+add_memory call it dictates (or show it to your human first). Adopted
+rules appear in the `memory://rules` resource beside the constitution and
+silence future questions of that shape. The constitution itself never
+self-learns — only these rules do.
+
 </swarm_protocol>
 
 <fastthink_protocol>

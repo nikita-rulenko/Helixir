@@ -470,6 +470,10 @@ pub struct WriteConfig {
     pub context_link_priority: i64,
     /// Charter C5: confidence below which a rewrite is escalated to the human.
     pub charter_low_confidence: u8,
+    /// #34 increment 2b: after this many IDENTICAL contradiction-review
+    /// verdicts (same new-type/old-type/strategy shape), resolve_contradiction
+    /// proposes a standing rule. 0 disables precedent learning.
+    pub rule_propose_after: usize,
     /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
     /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
     /// executing — store the new fact alongside the old, record a
@@ -496,6 +500,7 @@ impl Default for WriteConfig {
             fallback_importance: 50,
             context_link_priority: 50,
             charter_low_confidence: 70,
+            rule_propose_after: 3,
             charter_blocking: true,
         }
     }

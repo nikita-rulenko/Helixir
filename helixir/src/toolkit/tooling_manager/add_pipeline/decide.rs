@@ -31,6 +31,22 @@ impl ToolingManager {
         chunks_created: &mut usize,
         relations_created: &mut usize,
     ) -> Result<Option<String>, ToolingError> {
+        // #34 2b: an adopted charter rule announces itself in its text
+        // ("Charter rule [shape]: ..."). Stamp the exact rule tag so the
+        // shape becomes countable and the proposal for it goes quiet.
+        let rule_tag: Option<String> = memory
+            .text
+            .strip_prefix("Charter rule [")
+            .and_then(|rest| rest.split_once(']'))
+            .map(|(shape, _)| {
+                format!(
+                    "{}{}",
+                    crate::toolkit::tooling_manager::charter_rules::RULE_TAG_PREFIX,
+                    shape.trim()
+                )
+            });
+        let tags: &str = rule_tag.as_deref().unwrap_or(tags);
+
         let memory_id = match decision.operation {
             MemoryOperation::Noop => {
                 debug!("NOOP: duplicate memory");

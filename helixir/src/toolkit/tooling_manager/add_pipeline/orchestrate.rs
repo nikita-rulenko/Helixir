@@ -30,11 +30,30 @@ impl ToolingManager {
         );
 
         debug!("Step 1: LLM extraction");
-        let extraction = self
-            .extractor
-            .extract(message, user_id, true, true)
-            .await
-            .map_err(|e| ToolingError::Extraction(e.to_string()))?;
+        // #34 2b: an adopted charter rule is a VERBATIM artifact, not a story
+        // to atomize — extraction would rephrase it and the rule tag (stamped
+        // by prefix in decide.rs) would never land. Deterministic single-atom
+        // path, no LLM.
+        let extraction = if message.trim_start().starts_with("Charter rule [") {
+            info!("charter-rule write: verbatim single-atom path (no extraction)");
+            crate::llm::extractor::ExtractionResult {
+                memories: vec![crate::llm::extractor::ExtractedMemory {
+                    text: message.trim().to_string(),
+                    memory_type: "fact".to_string(),
+                    certainty: 95,
+                    importance: 70,
+                    entities: vec![],
+                    context: None,
+                }],
+                entities: vec![],
+                relations: vec![],
+            }
+        } else {
+            self.extractor
+                .extract(message, user_id, true, true)
+                .await
+                .map_err(|e| ToolingError::Extraction(e.to_string()))?
+        };
 
         info!(
             "Extracted {} memories, {} entities, {} relations",
