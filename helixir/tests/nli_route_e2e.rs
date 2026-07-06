@@ -11,6 +11,8 @@
 //!   cargo test -p helixir --test nli_route_e2e -- --ignored --nocapture
 //! ```
 
+#![cfg(feature = "nli")]
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
@@ -32,12 +34,6 @@ fn atom(text: &str) -> ExtractedMemory {
 async fn nli_routes_a_typed_edge_with_a_dead_llm() {
     assert_eq!(std::env::var("HELIX_E2E").unwrap_or_default(), "1");
 
-    #[cfg(not(feature = "nli"))]
-    {
-        println!("SKIP: built without the nli feature");
-        return;
-    }
-    #[cfg(feature = "nli")]
     {
         let model_dir = helixir::llm::nli::NliJudge::default_dir();
         if !model_dir.join("model.onnx").exists() {
