@@ -129,6 +129,10 @@ make config         # Print MCP config to paste into your IDE
   helix --version    # must print: Helix CLI 2.3.5
   ```
 
+  Preserved mirror (same binaries + source tag + `v2-lts` branch, in case
+  upstream ever drops v2):
+  <https://github.com/nikita-rulenko/helix-db/releases/tag/v2.3.5>
+
   There is no public HelixDB server image: the CLI builds it locally,
   compiling this repo's schema into it (`install.sh` / `make setup` do
   this for you). If you already ran a v3 CLI here, delete its instance
