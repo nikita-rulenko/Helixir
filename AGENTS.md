@@ -46,6 +46,10 @@ user — there is no public reference good enough for blind copy-paste.
 
 - **Helixir** is a graph-based persistent memory system for LLM agents, written in Rust.
 - Runtime stack: Rust (edition 2024) + HelixDB (graph + vector DB) + MCP server over stdio.
+- **HelixDB CLI pin: v2.3.5** (the v2/LMDB generation). CLI v3.x is a
+  different engine (hyperscale/S3) and is incompatible — no `helix check`
+  / `helix build`, schema never registers. Never `helix update`; install
+  the pinned binary from the HelixDB GitHub release (README Prerequisites).
 - Crate lives in `helixir/`. Top-level holds `Makefile`, `install.sh`, `README.md`, deploy
   glue. `ansible/` and `.snapshots/` are intentionally **gitignored** (local-only).
 - Public GitHub repo: [`nikita-rulenko/Helixir`](https://github.com/nikita-rulenko/Helixir).
