@@ -78,7 +78,7 @@ impl MemoryEvolution {
             .map_err(|e| EvolutionError::Database(e.to_string()))?;
 
         debug!(
-            "Creating SUPERSEDES edge: {} → {}",
+            "Creating SUPERSEDES edge: {} -> {}",
             new_memory_id, old_memory_id
         );
 
@@ -104,7 +104,7 @@ impl MemoryEvolution {
         };
 
         info!(
-            "✅ Memory supersession complete: {} supersedes {}",
+            "Memory supersession complete: {} supersedes {}",
             crate::safe_truncate(new_memory_id, 12),
             crate::safe_truncate(old_memory_id, 12)
         );
@@ -127,7 +127,7 @@ impl MemoryEvolution {
         confidence: i32,
     ) -> Result<EvolutionResult, EvolutionError> {
         info!(
-            "Handling contradiction: {} ⇄ {}",
+            "Handling contradiction: {} <-> {}",
             crate::safe_truncate(new_memory_id, 12),
             crate::safe_truncate(existing_memory_id, 12)
         );
@@ -160,14 +160,14 @@ impl MemoryEvolution {
 
         if !edge_created {
             warn!(
-                "⚠️ Some CONTRADICTS edges failed: edge1={:?}, edge2={:?}",
+                "Some CONTRADICTS edges failed: edge1={:?}, edge2={:?}",
                 edge1.is_ok(),
                 edge2.is_ok()
             );
         }
 
         warn!(
-            "⚠️ Memory contradiction detected and logged: {} ⇄ {}",
+            "Memory contradiction detected and logged: {} <-> {}",
             crate::safe_truncate(new_memory_id, 12),
             crate::safe_truncate(existing_memory_id, 12)
         );
@@ -211,10 +211,7 @@ impl MemoryEvolution {
             .await
             .map_err(|e| EvolutionError::Database(e.to_string()))?;
 
-        info!(
-            "✅ Memory enhanced: {}",
-            crate::safe_truncate(memory_id, 12)
-        );
+        info!("Memory enhanced: {}", crate::safe_truncate(memory_id, 12));
 
         Ok(EvolutionResult {
             success: true,

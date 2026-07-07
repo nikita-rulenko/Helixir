@@ -116,6 +116,7 @@ vendored-tls = ["dep:openssl"]
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [dev-dependencies]
+temp-env = "0.3.6"
 tokio-test = "0.4"
 
 [lib]

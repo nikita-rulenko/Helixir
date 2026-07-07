@@ -1081,19 +1081,14 @@ mod tests {
 
     #[test]
     fn test_from_env_reads_llm_base_url() {
-        unsafe {
-            std::env::set_var("HELIX_LLM_BASE_URL", "http://localhost:11434");
-        }
-
-        let config = HelixirConfig::from_env();
-        assert_eq!(
-            config.llm_base_url.as_deref(),
-            Some("http://localhost:11434")
-        );
-
-        unsafe {
-            std::env::remove_var("HELIX_LLM_BASE_URL");
-        }
+        // #15: temp_env scopes + serializes env mutation — no unsafe, no races.
+        temp_env::with_var("HELIX_LLM_BASE_URL", Some("http://localhost:11434"), || {
+            let config = HelixirConfig::from_env();
+            assert_eq!(
+                config.llm_base_url.as_deref(),
+                Some("http://localhost:11434")
+            );
+        });
     }
 
     #[test]
@@ -1104,40 +1099,35 @@ mod tests {
 
     #[test]
     fn test_fallback_chain_env_parses_and_empty_clears() {
-        unsafe {
-            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", " deepseek , ollama ");
-        }
-        let config = HelixirConfig::from_env();
-        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
-
-        unsafe {
-            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", "");
-        }
-        let config = HelixirConfig::from_env();
-        assert!(
-            config.llm_fallback_chain.is_empty(),
-            "explicit empty value must clear the chain"
+        temp_env::with_var(
+            "HELIX_LLM_FALLBACK_CHAIN",
+            Some(" deepseek , ollama "),
+            || {
+                let config = HelixirConfig::from_env();
+                assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+            },
         );
-
-        unsafe {
-            std::env::remove_var("HELIX_LLM_FALLBACK_CHAIN");
-        }
+        temp_env::with_var("HELIX_LLM_FALLBACK_CHAIN", Some(""), || {
+            let config = HelixirConfig::from_env();
+            assert!(
+                config.llm_fallback_chain.is_empty(),
+                "explicit empty value must clear the chain"
+            );
+        });
     }
 
     #[test]
     fn test_from_env_reads_embedding_url() {
         // Set a recognizable URL different from the ollama default so the
         // assertion catches a regression where embedding_url is shadowed.
-        unsafe {
-            std::env::set_var("HELIX_EMBEDDING_URL", "https://openrouter.ai/api/v1");
-        }
-
-        let config = HelixirConfig::from_env();
-        assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
-
-        unsafe {
-            std::env::remove_var("HELIX_EMBEDDING_URL");
-        }
+        temp_env::with_var(
+            "HELIX_EMBEDDING_URL",
+            Some("https://openrouter.ai/api/v1"),
+            || {
+                let config = HelixirConfig::from_env();
+                assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
+            },
+        );
     }
 
     #[test]

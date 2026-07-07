@@ -82,24 +82,24 @@ pub(super) fn is_empty_user_graph_error(msg: &str) -> bool {
 }
 
 pub async fn run_server() -> anyhow::Result<()> {
-    info!("🚀 Initializing Helixir MCP Server...");
+    info!("Initializing Helixir MCP Server...");
 
     let config = HelixirConfig::from_env();
     let client = HelixirClient::new(config)?;
     client.initialize().await?;
 
-    info!("✅ Helixir MCP Server ready");
+    info!("Helixir MCP Server ready");
     info!(
-        "   📍 HelixDB: {}:{}",
+        "   HelixDB: {}:{}",
         client.config().host,
         client.config().port
     );
     info!(
-        "   🤖 LLM: {}/{}",
+        "   LLM: {}/{}",
         client.config().llm_provider,
         client.config().llm_model
     );
-    info!("   📊 Instance: {}", client.config().instance);
+    info!("   Instance: {}", client.config().instance);
 
     let server = HelixirMcpServer::new(client);
     let fast_think = Arc::clone(&server.fast_think);
@@ -127,12 +127,12 @@ pub async fn run_gateway(bind: &str) -> anyhow::Result<()> {
         session::local::LocalSessionManager, tower::StreamableHttpService,
     };
 
-    info!("🚀 Initializing Helixir MCP Gateway (#42)...");
+    info!("Initializing Helixir MCP Gateway (#42)...");
     let config = HelixirConfig::from_env();
     let client = HelixirClient::new(config)?;
     client.initialize().await?;
     info!(
-        "✅ Gateway ready — HelixDB {}:{}, instance {}, tier {}",
+        "Gateway ready — HelixDB {}:{}, instance {}, tier {}",
         client.config().host,
         client.config().port,
         client.config().instance,
@@ -150,7 +150,7 @@ pub async fn run_gateway(bind: &str) -> anyhow::Result<()> {
 
     let app = axum::Router::new().nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    info!("🌐 Helixir gateway serving MCP at http://{bind}/mcp");
+    info!("Helixir gateway serving MCP at http://{bind}/mcp");
     axum::serve(listener, app).await?;
     Ok(())
 }

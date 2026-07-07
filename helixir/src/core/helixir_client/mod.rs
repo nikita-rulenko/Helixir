@@ -40,14 +40,16 @@ mod tests {
 
     #[test]
     fn test_client_from_env() {
-        unsafe {
-            std::env::set_var("HELIX_HOST", "localhost");
-        }
-        unsafe {
-            std::env::set_var("HELIX_PORT", "6969");
-        }
-        let client = HelixirClient::from_env();
-        assert!(client.is_ok());
+        temp_env::with_vars(
+            [
+                ("HELIX_HOST", Some("localhost")),
+                ("HELIX_PORT", Some("6969")),
+            ],
+            || {
+                let client = HelixirClient::from_env();
+                assert!(client.is_ok());
+            },
+        );
     }
 
     #[test]

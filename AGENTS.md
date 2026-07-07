@@ -51,6 +51,14 @@ user — there is no public reference good enough for blind copy-paste.
 - Public GitHub repo: [`nikita-rulenko/Helixir`](https://github.com/nikita-rulenko/Helixir).
   Default branch: `main`. `dev` exists but currently mirrors `main`.
 
+### Deployment policy (no Ansible)
+
+Deployment truth lives in `install.sh`, `helixir/docker-compose.yml` and the
+`helix` CLI flow (see #13) — there is NO Ansible in this project. A local
+`ansible/` directory may exist on older machines (gitignored, pre-#13 relics
+of ad-hoc VM experiments); it is not maintained, not documented, and safe to
+archive or delete. Do not add deployment steps that assume it.
+
 ### Where the engineering documentation lives
 
 The authoritative engineering docs sit in `helixir/doc/`. Always treat them as the

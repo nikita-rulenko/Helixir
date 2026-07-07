@@ -2,6 +2,8 @@
 target/
 *.log
 /ansible/
+# AI-IDE snapshot artifacts (per-machine tooling, never source)
+.snapshots/
 /tests/
 /scripts/
 .helix-archives/
