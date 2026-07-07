@@ -51,7 +51,7 @@ module docs. Run unit tests: `cargo test --lib` from `helixir/`.
 | Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | 4 | Map preference, map skill, no-match, case-insensitive. |
 | Reasoning engine | `src/toolkit/mind_toolbox/reasoning/engine.rs` | 3 | Type→edge name, relation construction, reasoning trail. |
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
-| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal_v2/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
+| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
 
 ### Integration / E2E

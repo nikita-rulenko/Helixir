@@ -18,7 +18,7 @@ use crate::llm::EmbeddingGenerator;
 use super::bm25::Bm25Search;
 use super::hybrid::{HybridSearch, HybridSearchError};
 use super::models::SearchResult;
-use super::smart_traversal_v2::{SearchConfig, SmartTraversalV2};
+use super::smart_traversal::{SearchConfig, SmartTraversalV2};
 use super::types::{SearchEngineConfig, UnifiedSearchResult};
 use super::vector::{VectorSearch, VectorSearchError};
 

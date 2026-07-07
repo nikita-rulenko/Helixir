@@ -145,7 +145,7 @@ of these.
 | `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class edges, not metadata | `ReasoningEngine`, `mind_toolbox/reasoning/` | You will collapse them into a single `metadata.reason` string and lose traversal. |
 | Decision matrix replaces append-only | `LLMDecisionEngine`, `add_pipeline.rs` | You will propose unconditional `ADD` and grow the corpus forever. |
 | FastThink does not touch HelixDB until `think_commit` | `fast_think/manager.rs` | You will persist thoughts eagerly and pollute long-term memory. |
-| Real cosine is computed by re-embedding on the client (HelixDB does not expose it) | `smart_traversal_v2/scoring.rs` | You will treat re-embedding as wasteful and remove it. |
+| Real cosine is computed by re-embedding on the client (HelixDB does not expose it) | `smart_traversal/scoring.rs` | You will treat re-embedding as wasteful and remove it. |
 | Long inputs persist a `source="raw_input"` Memory alongside atomized facts | `add_pipeline.rs::store_raw_source` | You will treat the duplicate as redundancy and remove it. |
 | All decision/enrichment cost is on the writer; reader stays fast | two-phase add pipeline | You will move enrichment to read time and slow searches by an order of magnitude. |
 

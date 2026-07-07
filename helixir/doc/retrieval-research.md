@@ -35,7 +35,7 @@ file them separately when we agree on the direction.
   HNSW tuning via `helix.toml`. See §3.
 - **Two correctness smells in the current pipeline.** Phase-2 graph
   expansion assigns a hard-coded `semantic_sim = 0.5` to every graph
-  neighbour (`smart_traversal_v2/phases.rs:407`); the search cache key
+  neighbour (`smart_traversal/phases.rs:407`); the search cache key
   excludes `temporal_cutoff` (`traversal.rs:177-203`). Both bias results
   in non-obvious ways. See §6 P0.
 - **The reasoning chain isn't a BFS despite its name.** It pops from a
@@ -66,7 +66,7 @@ file them separately when we agree on the direction.
 
 ### 2.2 `SmartTraversalV2` — what the live engine actually does
 
-Three phases, all visible in `mind_toolbox/search/smart_traversal_v2/`:
+Three phases, all visible in `mind_toolbox/search/smart_traversal/`:
 
 1. **Vector phase** (`phases.rs::vector_search_phase`).
    - Calls HQL `smartVectorSearchWithChunks` with `query_vector` and

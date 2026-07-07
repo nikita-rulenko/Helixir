@@ -246,7 +246,7 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   score from HelixDB.
 - **How.** `SmartTraversalV2` calls `EmbeddingGenerator::generate` for
   each candidate and computes the cosine in
-  `mind_toolbox/search/smart_traversal_v2/scoring.rs`. The embedding cache
+  `mind_toolbox/search/smart_traversal/scoring.rs`. The embedding cache
   (`moka`, LRU 1000, TTL 300 s) keeps re-embedding cheap for repeated
   queries.
 - **Why.** HelixDB's `SearchV` returns a result-set ordered by similarity
