@@ -16,6 +16,8 @@ pub struct FastThinkLimits {
     pub recall_fallback_min_score: f32,
     /// #90: hard cap on fallback rows; 0 disables the fallback.
     pub recall_fallback_max: usize,
+    /// #78: recall stops this many slots short of the thought cap.
+    pub conclude_reserve: usize,
 }
 
 impl Default for FastThinkLimits {
@@ -31,6 +33,7 @@ impl Default for FastThinkLimits {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 3,
+            conclude_reserve: 2,
         }
     }
 }
@@ -49,6 +52,7 @@ impl FastThinkLimits {
             recall_min_score: c.recall_min_score,
             recall_fallback_min_score: c.recall_fallback_min_score,
             recall_fallback_max: c.recall_fallback_max,
+            conclude_reserve: c.conclude_reserve,
         }
     }
 
@@ -64,6 +68,7 @@ impl FastThinkLimits {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 3,
+            conclude_reserve: 2,
         }
     }
 
@@ -82,6 +87,7 @@ impl FastThinkLimits {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 3,
+            conclude_reserve: 2,
         }
     }
 
@@ -97,6 +103,7 @@ impl FastThinkLimits {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 1,
+            conclude_reserve: 2,
         }
     }
 
@@ -135,6 +142,7 @@ mod tests {
         assert!((limits.recall_min_score - 0.42).abs() < f32::EPSILON);
         assert!((limits.recall_fallback_min_score - 0.33).abs() < f32::EPSILON);
         assert_eq!(limits.recall_fallback_max, 2);
+        assert_eq!(limits.conclude_reserve, 2, "#78 reserve flows from config");
     }
 
     /// #90: the fallback cap must stay SMALLER than the primary cap in every

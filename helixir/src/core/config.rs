@@ -694,6 +694,10 @@ pub struct FastThinkConfig {
     /// #90: hard cap on fallback rows (smaller than max_recall_results —
     /// weak evidence never floods the tree). 0 disables the fallback.
     pub recall_fallback_max: usize,
+    /// #78: think_recall stops this many slots short of the thought cap, so
+    /// the agent can always add a synthesis thought and conclude — recalled
+    /// evidence must never trap the session at the cap.
+    pub conclude_reserve: usize,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -712,6 +716,7 @@ impl Default for FastThinkConfig {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 3,
+            conclude_reserve: 2,
         }
     }
 }
