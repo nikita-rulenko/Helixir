@@ -31,6 +31,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(
     name = "helixir",
+    version,
     about = "Helixir agent control & monitoring (the Moirai)"
 )]
 struct Cli {
