@@ -269,7 +269,7 @@ impl ChunkingManager {
                             {
                                 warn!("Failed to add chunk {} embedding: {}", position, e);
                             } else {
-                                debug!("✅ Chunk {} embedding created", position);
+                                debug!("Chunk {} embedding created", position);
                             }
                         }
                         Err(e) => {
@@ -281,7 +281,7 @@ impl ChunkingManager {
         }
 
         info!(
-            "✅ Memory chunked: {} chunks created for {}",
+            "Memory chunked: {} chunks created for {}",
             chunk_ids.len(),
             memory_id
         );

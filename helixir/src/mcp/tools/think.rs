@@ -17,13 +17,13 @@ use crate::toolkit::fast_think::{FastThinkError, ThoughtType};
 #[tool_router(router = think_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start → think_add steps → think_recall → think_conclude → think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Returns {session_id, root_thought_idx}."
+        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start -> think_add steps -> think_recall -> think_conclude -> think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Returns {session_id, root_thought_idx}."
     )]
     async fn think_start(
         &self,
         Parameters(params): Parameters<StartThinkingParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("🧠 Starting thinking session: {}", params.session_id);
+        info!("Starting thinking session: {}", params.session_id);
 
         let result = self
             .fast_think
@@ -79,7 +79,7 @@ impl HelixirMcpServer {
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(FastThinkError::Timeout) => {
-                warn!("⏰ FastThink timeout - committing partial results");
+                warn!("FastThink timeout - committing partial results");
                 let commit_result = self
                     .fast_think
                     .commit_partial(&params.session_id, "claude", "timeout")
@@ -91,7 +91,7 @@ impl HelixirMcpServer {
                             "status": "timeout_committed",
                             "memory_id": cr.memory_id,
                             "thoughts_saved": cr.thoughts_processed,
-                            "message": "⚠️ Thinking timed out. Partial thoughts saved to memory for future research."
+                            "message": "Thinking timed out. Partial thoughts saved to memory for future research."
                         }))?;
                         Ok(CallToolResult::success(vec![Content::text(json)]))
                     }
@@ -112,7 +112,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<ThinkRecallParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("💭 Recalling from main memory: '{}'", params.query);
+        info!("Recalling from main memory: '{}'", params.query);
 
         let parent = petgraph::stable_graph::NodeIndex::new(params.parent_idx as usize);
         let user_id = params.user_id.as_deref().unwrap_or("default");
@@ -125,7 +125,7 @@ impl HelixirMcpServer {
 
         let indices: Vec<usize> = results.iter().map(|n| n.index()).collect();
 
-        info!("✅ Recalled {} facts", results.len());
+        info!("Recalled {} facts", results.len());
 
         let json = Self::result_to_json(json!({
             "recalled_count": results.len(),
@@ -141,7 +141,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<ThinkConcludeParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("✨ Concluding thinking session: {}", params.session_id);
+        info!("Concluding thinking session: {}", params.session_id);
 
         let supporting: Vec<petgraph::stable_graph::NodeIndex> = params
             .supporting_idx
@@ -169,7 +169,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<ThinkCommitParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("📝 Committing thinking session: {}", params.session_id);
+        info!("Committing thinking session: {}", params.session_id);
 
         let result = self
             .fast_think
@@ -178,7 +178,7 @@ impl HelixirMcpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         info!(
-            "✅ Committed: {} thoughts → memory {}",
+            "Committed: {} thoughts -> memory {}",
             result.thoughts_processed, result.memory_id
         );
 
@@ -199,7 +199,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<ThinkDiscardParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("🗑️ Discarding thinking session: {}", params.session_id);
+        info!("Discarding thinking session: {}", params.session_id);
 
         let result = self
             .fast_think

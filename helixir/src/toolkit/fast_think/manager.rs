@@ -166,9 +166,19 @@ impl FastThinkManager {
                 .get_mut(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?;
 
+            // #78: recalled evidence must never trap the session at the cap —
+            // stop short so a synthesis thought + the conclusion always fit.
+            let recall_ceiling = self
+                .limits
+                .max_thoughts
+                .saturating_sub(self.limits.conclude_reserve);
             for memory in memories {
-                if session.thought_count() >= self.limits.max_thoughts {
-                    warn!(session_id = session_id, "Hit thought limit during recall");
+                if session.thought_count() >= recall_ceiling {
+                    warn!(
+                        session_id = session_id,
+                        "Recall stopped at the reserve ceiling ({recall_ceiling} of {} thoughts) — headroom kept for synthesis + conclude",
+                        self.limits.max_thoughts
+                    );
                     break;
                 }
 

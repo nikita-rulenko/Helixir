@@ -234,7 +234,7 @@ impl ToolingManager {
         user_id: &str,
         max_depth: usize,
     ) -> Result<
-        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath>,
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal::ConnectionPath>,
         ToolingError,
     > {
         info!(
@@ -297,7 +297,7 @@ impl ToolingManager {
         let seeds_b = seed_sets.pop().unwrap_or_default();
         let seeds_a = seed_sets.pop().unwrap_or_default();
 
-        crate::toolkit::mind_toolbox::search::smart_traversal_v2::connect::connect(
+        crate::toolkit::mind_toolbox::search::smart_traversal::connect::connect(
             &self.db,
             &seeds_a,
             &seeds_b,
@@ -318,7 +318,7 @@ impl ToolingManager {
         user_id: &str,
         max_hops: usize,
     ) -> Result<
-        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ChainNarrative>,
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal::ChainNarrative>,
         ToolingError,
     > {
         info!(
@@ -342,7 +342,7 @@ impl ToolingManager {
             .map(|r| (r.memory_id, r.content))
             .collect();
 
-        crate::toolkit::mind_toolbox::search::smart_traversal_v2::longest_chain::longest_chain(
+        crate::toolkit::mind_toolbox::search::smart_traversal::longest_chain::longest_chain(
             &self.db,
             &seeds,
             max_hops,

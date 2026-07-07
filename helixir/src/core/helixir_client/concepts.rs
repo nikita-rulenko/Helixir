@@ -160,7 +160,7 @@ impl HelixirClient {
         user_id: &str,
         max_hops: usize,
     ) -> Result<
-        Option<crate::toolkit::mind_toolbox::search::smart_traversal_v2::ChainNarrative>,
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal::ChainNarrative>,
         HelixirClientError,
     > {
         self.ensure_initialized().await?;

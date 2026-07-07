@@ -43,7 +43,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.11)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.12)
 
 ---
 
@@ -110,9 +110,34 @@ make config         # Print MCP config to paste into your IDE
 
 - **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
-- **HelixDB CLI** — `cargo install helix-cli`. There is no public HelixDB
-  image: the CLI builds the server image locally, compiling this repo's
-  schema into it (`install.sh` does this for you)
+- **HelixDB CLI v2.3.5 — the version matters.** Helixir targets the v2
+  (LMDB) generation of HelixDB. CLI **v3.x is NOT compatible**: it runs a
+  different engine (hyperscale over object storage), has no `helix check` /
+  `helix build`, and its `helix start` never compiles this repo's `.hx`
+  schema — the gateway comes up with `query_count: 0` and every Helixir call
+  fails. Both `curl install.helix-db.com | bash` and `cargo install
+  helix-cli` install latest (v3.x) — instead, install the pinned binary from
+  the GitHub release:
+
+  ```bash
+  # substitute your platform: helix-aarch64-apple-darwin, helix-x86_64-apple-darwin,
+  # helix-aarch64-unknown-linux-gnu, helix-x86_64-unknown-linux-gnu (WSL2),
+  # helix-x86_64-pc-windows-msvc.exe
+  curl -L -o ~/.local/bin/helix \
+    https://github.com/HelixDB/helix-db/releases/download/v2.3.5/helix-x86_64-unknown-linux-gnu
+  chmod +x ~/.local/bin/helix
+  helix --version    # must print: Helix CLI 2.3.5
+  ```
+
+  Preserved mirror (same binaries + source tag + `v2-lts` branch, in case
+  upstream ever drops v2):
+  <https://github.com/nikita-rulenko/helix-db/releases/tag/v2.3.5>
+
+  There is no public HelixDB server image: the CLI builds it locally,
+  compiling this repo's schema into it (`install.sh` / `make setup` do
+  this for you). If you already ran a v3 CLI here, delete its instance
+  and containers first (`docker rm -f` anything from
+  `ghcr.io/helixdb/enterprise-dev`), then redo `make setup` with 2.3.5.
 
 > ⚠️ **Storage-mode trap (data loss).** Newer HelixDB builds default to
 > **in-memory** storage — stopping the instance ERASES everything unless it
@@ -424,6 +449,9 @@ helixir journal | insights             # activity + insight journals (with prove
 helixir watch start | run --once | stop | status   # Hygieia, the health watchdog:
 #   DB liveness (self-heals via docker restart when allowed), container memory
 #   pressure, orphaned daemons; alerts land as ops_alert notices IN the memory
+helixir watch install | uninstall      # run the watchdog as a login service
+#   (launchd / systemd user unit); watchdog.on_alert_cmd pushes each alert to
+#   a human too — shell hook with HELIXIR_ALERT_KIND/_SUMMARY in the env
 helixir health                         # recent health events (health.jsonl)
 ```
 

@@ -30,7 +30,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<AddMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("🧠 Adding memory for user={}", params.user_id);
+        info!("Adding memory for user={}", params.user_id);
 
         // Rendezvous (#39): a writing agent announces its presence for free —
         // any agent that passes agent_id shows up in swarm_status with host +
@@ -67,7 +67,7 @@ impl HelixirMcpServer {
                 )
                 .await
                 .map_err(Self::convert_error)?;
-            info!("📥 Queued {} for background processing", enq.pending_id);
+            info!("Queued {} for background processing", enq.pending_id);
 
             // Opportunistic outbox delivery FIRST: ride EARLIER write outcomes
             // back so the agent learns them without polling. Drain before the
@@ -89,7 +89,7 @@ impl HelixirMcpServer {
                 .await;
 
             let mut json = match confirmed {
-                // Finished in time → return the real result, framed as success.
+                // Finished in time -> return the real result, framed as success.
                 Some(st) if st.status == STATUS_DONE => {
                     let mut v = st.result.unwrap_or_else(|| json!({}));
                     if !v.is_object() {
@@ -98,13 +98,13 @@ impl HelixirMcpServer {
                     v["ok"] = json!(true);
                     v
                 }
-                // Genuinely failed → say so honestly; never fake success.
+                // Genuinely failed -> say so honestly; never fake success.
                 Some(st) => json!({
                     "ok": false,
                     "status": STATUS_FAILED,
                     "error": st.error.unwrap_or_else(|| "write failed".to_string()),
                 }),
-                // Still processing → explicit ACCEPTED promise, never bare "pending".
+                // Still processing -> explicit ACCEPTED promise, never bare "pending".
                 None => json!({
                     "ok": true,
                     "accepted": true,
@@ -135,7 +135,7 @@ impl HelixirMcpServer {
             .map_err(Self::convert_error)?;
 
         info!(
-            "✅ Added {} memories ({} chunks)",
+            "Added {} memories ({} chunks)",
             result.memories_added, result.chunks_created
         );
 
@@ -168,7 +168,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something → search_reasoning_chain; to bridge two specific concepts → connect_memories; to filter by ontology type/tags → search_by_concept; to dump everything for a user → list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'time_from'/'time_to' (RFC3339 or YYYY-MM-DD) bound recall to an explicit EVENT-time window; memories outside the window that are linked to in-window results via the graph still return as FLASHBACKS — flagged metadata.flashback=true with their event_date, capped separately so they never crowd in-window rows. 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording. A result with 'superseded: true' is OUTDATED (ranked down, kept for history) — 'superseded_by' names the current version; never act on a superseded row as current truth."
+        description = "Recall memories by meaning — the DEFAULT retrieval tool (hybrid dense + keyword + graph, no LLM call). Use it to answer 'what do I know about X'. Pick a sibling instead when: you want the WHY behind something -> search_reasoning_chain; to bridge two specific concepts -> connect_memories; to filter by ontology type/tags -> search_by_concept; to dump everything for a user -> list_memories. 'mode' sets recall breadth (recent ~4h / contextual ~30d default / deep ~90d / full = whole store; use full if a query you expect to match returns empty). 'time_from'/'time_to' (RFC3339 or YYYY-MM-DD) bound recall to an explicit EVENT-time window; memories outside the window that are linked to in-window results via the graph still return as FLASHBACKS — flagged metadata.flashback=true with their event_date, capped separately so they never crowd in-window rows. 'scope' defaults to personal; collective/all need the collective tier and are downgraded to personal otherwise. Returns ranked [{memory_id, content, score, metadata}] where metadata carries provenance (origin, edge, ppr, cosine). When a result's metadata has 'collapsed', those memory_ids are the same story folded under this row (a raw source and its extracted atoms never coexist in one window) — the content is NOT lost; fetch a folded id explicitly if you need its exact wording. A result with 'superseded: true' is OUTDATED (ranked down, kept for history) — 'superseded_by' names the current version; never act on a superseded row as current truth."
     )]
     async fn search_memory(
         &self,
@@ -217,7 +217,7 @@ impl HelixirMcpServer {
 
         let query_preview: String = params.query.chars().take(50).collect();
         info!(
-            "🔍 Searching: '{}' [mode={}, limit={:?}, scope={}, window={:?}..{:?}]",
+            "Searching: '{}' [mode={}, limit={:?}, scope={}, window={:?}..{:?}]",
             query_preview, mode, limit, scope, window.from, window.to
         );
 
@@ -236,7 +236,7 @@ impl HelixirMcpServer {
             .await
             .map_err(Self::convert_error)?;
 
-        info!("✅ Found {} memories", results.len());
+        info!("Found {} memories", results.len());
 
         // content[0] stays the ranked array (stable contract). When a PERSONAL
         // recall comes back thin and the collective tier is available, append a
@@ -267,7 +267,7 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let limit = params.limit.unwrap_or(100) as i64;
         info!(
-            "📋 Listing memories for user={}, limit={}",
+            "Listing memories for user={}, limit={}",
             params.user_id, limit
         );
 
@@ -323,7 +323,7 @@ impl HelixirMcpServer {
             });
         }
 
-        info!("📋 Listed {} memories", memories.len());
+        info!("Listed {} memories", memories.len());
         let json = serde_json::to_string_pretty(&memories)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -351,7 +351,7 @@ impl HelixirMcpServer {
         }
 
         let limit = params.limit.unwrap_or(50).max(1) as usize;
-        info!("👥 Listing users (limit={})", limit);
+        info!("Listing users (limit={})", limit);
 
         #[derive(serde::Deserialize)]
         struct UsersResponse {
@@ -388,7 +388,7 @@ impl HelixirMcpServer {
             })
             .collect();
 
-        info!("👥 Listed {}/{} users", roster.len(), total);
+        info!("Listed {}/{} users", roster.len(), total);
         let payload = json!({
             "available": true,
             "total_users": total,
@@ -477,11 +477,7 @@ impl HelixirMcpServer {
             .iter()
             .filter(|a| a["active"].as_bool() == Some(true))
             .count();
-        info!(
-            "👥 Swarm roster: {} agents, {} active",
-            roster.len(),
-            active
-        );
+        info!("Swarm roster: {} agents, {} active", roster.len(), active);
         let payload = json!({
             "available": true,
             "active_window_secs": window,
@@ -518,7 +514,7 @@ impl HelixirMcpServer {
             }
         };
         info!(
-            "⚖️ Resolving contradiction {} -> {} as {strategy}",
+            "Resolving contradiction {} -> {} as {strategy}",
             params.from_id, params.to_id
         );
 
@@ -597,7 +593,7 @@ impl HelixirMcpServer {
             .register_or_heartbeat(&params.agent_id, &role, machine_hostname(), "done")
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        info!("👋 Farewell stamped for {}", params.agent_id);
+        info!("Farewell stamped for {}", params.agent_id);
         Ok(CallToolResult::success(vec![Content::text(
             json!({"available": true, "agent_id": params.agent_id, "status": "done"}).to_string(),
         )]))
@@ -611,7 +607,7 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<UpdateMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
         let id_preview: String = params.memory_id.chars().take(12).collect();
-        info!("✏️ Updating memory: {}...", id_preview);
+        info!("Updating memory: {}...", id_preview);
 
         let result = self
             .client
@@ -620,9 +616,9 @@ impl HelixirMcpServer {
             .map_err(Self::convert_error)?;
 
         if result.updated {
-            info!("✅ Memory updated");
+            info!("Memory updated");
         } else {
-            warn!("⚠️ Memory update failed");
+            warn!("Memory update failed");
         }
 
         let json = Self::result_to_json(&result)?;
@@ -636,7 +632,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<GetMemoryGraphParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("📊 Getting memory graph for user={}", params.user_id);
+        info!("Getting memory graph for user={}", params.user_id);
 
         let result = self
             .client
@@ -661,7 +657,7 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let query_preview: String = params.query.chars().take(30).collect();
         info!(
-            "🎯 Concept search: '{}' type={:?}",
+            "Concept search: '{}' type={:?}",
             query_preview, params.concept_type
         );
 
@@ -678,14 +674,14 @@ impl HelixirMcpServer {
             .await
             .map_err(Self::convert_error)?;
 
-        info!("✅ Found {} memories", results.len());
+        info!("Found {} memories", results.len());
 
         let json = Self::result_to_json(&results)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
     #[tool(
-        description = "Reconstruct chains of reasoning around a topic — the 'why / what-follows' tool, and Helixir's signature capability. It finds seed memories then walks typed reasoning edges (BECAUSE/IMPLIES/SUPPORTS/CONTRADICTS) to assemble cause→effect chains with a human-readable reasoning_trail. Use chain_mode 'causal' for 'why is X so', 'forward' for 'what does X lead to', 'both'/'deep' for full context. Can return a LARGE payload on a dense graph — keep max_depth (default 5) and limit modest. Returns {query, chains:[{seed, nodes, reasoning_trail}], total_memories, deepest_chain}."
+        description = "Reconstruct chains of reasoning around a topic — the 'why / what-follows' tool, and Helixir's signature capability. It finds seed memories then walks typed reasoning edges (BECAUSE/IMPLIES/SUPPORTS/CONTRADICTS) to assemble cause->effect chains with a human-readable reasoning_trail. Use chain_mode 'causal' for 'why is X so', 'forward' for 'what does X lead to', 'both'/'deep' for full context. Can return a LARGE payload on a dense graph — keep max_depth (default 5) and limit modest. Returns {query, chains:[{seed, nodes, reasoning_trail}], total_memories, deepest_chain}."
     )]
     async fn search_reasoning_chain(
         &self,
@@ -694,10 +690,7 @@ impl HelixirMcpServer {
         let chain_mode = params.chain_mode.map(|c| c.as_str()).unwrap_or("both");
 
         let query_preview: String = params.query.chars().take(30).collect();
-        info!(
-            "🔗 Reasoning chain: '{}' mode={}",
-            query_preview, chain_mode
-        );
+        info!("Reasoning chain: '{}' mode={}", query_preview, chain_mode);
 
         let result = self
             .client
@@ -711,7 +704,7 @@ impl HelixirMcpServer {
             .await
             .map_err(Self::convert_error)?;
 
-        info!("✅ Found {} chains", result.chains.len());
+        info!("Found {} chains", result.chains.len());
 
         let json = Self::result_to_json(&result)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -725,7 +718,7 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<ConnectMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
         info!(
-            "🌉 Connect: '{}' <-> '{}'",
+            "Connect: '{}' <-> '{}'",
             params.query_a.chars().take(30).collect::<String>(),
             params.query_b.chars().take(30).collect::<String>()
         );
@@ -741,7 +734,7 @@ impl HelixirMcpServer {
             .await
             .map_err(Self::convert_error)?;
 
-        info!("✅ Connection: found={} hops={}", result.found, result.hops);
+        info!("Connection: found={} hops={}", result.found, result.hops);
 
         let json = Self::result_to_json(&result)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -754,7 +747,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<SearchIncompleteThoughtsParams>,
     ) -> Result<CallToolResult, McpError> {
-        info!("🔍 Searching for incomplete thoughts");
+        info!("Searching for incomplete thoughts");
 
         let limit = params.limit.unwrap_or(5) as usize;
 

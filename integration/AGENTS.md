@@ -80,6 +80,12 @@ memory's own health watchdog speaking — relay it to your human.
 - How are A and B related → `connect_memories` (anchors = query or `memory_id`).
 - Only goals / one ontology type → `search_by_concept` (`concept_type`).
 - General recall → `search_memory`; bulk/audit → `list_memories`.
+- The graph around one memory (nodes + typed edges) → `get_memory_graph`.
+- A buffered write's outcome (`pending_id` in hand) → `get_add_status`.
+- Reasoning someone started but never concluded → `search_incomplete_thoughts`
+  (check it when picking up a topic you may have been interrupted on).
+- A stored fact is wrong or needs an annotation → `update_memory(memory_id, ...)`
+  — correction, not deletion: history is preserved.
 
 **Principle:** the memory does not gaslight its owner — surface
 `needs_clarification`, never silently overwrite a conflicting fact. Recall before
@@ -109,10 +115,11 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   IS_A (English and Russian both work). Prefer stating causes and structure
   explicitly over implying them: the graph cannot see inside an atom.
 - **Write for the ontology**: typed memories are findable memories — don't
-  flatten everything into fact-speak. "I prefer X" → preference, "I can X" →
-  skill, "my goal is X" → goal, "I think X" → opinion, "doing X, I realized
-  Y" → experience, "I shipped X" → achievement. `search_by_concept` and the
-  charter's rewrite protections only work when the type lands.
+  flatten everything into fact-speak. All 8 types: "I prefer X" → preference,
+  "I can X" → skill, "my goal is X" → goal, "I think X" → opinion, "X is
+  true" → fact, "I did X" → action, "doing X, I realized Y" → experience,
+  "I shipped X" → achievement. `search_by_concept` and the charter's rewrite
+  protections only work when the type lands.
 - **The charter learns from your verdicts**: every `resolve_contradiction`
   becomes a precedent; after several identical verdicts the result carries a
   `rule_proposal` — adopt it with the exact `add_memory` call it dictates

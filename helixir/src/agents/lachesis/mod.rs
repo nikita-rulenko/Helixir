@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::toolkit::mind_toolbox::search::smart_traversal_v2::ConnectionPath;
+use crate::toolkit::mind_toolbox::search::smart_traversal::ConnectionPath;
 use crate::toolkit::tooling_manager::ToolingManager;
 use crate::toolkit::tooling_manager::types::ToolingError;
 

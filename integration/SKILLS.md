@@ -82,6 +82,11 @@ get cut off; a capture postponed to "the end" is a capture lost.
 | Only goals / preferences / one type | `search_by_concept` | `concept_type` enum |
 | Everything for a user (audit/count) | `list_memories` | no relevance ranking |
 | The graph around a memory | `get_memory_graph` | nodes + typed edges |
+| Unfinished reasoning to resume | `search_incomplete_thoughts` | check when re-entering a topic |
+| Outcome of a buffered write | `get_add_status` | pass the `pending_id` |
+
+To correct or annotate a stored fact, use `update_memory(memory_id, ...)` —
+it amends without deleting; history is preserved.
 
 If `search_memory` in the default `contextual` mode returns nothing on an old
 corpus, retry with `mode="full"`.
@@ -152,11 +157,12 @@ BECAUSE, "is part of" → PART_OF, "is a kind of" → IS_A (EN and RU). State
 causes and structure explicitly — that is what later answers "why" without
 an LLM call.
 
-Write for the ontology too: "I prefer X" → preference, "I can X" → skill,
-"my goal is X" → goal, "I think X" → opinion, "doing X, I realized Y" →
-experience, "I shipped X" → achievement. Typed memories are findable
-memories — `search_by_concept` and the charter's protections only work
-when the type lands.
+Write for the ontology too — all 8 types: "I prefer X" → preference,
+"I can X" → skill, "my goal is X" → goal, "I think X" → opinion, "X is
+true" → fact, "I did X" → action, "doing X, I realized Y" → experience,
+"I shipped X" → achievement. Typed memories are findable memories —
+`search_by_concept` and the charter's protections only work when the
+type lands.
 
 Every `resolve_contradiction` verdict teaches the charter: after several
 identical verdicts the result carries a `rule_proposal` — adopt it with the

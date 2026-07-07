@@ -1,19 +1,26 @@
 # Upgrading Helixir
 
+> ⚠️ **HelixDB version pin: CLI v2.3.5.** Helixir targets the v2 (LMDB)
+> generation of HelixDB; **v3.x is incompatible** (different engine, no
+> `helix check`/`helix build`, schema never registers — `query_count: 0`).
+> Every `helix …` command in this file assumes CLI 2.3.5 — see the README
+> Prerequisites for the pinned install command. Do NOT `helix update`.
+
 > ⚠️ **Before ANY upgrade that touches HelixDB itself:** newer HelixDB builds
 > default to **in-memory storage** — stopping the instance ERASES everything
 > unless it runs with disk persistence (`helix start dev --disk`, or a mounted
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
-## v0.4.x → v0.11.0 — all drop-in
+## v0.4.x → v0.12.0 — all drop-in
 
-Every release from v0.5.0 through v0.11.0 upgrades in place: update the
+Every release from v0.5.0 through v0.12.0 upgrades in place: update the
 binary, restart your MCP client, done. New config keys are optional with
 safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.12.0** | The operator release | Ops alerts can push to a human: `watchdog.on_alert_cmd` runs on every alert with `HELIXIR_ALERT_KIND`/`HELIXIR_ALERT_SUMMARY` in the env (off when empty). `helixir watch install`/`uninstall` runs the watchdog as a launchd agent / systemd user unit (refuses `target/` binaries). FastThink recall reserves `fast_think.conclude_reserve` (2) thoughts of headroom so synthesis always fits. Default logs are ASCII; `helixir-deploy` is a clap CLI (`-h` = `--help`, `--version`, invalid `--port` errors). |
 | **v0.11.0** | Honest generation | Lachesis truncates threads at polysemous pivot categories (`lachesis.polysemy_guard`, on). Atropos verifies aging hypotheses — promote to `VERIFIED` / retire via SUPERSEDE (`atropos.verify_*` knobs, daemon `verify_every_passes`, 6). New `agent_farewell` tool (22nd) — restart your MCP client for the schema; roster rows gain `derived_status`. Operator prune: `helixir prune-agent` — **self-hosted deployments must redeploy the schema** (new `dropPresenceByAgentId`). `helixir charter` reviews learned rules. |
 | **v0.10.0** | The learning charter | The charter grows rules from your `resolve_contradiction` verdicts (`write.rule_propose_after`, 3; adopted rules render in `memory://rules`). Superseded facts rank below their corrections, flagged `superseded`/`superseded_by` (`retrieval.superseded_penalty`, 0.6) — **self-hosted deployments must redeploy the schema** (new `getSupersededBatch` query: `helix check` → rebuild image → recreate container, volume preserved). Charter false positives are gated (shared subject + 0.88 similarity floor). Write-path LLM cost drops: batched inference + reliable batch decisions + local-NLI edge routing (`write.nli_route`, on; no-op on lean builds). All 8 ontology types classify correctly even on llama3.2:3b. |
 | **v0.9.2** | Flashbacks | `search_memory` gains `time_from`/`time_to` event-time windows; out-of-window rows reachable via edges return flagged `flashback` (cap `retrieval.flashback_max`, 3). Restart your MCP client — it caches tool schemas. Rerank on dense graphs is capped (`retrieval.rerank_max_rows`, 128). `think_recall` gains an annotated weak-evidence fallback (`fast_think.recall_fallback_*`). Hygieia cache valve is opt-in (`watchdog.allow_cache_reclaim` — spawns a privileged helper). Old compose files reference a Docker Hub image that never existed — re-run `install.sh` or take the new compose. |

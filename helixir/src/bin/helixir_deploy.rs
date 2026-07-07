@@ -2,46 +2,36 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use clap::Parser;
+
+/// Deploy the Helixir schema + named queries to a running HelixDB.
+// #15: clap-parsed — -h is help (not host), --version exists, and an invalid
+// --port errors out instead of silently falling back to 6969.
+#[derive(Parser)]
+#[command(version, about)]
+struct Args {
+    /// HelixDB host.
+    #[arg(long, default_value = "localhost")]
+    host: String,
+    /// HelixDB port.
+    #[arg(short, long, default_value_t = 6969)]
+    port: u16,
+    /// Deploy only schema.hx.
+    #[arg(long)]
+    schema_only: bool,
+    /// Deploy only queries.hx.
+    #[arg(long)]
+    queries_only: bool,
+    /// Directory holding schema.hx / queries.hx.
+    #[arg(short = 'd', long, default_value = "schema")]
+    schema_dir: PathBuf,
+}
+
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = env::args().collect();
-
-    let mut host = "localhost".to_string();
-    let mut port = 6969u16;
-    let mut schema_only = false;
-    let mut queries_only = false;
-    let mut schema_dir = PathBuf::from("schema");
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--host" | "-h" => {
-                if i + 1 < args.len() {
-                    host = args[i + 1].clone();
-                    i += 1;
-                }
-            }
-            "--port" | "-p" => {
-                if i + 1 < args.len() {
-                    port = args[i + 1].parse().unwrap_or(6969);
-                    i += 1;
-                }
-            }
-            "--schema-only" => schema_only = true,
-            "--queries-only" => queries_only = true,
-            "--schema-dir" | "-d" => {
-                if i + 1 < args.len() {
-                    schema_dir = PathBuf::from(&args[i + 1]);
-                    i += 1;
-                }
-            }
-            "--help" => {
-                print_help();
-                return Ok(());
-            }
-            _ => {}
-        }
-        i += 1;
-    }
+    let args = Args::parse();
+    let (host, port) = (args.host, args.port);
+    let (schema_only, queries_only) = (args.schema_only, args.queries_only);
+    let mut schema_dir = args.schema_dir;
 
     println!("🚀 Helixir Schema Deployment");
     println!("   Target: {}:{}", host, port);
@@ -147,37 +137,4 @@ fn deploy_queries(
         let body = response.text().unwrap_or_default();
         Err(anyhow::anyhow!("HTTP {}: {}", status, body))
     }
-}
-
-fn print_help() {
-    println!(
-        r#"
-Helixir Schema Deployment CLI
-
-USAGE:
-    helixir-deploy [OPTIONS]
-
-OPTIONS:
-    -h, --host <HOST>       HelixDB host (default: localhost)
-    -p, --port <PORT>       HelixDB port (default: 6969)
-    -d, --schema-dir <DIR>  Schema directory (default: ./schema)
-    --schema-only           Deploy only schema.hx
-    --queries-only          Deploy only queries.hx
-    --help                  Print this help
-
-EXAMPLES:
-    # Deploy to local HelixDB
-    helixir-deploy
-
-    # Deploy to remote server
-    helixir-deploy --host 192.168.50.11 --port 6969
-
-    # Deploy only queries (schema already exists)
-    helixir-deploy --host myserver.com --queries-only
-
-ENVIRONMENT:
-    HELIX_HOST              Override default host
-    HELIX_PORT              Override default port
-"#
-    );
 }

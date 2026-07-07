@@ -16,22 +16,25 @@
 //!
 //! Resolution of the historical duplication noted in
 //! `helixir/doc/duplication-audit.md` (D2 / issue #26): the `onto_search/`
-//! tree is the dead twin of `smart_traversal_v2/` — same-name phase
+//! tree is the dead twin of `smart_traversal/` — same-name phase
 //! functions, parallel result types, never wired into [`SearchEngine`].
 //! It is excluded from the live compilation unit below and kept on disk
 //! as a historical reference.
+//!
+//! `smart_traversal/` was named `smart_traversal_v2` until issue #9: the
+//! `_v2` suffix outlived its v1 (never in this tree) and was dropped.
 
 pub mod bm25;
 pub mod cache;
 pub mod hybrid;
 pub mod models;
 pub mod query_processor;
-pub mod smart_traversal_v2;
+pub mod smart_traversal;
 pub mod vector;
 
 // <unused reason="`onto_search/` is a parallel, never-wired search pipeline (vector_search_phase,
 //                graph_expansion_phase, rank_results, classify_query_concepts, etc.) that duplicates
-//                the active `smart_traversal_v2/` tree below. No call site outside the module itself.
+//                the active `smart_traversal/` tree below. No call site outside the module itself.
 //                Kept on disk for historical reference and to make a future revival cheap.
 //                Closes issue #26 (D2) by removing the duplicate from the live build.
 //                See helixir/doc/duplication-audit.md §3.">
@@ -49,7 +52,7 @@ pub use hybrid::{HybridSearch, HybridSearchError};
 pub use models::{SearchMethod, SearchResult};
 pub use vector::{VectorSearch, VectorSearchError};
 
-pub use smart_traversal_v2::{
+pub use smart_traversal::{
     SearchConfig as SmartSearchConfig, SmartTraversalV2, calculate_temporal_freshness, cosine_score,
 };
 

@@ -150,7 +150,7 @@ impl ChunkReconstructor {
                     let chunk_count = chunks.len();
 
                     info!(
-                        "✅ Reconstructed {} chunks for memory {}",
+                        "Reconstructed {} chunks for memory {}",
                         chunk_count,
                         crate::safe_truncate(memory_id, 12)
                     );
@@ -424,7 +424,7 @@ impl RetrievalManager {
         metadata.insert("mode".to_string(), serde_json::json!(mode));
 
         info!(
-            "✅ Retrieved {} memories ({} chunks, {} context, {} reasoning, {} entities)",
+            "Retrieved {} memories ({} chunks, {} context, {} reasoning, {} entities)",
             memories.len(),
             total_chunks,
             all_context_memories.len(),

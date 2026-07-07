@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 use super::engine::ReasoningEngine;
 use super::types::{ReasoningChain, ReasoningError, ReasoningType, project_relation};
 use crate::llm::EmbeddingGenerator;
-use crate::toolkit::mind_toolbox::search::smart_traversal_v2::cosine_score;
+use crate::toolkit::mind_toolbox::search::smart_traversal::cosine_score;
 
 /// Query context for embedding-guided traversal (algo_opt R3).
 pub struct ChainGuidance<'a> {

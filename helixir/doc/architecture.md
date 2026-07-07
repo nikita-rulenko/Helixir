@@ -69,7 +69,7 @@ should require deliberation.
 │     crud.rs                update / delete                               │
 │                                                                          │
 │   mind_toolbox/            domain primitives                             │
-│     search/{vector,bm25,hybrid,onto_search,smart_traversal_v2,...}       │
+│     search/{vector,bm25,hybrid,onto_search,smart_traversal,...}       │
 │     entity/                EntityManager                                 │
 │     ontology/              OntologyManager (8 concept types)             │
 │     reasoning/             ReasoningEngine                               │
@@ -261,7 +261,7 @@ plus the root `README.md`.
     defence in depth (BM25 rows are not HQL-filtered).
   - Phase 2 graph expansion is **levelwise-batched**: one
     `getConnectionsLevelBatch` HQL call per BFS level
-    (`smart_traversal_v2/batch_expansion.rs`) instead of one
+    (`smart_traversal/batch_expansion.rs`) instead of one
     `getMemoryLogicalConnections` call per visited node. Semantics mirror
     the legacy DFS (every unvisited neighbour scored; top-3 per parent
     expand), with a single search-wide visited set.

@@ -694,6 +694,10 @@ pub struct FastThinkConfig {
     /// #90: hard cap on fallback rows (smaller than max_recall_results —
     /// weak evidence never floods the tree). 0 disables the fallback.
     pub recall_fallback_max: usize,
+    /// #78: think_recall stops this many slots short of the thought cap, so
+    /// the agent can always add a synthesis thought and conclude — recalled
+    /// evidence must never trap the session at the cap.
+    pub conclude_reserve: usize,
 }
 impl Default for FastThinkConfig {
     fn default() -> Self {
@@ -712,6 +716,7 @@ impl Default for FastThinkConfig {
             recall_min_score: 0.6,
             recall_fallback_min_score: 0.45,
             recall_fallback_max: 3,
+            conclude_reserve: 2,
         }
     }
 }
@@ -753,6 +758,12 @@ pub struct WatchdogConfig {
     pub alert_users: Vec<String>,
     /// Re-alerting the same kind is suppressed for this long.
     pub alert_cooldown_secs: u64,
+    /// #75: shell command executed on every alert (after journal + memory
+    /// notices) — osascript notification, curl to a webhook, anything. The
+    /// alert's kind and summary arrive in HELIXIR_ALERT_KIND /
+    /// HELIXIR_ALERT_SUMMARY env vars. Empty disables. Best-effort:
+    /// failures are logged, never block the alert path.
+    pub on_alert_cmd: String,
     /// Autobackup duty (#65): tar the data dir on a schedule. Empty source
     /// disables the duty. When `container_name` is set the container is
     /// paused for the copy (a consistent LMDB snapshot), then unpaused.
@@ -777,6 +788,7 @@ impl Default for WatchdogConfig {
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
             alert_cooldown_secs: 21_600,
+            on_alert_cmd: String::new(),
             backup_source_dir: String::new(),
             backup_dir: String::new(),
             backup_interval_hours: 24.0,
@@ -1069,19 +1081,14 @@ mod tests {
 
     #[test]
     fn test_from_env_reads_llm_base_url() {
-        unsafe {
-            std::env::set_var("HELIX_LLM_BASE_URL", "http://localhost:11434");
-        }
-
-        let config = HelixirConfig::from_env();
-        assert_eq!(
-            config.llm_base_url.as_deref(),
-            Some("http://localhost:11434")
-        );
-
-        unsafe {
-            std::env::remove_var("HELIX_LLM_BASE_URL");
-        }
+        // #15: temp_env scopes + serializes env mutation — no unsafe, no races.
+        temp_env::with_var("HELIX_LLM_BASE_URL", Some("http://localhost:11434"), || {
+            let config = HelixirConfig::from_env();
+            assert_eq!(
+                config.llm_base_url.as_deref(),
+                Some("http://localhost:11434")
+            );
+        });
     }
 
     #[test]
@@ -1092,40 +1099,35 @@ mod tests {
 
     #[test]
     fn test_fallback_chain_env_parses_and_empty_clears() {
-        unsafe {
-            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", " deepseek , ollama ");
-        }
-        let config = HelixirConfig::from_env();
-        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
-
-        unsafe {
-            std::env::set_var("HELIX_LLM_FALLBACK_CHAIN", "");
-        }
-        let config = HelixirConfig::from_env();
-        assert!(
-            config.llm_fallback_chain.is_empty(),
-            "explicit empty value must clear the chain"
+        temp_env::with_var(
+            "HELIX_LLM_FALLBACK_CHAIN",
+            Some(" deepseek , ollama "),
+            || {
+                let config = HelixirConfig::from_env();
+                assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+            },
         );
-
-        unsafe {
-            std::env::remove_var("HELIX_LLM_FALLBACK_CHAIN");
-        }
+        temp_env::with_var("HELIX_LLM_FALLBACK_CHAIN", Some(""), || {
+            let config = HelixirConfig::from_env();
+            assert!(
+                config.llm_fallback_chain.is_empty(),
+                "explicit empty value must clear the chain"
+            );
+        });
     }
 
     #[test]
     fn test_from_env_reads_embedding_url() {
         // Set a recognizable URL different from the ollama default so the
         // assertion catches a regression where embedding_url is shadowed.
-        unsafe {
-            std::env::set_var("HELIX_EMBEDDING_URL", "https://openrouter.ai/api/v1");
-        }
-
-        let config = HelixirConfig::from_env();
-        assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
-
-        unsafe {
-            std::env::remove_var("HELIX_EMBEDDING_URL");
-        }
+        temp_env::with_var(
+            "HELIX_EMBEDDING_URL",
+            Some("https://openrouter.ai/api/v1"),
+            || {
+                let config = HelixirConfig::from_env();
+                assert_eq!(config.embedding_url, "https://openrouter.ai/api/v1");
+            },
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(
     name = "helixir",
+    version,
     about = "Helixir agent control & monitoring (the Moirai)"
 )]
 struct Cli {
@@ -249,6 +250,11 @@ enum WatchCmd {
     Stop,
     /// Is the background watchdog alive?
     Status,
+    /// Install the watchdog as a login service (launchd on macOS, systemd
+    /// user unit on Linux) so it survives reboots (#75).
+    Install,
+    /// Remove the login service installed by `watch install`.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -530,6 +536,8 @@ async fn main() -> Result<()> {
                 );
                 return Ok(());
             }
+            WatchCmd::Install => return watch_install(),
+            WatchCmd::Uninstall => return watch_uninstall(),
             WatchCmd::Run { .. } => {} // needs the client — fall through
         }
     }
@@ -2105,6 +2113,147 @@ async fn watch_run(client: &HelixirClient, once: bool, interval: Option<u64>) ->
 }
 
 /// Detach `watch run` as a background service (pid file + log, like the daemon).
+/// #75: install the watchdog as a login service so it survives reboots.
+/// macOS: a launchd agent at ~/Library/LaunchAgents; Linux: a systemd user
+/// unit. The service runs `helixir watch run` in the FOREGROUND — the init
+/// system owns the lifecycle, so no pid file is involved.
+fn watch_install() -> Result<()> {
+    let exe = std::env::current_exe().context("resolve helixir binary path")?;
+    let home = std::env::var("HOME").context("HOME not set")?;
+    // The service pins THIS binary path. A target/ path gets overwritten by
+    // rebuilds — and on macOS replacing a running executable in place gets
+    // it SIGKILLed (the 2026-07-02 incident). Install from the promoted
+    // binary instead.
+    if exe.components().any(|c| c.as_os_str() == "target") {
+        anyhow::bail!(
+            "refusing to install a service pinned to a build directory ({}) — \
+             install the promoted binary instead: ~/.helixir/bin/helixir watch install",
+            exe.display()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let dir = std::path::PathBuf::from(&home).join("Library/LaunchAgents");
+        std::fs::create_dir_all(&dir)?;
+        let plist = dir.join("com.helixir.watchdog.plist");
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.helixir.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{exe}</string>
+    <string>watch</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{home}/.helixir/watchdog.out.log</string>
+  <key>StandardErrorPath</key><string>{home}/.helixir/watchdog.err.log</string>
+</dict>
+</plist>
+"#,
+            exe = exe.display(),
+            home = home,
+        );
+        std::fs::write(&plist, body)?;
+        let loaded = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        println!(
+            "Installed launchd agent: {}\nlaunchctl load: {}\nLogs: ~/.helixir/watchdog.{{out,err}}.log",
+            plist.display(),
+            if loaded {
+                "OK (runs now and at every login)"
+            } else {
+                "FAILED — run manually: launchctl load -w <plist>"
+            }
+        );
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let dir = std::path::PathBuf::from(&home).join(".config/systemd/user");
+        std::fs::create_dir_all(&dir)?;
+        let unit = dir.join("helixir-watchdog.service");
+        let body = format!(
+            "[Unit]\nDescription=Helixir health watchdog\n\n[Service]\nExecStart={} watch run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+            exe.display()
+        );
+        std::fs::write(&unit, body)?;
+        let ok = std::process::Command::new("systemctl")
+            .args(["--user", "enable", "--now", "helixir-watchdog.service"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        println!(
+            "Installed systemd user unit: {}\nsystemctl enable --now: {}",
+            unit.display(),
+            if ok {
+                "OK"
+            } else {
+                "FAILED — run manually: systemctl --user enable --now helixir-watchdog"
+            }
+        );
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        anyhow::bail!("watch install supports macOS (launchd) and Linux (systemd user units)");
+    }
+}
+
+/// #75: remove the login service installed by `watch install`.
+fn watch_uninstall() -> Result<()> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist =
+            std::path::PathBuf::from(&home).join("Library/LaunchAgents/com.helixir.watchdog.plist");
+        if !plist.exists() {
+            println!("Nothing installed ({} not found).", plist.display());
+            return Ok(());
+        }
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", "-w"])
+            .arg(&plist)
+            .status();
+        std::fs::remove_file(&plist)?;
+        println!("Removed {}.", plist.display());
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let unit =
+            std::path::PathBuf::from(&home).join(".config/systemd/user/helixir-watchdog.service");
+        if !unit.exists() {
+            println!("Nothing installed ({} not found).", unit.display());
+            return Ok(());
+        }
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "disable", "--now", "helixir-watchdog.service"])
+            .status();
+        std::fs::remove_file(&unit)?;
+        println!("Removed {}.", unit.display());
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        anyhow::bail!("watch uninstall supports macOS and Linux");
+    }
+}
+
 fn watch_start(interval: Option<u64>) -> Result<()> {
     let mut args: Vec<String> = vec!["watch".into(), "run".into()];
     if let Some(i) = interval {

@@ -198,6 +198,35 @@ impl<'a> Hygieia<'a> {
                 .await;
         }
 
+        // #75: the human hook — agents hear alerts through the memory, but a
+        // human not currently talking to an agent needs a push (notification,
+        // webhook). Fire-and-forget; a hook failure must never block alerts.
+        let hook = self.cfg().on_alert_cmd.clone();
+        if !hook.is_empty() {
+            let (k, s) = (kind.to_string(), summary.to_string());
+            tokio::spawn(async move {
+                match tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&hook)
+                    .env("HELIXIR_ALERT_KIND", &k)
+                    .env("HELIXIR_ALERT_SUMMARY", &s)
+                    .output()
+                    .await
+                {
+                    Ok(o) if !o.status.success() => warn!(
+                        "on_alert_cmd exited {}: {}",
+                        o.status,
+                        String::from_utf8_lossy(&o.stderr)
+                            .chars()
+                            .take(200)
+                            .collect::<String>()
+                    ),
+                    Err(e) => warn!("on_alert_cmd failed to spawn: {e}"),
+                    _ => {}
+                }
+            });
+        }
+
         // A recallable trace: incidents are knowledge. Skipped silently when
         // the embedder is down — the notice + journal already carry the alert.
         let text = format!(

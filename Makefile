@@ -71,6 +71,11 @@ mem-reclaim: ## Shed reclaimable page cache charged to the HelixDB container (#8
 mem-probe: ## Profile where the container's memory actually goes (#89)
 	python3 tools/memprobe.py helix-helixir-local-bench_app
 
+# Lifecycle note: docker-up runs with --restart unless-stopped (same policy as
+# docker-compose.yml) — the container auto-recovers from Docker Desktop
+# restarts and host reboots; `make docker-down` (or docker stop) is the ONLY
+# intended way to keep it down. Both paths configure identical persistence
+# (HELIX_DATA_DIR volume) and memory caps.
 docker-up: ## Start HelixDB container
 	@if docker ps --format '{{.Names}}' | grep -q '^helixdb$$'; then \
 		echo "  HelixDB already running"; \

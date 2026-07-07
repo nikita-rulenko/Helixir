@@ -244,7 +244,7 @@ listed here so contributors recognize them without re-deriving from grep.
   "{{timestamp}}"`, while `MemoryEmbedding.created_at` is `Date`.
 - **Denormalized parent links.** `Concept.parent_id: String` exists alongside
   the `IS_A` edge.
-- **`smart_traversal_v2` module name.** The `_v2` suffix is a naming artifact
+- **`smart_traversal` module name.** The `_v2` suffix is a naming artifact
   from an earlier `smart_traversal` that was removed; the current module is
   the only implementation.
 
