@@ -121,6 +121,9 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
 - **Superseded results are history**: a result with `superseded: true` was
   replaced (`superseded_by` names the current version). Never act on it as
   current truth — prefer the successor.
+- **Say goodbye**: one-shot agents call `agent_farewell(agent_id=...)` on
+  exit — otherwise the roster shows a stale "working" forever (it will be
+  flagged `derived_status: stale`, but a clean `done` is better).
 - **Time windows and flashbacks**: to recall a period, pass `time_from` /
   `time_to` (RFC3339 or `YYYY-MM-DD`) to `search_memory`. The window bounds
   direct answers by EVENT time; memories outside it that are linked to

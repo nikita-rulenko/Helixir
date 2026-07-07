@@ -120,6 +120,10 @@ here right now; `list_users` = which identities exist. In
 `resolve_contradiction(from_id, to_id, confirm|retract|preference)`;
 `ops_alert` → the memory's health watchdog (Hygieia) — tell your human.
 
+- **Say goodbye**: one-shot agents call `agent_farewell(agent_id=...)` on
+  exit — otherwise the roster shows a stale "working" forever (it will be
+  flagged `derived_status: stale`, but a clean `done` is better).
+
 ## Principles
 - **Recall before you re-derive** — don't make the user repeat what's stored.
 - **The memory doesn't gaslight its owner** — surface `needs_clarification`,

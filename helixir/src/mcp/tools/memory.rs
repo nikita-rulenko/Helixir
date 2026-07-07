@@ -449,14 +449,28 @@ impl HelixirMcpServer {
         let roster: Vec<serde_json::Value> = agents
             .iter()
             .map(|a| {
-                json!({
-                    "agent_id": a.agent_id,
-                    "role": a.role,
-                    "host": a.host,
-                    "status": a.status,
-                    "age_seconds": a.age_seconds(now),
-                    "active": a.is_active(now, window),
-                })
+                {
+                    // #84: derived honesty — a stored 'working' from an agent
+                    // silent past the active window is a lie by omission; the
+                    // roster says so instead of repeating it.
+                    let active = a.is_active(now, window);
+                    let derived = if active {
+                        a.status.clone()
+                    } else if a.status == "working" {
+                        "stale (last reported: working)".to_string()
+                    } else {
+                        a.status.clone()
+                    };
+                    json!({
+                        "agent_id": a.agent_id,
+                        "role": a.role,
+                        "host": a.host,
+                        "status": a.status,
+                        "derived_status": derived,
+                        "age_seconds": a.age_seconds(now),
+                        "active": active,
+                    })
+                }
             })
             .collect();
         let active = roster
@@ -563,6 +577,30 @@ impl HelixirMcpServer {
         }
         let json = Self::result_to_json(payload)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Say goodbye to the swarm: stamp your presence status 'done' when your job is finished (one-shot agents especially — without a farewell your last status reads 'working' forever). Pass the same agent_id you used on add_memory. Cheap and idempotent; your authorship provenance is untouched. GATED by the collective tier: Solo returns {available:false}."
+    )]
+    async fn agent_farewell(
+        &self,
+        Parameters(params): Parameters<AgentFarewellParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.client.config().mode.collective_enabled() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                json!({"available": false, "reason": "solo mode has no swarm"}).to_string(),
+            )]));
+        }
+        let role = self.client.config().swarm.default_role.clone();
+        self.client
+            .tooling()
+            .register_or_heartbeat(&params.agent_id, &role, machine_hostname(), "done")
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        info!("👋 Farewell stamped for {}", params.agent_id);
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({"available": true, "agent_id": params.agent_id, "status": "done"}).to_string(),
+        )]))
     }
 
     #[tool(

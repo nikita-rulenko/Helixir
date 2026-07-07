@@ -42,6 +42,15 @@ struct Cli {
 enum Cmd {
     /// Memory charter review: adopted learned rules + precedent counts (#34).
     Charter,
+    /// Delete an Agent presence row (#84, operator-only): for true junk —
+    /// test agents, renamed identities. Stale agents are already flagged.
+    PruneAgent {
+        #[arg(long)]
+        agent_id: String,
+        /// Confirm the deletion (refuses without it).
+        #[arg(long)]
+        yes: bool,
+    },
     /// List categories with member counts (tag coverage / subset sizes).
     Categories {
         #[arg(long, default_value_t = 500)]
@@ -417,6 +426,7 @@ fn cmd_name(cmd: &Cmd) -> &'static str {
         Cmd::Debt { .. } => "debt",
         Cmd::Watch { .. } => "watch",
         Cmd::Charter => "charter",
+        Cmd::PruneAgent { .. } => "prune-agent",
         Cmd::Health { .. } => "health",
         _ => "command",
     }
@@ -581,6 +591,7 @@ async fn main() -> Result<()> {
 
     match cli.cmd {
         Cmd::Charter => charter_review(&client).await?,
+        Cmd::PruneAgent { agent_id, yes } => swarm_prune(&client, &agent_id, yes).await?,
         Cmd::Categories { limit } => categories(&client, limit).await?,
         Cmd::Clotho { cmd } => match cmd {
             ClothoCmd::Seed => clotho_seed(&client).await?,
@@ -818,6 +829,27 @@ async fn atropos_run(
         "run",
         &format!("seeds={} insights={}", seeds.len(), insights.len()),
     );
+    Ok(())
+}
+
+async fn swarm_prune(client: &HelixirClient, agent_id: &str, yes: bool) -> Result<()> {
+    if !yes {
+        println!(
+            "Refusing to prune '{agent_id}' without --yes.\n\
+             This deletes the presence row AND its AGENT_CREATED provenance \
+             edges — meant for true junk (test agents, renamed identities). \
+             A merely-stale agent is already flagged in swarm_status."
+        );
+        return Ok(());
+    }
+    client
+        .db()
+        .execute_query::<serde_json::Value, _>(
+            "dropPresenceByAgentId",
+            &serde_json::json!({"agent_id": agent_id}),
+        )
+        .await?;
+    println!("Pruned presence row for '{agent_id}'.");
     Ok(())
 }
 

@@ -328,6 +328,10 @@ on). Three habits make you a good citizen:
 3. **Orient identities**: `list_users` shows which user_ids exist. Use
    your OWN stable user_id; read a teammate's memories with
    `list_memories(user_id=...)`; search everyone with scope="collective".
+4. **Say goodbye**: when your job is done — especially as a one-shot
+   agent — call `agent_farewell(agent_id=...)`. Without it your last
+   status reads "working" forever; the roster will flag you as stale, but
+   a clean "done" is better manners.
 
 Your outbox (`pending_outcomes` on any add_memory) may carry:
 - `contradiction_review` — a dispute touching YOUR memory; settle it with

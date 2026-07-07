@@ -649,6 +649,9 @@ QUERY getMemoryAgent(memory_id: String) =>
 
 // Swarm rendezvous (#39): presence lives in the shared graph, so agents on any
 // host see each other through the one DB — no CLI-to-CLI coordination.
+QUERY dropPresenceByAgentId(agent_id: String) =>
+  DROP N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))
+  RETURN "deleted"
 QUERY heartbeatAgent(agent_id: String, host: String, last_seen: String, status: String) =>
   agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
   updated <- agent::UPDATE({ host: host, last_seen: last_seen, status: status })
