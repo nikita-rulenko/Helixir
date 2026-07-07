@@ -758,6 +758,12 @@ pub struct WatchdogConfig {
     pub alert_users: Vec<String>,
     /// Re-alerting the same kind is suppressed for this long.
     pub alert_cooldown_secs: u64,
+    /// #75: shell command executed on every alert (after journal + memory
+    /// notices) — osascript notification, curl to a webhook, anything. The
+    /// alert's kind and summary arrive in HELIXIR_ALERT_KIND /
+    /// HELIXIR_ALERT_SUMMARY env vars. Empty disables. Best-effort:
+    /// failures are logged, never block the alert path.
+    pub on_alert_cmd: String,
     /// Autobackup duty (#65): tar the data dir on a schedule. Empty source
     /// disables the duty. When `container_name` is set the container is
     /// paused for the copy (a consistent LMDB snapshot), then unpaused.
@@ -782,6 +788,7 @@ impl Default for WatchdogConfig {
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
             alert_cooldown_secs: 21_600,
+            on_alert_cmd: String::new(),
             backup_source_dir: String::new(),
             backup_dir: String::new(),
             backup_interval_hours: 24.0,
