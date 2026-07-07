@@ -169,6 +169,12 @@ pub struct SearchMemoryParams {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct AgentFarewellParams {
+    #[schemars(description = "Your agent identity — the same agent_id you passed to add_memory.")]
+    pub agent_id: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct UpdateMemoryParams {
     #[schemars(
         description = "Id of the memory to update (mem_… / raw_…), e.g. from a search result."

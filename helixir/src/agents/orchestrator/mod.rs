@@ -21,6 +21,8 @@ pub struct PipelineRun {
     /// How many insights persist_insights actually stored this pass (after
     /// the flood gate) — Hygieia's flood detector reads this.
     pub persisted: usize,
+    /// #91: what the hypothesis verification duty did.
+    pub verify: crate::agents::atropos::verify::VerifyStats,
     /// #83: what the retroactive causal stitching stage did.
     pub stitch: crate::agents::lachesis::stitch::StitchStats,
 }
@@ -39,6 +41,8 @@ pub struct PassConfig {
     pub run_insights: bool,
     /// #83: cadence gate for the retroactive causal stitching stage.
     pub run_stitch: bool,
+    /// #91: cadence gate for the hypothesis verification duty.
+    pub run_verify: bool,
 }
 
 impl Default for PassConfig {
@@ -60,6 +64,7 @@ impl PassConfig {
             run_clotho: true,
             run_insights: true,
             run_stitch: true,
+            run_verify: true,
         }
     }
 }
@@ -133,6 +138,17 @@ impl<'a> Orchestrator<'a> {
             Default::default()
         };
 
+        // 4) #91: the verification duty — aging hypotheses get an adversarial
+        // review: promote (relabel VERIFIED) or retire (SUPERSEDE by a note,
+        // which auto-demotes it in search since #92). Bounded and non-fatal.
+        let verify = if cfg.run_verify {
+            crate::agents::atropos::verify::Verifier::new(self.tooling)
+                .verify_pass()
+                .await
+        } else {
+            Default::default()
+        };
+
         // Close the hive loop: curated hypotheses become first-class memories
         // (user `helixir`, SUPPORTS provenance) so any agent can recall them.
         let persisted = if insights.is_empty() {
@@ -154,6 +170,7 @@ impl<'a> Orchestrator<'a> {
             grow,
             insights,
             persisted,
+            verify,
             stitch,
         })
     }

@@ -230,6 +230,11 @@ preferences?" and "what have I learned from experience?" return nothing.
   by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
   provenance, not asserted truth — trust it like a colleague's "I think these
   are connected", and say so when you present it to the user.
+- Generated insights carry their lifecycle in the text: `HYPOTHESIS
+  (generated, requires verification)` = an unverified lead; `VERIFIED
+  (generated, confirmed by review)` = it survived an adversarial check
+  against its witness memories; `RETIRED hypothesis` = it failed review
+  (kept for history, demoted in ranking). Trust accordingly.
 - A search result whose metadata has `collapsed: [ids]` is one story shown
   once: a raw source and its extracted atoms never coexist in a window. The
   folded ids stay reachable — fetch one explicitly if you need exact wording.
@@ -323,6 +328,10 @@ on). Three habits make you a good citizen:
 3. **Orient identities**: `list_users` shows which user_ids exist. Use
    your OWN stable user_id; read a teammate's memories with
    `list_memories(user_id=...)`; search everyone with scope="collective".
+4. **Say goodbye**: when your job is done — especially as a one-shot
+   agent — call `agent_farewell(agent_id=...)`. Without it your last
+   status reads "working" forever; the roster will flag you as stale, but
+   a clean "done" is better manners.
 
 Your outbox (`pending_outcomes` on any add_memory) may carry:
 - `contradiction_review` — a dispute touching YOUR memory; settle it with

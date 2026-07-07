@@ -94,6 +94,10 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
 - Some BECAUSE edges are **stitched hypotheses**: a background pass (Lachesis)
   connects old memories retroactively and tags the edge `lachesis-stitch`.
   Present those as "the memory suspects a causal link", never as settled fact.
+  Generated insights carry a lifecycle label in their text: `HYPOTHESIS
+  (generated, ...)` = unverified lead, `VERIFIED (generated, ...)` = survived
+  an adversarial review against its witnesses, `RETIRED hypothesis` = failed
+  review (kept for history, demoted in ranking). Trust accordingly.
 - `think_status` returns `thoughts_left` — your headroom before the session
   cap. `think_conclude` always works, even at 0: the conclusion is the exit.
 - **Language note**: memories may be stored in English even when the source
@@ -117,6 +121,9 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
 - **Superseded results are history**: a result with `superseded: true` was
   replaced (`superseded_by` names the current version). Never act on it as
   current truth — prefer the successor.
+- **Say goodbye**: one-shot agents call `agent_farewell(agent_id=...)` on
+  exit — otherwise the roster shows a stale "working" forever (it will be
+  flagged `derived_status: stale`, but a clean `done` is better).
 - **Time windows and flashbacks**: to recall a period, pass `time_from` /
   `time_to` (RFC3339 or `YYYY-MM-DD`) to `search_memory`. The window bounds
   direct answers by EVENT time; memories outside it that are linked to

@@ -43,7 +43,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.10)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.11)
 
 ---
 

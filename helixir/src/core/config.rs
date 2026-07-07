@@ -337,6 +337,9 @@ pub struct LachesisConfig {
     pub stitch_max_persist: usize,
     /// Judge confidence below this is discarded.
     pub stitch_min_confidence: u32,
+    /// #91: truncate routed threads at a polysemous bridge — an interior
+    /// pivot category holding two otherwise-disjoint communities together.
+    pub polysemy_guard: bool,
 }
 impl Default for LachesisConfig {
     fn default() -> Self {
@@ -351,6 +354,7 @@ impl Default for LachesisConfig {
             stitch_max_judged: 12,
             stitch_max_persist: 6,
             stitch_min_confidence: 70,
+            polysemy_guard: true,
         }
     }
 }
@@ -359,6 +363,15 @@ impl Default for LachesisConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AtroposConfig {
+    /// #91: hypotheses older than this get an adversarial verification
+    /// review (promote / retire / keep). 0 disables the duty.
+    pub verify_min_age_hours: f64,
+    /// #91: at most this many hypotheses reviewed per verify pass.
+    pub verify_max_per_pass: usize,
+    /// #91 aged-out policy: a hypothesis with NO witness provenance can never
+    /// be verified — past this age it is retired as unverifiable (0 keeps
+    /// such hypotheses forever).
+    pub verify_unverifiable_age_hours: f64,
     pub quality_pmi_bar: f64,
     pub min_hops: usize,
     pub preference_labels: Vec<String>,
@@ -370,6 +383,9 @@ pub struct AtroposConfig {
 impl Default for AtroposConfig {
     fn default() -> Self {
         Self {
+            verify_min_age_hours: 48.0,
+            verify_max_per_pass: 3,
+            verify_unverifiable_age_hours: 168.0,
             quality_pmi_bar: 1.0,
             min_hops: 2,
             preference_labels: ["preference", "opinion", "taste", "style", "subjective"]
@@ -424,6 +440,8 @@ pub struct MoiraDaemonConfig {
     pub reconcile_every_passes: u64,
     /// #83 retroactive causal stitching cadence (0 = never).
     pub stitch_every_passes: u64,
+    /// #91 hypothesis verification cadence (0 = never).
+    pub verify_every_passes: u64,
 }
 impl Default for MoiraDaemonConfig {
     fn default() -> Self {
@@ -435,6 +453,7 @@ impl Default for MoiraDaemonConfig {
             clotho_every_passes: 1,
             insight_every_passes: 1,
             stitch_every_passes: 4,
+            verify_every_passes: 6,
             merge_every_passes: 1,
             reconcile_every_passes: 1,
         }
