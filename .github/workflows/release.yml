@@ -106,7 +106,7 @@ jobs:
       - name: Blackhole cdn.pyke.io (Windows)
         if: matrix.ort_url && runner.os == 'Windows'
         shell: pwsh
-        run: Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 cdn.pyke.io"''')
+        run: Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 cdn.pyke.io"
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
