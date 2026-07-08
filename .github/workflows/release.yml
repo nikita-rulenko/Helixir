@@ -94,7 +94,13 @@ jobs:
             *.tgz) tar xzf ort-archive ;;
             *.zip) python -m zipfile -e ort-archive . ;;
           esac
-          echo "ORT_LIB_LOCATION=$PWD/${{ matrix.ort_dir }}/lib" >> "$GITHUB_ENV"
+          # MSVC's link.exe cannot use git-bash POSIX paths — hand it a
+          # Windows-style one (pwd -W). Linux keeps plain $PWD.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "ORT_LIB_LOCATION=$(pwd -W)/${{ matrix.ort_dir }}/lib" >> "$GITHUB_ENV"
+          else
+            echo "ORT_LIB_LOCATION=$PWD/${{ matrix.ort_dir }}/lib" >> "$GITHUB_ENV"
+          fi
           echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
 
       # The whole point of #80: the build must succeed with the third-party
