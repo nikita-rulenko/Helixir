@@ -281,6 +281,16 @@ pub struct RetrievalManager {
     assembler: ContextAssembler,
 }
 
+/// What one retrieval should fetch (#9): the breadth knobs bundled so the
+/// call site reads as intent, not a parade of booleans.
+#[derive(Debug, Clone, Copy)]
+pub struct RetrievalSpec {
+    pub depth: RetrievalDepth,
+    pub limit: usize,
+    pub include_reasoning: bool,
+    pub include_entities: bool,
+}
+
 impl RetrievalManager {
     pub fn new(client: Arc<HelixClient>, search_engine: Arc<SearchEngine>) -> Self {
         info!("RetrievalManager initialized");
@@ -296,11 +306,14 @@ impl RetrievalManager {
         query: &str,
         query_embedding: &[f32],
         user_id: &str,
-        depth: RetrievalDepth,
-        limit: usize,
-        include_reasoning: bool,
-        include_entities: bool,
+        spec: RetrievalSpec,
     ) -> Result<RetrievalResult, RetrievalError> {
+        let RetrievalSpec {
+            depth,
+            limit,
+            include_reasoning,
+            include_entities,
+        } = spec;
         info!(
             "Retrieving: '{}...' [depth={:?}, limit={}]",
             crate::safe_truncate(query, 50),
@@ -320,11 +333,7 @@ impl RetrievalManager {
                 query,
                 query_embedding,
                 user_id,
-                limit,
-                mode,
-                None,
-                None,
-                "personal",
+                crate::toolkit::mind_toolbox::search::SearchOptions::new(limit, mode),
             )
             .await?;
 

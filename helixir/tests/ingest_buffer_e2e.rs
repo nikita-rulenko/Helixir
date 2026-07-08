@@ -66,11 +66,12 @@ async fn ingest_buffer_roundtrip() {
         .search(
             &msg,
             &user,
-            Some(5),
-            Some("full"),
-            None,
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(5),
+                search_mode: Some("full".to_string()),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("search before");
@@ -100,11 +101,12 @@ async fn ingest_buffer_roundtrip() {
         .search(
             &msg,
             &user,
-            Some(5),
-            Some("full"),
-            None,
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(5),
+                search_mode: Some("full".to_string()),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("search after");

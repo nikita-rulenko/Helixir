@@ -181,13 +181,8 @@ impl SmartTraversalV2 {
                     .await?;
             (expansion.results, expansion.edges)
         } else {
-            let results = graph_expansion_phase(
-                Arc::clone(&self.client),
-                &vector_hits,
-                query_embedding,
-                &config,
-            )
-            .await?;
+            let results =
+                graph_expansion_phase(Arc::clone(&self.client), &vector_hits, &config).await?;
             (results, Vec::new())
         };
         let phase2_duration = phase2_start.elapsed();

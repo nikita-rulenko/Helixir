@@ -5,6 +5,7 @@ use super::types::{
     ChainNode, ReasoningChainSearchResult, SearchMemoryResult, ToolingError, ToolingReasoningChain,
 };
 use crate::safe_truncate;
+use crate::toolkit::mind_toolbox::search::SearchOptions;
 
 /// True if a `connect_memories` / `route` anchor argument is itself a memory id
 /// (`mem_…` / `raw_…`) rather than a free-text query — in which case it anchors
@@ -82,11 +83,7 @@ impl ToolingManager {
                 query,
                 &query_embedding,
                 user_id,
-                seed_overfetch,
-                "contextual",
-                None,
-                None,
-                "personal",
+                SearchOptions::new(seed_overfetch, "contextual"),
             )
             .await?;
 
@@ -102,11 +99,7 @@ impl ToolingManager {
                     query,
                     &query_embedding,
                     user_id,
-                    seed_overfetch,
-                    "full",
-                    None,
-                    None,
-                    "personal",
+                    SearchOptions::new(seed_overfetch, "full"),
                 )
                 .await?;
         }
@@ -284,9 +277,7 @@ impl ToolingManager {
                     .await
                     .map_err(|e| ToolingError::Embedding(e.to_string()))?;
                 self.search_engine
-                    .search(
-                        query, &embedding, user_id, 3, "full", None, None, "personal",
-                    )
+                    .search(query, &embedding, user_id, SearchOptions::new(3, "full"))
                     .await?
                     .into_iter()
                     .map(|r| (r.memory_id, r.content))
@@ -334,9 +325,7 @@ impl ToolingManager {
             .map_err(|e| ToolingError::Embedding(e.to_string()))?;
         let seeds: Vec<(String, String)> = self
             .search_engine
-            .search(
-                topic, &embedding, user_id, 5, "full", None, None, "personal",
-            )
+            .search(topic, &embedding, user_id, SearchOptions::new(5, "full"))
             .await?
             .into_iter()
             .map(|r| (r.memory_id, r.content))

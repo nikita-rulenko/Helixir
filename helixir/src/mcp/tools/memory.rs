@@ -223,15 +223,17 @@ impl HelixirMcpServer {
 
         let results = self
             .client
-            .search_windowed(
+            .search(
                 &params.query,
                 &params.user_id,
-                limit,
-                Some(&mode),
-                params.temporal_days,
-                params.graph_depth.map(|d| d as usize),
-                Some(scope),
-                window,
+                crate::core::helixir_client::SearchParams {
+                    limit,
+                    search_mode: Some(mode.clone()),
+                    temporal_days: params.temporal_days,
+                    graph_depth: params.graph_depth.map(|d| d as usize),
+                    scope: Some(scope.to_string()),
+                    window,
+                },
             )
             .await
             .map_err(Self::convert_error)?;

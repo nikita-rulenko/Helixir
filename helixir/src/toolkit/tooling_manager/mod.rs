@@ -11,6 +11,7 @@ pub(crate) mod helpers;
 pub mod ingest_buffer;
 mod reasoning;
 mod search;
+pub use search::MemorySearchOptions;
 pub mod seeds;
 pub mod swarm;
 pub mod types;

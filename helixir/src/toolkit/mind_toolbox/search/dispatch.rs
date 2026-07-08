@@ -38,48 +38,27 @@ fn clamp_with_flashbacks(
 }
 
 impl SearchEngine {
+    /// Mode-driven search. #87: an active `opts.window` bounds seeds by
+    /// EVENT time and wins over `temporal_days`; when the window is inactive,
+    /// `temporal_days` (or the mode default) becomes the legacy one-sided
+    /// cutoff. Out-of-window rows pulled back through the graph return
+    /// flagged as flashbacks.
     pub async fn search(
         &self,
         query: &str,
         query_embedding: &[f32],
         user_id: &str,
-        limit: usize,
-        mode: &str,
-        temporal_days: Option<f64>,
-        graph_depth: Option<u32>,
-        scope: &str,
+        opts: super::SearchOptions,
     ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
-        self.search_windowed(
-            query,
-            query_embedding,
-            user_id,
+        let super::SearchOptions {
             limit,
             mode,
             temporal_days,
             graph_depth,
             scope,
-            TimeWindow::default(),
-        )
-        .await
-    }
-
-    /// #87: search with an explicit two-sided EVENT-time window. When the
-    /// window is inactive, `temporal_days` (or the mode default) becomes a
-    /// one-sided window — the legacy cutoff. An active explicit window wins
-    /// over `temporal_days`.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn search_windowed(
-        &self,
-        query: &str,
-        query_embedding: &[f32],
-        user_id: &str,
-        limit: usize,
-        mode: &str,
-        temporal_days: Option<f64>,
-        graph_depth: Option<u32>,
-        scope: &str,
-        window: TimeWindow,
-    ) -> Result<Vec<UnifiedSearchResult>, SearchError> {
+            window,
+        } = opts;
+        let (mode, scope) = (mode.as_str(), scope.as_str());
         let query_preview: String = query.chars().take(30).collect();
 
         let search_mode = SearchMode::parse_mode(mode);

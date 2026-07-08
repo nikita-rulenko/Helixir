@@ -80,11 +80,12 @@ async fn hive_cross_user_collective_link_e2e() {
             .search(
                 &token,
                 &user_b,
-                Some(20),
-                Some("full"),
-                None,
-                None,
-                Some("collective"),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(20),
+                    search_mode: Some("full".to_string()),
+                    scope: Some("collective".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("collective search");

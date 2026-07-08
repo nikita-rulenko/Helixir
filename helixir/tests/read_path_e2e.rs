@@ -68,11 +68,12 @@ async fn read_path_e2e() {
             .search(
                 query,
                 USER,
-                Some(5),
-                Some("full"),
-                None,
-                None,
-                Some("personal"),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(5),
+                    search_mode: Some("full".to_string()),
+                    scope: Some("personal".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap_or_else(|e| panic!("search '{query}' failed: {e}"));
@@ -115,11 +116,12 @@ async fn read_path_e2e() {
             .search(
                 query,
                 USER,
-                Some(5),
-                Some("full"),
-                None,
-                None,
-                Some("personal"),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(5),
+                    search_mode: Some("full".to_string()),
+                    scope: Some("personal".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .expect("warm search");
@@ -147,11 +149,12 @@ async fn read_path_e2e() {
             .search(
                 q_old,
                 USER,
-                Some(10),
-                Some(mode),
-                None,
-                None,
-                Some("personal"),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(10),
+                    search_mode: Some(mode.to_string()),
+                    scope: Some("personal".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap_or_else(|e| panic!("{mode} search failed: {e}"));
@@ -177,11 +180,13 @@ async fn read_path_e2e() {
         .search(
             q_old,
             USER,
-            Some(10),
-            Some("full"),
-            Some(30.0),
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(10),
+                search_mode: Some("full".to_string()),
+                temporal_days: Some(30.0),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("windowed search (old)");
@@ -196,11 +201,13 @@ async fn read_path_e2e() {
         .search(
             q_event,
             USER,
-            Some(10),
-            Some("full"),
-            Some(30.0),
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(10),
+                search_mode: Some("full".to_string()),
+                temporal_days: Some(30.0),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("windowed search (event)");
@@ -235,15 +242,15 @@ async fn read_path_e2e() {
         to: None,
     };
     let flash_rs = client
-        .search_windowed(
+        .search(
             q_event,
             USER,
-            Some(10),
-            Some("full"),
-            None,
-            None,
-            Some("personal"),
-            window,
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(10),
+                search_mode: Some("full".to_string()),
+                window,
+                ..Default::default()
+            },
         )
         .await
         .expect("windowed search (flashback)");
@@ -367,11 +374,12 @@ async fn read_path_e2e() {
         .search(
             "flaky test",
             USER,
-            Some(5),
-            Some("full"),
-            None,
-            None,
-            Some("collective"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(5),
+                search_mode: Some("full".to_string()),
+                scope: Some("collective".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("collective search");
@@ -395,11 +403,12 @@ async fn read_path_e2e() {
         .search(
             "postgres migration payments service",
             USER,
-            Some(15),
-            Some("deep"),
-            None,
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(15),
+                search_mode: Some("deep".to_string()),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("provenance search");
@@ -457,11 +466,12 @@ async fn read_path_e2e() {
         .search(
             "payments service migrated sqlite postgres",
             USER,
-            Some(3),
-            Some("full"),
-            None,
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(3),
+                search_mode: Some("full".to_string()),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("anchor search")

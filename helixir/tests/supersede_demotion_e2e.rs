@@ -76,11 +76,12 @@ async fn superseded_hub_ranks_below_its_correction() {
         .search(
             &format!("SUPTEST{run} payments gateway endpoint"),
             &user,
-            Some(10),
-            Some("full"),
-            None,
-            None,
-            Some("personal"),
+            helixir::core::helixir_client::SearchParams {
+                limit: Some(10),
+                search_mode: Some("full".to_string()),
+                scope: Some("personal".to_string()),
+                ..Default::default()
+            },
         )
         .await
         .expect("search");

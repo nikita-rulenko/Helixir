@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::core::TimeWindow;
 use crate::core::config::{RetrievalConfig, SearchThresholds};
 
 use super::hybrid::HybridSearchError;
@@ -16,6 +17,34 @@ pub enum SearchError {
     Hybrid(#[from] HybridSearchError),
     #[error("Invalid mode: {0}")]
     InvalidMode(String),
+}
+
+/// One [`super::SearchEngine`] query's knobs (#9) — everything except the
+/// query text, its embedding and the user. An active `window` wins over
+/// `temporal_days` (#87); flashbacks come back flagged.
+#[derive(Debug, Clone)]
+pub struct SearchOptions {
+    pub limit: usize,
+    pub mode: String,
+    pub temporal_days: Option<f64>,
+    pub graph_depth: Option<u32>,
+    pub scope: String,
+    pub window: TimeWindow,
+}
+
+impl SearchOptions {
+    /// `limit` + `mode` with the defaults every internal caller used:
+    /// personal scope, no temporal override, mode-chosen depth, no window.
+    pub fn new(limit: usize, mode: impl Into<String>) -> Self {
+        Self {
+            limit,
+            mode: mode.into(),
+            temporal_days: None,
+            graph_depth: None,
+            scope: "personal".to_string(),
+            window: TimeWindow::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

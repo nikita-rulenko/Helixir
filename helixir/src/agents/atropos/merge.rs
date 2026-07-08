@@ -64,11 +64,12 @@ impl Atropos<'_> {
                 .search_memory(
                     &brief.content,
                     "merge", // collective scope ignores the user_id
-                    Some(8),
-                    "contextual",
-                    Some(36500.0),
-                    None,
-                    "collective",
+                    crate::toolkit::tooling_manager::MemorySearchOptions {
+                        limit: Some(8),
+                        temporal_days: Some(36500.0),
+                        scope: "collective".to_string(),
+                        ..crate::toolkit::tooling_manager::MemorySearchOptions::new("contextual")
+                    },
                 )
                 .await
             {
