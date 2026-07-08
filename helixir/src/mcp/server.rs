@@ -10,7 +10,7 @@ use rmcp::{
     transport::stdio,
 };
 use serde::Serialize;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::core::helixir_client::{HelixirClient, HelixirClientError};
@@ -18,7 +18,10 @@ use crate::toolkit::fast_think::{FastThinkLimits, FastThinkManager};
 
 #[derive(Clone)]
 pub struct HelixirMcpServer {
-    pub(super) client: Arc<HelixirClient>,
+    /// #52: the client sits behind an ArcSwap so a SIGHUP can rebuild it
+    /// from a freshly re-read config and swap it atomically — in-flight
+    /// requests finish on the old client, new requests see the new one.
+    pub(super) client: Arc<arc_swap::ArcSwap<HelixirClient>>,
     pub(super) fast_think: Arc<FastThinkManager>,
     pub(super) tool_router: ToolRouter<Self>,
     pub(super) prompt_router: PromptRouter<Self>,
@@ -33,11 +36,52 @@ impl HelixirMcpServer {
         ));
 
         Self {
-            client: client_arc,
+            client: Arc::new(arc_swap::ArcSwap::from(client_arc)),
             fast_think,
             tool_router: Self::build_tool_router(),
             prompt_router: Self::build_prompt_router(),
         }
+    }
+
+    /// The current client. Load per call — never cache across an await if
+    /// you want reloads to take effect promptly (holding one for a single
+    /// request is exactly right).
+    pub(super) fn client(&self) -> Arc<HelixirClient> {
+        self.client.load_full()
+    }
+
+    /// #52: re-read the layered config (defaults -> helixir.toml -> env),
+    /// build + initialize a NEW client, swap it in. The old client keeps
+    /// serving whatever still holds it (in-flight requests, FastThink).
+    /// On any failure the old client stays — reload is all-or-nothing.
+    pub async fn reload(handle: &arc_swap::ArcSwap<HelixirClient>) -> anyhow::Result<()> {
+        let config = HelixirConfig::from_env();
+        let client = HelixirClient::new(config)?;
+        client.initialize().await?;
+        handle.store(Arc::new(client));
+        info!("config reload: new client swapped in (helixir.toml re-read)");
+        Ok(())
+    }
+
+    /// Spawn the SIGHUP listener that triggers [`Self::reload`].
+    /// FastThink deliberately keeps its construction-time client: active
+    /// scratchpad sessions must not lose their memory handle mid-thought.
+    #[cfg(unix)]
+    pub(super) fn spawn_sighup_reload(handle: Arc<arc_swap::ArcSwap<HelixirClient>>) {
+        tokio::spawn(async move {
+            let Ok(mut hup) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+            else {
+                warn!("config reload: cannot install SIGHUP handler");
+                return;
+            };
+            while hup.recv().await.is_some() {
+                info!("SIGHUP received: reloading config");
+                if let Err(e) = Self::reload(&handle).await {
+                    warn!("config reload FAILED — keeping the old client: {e}");
+                }
+            }
+        });
     }
 
     pub(super) fn convert_error(err: HelixirClientError) -> McpError {
@@ -103,6 +147,8 @@ pub async fn run_server() -> anyhow::Result<()> {
 
     let server = HelixirMcpServer::new(client);
     let fast_think = Arc::clone(&server.fast_think);
+    #[cfg(unix)]
+    HelixirMcpServer::spawn_sighup_reload(Arc::clone(&server.client));
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 
@@ -142,6 +188,8 @@ pub async fn run_gateway(bind: &str) -> anyhow::Result<()> {
     // One handler instance shared across sessions (the client is Arc'd); the
     // factory clones the template per session — cheap, no extra DB connections.
     let template = HelixirMcpServer::new(client);
+    #[cfg(unix)]
+    HelixirMcpServer::spawn_sighup_reload(Arc::clone(&template.client));
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),

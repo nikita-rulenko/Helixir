@@ -98,6 +98,8 @@ moka = { version = "0.12.15", features = ["future"] }
 # features` gives a lean core that still compiles on 1.85 and everywhere.
 ort = { version = "2.0.0-rc.12", optional = true }
 tokenizers = { version = "0.23.1", default-features = false, features = ["onig"], optional = true }
+arc-swap = "1"
+toml_edit = "0.22"
 
 # MCP (Model Context Protocol)
 # TODO: Add mcp-rust-sdk when available or implement manually

@@ -974,7 +974,7 @@ impl HelixirConfig {
     /// Resolve the optional config file: `$HELIXIR_CONFIG`, else
     /// `~/.helixir/helixir.toml`, else `./helixir.toml`. Returns the first that
     /// exists.
-    fn config_file_path() -> Option<std::path::PathBuf> {
+    pub fn config_file_path() -> Option<std::path::PathBuf> {
         if let Ok(p) = std::env::var("HELIXIR_CONFIG") {
             let p = std::path::PathBuf::from(p);
             return p.exists().then_some(p);

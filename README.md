@@ -453,6 +453,11 @@ helixir watch install | uninstall      # run the watchdog as a login service
 #   (launchd / systemd user unit); watchdog.on_alert_cmd pushes each alert to
 #   a human too — shell hook with HELIXIR_ALERT_KIND/_SUMMARY in the env
 helixir health                         # recent health events (health.jsonl)
+helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-style:
+#   edit ~/.helixir/helixir.toml (comments preserved), validate, then `apply`
+#   hot-reloads running MCP/gateway processes via SIGHUP — the client is rebuilt
+#   from the re-read file and swapped atomically, no Claude Desktop reboot.
+#   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
 ```
 
 `helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.

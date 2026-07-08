@@ -97,6 +97,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1086,6 +1095,7 @@ name = "helixir"
 version = "0.12.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "axum",
  "chrono",
@@ -1117,6 +1127,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "url",
