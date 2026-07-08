@@ -20,11 +20,16 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: helixir-linux-x86_64
-            # Lean core since v0.8.0: ort's build script downloads ONNX
-            # Runtime prebuilts from cdn.pyke.io at build time — a third-party
-            # CDN outage (2026-07-03) broke the release pipeline. All five
-            # artifacts are lean now; NLI stays a compile-time opt-in (#80).
-            flags: --no-default-features
+            # Full features again (#80): NLI links against Microsoft's
+            # official ONNX Runtime release (fetched below, sha-pinned) via
+            # ORT_LIB_LOCATION — cdn.pyke.io is out of the critical path and
+            # blackholed during the build to prove it. The tarball ships
+            # libonnxruntime.so.* next to the binaries (rpath $ORIGIN).
+            flags: ''
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-linux-x64-1.24.2.tgz
+            ort_sha: 43725474ba5663642e17684717946693850e2005efbd724ac72da278fead25e6
+            ort_dir: onnxruntime-linux-x64-1.24.2
+            rustflags: -C link-arg=-Wl,-rpath,$ORIGIN
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -54,9 +59,12 @@ jobs:
             os: windows-latest
             artifact: helixir-windows-x86_64
             ext: .exe
-            # Lean core since v0.8.0 — same cdn.pyke.io outage as the
-            # linux-x86_64 entry above (#80).
-            flags: --no-default-features
+            # Full features again (#80): same MS-release linking as the
+            # linux-x86_64 entry; onnxruntime.dll ships next to the exe.
+            flags: ''
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-win-x64-1.24.2.zip
+            ort_sha: 8e3e9c826375352e29cb2614fe44f3d7a4b0ff7b8028ad7a456af9d949a7e8b0
+            ort_dir: onnxruntime-win-x64-1.24.2
 
     steps:
       - uses: actions/checkout@v4
@@ -76,9 +84,35 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross --locked
 
+      - name: Fetch ONNX Runtime (NLI link target, #80)
+        if: matrix.ort_url
+        shell: bash
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 -o ort-archive "${{ matrix.ort_url }}"
+          echo "${{ matrix.ort_sha }}  ort-archive" | sha256sum -c -
+          case "${{ matrix.ort_url }}" in
+            *.tgz) tar xzf ort-archive ;;
+            *.zip) python -m zipfile -e ort-archive . ;;
+          esac
+          echo "ORT_LIB_LOCATION=$PWD/${{ matrix.ort_dir }}/lib" >> "$GITHUB_ENV"
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
+
+      # The whole point of #80: the build must succeed with the third-party
+      # CDN unreachable. Blackhole it so a regression fails loudly here, not
+      # during the next outage.
+      - name: Blackhole cdn.pyke.io (Linux)
+        if: matrix.ort_url && runner.os == 'Linux'
+        run: echo "127.0.0.1 cdn.pyke.io" | sudo tee -a /etc/hosts
+      - name: Blackhole cdn.pyke.io (Windows)
+        if: matrix.ort_url && runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 cdn.pyke.io"''')
+
       - name: Build (native)
         if: ${{ !matrix.cross }}
         working-directory: helixir
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags || '' }}
         run: cargo build --release --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
       - name: Build (cross)
@@ -95,6 +129,13 @@ jobs:
           cp target/${{ matrix.target }}/release/helixir-mcp${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-deploy${{ matrix.ext || '' }} dist/
           cp -r schema dist/
+          # #80: full-feature artifacts carry the ONNX Runtime next to the
+          # binaries (linux links with rpath $ORIGIN; windows finds the DLL
+          # in the exe directory). Keep them together when relocating.
+          if [ -n "${ORT_LIB_LOCATION:-}" ]; then
+            cp -a "$ORT_LIB_LOCATION"/libonnxruntime*.so* dist/ 2>/dev/null || true
+            cp "$ORT_LIB_LOCATION"/onnxruntime.dll dist/ 2>/dev/null || true
+          fi
           cd dist
           tar -czvf ../${{ matrix.artifact }}.tar.gz *
 
