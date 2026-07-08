@@ -68,10 +68,8 @@ impl ToolingManager {
         );
         let chunking_manager = ChunkingManager::with_config(
             Arc::clone(&db),
-            Some(Arc::clone(&embedder)),
             config.chunking.threshold,
             config.chunking.chunk_size,
-            config.chunking.enable_embeddings,
         );
         let entity_manager = EntityManager::new(Arc::clone(&db), config.entity_cache_size);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));

@@ -581,15 +581,12 @@ pub struct ChunkingConfig {
     pub threshold: usize,
     /// Target chunk size (characters).
     pub chunk_size: usize,
-    /// Embed each chunk on write.
-    pub enable_embeddings: bool,
 }
 impl Default for ChunkingConfig {
     fn default() -> Self {
         Self {
             threshold: 500,
             chunk_size: 512,
-            enable_embeddings: true,
         }
     }
 }

@@ -376,7 +376,7 @@ Declared in the schema with a named producer, not yet wired end-to-end:
 | Edge | From → To | Planned producer |
 |:-----|:----------|:-----------------|
 | ENTITY_HAS_EMBEDDING | Entity → EntityEmbedding | Entity-resolution v2: persisted vectors for cross-session entity dedup (fragmented entities break graph hubs) |
-| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Document ingestion; the memory-chunk vector design question is tracked in #12 |
+| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Reserved doc pipeline. Memory-chunk vectors were rejected (#86): chunks are raw-source storage; the retrieval unit is the extracted atom |
 
 Everything else that used to sit in a "reserved" list — duplicate twins and
 an unbuilt documentation-ingestion subsystem — was removed from the schema

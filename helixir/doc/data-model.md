@@ -67,7 +67,7 @@ Nodes group into five purposes:
 | **HistoryEvent** | `event_id`, `memory_id`, `action`, `old_value`, `new_value`, `timestamp`, `actor` | Audit trail. |
 | **MemoryEmbedding** | `content` (proj.), `created_at` | Vector index for memories. |
 | **EntityEmbedding** | `name` | Vector index for entities. |
-| **ChunkEmbedding** | `embedding: [F64]` | Vector for `DocChunk` (reserved doc pipeline). |
+| **ChunkEmbedding** | `embedding: [F64]` | Vector for `DocChunk` (reserved doc pipeline; memory chunks are deliberately NOT embedded — #86). |
 | **ConceptEmbedding** | `embedding: [F64]` | Vector for concept search (reserved). |
 | **DocPage / DocChunk / CodeExample / ErrorCode** | — | Reserved doc-ingest pipeline. Schema present, no Rust producer. |
 
@@ -152,7 +152,6 @@ with HQL ready, but no Rust producer uses them — the arsenal rides
 | `HAS_HISTORY` | Memory → HistoryEvent | — | every UPDATE/SUPERSEDE/DELETE |
 | `HAS_CHUNK` | Memory → MemoryChunk | `chunk_index` | chunking manager |
 | `NEXT_CHUNK` | MemoryChunk → MemoryChunk | — | chunking manager |
-| `CHUNK_HAS_EMBEDDING` | MemoryChunk → MemoryEmbedding | `embedding_model` | chunking manager |
 | `MEMORY_RELATION` | Memory → Memory | `relation_type`, `strength`, `created_at`, `metadata` | reasoning engine — see above |
 | `SUPERSEDES` / `CONTRADICTS` | Memory → Memory | see above | decision engine — see above |
 | `HAS_EMBEDDING` | Memory → MemoryEmbedding | `embedding_model` | add pipeline |
