@@ -744,6 +744,14 @@ pub struct WatchdogConfig {
     pub allow_cache_reclaim: bool,
     /// How much to ask the kernel to reclaim per valve opening, in MiB.
     pub reclaim_step_mib: u64,
+    /// #89: live-heap pressure at or past this % of the container limit
+    /// triggers a supervised `docker restart` INSTEAD of waiting for the
+    /// OOM killer (in-process retention reaches the cap in ~a day under
+    /// heavy write churn; a restart resets it and preserves the volume).
+    /// Requires `allow_container_restart` too. Only the number that
+    /// SURVIVES a cache reclaim counts when the valve is enabled.
+    /// 0 disables. Should sit above `mem_alert_pct`.
+    pub mem_restart_pct: f64,
     /// Insight-flood brake: this many CONSECUTIVE passes hitting the Atropos
     /// persist cap pauses the insights stage for the daemon's lifetime.
     pub flood_passes_to_pause: u32,
@@ -781,6 +789,7 @@ impl Default for WatchdogConfig {
             allow_container_restart: false,
             allow_cache_reclaim: false,
             reclaim_step_mib: 1024,
+            mem_restart_pct: 92.0,
             flood_passes_to_pause: 3,
             orphan_daemon_hours: 6.0,
             alert_users: vec!["helixir".to_string()],
