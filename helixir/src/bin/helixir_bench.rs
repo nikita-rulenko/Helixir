@@ -100,11 +100,12 @@ async fn bench_search(client: &HelixirClient, p: SearchBenchParams<'_>) -> Resul
             .search(
                 &query,
                 p.user_id,
-                Some(p.limit),
-                Some(p.mode),
-                None,
-                None,
-                Some(p.scope),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(p.limit),
+                    search_mode: Some(p.mode.to_string()),
+                    scope: Some(p.scope.to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .with_context(|| format!("search mode={} scope={}", p.mode, p.scope))?;

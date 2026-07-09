@@ -27,11 +27,7 @@ impl ToolingManager {
                 text,
                 &vector,
                 user_id,
-                5,
-                "contextual",
-                None,
-                None,
-                "personal",
+                crate::toolkit::mind_toolbox::search::SearchOptions::new(5, "contextual"),
             )
             .await
             .unwrap_or_default();

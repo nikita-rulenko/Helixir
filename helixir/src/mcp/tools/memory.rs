@@ -36,10 +36,10 @@ impl HelixirMcpServer {
         // any agent that passes agent_id shows up in swarm_status with host +
         // "working" without a separate heartbeat call. Best-effort by design.
         if let Some(agent_id) = params.agent_id.as_deref() {
-            if self.client.config().mode.collective_enabled() {
-                let role = self.client.config().swarm.default_role.clone();
+            if self.client().config().mode.collective_enabled() {
+                let role = self.client().config().swarm.default_role.clone();
                 if let Err(e) = self
-                    .client
+                    .client()
                     .tooling()
                     .register_or_heartbeat(agent_id, &role, machine_hostname(), "working")
                     .await
@@ -58,7 +58,7 @@ impl HelixirMcpServer {
         if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
             use crate::toolkit::tooling_manager::ingest_buffer::{STATUS_DONE, STATUS_FAILED};
             let enq = self
-                .client
+                .client()
                 .add_buffered(
                     &params.message,
                     &params.user_id,
@@ -74,7 +74,7 @@ impl HelixirMcpServer {
             // await so we don't consume (and prune) THIS item's own outcome —
             // it is delivered inline below, and its tombstone stays pollable.
             let outcomes = self
-                .client
+                .client()
                 .drain_notices(&params.user_id, 20)
                 .await
                 .unwrap_or_default();
@@ -82,9 +82,10 @@ impl HelixirMcpServer {
             // Wait (bounded, configurable) for the serial worker to finish this
             // exact item. Waiting does not parallelize processing, so the
             // dedup-race protection the buffer exists for is preserved.
-            let ingest = &self.client.config().ingest;
+            let client = self.client();
+            let ingest = &client.config().ingest;
             let confirmed = self
-                .client
+                .client()
                 .await_add(&enq.pending_id, ingest.ack_wait_ms, ingest.ack_poll_ms)
                 .await;
 
@@ -124,7 +125,7 @@ impl HelixirMcpServer {
         }
 
         let result = self
-            .client
+            .client()
             .add(
                 &params.message,
                 &params.user_id,
@@ -159,7 +160,7 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<GetAddStatusParams>,
     ) -> Result<CallToolResult, McpError> {
         let status = self
-            .client
+            .client()
             .add_status(&params.pending_id)
             .await
             .map_err(Self::convert_error)?;
@@ -177,7 +178,7 @@ impl HelixirMcpServer {
         let mode = params
             .mode
             .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| self.client.config().default_search_mode.clone());
+            .unwrap_or_else(|| self.client().config().default_search_mode.clone());
         let limit = params.limit.map(|l| l as usize);
         // Default scope is intentionally personal (GH #40): collective memory
         // stays hidden unless explicitly requested, so weak models aren't
@@ -185,7 +186,7 @@ impl HelixirMcpServer {
         let requested_scope = params.scope.map(|s| s.as_str()).unwrap_or("personal");
         // Solo mode answers only from the user's own memory — a collective/all
         // request is downgraded to personal rather than leaking other users'.
-        let scope = if self.client.config().mode.collective_enabled() {
+        let scope = if self.client().config().mode.collective_enabled() {
             requested_scope
         } else {
             "personal"
@@ -222,16 +223,18 @@ impl HelixirMcpServer {
         );
 
         let results = self
-            .client
-            .search_windowed(
+            .client()
+            .search(
                 &params.query,
                 &params.user_id,
-                limit,
-                Some(&mode),
-                params.temporal_days,
-                params.graph_depth.map(|d| d as usize),
-                Some(scope),
-                window,
+                crate::core::helixir_client::SearchParams {
+                    limit,
+                    search_mode: Some(mode.clone()),
+                    temporal_days: params.temporal_days,
+                    graph_depth: params.graph_depth.map(|d| d as usize),
+                    scope: Some(scope.to_string()),
+                    window,
+                },
             )
             .await
             .map_err(Self::convert_error)?;
@@ -244,11 +247,11 @@ impl HelixirMcpServer {
         // escape hatch (#64) — a hint, not a roster dump, and never in Solo
         // (where collective would just downgrade back to personal).
         let mut contents = vec![Content::text(Self::result_to_json(&results)?)];
-        let threshold = self.client.config().recall_thin_hint_threshold;
+        let threshold = self.client().config().recall_thin_hint_threshold;
         if scope == "personal"
             && threshold > 0
             && results.len() < threshold
-            && self.client.config().mode.collective_enabled()
+            && self.client().config().mode.collective_enabled()
         {
             contents.push(Content::text(format!(
                 "Hint: personal scope returned {} result(s). If you expected more, retry search_memory with scope=\"collective\" to include the shared collective memory; or call list_users to check which user_id holds the knowledge.",
@@ -284,7 +287,7 @@ impl HelixirMcpServer {
         // memories", so we map them to an empty Vec instead of bubbling an
         // MCP error to the caller. See issue #19.
         let result: MemoriesResponse = match self
-            .client
+            .client()
             .db()
             .execute_query(
                 "getUserMemories",
@@ -339,7 +342,7 @@ impl HelixirMcpServer {
         // Discovery is gated by the collective tier — the same privilege as a
         // collective read (#40/#64). Solo keeps the roster private rather than
         // leaking who exists.
-        if !self.client.config().mode.collective_enabled() {
+        if !self.client().config().mode.collective_enabled() {
             let payload = json!({
                 "available": false,
                 "users": [],
@@ -361,7 +364,7 @@ impl HelixirMcpServer {
 
         // Reuses the already-deployed getAllUsers query (no schema change).
         let resp: UsersResponse = self
-            .client
+            .client()
             .db()
             .execute_query("getAllUsers", &serde_json::json!({}))
             .await
@@ -408,7 +411,7 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<SwarmStatusParams>,
     ) -> Result<CallToolResult, McpError> {
-        if !self.client.config().mode.collective_enabled() {
+        if !self.client().config().mode.collective_enabled() {
             let payload = json!({
                 "available": false,
                 "agents": [],
@@ -421,9 +424,9 @@ impl HelixirMcpServer {
 
         let window = params
             .active_window_secs
-            .unwrap_or(self.client.config().swarm.active_window_secs) as i64;
+            .unwrap_or(self.client().config().swarm.active_window_secs) as i64;
         let mut agents = self
-            .client
+            .client()
             .tooling()
             .list_swarm()
             .await
@@ -435,7 +438,7 @@ impl HelixirMcpServer {
         // their stored status lies "working" forever). The Agent NODE stays:
         // it anchors AGENT_CREATED provenance on every memory it wrote —
         // pruning the view must never orphan authorship.
-        let ttl = self.client.config().swarm.presence_ttl_secs as i64;
+        let ttl = self.client().config().swarm.presence_ttl_secs as i64;
         let total_known = agents.len();
         if ttl > 0 {
             agents.retain(|a| a.age_seconds(now).map(|s| s <= ttl).unwrap_or(false));
@@ -521,7 +524,7 @@ impl HelixirMcpServer {
         // Retract = the disputing memory wins: record the supersession FIRST
         // (if this fails the dispute must stay open), then retire the edge.
         if strategy == "owner_retracted" {
-            self.client
+            self.client()
                 .tooling()
                 .record_supersession(
                     &params.from_id,
@@ -533,7 +536,7 @@ impl HelixirMcpServer {
         }
 
         let resolved = match self
-            .client
+            .client()
             .tooling()
             .resolve_memory_contradictions(&params.from_id, strategy)
             .await
@@ -549,7 +552,7 @@ impl HelixirMcpServer {
         // (best-effort) and, when enough identical verdicts accumulate,
         // hand the agent a ready-to-adopt rule proposal.
         let rule_proposal = if resolved {
-            self.client
+            self.client()
                 .tooling()
                 .record_charter_precedent(&params.from_id, &params.to_id, strategy)
                 .await
@@ -582,13 +585,13 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<AgentFarewellParams>,
     ) -> Result<CallToolResult, McpError> {
-        if !self.client.config().mode.collective_enabled() {
+        if !self.client().config().mode.collective_enabled() {
             return Ok(CallToolResult::success(vec![Content::text(
                 json!({"available": false, "reason": "solo mode has no swarm"}).to_string(),
             )]));
         }
-        let role = self.client.config().swarm.default_role.clone();
-        self.client
+        let role = self.client().config().swarm.default_role.clone();
+        self.client()
             .tooling()
             .register_or_heartbeat(&params.agent_id, &role, machine_hostname(), "done")
             .await
@@ -610,7 +613,7 @@ impl HelixirMcpServer {
         info!("Updating memory: {}...", id_preview);
 
         let result = self
-            .client
+            .client()
             .update(&params.memory_id, &params.new_content, &params.user_id)
             .await
             .map_err(Self::convert_error)?;
@@ -635,7 +638,7 @@ impl HelixirMcpServer {
         info!("Getting memory graph for user={}", params.user_id);
 
         let result = self
-            .client
+            .client()
             .get_graph(
                 &params.user_id,
                 params.memory_id.as_deref(),
@@ -662,7 +665,7 @@ impl HelixirMcpServer {
         );
 
         let results = self
-            .client
+            .client()
             .search_by_concept(
                 &params.query,
                 &params.user_id,
@@ -693,7 +696,7 @@ impl HelixirMcpServer {
         info!("Reasoning chain: '{}' mode={}", query_preview, chain_mode);
 
         let result = self
-            .client
+            .client()
             .search_reasoning_chain(
                 &params.query,
                 &params.user_id,
@@ -724,7 +727,7 @@ impl HelixirMcpServer {
         );
 
         let result = self
-            .client
+            .client()
             .connect_memories(
                 &params.query_a,
                 &params.query_b,
@@ -752,7 +755,7 @@ impl HelixirMcpServer {
         let limit = params.limit.unwrap_or(5) as usize;
 
         let results = self
-            .client
+            .client()
             .tooling()
             .search_by_tag("incomplete_thought", limit)
             .await

@@ -1,4 +1,4 @@
-use super::models::{SearchConfig, SearchResult};
+use super::models::{GraphScores, ScoreWeights, SearchConfig, SearchResult};
 use super::rrf;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::core::{RetrievalProfile, TimeWindow};
@@ -312,7 +312,6 @@ pub async fn vector_search_phase(
 pub async fn graph_expansion_phase(
     client: Arc<HelixClient>,
     vector_hits: &[SearchResult],
-    query_embedding: &[f32],
     config: &SearchConfig,
 ) -> Result<Vec<SearchResult>, TraversalError> {
     info!(
@@ -334,28 +333,20 @@ pub async fn graph_expansion_phase(
     let ed = config.edge_damping;
 
     for hit in vector_hits {
-        let client = Arc::clone(&client);
-        let query_embedding = query_embedding.to_vec();
+        let ctx = ExpandCtx {
+            client: Arc::clone(&client),
+            max_depth,
+            graph_weights,
+            ew,
+            ed,
+        };
         let hit = hit.clone();
-        let weights = graph_weights;
 
         let task = tokio::spawn(async move {
             let mut visited = HashSet::new();
             visited.insert(hit.memory_id.clone());
 
-            expand_from_node(
-                client,
-                &hit.memory_id,
-                &query_embedding,
-                1,
-                max_depth,
-                &mut visited,
-                hit.combined_score,
-                weights,
-                ew,
-                ed,
-            )
-            .await
+            expand_from_node(&ctx, &hit.memory_id, 1, &mut visited, hit.combined_score).await
         });
 
         expansion_tasks.push(task);
@@ -373,25 +364,33 @@ pub async fn graph_expansion_phase(
     Ok(all_results)
 }
 
-async fn expand_from_node(
+/// Read-only invariants of one graph expansion (#9): everything that stays
+/// constant while `expand_from_node` recurses.
+struct ExpandCtx {
     client: Arc<HelixClient>,
-    node_id: &str,
-    query_embedding: &[f32],
-    current_depth: u32,
     max_depth: u32,
-    visited: &mut HashSet<String>,
-    parent_score: f64,
+    /// (semantic_w, graph_w, temporal_w, decay_days)
     graph_weights: (f64, f64, f64, f64),
     ew: crate::core::config::EdgeWeights,
     ed: crate::core::config::EdgeDamping,
+}
+
+async fn expand_from_node(
+    ctx: &ExpandCtx,
+    node_id: &str,
+    current_depth: u32,
+    visited: &mut HashSet<String>,
+    parent_score: f64,
 ) -> Result<Vec<SearchResult>, TraversalError> {
+    let ExpandCtx { ew, ed, .. } = ctx;
     debug!("Expanding from node {} at depth {}", node_id, current_depth);
 
     let params = serde_json::json!({
         "memory_id": node_id
     });
 
-    let response: GraphConnectionsResponse = client
+    let response: GraphConnectionsResponse = ctx
+        .client
         .execute_query("getMemoryLogicalConnections", &params)
         .await
         .map_err(|e| TraversalError::Database(e.to_string()))?;
@@ -400,109 +399,96 @@ async fn expand_from_node(
     let mut neighbors = Vec::new();
 
     process_edge_collection(
+        ctx,
         &response.implies_out,
-        "IMPLIES",
-        ew.implies,
+        ("IMPLIES", ew.implies),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.because_out,
-        "BECAUSE",
-        ew.because,
+        ("BECAUSE", ew.because),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.contradicts_out,
-        "CONTRADICTS",
-        ew.contradicts,
+        ("CONTRADICTS", ew.contradicts),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.relation_out,
-        "MEMORY_RELATION",
-        ew.memory_relation,
+        ("MEMORY_RELATION", ew.memory_relation),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.implies_in,
-        "IMPLIES_IN",
-        ew.implies * ed.implies_in,
+        ("IMPLIES_IN", ew.implies * ed.implies_in),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.because_in,
-        "BECAUSE_IN",
-        ew.because * ed.because_in,
+        ("BECAUSE_IN", ew.because * ed.because_in),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.contradicts_in,
-        "CONTRADICTS_IN",
-        ew.contradicts * ed.contradicts_in,
+        ("CONTRADICTS_IN", ew.contradicts * ed.contradicts_in),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
     process_edge_collection(
+        ctx,
         &response.relation_in,
-        "MEMORY_RELATION_IN",
-        ew.memory_relation * ed.relation_in,
+        ("MEMORY_RELATION_IN", ew.memory_relation * ed.relation_in),
         parent_score,
         visited,
         &mut results,
         &mut neighbors,
-        graph_weights,
     );
 
-    if current_depth < max_depth {
+    if current_depth < ctx.max_depth {
         neighbors.sort_by(|a, b| crate::toolkit::mind_toolbox::ranking::desc(&a.1, &b.1));
         for (neighbor_id, neighbor_score) in neighbors.into_iter().take(3) {
             if !visited.contains(&neighbor_id) {
                 visited.insert(neighbor_id.clone());
                 let expanded = Box::pin(expand_from_node(
-                    Arc::clone(&client),
+                    ctx,
                     &neighbor_id,
-                    query_embedding,
                     current_depth + 1,
-                    max_depth,
                     visited,
                     neighbor_score,
-                    graph_weights,
-                    ew,
-                    ed,
                 ))
                 .await?;
                 results.extend(expanded);
@@ -514,16 +500,16 @@ async fn expand_from_node(
 }
 
 fn process_edge_collection(
+    ctx: &ExpandCtx,
     memories: &[ConnectedMemory],
-    edge_type: &str,
-    edge_weight: f64,
+    edge: (&str, f64),
     parent_score: f64,
     visited: &HashSet<String>,
     results: &mut Vec<SearchResult>,
     neighbors: &mut Vec<(String, f64)>,
-    graph_weights: (f64, f64, f64, f64),
 ) {
-    let (semantic_w, graph_w, temporal_w, decay_days) = graph_weights;
+    let (edge_type, edge_weight) = edge;
+    let (semantic_w, graph_w, temporal_w, decay_days) = ctx.graph_weights;
 
     for mem in memories {
         if visited.contains(&mem.memory_id) {
@@ -541,14 +527,18 @@ fn process_edge_collection(
         let mut result = SearchResult::from_graph_weighted(
             &mem.memory_id,
             &mem.content,
-            semantic_sim,
-            graph_score,
-            temporal_score,
+            GraphScores {
+                semantic_sim,
+                graph_score,
+                temporal_score,
+            },
             1,
             vec![edge_type.to_string()],
-            semantic_w,
-            graph_w,
-            temporal_w,
+            ScoreWeights {
+                semantic: semantic_w,
+                graph: graph_w,
+                temporal: temporal_w,
+            },
         );
         result.created_at = Some(mem.created_at.clone());
         result.valid_from = Some(mem.valid_from.clone());

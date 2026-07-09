@@ -104,11 +104,11 @@ impl FastThinkManager {
             .search(
                 query,
                 user_id,
-                Some(self.limits.max_recall_results),
-                Some("contextual"),
-                None,
-                None,
-                None,
+                crate::core::helixir_client::SearchParams {
+                    limit: Some(self.limits.max_recall_results),
+                    search_mode: Some("contextual".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;
@@ -136,11 +136,11 @@ impl FastThinkManager {
                 .search(
                     query,
                     user_id,
-                    Some(self.limits.recall_fallback_max),
-                    Some("full"),
-                    None,
-                    None,
-                    None,
+                    crate::core::helixir_client::SearchParams {
+                        limit: Some(self.limits.recall_fallback_max),
+                        search_mode: Some("full".to_string()),
+                        ..Default::default()
+                    },
                 )
                 .await
                 .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;

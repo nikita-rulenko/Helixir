@@ -11,6 +11,7 @@ pub(crate) mod helpers;
 pub mod ingest_buffer;
 mod reasoning;
 mod search;
+pub use search::MemorySearchOptions;
 pub mod seeds;
 pub mod swarm;
 pub mod types;
@@ -68,10 +69,8 @@ impl ToolingManager {
         );
         let chunking_manager = ChunkingManager::with_config(
             Arc::clone(&db),
-            Some(Arc::clone(&embedder)),
             config.chunking.threshold,
             config.chunking.chunk_size,
-            config.chunking.enable_embeddings,
         );
         let entity_manager = EntityManager::new(Arc::clone(&db), config.entity_cache_size);
         let ontology_manager = parking_lot::RwLock::new(OntologyManager::new(Arc::clone(&db)));

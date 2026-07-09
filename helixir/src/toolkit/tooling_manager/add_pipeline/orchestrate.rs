@@ -186,11 +186,10 @@ impl ToolingManager {
                     &memory.text,
                     vector,
                     user_id,
-                    self.config.write.recall_top_k,
-                    "contextual",
-                    None,
-                    None,
-                    "personal",
+                    crate::toolkit::mind_toolbox::search::SearchOptions::new(
+                        self.config.write.recall_top_k,
+                        "contextual",
+                    ),
                 )
                 .await
                 .unwrap_or_default();

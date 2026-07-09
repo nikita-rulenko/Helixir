@@ -59,4 +59,6 @@ pub use smart_traversal::{
 pub use query_processor::{EnhancedQuery, QueryIntent, QueryProcessor};
 
 pub use engine::SearchEngine;
-pub use types::{ControversyInfo, SearchEngineConfig, SearchError, UnifiedSearchResult};
+pub use types::{
+    ControversyInfo, SearchEngineConfig, SearchError, SearchOptions, UnifiedSearchResult,
+};

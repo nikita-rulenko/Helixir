@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// The three per-hit scores a graph-expanded result is built from (#9).
+#[derive(Debug, Clone, Copy)]
+pub struct GraphScores {
+    pub semantic_sim: f64,
+    pub graph_score: f64,
+    pub temporal_score: f64,
+}
+
+/// Blend weights for combining [`GraphScores`] into one ranking score (#9).
+#[derive(Debug, Clone, Copy)]
+pub struct ScoreWeights {
+    pub semantic: f64,
+    pub graph: f64,
+    pub temporal: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub memory_id: String,
@@ -78,45 +94,44 @@ impl SearchResult {
     pub fn from_graph(
         memory_id: impl Into<String>,
         content: impl Into<String>,
-        semantic_sim: f64,
-        graph_score: f64,
-        temporal_score: f64,
+        scores: GraphScores,
         depth: u32,
         edge_path: Vec<String>,
     ) -> Self {
         Self::from_graph_weighted(
             memory_id,
             content,
-            semantic_sim,
-            graph_score,
-            temporal_score,
+            scores,
             depth,
             edge_path,
-            0.3,
-            0.5,
-            0.2,
+            ScoreWeights {
+                semantic: 0.3,
+                graph: 0.5,
+                temporal: 0.2,
+            },
         )
     }
 
     pub fn from_graph_weighted(
         memory_id: impl Into<String>,
         content: impl Into<String>,
-        semantic_sim: f64,
-        graph_score: f64,
-        temporal_score: f64,
+        scores: GraphScores,
         depth: u32,
         edge_path: Vec<String>,
-        semantic_weight: f64,
-        graph_weight: f64,
-        temporal_weight: f64,
+        weights: ScoreWeights,
     ) -> Self {
+        let GraphScores {
+            semantic_sim,
+            graph_score,
+            temporal_score,
+        } = scores;
         let combined = super::scoring::calculate_graph_combined_score_weighted(
             semantic_sim,
             graph_score,
             temporal_score,
-            semantic_weight,
-            graph_weight,
-            temporal_weight,
+            weights.semantic,
+            weights.graph,
+            weights.temporal,
         );
         Self {
             memory_id: memory_id.into(),

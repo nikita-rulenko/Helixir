@@ -155,7 +155,8 @@ impl ServerHandler for HelixirMcpServer {
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
             "config://helixir" => {
-                let config = self.client.config();
+                let client = self.client();
+                let config = client.config();
 
                 let content = serde_json::to_string_pretty(&json!({
                     "version": env!("CARGO_PKG_VERSION"),
@@ -228,7 +229,7 @@ impl ServerHandler for HelixirMcpServer {
                     .unwrap_or_else(|| include_str!("../../memory-charter.md").to_string());
                 // #34 2b: learned rules render BESIDE the constitution, never
                 // inside it — the constitution is immune to self-learning.
-                let learned = self.client.tooling().learned_charter_rules().await;
+                let learned = self.client().tooling().learned_charter_rules().await;
                 if !learned.is_empty() {
                     content.push_str(
                         "\n\n## Learned rules (adopted from contradiction-review precedents)\n\n",
@@ -242,7 +243,8 @@ impl ServerHandler for HelixirMcpServer {
                 })
             }
             "status://helixdb" => {
-                let config = self.client.config();
+                let client = self.client();
+                let config = client.config();
 
                 let content = serde_json::to_string_pretty(&json!({
                     "status": "connected",

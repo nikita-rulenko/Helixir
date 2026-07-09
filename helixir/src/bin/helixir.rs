@@ -41,6 +41,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Show, edit, validate and hot-apply the layered config (#52)
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
     /// Memory charter review: adopted learned rules + precedent counts (#34).
     Charter,
     /// Delete an Agent presence row (#84, operator-only): for true junk —
@@ -210,6 +215,22 @@ enum Cmd {
     },
     /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
     Mode,
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Print the RESOLVED config (defaults -> helixir.toml -> env)
+    Get {
+        /// Print the raw helixir.toml file instead of the resolved view
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Set one key in helixir.toml (dotted path, e.g. watchdog.mem_restart_pct 90)
+    Set { key: String, value: String },
+    /// Open helixir.toml in $EDITOR, then validate it
+    Edit,
+    /// Validate helixir.toml and hot-reload running processes (kubectl-apply style)
+    Apply,
 }
 
 #[derive(Subcommand)]
@@ -420,6 +441,158 @@ fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
     Ok(())
 }
 
+// ============ helixir config (#52) ============
+
+/// The file `config set/edit/apply` operates on: the resolved existing file,
+/// else `~/.helixir/helixir.toml` (created on first `set`).
+fn config_target_path() -> Result<PathBuf> {
+    if let Some(p) = helixir::core::config::HelixirConfig::config_file_path() {
+        return Ok(p);
+    }
+    Ok(helixir_dir()?.join("helixir.toml"))
+}
+
+fn config_get(raw: bool) -> Result<()> {
+    if raw {
+        let p = config_target_path()?;
+        match std::fs::read_to_string(&p) {
+            Ok(s) => print!("{s}"),
+            Err(_) => println!(
+                "# {} does not exist — everything is at defaults",
+                p.display()
+            ),
+        }
+        return Ok(());
+    }
+    let resolved = helixir::core::config::HelixirConfig::from_env();
+    println!(
+        "# RESOLVED config: defaults -> helixir.toml -> env (env wins)\n{}",
+        toml::to_string_pretty(&resolved).context("serialize resolved config")?
+    );
+    Ok(())
+}
+
+/// Validate a helixir.toml body the same way the loader consumes it.
+fn config_validate(content: &str) -> Result<()> {
+    toml::from_str::<helixir::core::config::HelixirConfig>(content)
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("invalid helixir.toml: {e}"))
+}
+
+fn config_set(key: &str, value: &str) -> Result<()> {
+    let p = config_target_path()?;
+    let content = std::fs::read_to_string(&p).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().context("parse helixir.toml")?;
+
+    let segs: Vec<&str> = key.split('.').collect();
+    anyhow::ensure!(!segs.is_empty(), "empty key");
+    let mut node = doc.as_table_mut();
+    for seg in &segs[..segs.len() - 1] {
+        node = node
+            .entry(seg)
+            .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| anyhow::anyhow!("{seg} exists and is not a table"))?;
+    }
+    // Try native TOML typing first (5, 5.0, true, [..]); fall back to string.
+    let item: toml_edit::Value = value
+        .parse()
+        .unwrap_or_else(|_| toml_edit::Value::from(value));
+    node[segs[segs.len() - 1]] = toml_edit::Item::Value(item);
+
+    let out = doc.to_string();
+    config_validate(&out)?; // never persist a file the loader would reject
+    std::fs::write(&p, out).with_context(|| format!("write {}", p.display()))?;
+    println!("{} = {} -> {}", key, value, p.display());
+    println!("run `helixir config apply` to hot-reload running processes");
+    Ok(())
+}
+
+fn config_edit() -> Result<()> {
+    let p = config_target_path()?;
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new(&editor).arg(&p).status()?;
+    anyhow::ensure!(status.success(), "{editor} exited with {status}");
+    match std::fs::read_to_string(&p) {
+        Ok(content) => match config_validate(&content) {
+            Ok(()) => println!("valid — run `helixir config apply` to hot-reload"),
+            Err(e) => {
+                println!("WARNING: {e}\n(the loader will fall back to DEFAULTS on this file)")
+            }
+        },
+        Err(_) => println!("no file written"),
+    }
+    Ok(())
+}
+
+/// kubectl-apply for the memory (#52): validate, then SIGHUP every process
+/// with real reload semantics. The MCP server and the gateway rebuild their
+/// client from the re-read file and swap atomically; daemon/watch hold
+/// deeper config snapshots and are listed as restart-to-apply.
+fn config_apply() -> Result<()> {
+    let p = config_target_path()?;
+    match std::fs::read_to_string(&p) {
+        Ok(content) => config_validate(&content)?,
+        Err(_) => println!(
+            "note: {} does not exist — defaults + env apply",
+            p.display()
+        ),
+    }
+    println!("config valid: {}", p.display());
+
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("pgrep")
+            .args(["-f", "helixir-mcp|helixir gateway"])
+            .output()?;
+        let pids: Vec<i32> = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .filter(|pid| *pid != std::process::id() as i32)
+            .collect();
+        if pids.is_empty() {
+            println!("no running MCP/gateway processes found — nothing to signal");
+        }
+        for pid in pids {
+            let ok = std::process::Command::new("kill")
+                .args(["-HUP", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            println!(
+                "SIGHUP -> pid {pid}: {}",
+                if ok {
+                    "reloading (client rebuilt + swapped)"
+                } else {
+                    "FAILED"
+                }
+            );
+        }
+        for name in ["daemon", "watch"] {
+            if let Some(state) = read_pid_state(name) {
+                let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                if is_alive(pid) {
+                    println!(
+                        "{name} (pid {pid}): restart to apply — `helixir {}`",
+                        if name == "daemon" {
+                            "daemon stop && helixir daemon start"
+                        } else {
+                            "watch stop && helixir watch start"
+                        }
+                    );
+                }
+            }
+        }
+        println!("note: active FastThink sessions keep their pre-reload memory handle by design");
+        println!(
+            "note: processes running a binary OLDER than the hot-reload feature EXIT on SIGHUP\n      (no handler installed) — their supervisor/client restarts them with the new config"
+        );
+    }
+    #[cfg(not(unix))]
+    println!("hot-reload signaling is unix-only; restart processes to apply");
+    Ok(())
+}
+
 fn cmd_name(cmd: &Cmd) -> &'static str {
     match cmd {
         Cmd::Clotho { .. } => "clotho",
@@ -515,6 +688,14 @@ async fn main() -> Result<()> {
             DaemonCmd::Run { .. } => {} // needs the client — fall through
         }
     }
+    if let Cmd::Config { cmd } = &cli.cmd {
+        return match cmd {
+            ConfigCmd::Get { raw } => config_get(*raw),
+            ConfigCmd::Set { key, value } => config_set(key, value),
+            ConfigCmd::Edit => config_edit(),
+            ConfigCmd::Apply => config_apply(),
+        };
+    }
     if let Cmd::Watch { cmd } = &cli.cmd {
         match cmd {
             WatchCmd::Start { interval } => return watch_start(*interval),
@@ -598,6 +779,7 @@ async fn main() -> Result<()> {
     }
 
     match cli.cmd {
+        Cmd::Config { .. } => unreachable!("handled before client construction"),
         Cmd::Charter => charter_review(&client).await?,
         Cmd::PruneAgent { agent_id, yes } => swarm_prune(&client, &agent_id, yes).await?,
         Cmd::Categories { limit } => categories(&client, limit).await?,

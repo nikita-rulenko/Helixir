@@ -5,7 +5,6 @@ use text_splitter::TextSplitter;
 use tracing::{debug, info, warn};
 
 use crate::db::HelixClient;
-use crate::llm::embeddings::EmbeddingGenerator;
 
 pub const DEFAULT_THRESHOLD: usize = 500;
 
@@ -52,47 +51,38 @@ pub enum ChunkingError {
     Config(String),
 }
 
+// #86: chunks are STORAGE, not a retrieval unit. Oversized inputs are split
+// into MemoryChunk nodes purely so the raw source survives and can be
+// reconstructed; retrieval always goes through extracted atoms and
+// whole-memory embeddings. Per-chunk embeddings (the never-wired
+// "feed Helixir a book" idea) were rejected as off-mission — raw-text
+// recall is plain RAG, not reasoning memory. Distill books through the
+// normal add_memory extraction path instead.
 pub struct ChunkingManager {
     client: Arc<HelixClient>,
-    embedder: Option<Arc<EmbeddingGenerator>>,
     splitter: TextSplitter<text_splitter::Characters>,
     threshold: usize,
     chunk_size: usize,
-    enable_embeddings: bool,
 }
 
 impl ChunkingManager {
-    pub fn new(client: Arc<HelixClient>, embedder: Option<Arc<EmbeddingGenerator>>) -> Self {
-        Self::with_config(
-            client,
-            embedder,
-            DEFAULT_THRESHOLD,
-            DEFAULT_CHUNK_SIZE,
-            true,
-        )
+    pub fn new(client: Arc<HelixClient>) -> Self {
+        Self::with_config(client, DEFAULT_THRESHOLD, DEFAULT_CHUNK_SIZE)
     }
 
-    pub fn with_config(
-        client: Arc<HelixClient>,
-        embedder: Option<Arc<EmbeddingGenerator>>,
-        threshold: usize,
-        chunk_size: usize,
-        enable_embeddings: bool,
-    ) -> Self {
+    pub fn with_config(client: Arc<HelixClient>, threshold: usize, chunk_size: usize) -> Self {
         let splitter = TextSplitter::new(chunk_size);
 
         info!(
-            "ChunkingManager initialized (threshold={}, chunk_size={}, embeddings={})",
-            threshold, chunk_size, enable_embeddings
+            "ChunkingManager initialized (threshold={}, chunk_size={})",
+            threshold, chunk_size
         );
 
         Self {
             client,
-            embedder,
             splitter,
             threshold,
             chunk_size,
-            enable_embeddings,
         }
     }
 
@@ -234,50 +224,15 @@ impl ChunkingManager {
                 .await
                 .map_err(|e| ChunkingError::Database(e.to_string()))?;
 
-            let chunk_internal_id = match chunk_result.chunk {
-                Some(c) if !c.id.is_empty() => c.id,
+            match chunk_result.chunk {
+                Some(c) if !c.id.is_empty() => {}
                 _ => {
                     warn!("Failed to create chunk {}", position);
                     continue;
                 }
-            };
+            }
 
             chunk_ids.push(chunk_id.clone());
-
-            if self.enable_embeddings {
-                if let Some(ref embedder) = self.embedder {
-                    match embedder.generate(chunk_text, true).await {
-                        Ok(vector) => {
-                            #[derive(Serialize)]
-                            struct AddChunkEmbeddingInput {
-                                chunk_id: String,
-                                vector_data: Vec<f32>,
-                            }
-
-                            let embed_input = AddChunkEmbeddingInput {
-                                chunk_id: chunk_internal_id,
-                                vector_data: vector,
-                            };
-
-                            if let Err(e) = self
-                                .client
-                                .execute_query::<serde_json::Value, _>(
-                                    "addChunkEmbedding",
-                                    &embed_input,
-                                )
-                                .await
-                            {
-                                warn!("Failed to add chunk {} embedding: {}", position, e);
-                            } else {
-                                debug!("Chunk {} embedding created", position);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to generate embedding for chunk {}: {}", position, e);
-                        }
-                    }
-                }
-            }
         }
 
         info!(

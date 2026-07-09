@@ -328,6 +328,10 @@ impl<'a> Hygieia<'a> {
         // live: 2.58GiB reported, ~414MiB true heap); cgroup memory.reclaim
         // sheds exactly the reclaimable part without touching live heap.
         // Only if the number stays high AFTER reclaim is the pressure real.
+        let mut live = MemSample {
+            used_mib: sample.used_mib,
+            limit_mib: sample.limit_mib,
+        };
         if self.cfg().allow_cache_reclaim {
             let step = self.cfg().reclaim_step_mib;
             if reclaim_container_cache(&name, step).await {
@@ -353,24 +357,75 @@ impl<'a> Hygieia<'a> {
                         );
                         return;
                     }
+                    // Pressure survived the reclaim: judge the restart bar
+                    // by the post-reclaim (live-heap) number, not the
+                    // cache-inflated one.
+                    live = after;
                 }
             }
+        }
+
+        // #89: in-process retention reaches the cap in ~a day of heavy write
+        // churn, and the OOM killer strikes mid-write. Past the restart bar
+        // a supervised restart (volume preserved, ~10s) is the lesser evil.
+        // Two opt-ins: the restart permission AND a non-zero bar.
+        let restart_pct = self.cfg().mem_restart_pct;
+        if restart_pct > 0.0 && live.pct() >= restart_pct && self.cfg().allow_container_restart {
+            info!(
+                "hygieia: live heap at {:.0}% (>= {restart_pct:.0}%) — supervised restart of {name}",
+                live.pct()
+            );
+            let healed = restart_container(&name).await;
+            journal(&HealthEvent {
+                at: chrono::Utc::now().to_rfc3339(),
+                severity: "heal".into(),
+                kind: "mem_restarted".into(),
+                summary: format!(
+                    "live heap at {:.0}% of limit ({:.0}/{:.0} MiB); docker restart {name} {}",
+                    live.pct(),
+                    live.used_mib,
+                    live.limit_mib,
+                    if healed { "succeeded" } else { "FAILED" }
+                ),
+                detail: serde_json::json!({
+                    "live_mib": live.used_mib,
+                    "limit_mib": live.limit_mib,
+                    "restart_pct": restart_pct,
+                }),
+            });
+            self.alert(
+                if healed { "mem_restarted" } else { "mem_pressure" },
+                &format!(
+                    "container {name} live heap hit {:.0}% of its limit ({:.0}/{:.0} MiB) — auto-restart {}",
+                    live.pct(),
+                    live.used_mib,
+                    live.limit_mib,
+                    if healed {
+                        "succeeded (heap reset, volume preserved)"
+                    } else {
+                        "FAILED — intervene before the OOM killer does"
+                    }
+                ),
+                serde_json::json!({"live_mib": live.used_mib, "limit_mib": live.limit_mib}),
+            )
+            .await;
+            return;
         }
 
         self.alert(
             "mem_pressure",
             &format!(
                 "container {name} at {:.0}% of its memory limit ({:.0}/{:.0} MiB){}",
-                sample.pct(),
-                sample.used_mib,
-                sample.limit_mib,
+                live.pct(),
+                live.used_mib,
+                live.limit_mib,
                 if self.cfg().allow_cache_reclaim {
                     " — persists after a cache reclaim, this is live heap"
                 } else {
                     ""
                 }
             ),
-            serde_json::json!({"used_mib": sample.used_mib, "limit_mib": sample.limit_mib}),
+            serde_json::json!({"used_mib": live.used_mib, "limit_mib": live.limit_mib}),
         )
         .await;
     }

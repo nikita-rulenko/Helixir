@@ -21,6 +21,7 @@ mod types;
 
 pub use client::HelixirClient;
 pub use error::HelixirClientError;
+pub use memory::SearchParams;
 pub use types::{
     AddMemoryResult, ChainNode, GraphEdge, GraphNode, GraphResult, ReasoningChain,
     ReasoningChainResult, SearchResult, UpdateResult,

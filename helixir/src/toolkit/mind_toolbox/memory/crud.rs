@@ -85,6 +85,21 @@ struct AddUserInput {
     name: String,
 }
 
+/// Everything needed to create one memory row (#9). Optional fields fall
+/// back to the same defaults `addMemory` always used (type "fact",
+/// certainty 80, importance 50, source "user", empty tags, `{}` metadata).
+#[derive(Debug, Clone, Default)]
+pub struct NewMemory {
+    pub content: String,
+    pub user_id: String,
+    pub memory_type: Option<String>,
+    pub certainty: Option<i64>,
+    pub importance: Option<i64>,
+    pub source: Option<String>,
+    pub context_tags: Option<String>,
+    pub metadata: Option<String>,
+}
+
 pub struct MemoryCrud {
     client: HelixClient,
     embedder: Option<Arc<EmbeddingGenerator>>,
@@ -96,17 +111,17 @@ impl MemoryCrud {
         Self { client, embedder }
     }
 
-    pub async fn add_memory(
-        &self,
-        content: String,
-        user_id: String,
-        memory_type: Option<String>,
-        certainty: Option<i64>,
-        importance: Option<i64>,
-        source: Option<String>,
-        context_tags: Option<String>,
-        metadata: Option<String>,
-    ) -> Result<Memory, CrudError> {
+    pub async fn add_memory(&self, new: NewMemory) -> Result<Memory, CrudError> {
+        let NewMemory {
+            content,
+            user_id,
+            memory_type,
+            certainty,
+            importance,
+            source,
+            context_tags,
+            metadata,
+        } = new;
         let memory_id = format!(
             "mem_{}",
             Uuid::new_v4()

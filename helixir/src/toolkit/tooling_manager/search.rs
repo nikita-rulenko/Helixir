@@ -51,45 +51,52 @@ fn collapse_collective_duplicates(results: Vec<SearchMemoryResult>) -> Vec<Searc
     out
 }
 
+/// Tooling-level search request (#9): `mode` and `scope` arrive resolved by
+/// the caller (the client layer); `limit` stays optional so the configured
+/// default applies. #87: an active `window` hard-filters seeds by EVENT time;
+/// graph expansion may pull out-of-window rows back in as flagged flashbacks
+/// (`metadata.flashback` + `event_date`).
+#[derive(Debug, Clone)]
+pub struct MemorySearchOptions {
+    pub limit: Option<usize>,
+    pub mode: String,
+    pub temporal_days: Option<f64>,
+    pub graph_depth: Option<usize>,
+    pub scope: String,
+    pub window: crate::core::TimeWindow,
+}
+
+impl MemorySearchOptions {
+    /// `mode` with the usual defaults: configured limit, personal scope,
+    /// no temporal override, no window.
+    pub fn new(mode: impl Into<String>) -> Self {
+        Self {
+            limit: None,
+            mode: mode.into(),
+            temporal_days: None,
+            graph_depth: None,
+            scope: "personal".to_string(),
+            window: crate::core::TimeWindow::default(),
+        }
+    }
+}
+
 impl ToolingManager {
     pub async fn search_memory(
         &self,
         query: &str,
         user_id: &str,
-        limit: Option<usize>,
-        mode: &str,
-        temporal_days: Option<f64>,
-        graph_depth: Option<usize>,
-        scope: &str,
+        opts: MemorySearchOptions,
     ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
-        self.search_memory_windowed(
-            query,
-            user_id,
+        let MemorySearchOptions {
             limit,
             mode,
             temporal_days,
             graph_depth,
             scope,
-            crate::core::TimeWindow::default(),
-        )
-        .await
-    }
-
-    /// #87: search with an explicit two-sided EVENT-time window. The window
-    /// hard-filters seeds; graph expansion may pull out-of-window rows back
-    /// in as flagged flashbacks (`metadata.flashback` + `event_date`).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn search_memory_windowed(
-        &self,
-        query: &str,
-        user_id: &str,
-        limit: Option<usize>,
-        mode: &str,
-        temporal_days: Option<f64>,
-        graph_depth: Option<usize>,
-        scope: &str,
-        window: crate::core::TimeWindow,
-    ) -> Result<Vec<SearchMemoryResult>, ToolingError> {
+            window,
+        } = opts;
+        let (mode, scope) = (mode.as_str(), scope.as_str());
         info!(
             "Searching: '{}...' [mode={}, limit={:?}, temporal_days={:?}, window={:?}..{:?}, scope={}]",
             safe_truncate(query, 50),
@@ -116,16 +123,18 @@ impl ToolingManager {
         };
         let results = self
             .search_engine
-            .search_windowed(
+            .search(
                 query,
                 &query_embedding,
                 user_id,
-                effective_limit,
-                mode,
-                temporal_days,
-                graph_depth,
-                effective_scope,
-                window,
+                crate::toolkit::mind_toolbox::search::SearchOptions {
+                    limit: effective_limit,
+                    mode: mode.to_string(),
+                    temporal_days,
+                    graph_depth,
+                    scope: effective_scope.to_string(),
+                    window,
+                },
             )
             .await?;
 
@@ -293,11 +302,7 @@ impl ToolingManager {
                 query,
                 &query_embedding,
                 user_id,
-                limit * 3,
-                mode,
-                None,
-                None,
-                "personal",
+                crate::toolkit::mind_toolbox::search::SearchOptions::new(limit * 3, mode),
             )
             .await?;
 

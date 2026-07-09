@@ -107,7 +107,7 @@ bug to file — not a feature to copy.
 | `HelixirConfig` | `src/core/config.rs` | Configuration shape + env parsing (currently partial, see #10) |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
 | `ToolingManager` | `src/toolkit/tooling_manager/` | Pipeline orchestration; the only struct allowed to wire all sub-managers together |
-| `ChunkingManager` | `src/toolkit/mind_toolbox/chunking/` | Long-memory chunking + chunk embeddings |
+| `ChunkingManager` | `src/toolkit/mind_toolbox/chunking/` | Long-memory chunking (storage/reconstruction only — per-chunk vectors rejected in #86) |
 | `EntityManager` | `src/toolkit/mind_toolbox/entity/` | Entity dedup, edges, aliases |
 | `OntologyManager` | `src/toolkit/mind_toolbox/ontology/` | Concept hierarchy, classification, mapping |
 | `ReasoningEngine` | `src/toolkit/mind_toolbox/reasoning/engine.rs` | IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS edges and traversal |

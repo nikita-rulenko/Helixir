@@ -267,48 +267,47 @@ pub struct SubsetHypothesis {
     pub requires_verification: bool,
 }
 
+/// Mutable scratch threaded through [`subset_dfs`]: the walk state, the best
+/// path found so far (ranked by hops, then weakest link) and the node budget.
+struct SubsetDfsScratch {
+    on_path: HashSet<String>,
+    cur: Vec<(String, f64)>,
+    best: Vec<(String, f64)>,
+    best_key: (usize, f64),
+    budget: u64,
+}
+
 /// DFS for the longest simple path over the PMI subset graph, ranked by hops then
 /// the weakest link (min PMI). `adj`: category_id → [(neighbour, pmi)].
 fn subset_dfs(
     node: &str,
     adj: &std::collections::HashMap<String, Vec<(String, f64)>>,
-    on_path: &mut HashSet<String>,
-    cur: &mut Vec<(String, f64)>,
     cur_min: f64,
-    best: &mut Vec<(String, f64)>,
-    best_key: &mut (usize, f64),
-    budget: &mut u64,
+    scratch: &mut SubsetDfsScratch,
 ) {
-    if *budget == 0 {
+    if scratch.budget == 0 {
         return;
     }
-    *budget -= 1;
+    scratch.budget -= 1;
 
-    if cur.len() > best_key.0 || (cur.len() == best_key.0 && cur_min > best_key.1) {
-        *best_key = (cur.len(), cur_min);
-        *best = cur.clone();
+    if scratch.cur.len() > scratch.best_key.0
+        || (scratch.cur.len() == scratch.best_key.0 && cur_min > scratch.best_key.1)
+    {
+        scratch.best_key = (scratch.cur.len(), cur_min);
+        scratch.best = scratch.cur.clone();
     }
 
     if let Some(neighbours) = adj.get(node) {
         for (next, p) in neighbours {
-            if on_path.contains(next) {
+            if scratch.on_path.contains(next) {
                 continue;
             }
-            on_path.insert(next.clone());
-            cur.push((next.clone(), *p));
-            subset_dfs(
-                next,
-                adj,
-                on_path,
-                cur,
-                cur_min.min(*p),
-                best,
-                best_key,
-                budget,
-            );
-            cur.pop();
-            on_path.remove(next);
-            if *budget == 0 {
+            scratch.on_path.insert(next.clone());
+            scratch.cur.push((next.clone(), *p));
+            subset_dfs(next, adj, cur_min.min(*p), scratch);
+            scratch.cur.pop();
+            scratch.on_path.remove(next);
+            if scratch.budget == 0 {
                 return;
             }
         }
@@ -431,22 +430,15 @@ impl<'a> Lachesis<'a> {
         }
 
         // Longest high-PMI simple path from the seed.
-        let mut best: Vec<(String, f64)> = Vec::new();
-        let mut best_key = (0usize, f64::INFINITY);
-        let mut on_path: HashSet<String> = HashSet::new();
-        on_path.insert(seed_category_id.to_string());
-        let mut cur: Vec<(String, f64)> = vec![(seed_category_id.to_string(), 0.0)];
-        let mut budget: u64 = lc.dfs_budget as u64;
-        subset_dfs(
-            seed_category_id,
-            &adj,
-            &mut on_path,
-            &mut cur,
-            f64::INFINITY,
-            &mut best,
-            &mut best_key,
-            &mut budget,
-        );
+        let mut scratch = SubsetDfsScratch {
+            on_path: HashSet::from([seed_category_id.to_string()]),
+            cur: vec![(seed_category_id.to_string(), 0.0)],
+            best: Vec::new(),
+            best_key: (0usize, f64::INFINITY),
+            budget: lc.dfs_budget as u64,
+        };
+        subset_dfs(seed_category_id, &adj, f64::INFINITY, &mut scratch);
+        let mut best = scratch.best;
         // Respect max_hops by truncating an over-long thread.
         if best.len() > max_hops + 1 {
             best.truncate(max_hops + 1);

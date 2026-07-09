@@ -278,11 +278,12 @@ pub async fn ensure_seeded(client: &HelixirClient) -> usize {
             .search(
                 "payments sqlite postgres migration",
                 GOLDEN_USER,
-                Some(5),
-                Some("full"),
-                None,
-                None,
-                Some("personal"),
+                helixir::core::helixir_client::SearchParams {
+                    limit: Some(5),
+                    search_mode: Some("full".to_string()),
+                    scope: Some("personal".to_string()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap_or_default();

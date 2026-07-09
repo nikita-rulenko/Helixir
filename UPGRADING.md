@@ -12,14 +12,15 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
-## v0.4.x → v0.12.0 — all drop-in
+## v0.4.x → v0.13.0 — all drop-in
 
-Every release from v0.5.0 through v0.12.0 upgrades in place: update the
+Every release from v0.5.0 through v0.13.0 upgrades in place: update the
 binary, restart your MCP client, done. New config keys are optional with
 safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.13.0** | The self-steering release | `helixir config get/set/edit/apply` hot-reloads running MCP/gateway processes via SIGHUP (client rebuilt from the re-read `helixir.toml`, swapped atomically) — **restart MCP clients once on this binary before your first `apply`** (older binaries exit on SIGHUP). Hygieia self-restarts the database container on genuine live-heap pressure (`watchdog.mem_restart_pct`, 92; needs `allow_container_restart`). linux-x86_64 + windows artifacts are full-featured again (NLI; the ONNX runtime ships in the tarball — keep it next to the binaries). `chunking.enable_embeddings` removed (the machinery was dead, #86). |
 | **v0.12.0** | The operator release | Ops alerts can push to a human: `watchdog.on_alert_cmd` runs on every alert with `HELIXIR_ALERT_KIND`/`HELIXIR_ALERT_SUMMARY` in the env (off when empty). `helixir watch install`/`uninstall` runs the watchdog as a launchd agent / systemd user unit (refuses `target/` binaries). FastThink recall reserves `fast_think.conclude_reserve` (2) thoughts of headroom so synthesis always fits. Default logs are ASCII; `helixir-deploy` is a clap CLI (`-h` = `--help`, `--version`, invalid `--port` errors). |
 | **v0.11.0** | Honest generation | Lachesis truncates threads at polysemous pivot categories (`lachesis.polysemy_guard`, on). Atropos verifies aging hypotheses — promote to `VERIFIED` / retire via SUPERSEDE (`atropos.verify_*` knobs, daemon `verify_every_passes`, 6). New `agent_farewell` tool (22nd) — restart your MCP client for the schema; roster rows gain `derived_status`. Operator prune: `helixir prune-agent` — **self-hosted deployments must redeploy the schema** (new `dropPresenceByAgentId`). `helixir charter` reviews learned rules. |
 | **v0.10.0** | The learning charter | The charter grows rules from your `resolve_contradiction` verdicts (`write.rule_propose_after`, 3; adopted rules render in `memory://rules`). Superseded facts rank below their corrections, flagged `superseded`/`superseded_by` (`retrieval.superseded_penalty`, 0.6) — **self-hosted deployments must redeploy the schema** (new `getSupersededBatch` query: `helix check` → rebuild image → recreate container, volume preserved). Charter false positives are gated (shared subject + 0.88 similarity floor). Write-path LLM cost drops: batched inference + reliable batch decisions + local-NLI edge routing (`write.nli_route`, on; no-op on lean builds). All 8 ontology types classify correctly even on llama3.2:3b. |

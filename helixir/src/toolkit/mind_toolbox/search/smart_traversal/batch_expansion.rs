@@ -22,7 +22,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tracing::{debug, info};
 
-use super::models::{SearchConfig, SearchResult};
+use super::models::{GraphScores, ScoreWeights, SearchConfig, SearchResult};
 use super::phases::TraversalError;
 use super::ppr::PprEdge;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
@@ -357,14 +357,18 @@ pub async fn graph_expansion_phase_batched(
                 let mut result = SearchResult::from_graph_weighted(
                     &child.memory_id,
                     &child.content,
-                    0.5,
-                    graph_score,
-                    temporal_score,
+                    GraphScores {
+                        semantic_sim: 0.5,
+                        graph_score,
+                        temporal_score,
+                    },
                     depth,
                     vec![edge_type.to_string()],
-                    config.graph_semantic_weight,
-                    config.graph_graph_weight,
-                    config.graph_temporal_weight,
+                    ScoreWeights {
+                        semantic: config.graph_semantic_weight,
+                        graph: config.graph_graph_weight,
+                        temporal: config.graph_temporal_weight,
+                    },
                 );
                 result.created_at = Some(child.created_at.clone());
                 result.valid_from = Some(child.valid_from.clone());

@@ -43,7 +43,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.12)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.13)
 
 ---
 
@@ -376,7 +376,7 @@ Declared in the schema with a named producer, not yet wired end-to-end:
 | Edge | From → To | Planned producer |
 |:-----|:----------|:-----------------|
 | ENTITY_HAS_EMBEDDING | Entity → EntityEmbedding | Entity-resolution v2: persisted vectors for cross-session entity dedup (fragmented entities break graph hubs) |
-| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Document ingestion; the memory-chunk vector design question is tracked in #12 |
+| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Reserved doc pipeline. Memory-chunk vectors were rejected (#86): chunks are raw-source storage; the retrieval unit is the extracted atom |
 
 Everything else that used to sit in a "reserved" list — duplicate twins and
 an unbuilt documentation-ingestion subsystem — was removed from the schema
@@ -453,6 +453,11 @@ helixir watch install | uninstall      # run the watchdog as a login service
 #   (launchd / systemd user unit); watchdog.on_alert_cmd pushes each alert to
 #   a human too — shell hook with HELIXIR_ALERT_KIND/_SUMMARY in the env
 helixir health                         # recent health events (health.jsonl)
+helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-style:
+#   edit ~/.helixir/helixir.toml (comments preserved), validate, then `apply`
+#   hot-reloads running MCP/gateway processes via SIGHUP — the client is rebuilt
+#   from the re-read file and swapped atomically, no Claude Desktop reboot.
+#   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
 ```
 
 `helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.

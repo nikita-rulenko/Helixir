@@ -7,6 +7,19 @@ use super::client::HelixirClient;
 use super::error::HelixirClientError;
 use super::types::{AddMemoryResult, SearchResult, UpdateResult};
 
+/// Client-facing search knobs (#9). Every field is optional — unset means
+/// "the configured default" (mode from `default_search_mode`, personal
+/// scope, configured limit, no time window).
+#[derive(Debug, Clone, Default)]
+pub struct SearchParams {
+    pub limit: Option<usize>,
+    pub search_mode: Option<String>,
+    pub temporal_days: Option<f64>,
+    pub graph_depth: Option<usize>,
+    pub scope: Option<String>,
+    pub window: crate::core::TimeWindow,
+}
+
 impl HelixirClient {
     pub async fn add(
         &self,
@@ -158,58 +171,35 @@ impl HelixirClient {
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
 
+    /// Search the memory. Every unset [`SearchParams`] field means "the
+    /// configured default". #87: an active `window` bounds recall by EVENT
+    /// time; out-of-window rows reachable through the graph come back
+    /// flagged as flashbacks (`metadata.flashback` + `event_date`).
     pub async fn search(
         &self,
         query: &str,
         user_id: &str,
-        limit: Option<usize>,
-        search_mode: Option<&str>,
-        temporal_days: Option<f64>,
-        graph_depth: Option<usize>,
-        scope: Option<&str>,
-    ) -> Result<Vec<SearchResult>, HelixirClientError> {
-        self.search_windowed(
-            query,
-            user_id,
-            limit,
-            search_mode,
-            temporal_days,
-            graph_depth,
-            scope,
-            crate::core::TimeWindow::default(),
-        )
-        .await
-    }
-
-    /// #87: search bounded by an explicit two-sided EVENT-time window.
-    /// Out-of-window rows reachable through the graph come back flagged
-    /// as flashbacks (`metadata.flashback` + `event_date`).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn search_windowed(
-        &self,
-        query: &str,
-        user_id: &str,
-        limit: Option<usize>,
-        search_mode: Option<&str>,
-        temporal_days: Option<f64>,
-        graph_depth: Option<usize>,
-        scope: Option<&str>,
-        window: crate::core::TimeWindow,
+        params: SearchParams,
     ) -> Result<Vec<SearchResult>, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        let mode = search_mode.unwrap_or(&self.config.default_search_mode);
+        let mode = params
+            .search_mode
+            .as_deref()
+            .unwrap_or(&self.config.default_search_mode);
         let results = self
             .tooling_manager
-            .search_memory_windowed(
+            .search_memory(
                 query,
                 user_id,
-                limit,
-                mode,
-                temporal_days,
-                graph_depth,
-                scope.unwrap_or("personal"),
-                window,
+                crate::toolkit::tooling_manager::MemorySearchOptions {
+                    limit: params.limit,
+                    mode: mode.to_string(),
+                    temporal_days: params.temporal_days,
+                    graph_depth: params.graph_depth,
+                    scope: params.scope.unwrap_or_else(|| "personal".to_string()),
+                    window: params.window,
+                },
             )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
