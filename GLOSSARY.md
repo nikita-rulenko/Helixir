@@ -286,11 +286,37 @@ like it. Used as the end-to-end validation fixture.
 
 **Hygieia.** The built-in health watchdog (the 2026-07-02 OOM incident,
 made an organ). Detectors — DB liveness, container memory, insight flood,
-orphaned daemons — feed a reaction ladder: self-heal silently (pause a
-flooding insights stage, restart a dead DB container when allowed), alert
-THROUGH the memory itself (`ops_alert` notices in agents' outboxes + a
-recallable `ops-alert` memory), journal everything (`helixir health`).
-Runs inside the Moirai daemon and standalone (`helixir watch`).
+orphaned daemons, non-persistent storage — feed a reaction ladder:
+self-heal silently (pause a flooding insights stage, restart a dead DB
+container when allowed), alert THROUGH the memory itself (`ops_alert`
+notices in agents' outboxes + a recallable `ops-alert` memory), push to a
+human via the `on_alert_cmd` shell hook, journal everything
+(`helixir health`). Runs inside the Moirai daemon, standalone
+(`helixir watch`), or as a login service (`helixir watch install`).
+
+**Cache valve.** Hygieia's lie detector for container memory: docker
+stats charges reclaimable page cache to the container, so the memory
+detector first opens cgroup `memory.reclaim` and only pressure that
+SURVIVES the shed counts as live heap (`watchdog.allow_cache_reclaim`).
+Observed live: 2.58GiB "used" collapsing to ~400MiB of real heap.
+
+**Supervised memory restart.** HelixDB's in-process retention tracks
+write churn and can reach the container cap within a day of heavy agent
+traffic. When the post-reclaim (live) number crosses
+`watchdog.mem_restart_pct` and restarts are allowed, Hygieia restarts the
+container itself — volume preserved, ~10s, journaled as
+`heal/mem_restarted` — instead of letting the OOM killer strike
+mid-write. Judge the container with `tools/memprobe.py`, never docker
+stats.
+
+**Config hot-reload.** kubectl-apply for the memory: edit
+`~/.helixir/helixir.toml`, run `helixir config apply`, running MCP
+servers and gateways rebuild their client from the re-read config and
+swap it atomically (SIGHUP; in-flight requests finish on the old client,
+a failed rebuild changes nothing). `config get/set/edit` complete the
+surface; `set` edits by dotted path with comments preserved. Active
+FastThink sessions keep their pre-reload handle; `daemon`/`watch`
+restart to apply.
 
 ## Working memory
 
