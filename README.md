@@ -49,6 +49,19 @@
 
 ## What is Helixir?
 
+**Helixir doesn't store data — it grows minds.** The product is not this
+software: it is the brain you grow with it. A graph that has been fed a
+domain for a year becomes an asset in its own right — yours to keep, to
+carry between models, to license, to seat as a resident advisor inside any
+agent. Models come and go; a grown memory compounds.
+
+Ordinary AI memory is similar-text retrieval. Helixir keeps the *why*:
+causal chains, provenance on every fact, automatic consensus (a duplicate
+from a second agent becomes confirmation, not a copy) and automatic
+disagreement (a contradiction surfaces and demands resolution instead of a
+silent overwrite). Knowledge here doesn't rot — it self-cleans and
+appreciates.
+
 Helixir gives AI agents **memory that persists between sessions** — and more than that: memory that *reasons*. When an agent starts a new conversation, it recalls past decisions, preferences, goals and the **chains of reasoning behind them**, not a flat log of similar text.
 
 Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
