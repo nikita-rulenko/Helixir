@@ -28,7 +28,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 CONTAINER = args[0] if args else "helix-helixir-local-bench_app"
 RECLAIM = "--reclaim" in flags
-RECLAIM_MIB = int(args[1]) if RECLAIM and len(args) > 1 else 1024
+RECLAIM_MIB = int(args[1]) if RECLAIM and len(args) > 1 else 0  # 0 = ask the full current charge (#89)
 
 KB = 1024
 MB = 1024 * 1024
@@ -110,9 +110,10 @@ def reclaim():
         print(f"container '{CONTAINER}' not found")
         sys.exit(1)
     before = cgroup().get("memory.current", 0)
+    ask_mib = RECLAIM_MIB if RECLAIM_MIB > 0 else max(1024, int(before) // 1048576 + 64)
     script = (
         f"for p in /sys/fs/cgroup/docker/{cid} /sys/fs/cgroup/system.slice/docker-{cid}.scope; do "
-        f'if [ -f "$p/memory.reclaim" ]; then echo {RECLAIM_MIB}M > "$p/memory.reclaim" || true; exit 0; fi; '
+        f'if [ -f "$p/memory.reclaim" ]; then echo {ask_mib}M > "$p/memory.reclaim" || true; exit 0; fi; '
         f"done; exit 1"
     )
     r = subprocess.run(
@@ -124,7 +125,7 @@ def reclaim():
         print("reclaim failed: no memory.reclaim found in either cgroup layout")
         sys.exit(1)
     after = cgroup().get("memory.current", 0)
-    print(f"cache valve: asked {RECLAIM_MIB}MiB, charge {human(before)} -> {human(after)}")
+    print(f"cache valve: asked {ask_mib}MiB, charge {human(before)} -> {human(after)}")
     print("(live heap untouched — only reclaimable pages were shed)")
 
 
