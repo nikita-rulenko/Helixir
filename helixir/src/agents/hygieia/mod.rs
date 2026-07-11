@@ -333,7 +333,13 @@ impl<'a> Hygieia<'a> {
             limit_mib: sample.limit_mib,
         };
         if self.cfg().allow_cache_reclaim {
-            let step = self.cfg().reclaim_step_mib;
+            // #89 root cause: the retained pages are the allocator's
+            // lazily-freed (MADV_FREE) heap — reclaimable, but only as much
+            // as we ASK for. A fixed step under-asked (observed live:
+            // "persists after reclaim" that was really "asked 1G of 3G").
+            // Ask for the full current charge; reclaim_step_mib stays as
+            // the floor for tiny containers.
+            let step = self.cfg().reclaim_step_mib.max(sample.used_mib as u64 + 64);
             if reclaim_container_cache(&name, step).await {
                 if let Some(after) = sample_container_memory(&name).await {
                     if after.pct() < self.cfg().mem_alert_pct {
