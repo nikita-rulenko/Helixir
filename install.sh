@@ -47,6 +47,67 @@ info()  { echo -e "${BLUE}[info]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[ok]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC}  $*"; }
 err()   { echo -e "${RED}[error]${NC} $*"; }
+
+# ── HelixDB CLI: PINNED to v2.3.5 ────────────────────────────────────────────
+# Helixir targets the v2 (LMDB) generation of HelixDB. CLI v3.x is a
+# DIFFERENT, INCOMPATIBLE engine (hyperscale over object storage): it has no
+# `helix check`/`helix build`, never compiles this repo's schema, and the
+# gateway comes up with query_count=0. Both `cargo install helix-cli` and
+# `curl install.helix-db.com | bash` install latest (v3) — so this script
+# installs the pinned binary itself and HARD-FAILS if a v3 would shadow it.
+HELIX_CLI_PIN="2.3.5"
+HELIX_CLI_MIRROR="https://github.com/nikita-rulenko/helix-db/releases/download/v${HELIX_CLI_PIN}"
+
+helix_cli_version() { helix --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
+
+ensure_helix_cli() {
+    if command -v helix >/dev/null 2>&1; then
+        local v; v=$(helix_cli_version)
+        case "$v" in
+            "$HELIX_CLI_PIN")
+                ok "HelixDB CLI v$v (pinned) — $(command -v helix)"; return 0 ;;
+            3.*)
+                err "Found HelixDB CLI v$v at $(command -v helix) — the v3 generation is INCOMPATIBLE with Helixir."
+                err "It cannot compile this repo's schema (no 'helix check'/'helix build'); every Helixir call would fail."
+                err "Remove or shadow it, then re-run this script — it installs the pinned v${HELIX_CLI_PIN} automatically:"
+                err "    mv \"$(command -v helix)\" \"$(command -v helix).v3\""
+                exit 1 ;;
+            2.*)
+                warn "HelixDB CLI v$v found (pin is v${HELIX_CLI_PIN}). Proceeding — but if 'helix build' misbehaves, install the pin from:"
+                warn "    ${HELIX_CLI_MIRROR}"
+                return 0 ;;
+            *)
+                warn "Could not parse 'helix --version' output; replacing with the pinned v${HELIX_CLI_PIN}." ;;
+        esac
+    fi
+
+    local os arch asset
+    os=$(uname -s); arch=$(uname -m)
+    case "$os/$arch" in
+        Darwin/arm64)          asset="helix-aarch64-apple-darwin" ;;
+        Darwin/x86_64)         asset="helix-x86_64-apple-darwin" ;;
+        Linux/aarch64|Linux/arm64) asset="helix-aarch64-unknown-linux-gnu" ;;
+        Linux/x86_64)          asset="helix-x86_64-unknown-linux-gnu" ;;
+        *) err "No pinned HelixDB CLI build for $os/$arch — fetch v${HELIX_CLI_PIN} manually: ${HELIX_CLI_MIRROR}"; exit 1 ;;
+    esac
+
+    info "Installing pinned HelixDB CLI v${HELIX_CLI_PIN} ($asset)..."
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL --retry 3 -o "$HOME/.local/bin/helix" "${HELIX_CLI_MIRROR}/${asset}" || {
+        err "Download failed: ${HELIX_CLI_MIRROR}/${asset}"; exit 1; }
+    chmod +x "$HOME/.local/bin/helix"
+    export PATH="$HOME/.local/bin:$PATH"
+
+    # the freshly installed pin must be the one PATH resolves
+    local got; got=$(helix_cli_version)
+    if [ "$got" != "$HELIX_CLI_PIN" ]; then
+        err "PATH resolves 'helix' to $(command -v helix) (v${got:-unknown}), not the pinned install."
+        err "Put \$HOME/.local/bin FIRST in PATH (and persist it in your shell rc), then re-run."
+        exit 1
+    fi
+    ok "HelixDB CLI v${HELIX_CLI_PIN} installed to ~/.local/bin/helix"
+    warn "Add to your shell rc if not present:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+}
 step()  { echo -e "\n${BOLD}$*${NC}"; }
 
 INSTALL_DIR="$DEFAULT_DIR"
@@ -186,13 +247,7 @@ else
             # built locally by the HelixDB CLI, which compiles our schema
             # INTO it. Build it if missing, then run with the proven flags.
             if ! docker image inspect helix-helixir-dev:latest >/dev/null 2>&1; then
-                if ! command -v helix >/dev/null 2>&1; then
-                    info "Installing HelixDB CLI (helix)..."
-                    cargo install helix-cli --quiet || {
-                        err "helix CLI missing and cargo install failed — install it manually: cargo install helix-cli"
-                        exit 1
-                    }
-                fi
+                ensure_helix_cli
                 info "Building the HelixDB image from schema (helix build)..."
                 (cd "$INSTALL_DIR/helixir/schema" && helix check && helix build -i dev) || {
                     err "helix build failed — see output above"
