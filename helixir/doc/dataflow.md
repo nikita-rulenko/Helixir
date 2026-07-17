@@ -241,6 +241,10 @@ All re-use the same `SearchEngine` instance:
 FastThink keeps a `petgraph::stable_graph::StableDiGraph<Thought, Relation>`
 in-process. Only `think_commit` mutates HelixDB.
 
+Each session pins the client and limits from the runtime generation in which
+it started. A SIGHUP publishes a new generation for future sessions without
+changing the meaning or persistence target of an active reasoning graph.
+
 ```
  think_start ─► creates session in memory only
  think_add   ─► adds Thought node (Reasoning / Hypothesis /

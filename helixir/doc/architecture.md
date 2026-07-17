@@ -103,6 +103,7 @@ bug to file — not a feature to copy.
 | Component | File / module | Owns |
 |---|---|---|
 | MCP server | `src/mcp/server.rs` | Tool dispatch, parameter typing, JSON responses |
+| MCP process runtime | `src/mcp/server.rs` | One ingest worker, hot-reload generations, optional gateway bearer authentication |
 | `HelixirClient` | `src/core/helixir_client.rs` | Public facade; nothing else may be a public entry point |
 | `HelixirConfig` | `src/core/config.rs` | Configuration shape + env parsing (currently partial, see #10) |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
@@ -302,6 +303,11 @@ timeout the manager runs `commit_partial` and tags the resulting Memory with
 `context_tags=incomplete_thought` so it can be recovered later.
 
 Default limits live in `FastThinkLimits::mcp`: 90 s wall clock, 150 thoughts.
+On SIGHUP, new sessions use the newly built client and limits while sessions
+already in progress retain their original runtime generation. The ingest
+worker is owned once by the MCP process and reads its current
+`ToolingManager` through `ArcSwap`; queue claims are also atomic in HelixDB so
+separate stdio/gateway processes cannot process the same `PendingInput`.
 
 ### 7.4 Hive Memory (cross-user shared knowledge)
 
@@ -385,4 +391,3 @@ category-bridge axis, **longest-chain reconstruction** (`HelixirClient::
 longest_chain`), and **per-edge reasoning weights** now flowing through PPR
 ranking + path confidence. In perspective the Moirai run as **N parallel
 instances** (memory only grows), supervised inside the daemon (§6 open items).
-

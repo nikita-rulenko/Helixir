@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -64,8 +65,8 @@ pub const STATUS_PROCESSING: &str = "processing";
 pub const STATUS_DONE: &str = "done";
 pub const STATUS_FAILED: &str = "failed";
 
-/// Server-side auto-retry budget for a queued write (#25). The agent never
-/// sees these — write-failure handling is entirely internal.
+// Server-side auto-retry budget for a queued write (#25). The agent never
+// sees these — write-failure handling is entirely internal.
 // Ingest retry budget + deadline now live in config.ingest
 // (max_retries / deadline_secs / retry_backoff_ms).
 
@@ -105,6 +106,8 @@ struct PendingNode {
     status: String,
     #[serde(default)]
     created_at: String,
+    #[serde(default)]
+    processed_at: String,
     #[serde(default)]
     result: String,
     #[serde(default)]
@@ -259,6 +262,17 @@ impl ToolingManager {
             Err(_) => return,
         };
         for node in stuck.pending {
+            let stale_after =
+                Duration::from_secs(self.config.ingest.deadline_secs.saturating_add(60));
+            let is_stale = chrono::DateTime::parse_from_rfc3339(&node.processed_at)
+                .map(|started| {
+                    chrono::Utc::now().signed_duration_since(started.with_timezone(&chrono::Utc))
+                        > chrono::Duration::from_std(stale_after).unwrap_or(chrono::Duration::MAX)
+                })
+                .unwrap_or(false);
+            if !is_stale {
+                continue;
+            }
             warn!(
                 "Ingest worker: recovering orphaned processing item {}",
                 node.pending_id
@@ -266,6 +280,26 @@ impl ToolingManager {
             let _ = self
                 .set_pending_status(&node.pending_id, STATUS_PENDING, "", "")
                 .await;
+        }
+    }
+
+    async fn claim_pending(&self, pending_id: &str) -> bool {
+        let params = serde_json::json!({
+            "pending_id": pending_id,
+            "expected_status": STATUS_PENDING,
+            "processed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        match self
+            .db
+            .execute_query::<serde_json::Value, _>("claimPendingInput", &params)
+            .await
+        {
+            Ok(_) => true,
+            Err(e) if e.to_string().to_lowercase().contains("no value found") => false,
+            Err(e) => {
+                warn!("Ingest worker: failed to claim {pending_id}: {e}");
+                false
+            }
         }
     }
 
@@ -296,13 +330,9 @@ impl ToolingManager {
     /// attempts within `INGEST_DEADLINE`; a retry after a partial success
     /// is self-healing because the W2 dedup gates NOOP already-written facts.
     async fn process_one_pending(&self, node: &PendingNode) -> bool {
-        if self
-            .set_pending_status(&node.pending_id, STATUS_PROCESSING, "", "")
-            .await
-            .is_err()
-        {
-            warn!(
-                "Ingest worker: failed to mark {} processing",
+        if !self.claim_pending(&node.pending_id).await {
+            debug!(
+                "Ingest worker: {} was already claimed by another worker",
                 node.pending_id
             );
             return false;
@@ -493,22 +523,28 @@ impl ToolingManager {
     }
 }
 
-/// The single serial worker. Spawned once at startup when the buffer is on.
+/// The single serial worker. Spawned once by the process runtime when the
+/// buffer is on. `tooling` is swapped on SIGHUP only between queue batches,
+/// so an in-flight item finishes on its original generation while the next
+/// item receives the new configuration.
 /// Drains `pending` items oldest-first, one at a time — serialization is the
 /// whole point (dedup-race closure), so this never parallelizes.
-pub async fn run_ingest_worker(tm: Arc<ToolingManager>) {
-    let interval = Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
+pub async fn run_ingest_worker(tooling: Arc<ArcSwap<ToolingManager>>) {
+    let initial = tooling.load_full();
     info!(
         "Ingest worker started (poll {}ms); add_memory now returns pending_id",
-        interval.as_millis()
+        initial.config.ingest.poll_interval_ms.clamp(50, 60_000)
     );
 
     // Recover orphans: a `processing` item whose worker process was killed
     // mid-flight would otherwise be stuck forever (the worker only fetches
     // `pending`). Reset them to `pending` so they get retried.
-    tm.recover_stuck_processing().await;
+    initial.recover_stuck_processing().await;
+    drop(initial);
 
     loop {
+        let tm = tooling.load_full();
+        let interval = Duration::from_millis(tm.config.ingest.poll_interval_ms.clamp(50, 60_000));
         match tm.fetch_pending_batch(32).await {
             Ok(mut batch) if !batch.is_empty() => {
                 // Oldest first — fairness and causal order for dedup.

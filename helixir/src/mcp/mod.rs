@@ -16,4 +16,4 @@ mod prompts;
 mod server;
 mod tools;
 
-pub use server::{HelixirMcpServer, run_gateway, run_server};
+pub use server::{HelixirMcpServer, run_gateway, run_gateway_with_options, run_server};

@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "helixir"
-version = "0.13.1"
+version = "0.13.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1120,6 +1120,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "strum 0.26.3",
+ "subtle",
  "temp-env",
  "text-splitter",
  "thiserror 2.0.17",

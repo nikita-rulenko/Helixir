@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.13.1"
+version = "0.13.2"
 edition = "2024"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
 description = "Ontological memory for LLMs - Rust implementation"
@@ -76,6 +76,7 @@ url = "2.5"
 
 # Hashing (for cache keys)
 sha2 = "0.10"
+subtle = "2.6"
 
 # Regex (for query processing, BM25)
 regex = "1.11"
@@ -140,4 +141,3 @@ path = "src/bin/helixir_bench.rs"
 [[bin]]
 name = "helixir"
 path = "src/bin/helixir.rs"
-
