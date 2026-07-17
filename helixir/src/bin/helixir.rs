@@ -168,7 +168,7 @@ enum Cmd {
     /// The per-host MCP gateway (#42): serve the same memory tools over HTTP
     /// (streamable-http) so many clients share one process — they point at the
     /// gateway URL instead of each spawning a stdio helixir-mcp. Foreground or
-    /// background. Full network trust for v1 (no auth token).
+    /// background. Bearer authentication is optional and disabled by default.
     Gateway {
         #[command(subcommand)]
         cmd: GatewayCmd,
@@ -345,13 +345,21 @@ enum DaemonCmd {
 enum GatewayCmd {
     /// Run in the FOREGROUND (serve until Ctrl-C).
     Run {
-        #[arg(long, default_value = "0.0.0.0:8765")]
-        bind: String,
+        /// Listen address. Defaults to `gateway.default_bind` from config.
+        #[arg(long)]
+        bind: Option<String>,
+        /// Refuse all requests if no gateway token is configured.
+        #[arg(long)]
+        require_auth: bool,
     },
     /// Start a DETACHED background gateway. Writes a PID file; `stop` ends it.
     Start {
-        #[arg(long, default_value = "0.0.0.0:8765")]
-        bind: String,
+        /// Listen address. Defaults to `gateway.default_bind` from config.
+        #[arg(long)]
+        bind: Option<String>,
+        /// Refuse all requests if no gateway token is configured.
+        #[arg(long)]
+        require_auth: bool,
     },
     /// Stop the background gateway.
     Stop,
@@ -456,7 +464,17 @@ fn config_get(raw: bool) -> Result<()> {
     if raw {
         let p = config_target_path()?;
         match std::fs::read_to_string(&p) {
-            Ok(s) => print!("{s}"),
+            Ok(s) => {
+                let mut doc: toml_edit::DocumentMut = s.parse().context("parse helixir.toml")?;
+                if let Some(token) = doc
+                    .get_mut("gateway")
+                    .and_then(toml_edit::Item::as_table_mut)
+                    .and_then(|gateway| gateway.get_mut("auth_token"))
+                {
+                    *token = toml_edit::value("<redacted>");
+                }
+                print!("{doc}");
+            }
             Err(_) => println!(
                 "# {} does not exist — everything is at defaults",
                 p.display()
@@ -464,7 +482,10 @@ fn config_get(raw: bool) -> Result<()> {
         }
         return Ok(());
     }
-    let resolved = helixir::core::config::HelixirConfig::from_env();
+    let mut resolved = helixir::core::config::HelixirConfig::from_env();
+    if resolved.gateway.auth_token.is_some() {
+        resolved.gateway.auth_token = Some("<redacted>".to_string());
+    }
     println!(
         "# RESOLVED config: defaults -> helixir.toml -> env (env wins)\n{}",
         toml::to_string_pretty(&resolved).context("serialize resolved config")?
@@ -503,7 +524,12 @@ fn config_set(key: &str, value: &str) -> Result<()> {
     let out = doc.to_string();
     config_validate(&out)?; // never persist a file the loader would reject
     std::fs::write(&p, out).with_context(|| format!("write {}", p.display()))?;
-    println!("{} = {} -> {}", key, value, p.display());
+    let displayed_value = if key == "gateway.auth_token" {
+        "<redacted>"
+    } else {
+        value
+    };
+    println!("{} = {} -> {}", key, displayed_value, p.display());
     println!("run `helixir config apply` to hot-reload running processes");
     Ok(())
 }
@@ -730,8 +756,16 @@ async fn main() -> Result<()> {
     // Status are process management (no DB) — all handled before the shared init.
     if let Cmd::Gateway { cmd } = &cli.cmd {
         return match cmd {
-            GatewayCmd::Run { bind } => helixir::mcp::run_gateway(bind).await,
-            GatewayCmd::Start { bind } => gateway_start(bind),
+            GatewayCmd::Run { bind, require_auth } => {
+                let config = helixir::core::config::HelixirConfig::from_env();
+                let bind = bind.as_deref().unwrap_or(&config.gateway.default_bind);
+                helixir::mcp::run_gateway_with_options(bind, *require_auth).await
+            }
+            GatewayCmd::Start { bind, require_auth } => {
+                let config = helixir::core::config::HelixirConfig::from_env();
+                let bind = bind.as_deref().unwrap_or(&config.gateway.default_bind);
+                gateway_start(bind, *require_auth)
+            }
             GatewayCmd::Stop => stop_process("gateway"),
             GatewayCmd::Status => gateway_status(),
         };
@@ -2524,11 +2558,23 @@ fn daemon_status() -> Result<()> {
     Ok(())
 }
 
-fn gateway_start(bind: &str) -> Result<()> {
+fn gateway_start(bind: &str, require_auth: bool) -> Result<()> {
+    let mut args = vec!["gateway", "run", "--bind", bind];
+    if require_auth {
+        args.push("--require-auth");
+    }
+    let auth_enabled = helixir::core::config::HelixirConfig::from_env()
+        .gateway
+        .auth_token
+        .is_some_and(|token| !token.is_empty());
     let (pid, log) = spawn_detached(
         "gateway",
-        &["gateway", "run", "--bind", bind],
-        serde_json::json!({ "bind": bind }),
+        &args,
+        serde_json::json!({
+            "bind": bind,
+            "auth_enabled": auth_enabled,
+            "auth_required": require_auth,
+        }),
     )?;
     println!(
         "gateway started (pid {pid}) at http://{bind}/mcp; log: {}",
@@ -2545,11 +2591,26 @@ fn gateway_status() -> Result<()> {
     let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     let bind = state.get("bind").and_then(|v| v.as_str()).unwrap_or("?");
     println!(
-        "gateway: {}  pid={pid} url=http://{bind}/mcp started={}",
+        "gateway: {}  pid={pid} url=http://{bind}/mcp auth={} started={}",
         if is_alive(pid) {
             "running"
         } else {
             "STALE (process gone)"
+        },
+        if state
+            .get("auth_required")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            "required"
+        } else if state
+            .get("auth_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            "enabled"
+        } else {
+            "disabled"
         },
         state
             .get("started_at")

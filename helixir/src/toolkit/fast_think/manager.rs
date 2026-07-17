@@ -9,23 +9,58 @@ use super::models::*;
 use super::session::ThinkingSession;
 use crate::core::HelixirClient;
 
-pub struct FastThinkManager {
-    sessions: RwLock<HashMap<String, ThinkingSession>>,
+struct FastThinkRuntime {
     limits: FastThinkLimits,
     main_memory: Arc<HelixirClient>,
+}
+
+struct ManagedSession {
+    state: ThinkingSession,
+    runtime: Arc<FastThinkRuntime>,
+}
+
+impl std::ops::Deref for ManagedSession {
+    type Target = ThinkingSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for ManagedSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
+
+pub struct FastThinkManager {
+    sessions: RwLock<HashMap<String, ManagedSession>>,
+    current: arc_swap::ArcSwap<FastThinkRuntime>,
 }
 
 impl FastThinkManager {
     pub fn new(main_memory: Arc<HelixirClient>, limits: FastThinkLimits) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
-            limits,
-            main_memory,
+            current: arc_swap::ArcSwap::from_pointee(FastThinkRuntime {
+                limits,
+                main_memory,
+            }),
         }
     }
 
     pub fn with_default_limits(main_memory: Arc<HelixirClient>) -> Self {
         Self::new(main_memory, FastThinkLimits::default())
+    }
+
+    /// Publish a new runtime generation for sessions started after a hot
+    /// reload. Existing sessions retain the client and limits they began
+    /// with, so their reasoning remains internally consistent.
+    pub fn update_runtime(&self, main_memory: Arc<HelixirClient>, limits: FastThinkLimits) {
+        self.current.store(Arc::new(FastThinkRuntime {
+            limits,
+            main_memory,
+        }));
     }
 
     pub fn start_thinking(
@@ -39,13 +74,14 @@ impl FastThinkManager {
             return Err(FastThinkError::SessionAlreadyExists);
         }
 
+        let runtime = self.current.load_full();
         let mut session = ThinkingSession::new(session_id);
         let node = session.add_thought(
             initial_thought,
             ThoughtType::Initial,
             None,
             None,
-            &self.limits,
+            &runtime.limits,
         )?;
 
         info!(
@@ -54,7 +90,13 @@ impl FastThinkManager {
             "Started thinking session"
         );
 
-        sessions.insert(session_id.to_string(), session);
+        sessions.insert(
+            session_id.to_string(),
+            ManagedSession {
+                state: session,
+                runtime,
+            },
+        );
         Ok(node)
     }
 
@@ -71,7 +113,9 @@ impl FastThinkManager {
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
 
-        let node = session.add_thought(content, thought_type, parent, edge_type, &self.limits)?;
+        let runtime = Arc::clone(&session.runtime);
+        let node =
+            session.add_thought(content, thought_type, parent, edge_type, &runtime.limits)?;
 
         debug!(
             session_id = session_id,
@@ -90,22 +134,23 @@ impl FastThinkManager {
         parent_thought: NodeIndex,
         user_id: &str,
     ) -> Result<Vec<NodeIndex>, FastThinkError> {
-        {
+        let runtime = {
             let mut sessions = self.sessions.write();
             let session = sessions
                 .get_mut(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?;
             session.status = SessionStatus::NeedsRecall;
             session.owner_hint = Some(user_id.to_string());
-        }
+            Arc::clone(&session.runtime)
+        };
 
-        let mut memories = self
+        let mut memories = runtime
             .main_memory
             .search(
                 query,
                 user_id,
                 crate::core::helixir_client::SearchParams {
-                    limit: Some(self.limits.max_recall_results),
+                    limit: Some(runtime.limits.max_recall_results),
                     search_mode: Some("contextual".to_string()),
                     ..Default::default()
                 },
@@ -119,8 +164,8 @@ impl FastThinkManager {
         // context-window flood for the agent and a slow commit. The score
         // floor guards the THIN-store case where the top-K itself reaches
         // into the flat expansion tail (see recall_min_score in config).
-        memories.retain(|m| m.score >= self.limits.recall_min_score);
-        memories.truncate(self.limits.max_recall_results);
+        memories.retain(|m| m.score >= runtime.limits.recall_min_score);
+        memories.truncate(runtime.limits.max_recall_results);
 
         // #90: the belt's failure mode must not be a silent zero. A strong
         // model sharpens its query on an empty recall; a weak one concludes
@@ -130,22 +175,22 @@ impl FastThinkManager {
         // fallback row is annotated as weak evidence, so the tree and the
         // SUPPORTS provenance stay honest about its quality.
         let mut weak_evidence = false;
-        if memories.is_empty() && self.limits.recall_fallback_max > 0 {
-            let mut wide = self
+        if memories.is_empty() && runtime.limits.recall_fallback_max > 0 {
+            let mut wide = runtime
                 .main_memory
                 .search(
                     query,
                     user_id,
                     crate::core::helixir_client::SearchParams {
-                        limit: Some(self.limits.recall_fallback_max),
+                        limit: Some(runtime.limits.recall_fallback_max),
                         search_mode: Some("full".to_string()),
                         ..Default::default()
                     },
                 )
                 .await
                 .map_err(|e| FastThinkError::RecallFailed(e.to_string()))?;
-            wide.retain(|m| m.score >= self.limits.recall_fallback_min_score);
-            wide.truncate(self.limits.recall_fallback_max);
+            wide.retain(|m| m.score >= runtime.limits.recall_fallback_min_score);
+            wide.truncate(runtime.limits.recall_fallback_max);
             weak_evidence = !wide.is_empty();
             memories = wide;
         }
@@ -168,16 +213,16 @@ impl FastThinkManager {
 
             // #78: recalled evidence must never trap the session at the cap —
             // stop short so a synthesis thought + the conclusion always fit.
-            let recall_ceiling = self
+            let recall_ceiling = runtime
                 .limits
                 .max_thoughts
-                .saturating_sub(self.limits.conclude_reserve);
+                .saturating_sub(runtime.limits.conclude_reserve);
             for memory in memories {
                 if session.thought_count() >= recall_ceiling {
                     warn!(
                         session_id = session_id,
                         "Recall stopped at the reserve ceiling ({recall_ceiling} of {} thoughts) — headroom kept for synthesis + conclude",
-                        self.limits.max_thoughts
+                        runtime.limits.max_thoughts
                     );
                     break;
                 }
@@ -195,7 +240,7 @@ impl FastThinkManager {
                     &memory.id,
                     memory.score,
                     parent_thought,
-                    &self.limits,
+                    &runtime.limits,
                 )?;
 
                 recalled_nodes.push(node);
@@ -218,7 +263,8 @@ impl FastThinkManager {
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
 
-        let node = session.add_conclusion(conclusion, supporting_thoughts, &self.limits)?;
+        let runtime = Arc::clone(&session.runtime);
+        let node = session.add_conclusion(conclusion, supporting_thoughts, &runtime.limits)?;
 
         info!(
             session_id = session_id,
@@ -253,7 +299,7 @@ impl FastThinkManager {
         if supporting_ids.is_empty() {
             supporting_ids = session.get_supporting_memory_ids();
         }
-        let ft = &self.main_memory.tooling().config.fast_think;
+        let ft = &session.runtime.main_memory.tooling().config.fast_think;
 
         // The session already IS the structure — conclusions are explicit,
         // typed and atomized by the agent. Re-running LLM extraction over them
@@ -282,11 +328,15 @@ impl FastThinkManager {
                     context: None,
                 })
                 .collect();
-            self.main_memory
+            session
+                .runtime
+                .main_memory
                 .add_prepared(atoms, user_id, None, None)
                 .await
         } else {
-            self.main_memory
+            session
+                .runtime
+                .main_memory
                 .add(&conclusion_content, user_id, None, None)
                 .await
         }
@@ -304,7 +354,8 @@ impl FastThinkManager {
                 if sid == mid {
                     continue;
                 }
-                if let Err(e) = self
+                if let Err(e) = session
+                    .runtime
                     .main_memory
                     .tooling()
                     .reasoning_engine
@@ -326,7 +377,7 @@ impl FastThinkManager {
         // critical path: one background extraction call links entities to the
         // stored conclusion after the agent already has its ack.
         if fast && !committed_ids.is_empty() {
-            let client = Arc::clone(&self.main_memory);
+            let client = Arc::clone(&session.runtime.main_memory);
             let text = conclusion_content.clone();
             let uid = user_id.to_string();
             let ids = committed_ids.clone();
@@ -411,7 +462,8 @@ impl FastThinkManager {
         );
 
         // Use add_with_tags to mark as incomplete_thought - tag is inherited by all extracted facts
-        let result = self
+        let result = session
+            .runtime
             .main_memory
             .add_with_tags(
                 &partial_content,
@@ -456,7 +508,8 @@ impl FastThinkManager {
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
 
-        session.extract_entity(thought_idx, name, entity_type, &self.limits)
+        let runtime = Arc::clone(&session.runtime);
+        session.extract_entity(thought_idx, name, entity_type, &runtime.limits)
     }
 
     pub fn map_to_concept(
@@ -471,7 +524,8 @@ impl FastThinkManager {
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
 
-        session.map_to_concept(thought_idx, concept_name, parent_concept, &self.limits)
+        let runtime = Arc::clone(&session.runtime);
+        session.map_to_concept(thought_idx, concept_name, parent_concept, &runtime.limits)
     }
 
     pub fn link_thoughts(
@@ -493,7 +547,16 @@ impl FastThinkManager {
     /// The session thought ceiling — exposed so surfaces (think_status) can
     /// report headroom. think_conclude bypasses this cap by design.
     pub fn max_thoughts(&self) -> usize {
-        self.limits.max_thoughts
+        self.current.load().limits.max_thoughts
+    }
+
+    /// Thought ceiling for a particular session generation.
+    pub fn session_max_thoughts(&self, session_id: &str) -> Result<usize, FastThinkError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+        Ok(session.runtime.limits.max_thoughts)
     }
 
     pub fn get_session_status(&self, session_id: &str) -> Result<SessionInfo, FastThinkError> {
@@ -542,11 +605,10 @@ impl FastThinkManager {
 
     pub fn cleanup_stale(&self) -> usize {
         let mut sessions = self.sessions.write();
-        let ttl = self.limits.session_ttl;
         let before = sessions.len();
 
         sessions.retain(|id, session| {
-            let keep = session.last_activity.elapsed() < ttl;
+            let keep = session.last_activity.elapsed() < session.runtime.limits.session_ttl;
             if !keep {
                 info!(session_id = id, "Cleaned up stale session");
             }
@@ -628,4 +690,37 @@ pub struct ThoughtInfo {
     pub thought_type: ThoughtType,
     pub certainty: f32,
     pub depth: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::HelixirConfig;
+
+    #[test]
+    fn hot_reload_pins_existing_sessions_and_updates_new_sessions() {
+        let client =
+            Arc::new(HelixirClient::new(HelixirConfig::default()).expect("test client constructs"));
+        let old_limits = FastThinkLimits {
+            max_thoughts: 11,
+            ..FastThinkLimits::default()
+        };
+        let manager = FastThinkManager::new(Arc::clone(&client), old_limits);
+        manager
+            .start_thinking("old", "before reload")
+            .expect("old session starts");
+
+        let new_limits = FastThinkLimits {
+            max_thoughts: 23,
+            ..FastThinkLimits::default()
+        };
+        manager.update_runtime(client, new_limits);
+        manager
+            .start_thinking("new", "after reload")
+            .expect("new session starts");
+
+        assert_eq!(manager.session_max_thoughts("old").unwrap(), 11);
+        assert_eq!(manager.session_max_thoughts("new").unwrap(), 23);
+        assert_eq!(manager.max_thoughts(), 23);
+    }
 }

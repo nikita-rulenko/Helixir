@@ -789,6 +789,13 @@ QUERY getPendingInputsByStatus(status: String, limit: I64) =>
 QUERY getPendingInput(pending_id: String) =>
   pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
   RETURN pending
+// Compare-and-claim: only one worker may transition a still-pending item.
+// The query is atomic inside HelixDB, so additional stdio/gateway processes
+// cannot run the same buffered write concurrently.
+QUERY claimPendingInput(pending_id: String, expected_status: String, processed_at: String) =>
+  pending <- N<PendingInput>::WHERE(AND(_::{pending_id}::EQ(pending_id), _::{status}::EQ(expected_status)))::FIRST
+  claimed <- pending::UPDATE({ status: "processing", processed_at: processed_at, result: "", error: "" })
+  RETURN claimed
 QUERY updatePendingInput(pending_id: String, status: String, processed_at: String, result: String, error: String) =>
   pending <- N<PendingInput>::WHERE(_::{pending_id}::EQ(pending_id))::FIRST
   updated <- pending::UPDATE({ status: status, processed_at: processed_at, result: result, error: error })

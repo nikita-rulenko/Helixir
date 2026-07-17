@@ -1,6 +1,7 @@
 # Test design
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.13.1` plus `codex/refactor-architecture-audit`.
+> Last verified: 2026-07-18._
 
 ## 1. Stance
 
@@ -26,12 +27,18 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (v0.5.0):** ~129 unit tests (`cargo test --lib`, run in CI) + **25
+**Current (v0.13.1 + refactor audit):** 196 unit tests with default features
+(193 without the opt-in `nli` feature; `cargo test --lib`, run in CI) + **38
 HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
 E2E are run by hand (not in CI yet); the manual recipe lives in the suites'
 module docs. Run unit tests: `cargo test --lib` from `helixir/`.
+
+The refactor-audit lifecycle coverage includes optional gateway-auth policy,
+FastThink generation pinning across hot reload, and the invariant that two
+consecutive runtime-generation publications retain one process-owned ingest
+worker while swapping its `ToolingManager`.
 
 ### Unit-test distribution
 
