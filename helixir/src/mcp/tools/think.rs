@@ -224,6 +224,10 @@ impl HelixirMcpServer {
             .fast_think
             .get_session_status(&params.session_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let max_thoughts = self
+            .fast_think
+            .session_max_thoughts(&params.session_id)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = Self::result_to_json(json!({
             "session_id": status.id,
@@ -231,7 +235,7 @@ impl HelixirMcpServer {
             "thought_count": status.thought_count,
             // #78: headroom before the thought cap — think_conclude still
             // works at 0 (the conclusion is the exit, not another thought).
-            "thoughts_left": self.fast_think.max_thoughts().saturating_sub(status.thought_count),
+            "thoughts_left": max_thoughts.saturating_sub(status.thought_count),
             "entity_count": status.entity_count,
             "concept_count": status.concept_count,
             "current_depth": status.current_depth,

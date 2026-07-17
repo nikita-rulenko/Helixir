@@ -105,13 +105,6 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        // Ingest buffer (#25): one serial background worker drains the queue
-        // when HELIXIR_INGEST_BUFFER=1. The synchronous path stays the default.
-        if crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
-            let tm = Arc::clone(&self.tooling_manager);
-            tokio::spawn(crate::toolkit::tooling_manager::ingest_buffer::run_ingest_worker(tm));
-        }
-
         self.is_initialized.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -150,6 +143,13 @@ impl HelixirClient {
 
     pub fn tooling(&self) -> &ToolingManager {
         &self.tooling_manager
+    }
+
+    /// Share the tooling generation with process-owned background services.
+    /// Workers must not be spawned from the client itself: hot reload creates
+    /// multiple client generations, while the ingest serializer is singular.
+    pub(crate) fn tooling_arc(&self) -> Arc<ToolingManager> {
+        Arc::clone(&self.tooling_manager)
     }
 
     /// Clotho the Spinner (#33 / Moira) — the auto-tagging agent over the

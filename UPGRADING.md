@@ -12,14 +12,16 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
-## v0.4.x → v0.13.1 — all drop-in
+## v0.4.x → v0.13.2 — schema note for v0.13.2
 
-Every release from v0.5.0 through v0.13.1 upgrades in place: update the
-binary, restart your MCP client, done. New config keys are optional with
+Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds
+one HQL query, so self-hosted deployments must back up and redeploy the
+schema before replacing the binary. New config keys remain optional with
 safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.13.2** | The guarded reload | Hot reload now publishes one coherent runtime generation while one process-owned ingest worker follows the active client; an atomic `claimPendingInput` query prevents duplicate queue work across processes. **Back up the data volume and redeploy the schema** before replacing the binary, then restart MCP clients/gateways. Gateway bearer auth is optional and off by default; enable it with `gateway.auth_token`, `HELIXIR_GATEWAY_TOKEN`, or `helixir config`, and use `helixir gateway --require-auth` when startup must fail closed. |
 | **v0.13.1** | The honest valve | The Hygieia cache valve and `memprobe --reclaim` now ask cgroup reclaim for the FULL current charge instead of a fixed 1024MiB step — under-asking produced false "live heap" verdicts and premature restarts (#89 forensics). Restart a running `helixir watch` to pick it up. |
 | **v0.13.0** | The self-steering release | `helixir config get/set/edit/apply` hot-reloads running MCP/gateway processes via SIGHUP (client rebuilt from the re-read `helixir.toml`, swapped atomically) — **restart MCP clients once on this binary before your first `apply`** (older binaries exit on SIGHUP). Hygieia self-restarts the database container on genuine live-heap pressure (`watchdog.mem_restart_pct`, 92; needs `allow_container_restart`). linux-x86_64 + windows artifacts are full-featured again (NLI; the ONNX runtime ships in the tarball — keep it next to the binaries). `chunking.enable_embeddings` removed (the machinery was dead, #86). |
 | **v0.12.0** | The operator release | Ops alerts can push to a human: `watchdog.on_alert_cmd` runs on every alert with `HELIXIR_ALERT_KIND`/`HELIXIR_ALERT_SUMMARY` in the env (off when empty). `helixir watch install`/`uninstall` runs the watchdog as a launchd agent / systemd user unit (refuses `target/` binaries). FastThink recall reserves `fast_think.conclude_reserve` (2) thoughts of headroom so synthesis always fits. Default logs are ASCII; `helixir-deploy` is a clap CLI (`-h` = `--help`, `--version`, invalid `--port` errors). |

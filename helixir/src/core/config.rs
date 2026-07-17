@@ -621,11 +621,16 @@ impl Default for SwarmConfig {
 #[serde(default)]
 pub struct GatewayConfig {
     pub default_bind: String,
+    /// Optional bearer token for the HTTP MCP gateway. `None` preserves the
+    /// intentional full-trust network model. Prefer the
+    /// `HELIXIR_GATEWAY_TOKEN` environment override for secrets.
+    pub auth_token: Option<String>,
 }
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             default_bind: "0.0.0.0:8765".to_string(),
+            auth_token: None,
         }
     }
 }
@@ -1026,6 +1031,9 @@ impl HelixirConfig {
         if let Ok(instance) = std::env::var("HELIX_INSTANCE") {
             self.instance = instance;
         }
+        if let Ok(token) = std::env::var("HELIXIR_GATEWAY_TOKEN") {
+            self.gateway.auth_token = (!token.is_empty()).then_some(token);
+        }
         if let Ok(provider) = std::env::var("HELIX_LLM_PROVIDER") {
             self.llm_provider = provider;
         }
@@ -1182,6 +1190,33 @@ mod tests {
         assert_eq!(c.ingest.max_retries, 5);
         assert_eq!(c.retry.max, 3);
         assert_eq!(c.gateway.default_bind, "0.0.0.0:8765");
+        assert!(c.gateway.auth_token.is_none());
+    }
+
+    #[test]
+    fn gateway_auth_can_be_enabled_in_partial_config() {
+        let cfg: HelixirConfig = toml::from_str(
+            r#"
+                [gateway]
+                default_bind = "127.0.0.1:9876"
+                auth_token = "test-token"
+            "#,
+        )
+        .expect("gateway config parses");
+        assert_eq!(cfg.gateway.default_bind, "127.0.0.1:9876");
+        assert_eq!(cfg.gateway.auth_token.as_deref(), Some("test-token"));
+    }
+
+    #[test]
+    fn gateway_token_env_enables_auth_and_empty_value_disables_it() {
+        temp_env::with_var("HELIXIR_GATEWAY_TOKEN", Some("env-token"), || {
+            let cfg = HelixirConfig::from_env();
+            assert_eq!(cfg.gateway.auth_token.as_deref(), Some("env-token"));
+        });
+        temp_env::with_var("HELIXIR_GATEWAY_TOKEN", Some(""), || {
+            let cfg = HelixirConfig::from_env();
+            assert!(cfg.gateway.auth_token.is_none());
+        });
     }
 
     #[test]

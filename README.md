@@ -473,6 +473,13 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
 ```
 
+The gateway deliberately assumes a trusted network by default: it listens on
+`gateway.default_bind` (`0.0.0.0:8765`) without authentication. To enable
+bearer authentication, set `gateway.auth_token` with `helixir config set` or
+provide `HELIXIR_GATEWAY_TOKEN`, then run `helixir config apply`. The token is
+redacted from `helixir config get` output. `helixir gateway start --require-auth`
+is the fail-closed variant: it serves `503` until a token is configured.
+
 `helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.
 
 ## Integration
