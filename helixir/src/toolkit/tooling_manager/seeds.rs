@@ -285,7 +285,7 @@ impl ToolingManager {
                 context: None,
             };
             match self
-                .store_new_memory(&memory, SEED_USER, vector, &tag)
+                .store_new_memory(&memory, SEED_USER, vector, &tag, None)
                 .await
             {
                 Ok(_) => stored += 1,

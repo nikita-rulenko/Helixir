@@ -294,7 +294,8 @@ impl FastThinkManager {
         session_id: &str,
         user_id: &str,
     ) -> Result<CommitResult, FastThinkError> {
-        self.commit_as(session_id, user_id, user_id).await
+        self.commit_as_in_group(session_id, user_id, user_id, None)
+            .await
     }
 
     pub async fn commit_as(
@@ -302,6 +303,17 @@ impl FastThinkManager {
         session_id: &str,
         actor_id: &str,
         user_id: &str,
+    ) -> Result<CommitResult, FastThinkError> {
+        self.commit_as_in_group(session_id, actor_id, user_id, None)
+            .await
+    }
+
+    pub async fn commit_as_in_group(
+        &self,
+        session_id: &str,
+        actor_id: &str,
+        user_id: &str,
+        group_id: Option<&str>,
     ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
@@ -354,13 +366,13 @@ impl FastThinkManager {
             session
                 .runtime
                 .main_memory
-                .add_prepared_as(actor_id, atoms, user_id, None, None)
+                .add_prepared_as_in_group(actor_id, atoms, user_id, None, None, group_id)
                 .await
         } else {
             session
                 .runtime
                 .main_memory
-                .add_as(actor_id, &conclusion_content, user_id, None, None)
+                .add_as_in_group(actor_id, &conclusion_content, user_id, None, None, group_id)
                 .await
         }
         .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;

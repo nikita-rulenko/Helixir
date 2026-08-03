@@ -43,8 +43,25 @@ impl HelixirClient {
         agent_id: Option<&str>,
         metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
-        self.add_with_tags_as(actor_id, message, owner_id, agent_id, metadata, None)
+        self.add_as_in_group(actor_id, message, owner_id, agent_id, metadata, None)
             .await
+    }
+
+    /// Add a memory with an explicit RBAC group. Enabled non-admin callers
+    /// must provide `group_id`; disabled deployments retain legacy behavior.
+    pub async fn add_as_in_group(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        metadata: Option<HashMap<String, serde_json::Value>>,
+        group_id: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_with_tags_as_in_group(
+            actor_id, message, owner_id, agent_id, metadata, None, group_id,
+        )
+        .await
     }
 
     /// Add memory with optional context tags that are inherited by all extracted facts.
@@ -70,32 +87,54 @@ impl HelixirClient {
         metadata: Option<HashMap<String, serde_json::Value>>,
         context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_with_tags_as_in_group(
+            actor_id,
+            message,
+            owner_id,
+            agent_id,
+            metadata,
+            context_tags,
+            None,
+        )
+        .await
+    }
+
+    /// Add a tagged memory to one explicit RBAC group.
+    #[allow(clippy::too_many_arguments)] // Public boundary keeps actor, owner, and group explicit.
+    pub async fn add_with_tags_as_in_group(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        metadata: Option<HashMap<String, serde_json::Value>>,
+        context_tags: Option<&str>,
+        group_id: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        self.rbac()
-            .authorize_write_for(actor_id, owner_id)
+        let rbac = self.rbac();
+        rbac.authorize_write_for_group(actor_id, owner_id, group_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        let scope = rbac
+            .resolve_write_scope(group_id)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
 
         let result = self
             .tooling_manager
-            .add_memory(message, owner_id, agent_id, metadata, context_tags)
+            .add_memory_scoped(
+                message,
+                owner_id,
+                agent_id,
+                metadata,
+                context_tags,
+                &scope,
+                actor_id,
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
-
-        let rbac = self.rbac();
-        if rbac
-            .snapshot()
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?
-            .enabled
-        {
-            for memory_id in &result.added {
-                rbac.link_memory_to_actor_groups(memory_id, owner_id)
-                    .await
-                    .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-            }
-        }
 
         Ok(AddMemoryResult {
             memories_added: result.added.len(),
@@ -132,32 +171,43 @@ impl HelixirClient {
         agent_id: Option<&str>,
         context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_prepared_as_in_group(actor_id, memories, owner_id, agent_id, context_tags, None)
+            .await
+    }
+
+    /// Store prepared memories in one explicit RBAC group.
+    pub async fn add_prepared_as_in_group(
+        &self,
+        actor_id: &str,
+        memories: Vec<crate::llm::extractor::ExtractedMemory>,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+        group_id: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
-        self.rbac()
-            .authorize_write_for(actor_id, owner_id)
+        let rbac = self.rbac();
+        rbac.authorize_write_for_group(actor_id, owner_id, group_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        let scope = rbac
+            .resolve_write_scope(group_id)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
 
         let result = self
             .tooling_manager
-            .add_prepared_memories(memories, owner_id, agent_id, context_tags)
+            .add_prepared_memories_scoped(
+                memories,
+                owner_id,
+                agent_id,
+                context_tags,
+                &scope,
+                actor_id,
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
-
-        let rbac = self.rbac();
-        if rbac
-            .snapshot()
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?
-            .enabled
-        {
-            for memory_id in &result.added {
-                rbac.link_memory_to_actor_groups(memory_id, owner_id)
-                    .await
-                    .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-            }
-        }
 
         Ok(AddMemoryResult {
             memories_added: result.added.len(),
@@ -196,13 +246,35 @@ impl HelixirClient {
         context_tags: Option<&str>,
     ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::EnqueuedInput, HelixirClientError>
     {
+        self.add_buffered_as_in_group(actor_id, message, owner_id, agent_id, context_tags, None)
+            .await
+    }
+
+    /// Queue a memory for one explicit RBAC group.
+    pub async fn add_buffered_as_in_group(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+        group_id: Option<&str>,
+    ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::EnqueuedInput, HelixirClientError>
+    {
         self.ensure_initialized().await?;
         self.rbac()
-            .authorize_write_for(actor_id, owner_id)
+            .authorize_write_for_group(actor_id, owner_id, group_id)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         self.tooling_manager
-            .enqueue_input(message, owner_id, agent_id, context_tags)
+            .enqueue_input(
+                message,
+                owner_id,
+                actor_id,
+                agent_id,
+                context_tags,
+                group_id,
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
@@ -313,17 +385,23 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
+        let memory_ids = results
+            .iter()
+            .map(|result| result.memory_id.clone())
+            .collect::<Vec<_>>();
+        let visible = self
             .rbac()
-            .snapshot()
+            .visible_memory_ids(actor_id, &memory_ids)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        let results = policy.filter_results(actor_id, results, |result| {
-            result
-                .metadata
-                .get("user_id")
-                .and_then(|value| value.as_str())
-        });
+        let results = results
+            .into_iter()
+            .filter(|result| {
+                visible
+                    .as_ref()
+                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
+            })
+            .collect::<Vec<_>>();
 
         Ok(results
             .into_iter()
@@ -372,11 +450,15 @@ impl HelixirClient {
                 .and_then(|memory| memory.get("user_id"))
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
-            if owner.is_empty() || !policy.can_write_owner(actor_id, owner) {
+            if owner.is_empty() {
                 return Err(HelixirClientError::Operation(format!(
                     "RBAC denied update for actor '{actor_id}' on memory '{memory_id}'"
                 )));
             }
+            self.rbac()
+                .authorize_memory_write(actor_id, owner, memory_id)
+                .await
+                .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         }
 
         let updated = self
@@ -424,11 +506,15 @@ impl HelixirClient {
                 .and_then(|memory| memory.get("user_id"))
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
-            if owner.is_empty() || !policy.can_write_owner(actor_id, owner) {
+            if owner.is_empty() {
                 return Err(HelixirClientError::Operation(format!(
                     "RBAC denied delete for actor '{actor_id}' on memory '{memory_id}'"
                 )));
             }
+            self.rbac()
+                .authorize_memory_write(actor_id, owner, memory_id)
+                .await
+                .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         }
 
         self.tooling_manager

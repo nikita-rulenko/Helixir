@@ -49,17 +49,23 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
+        let memory_ids = results
+            .iter()
+            .map(|result| result.memory_id.clone())
+            .collect::<Vec<_>>();
+        let visible = self
             .rbac()
-            .snapshot()
+            .visible_memory_ids(actor_id, &memory_ids)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        let results = policy.filter_results(actor_id, results, |result| {
-            result
-                .metadata
-                .get("user_id")
-                .and_then(|value| value.as_str())
-        });
+        let results = results
+            .into_iter()
+            .filter(|result| {
+                visible
+                    .as_ref()
+                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
+            })
+            .collect::<Vec<_>>();
 
         Ok(results
             .into_iter()
@@ -108,65 +114,38 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
+        let memory_ids = result
+            .chains
+            .iter()
+            .flat_map(|chain| {
+                std::iter::once(chain.seed.memory_id.clone())
+                    .chain(chain.nodes.iter().map(|node| node.memory_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let visible = self
             .rbac()
-            .snapshot()
+            .visible_memory_ids(actor_id, &memory_ids)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-
-        let restricted = policy.enabled && policy.readable_users(actor_id).is_some();
+        let restricted = visible.is_some();
         let mut chains = Vec::with_capacity(result.chains.len());
         for tc in result.chains {
-            if policy.enabled {
-                let Some(allowed) = policy.readable_users(actor_id) else {
-                    // Global admin: all chain nodes are visible.
-                    chains.push(ReasoningChain {
-                        seed: SearchResult {
-                            id: tc.seed.memory_id,
-                            content: tc.seed.content,
-                            score: tc.seed.score as f32,
-                            metadata: tc.seed.metadata,
-                            created_at: tc.seed.created_at,
-                        },
-                        nodes: tc
-                            .nodes
-                            .into_iter()
-                            .map(|n| ChainNode {
-                                memory_id: n.memory_id,
-                                content: n.content,
-                                relation: n.relation,
-                                depth: n.depth,
-                            })
-                            .collect(),
-                        chain_type: tc.chain_type,
-                        reasoning_trail: tc.reasoning_trail,
-                    });
-                    continue;
-                };
-                let seed_owner = self.memory_owner(&tc.seed.memory_id).await?;
-                // An unknown owner is not evidence of authorization.
-                if !seed_owner
-                    .as_deref()
-                    .is_some_and(|owner| allowed.contains(owner))
-                {
+            if let Some(allowed) = &visible {
+                if !allowed.contains(&tc.seed.memory_id) {
                     continue;
                 }
                 let original_nodes = tc.nodes.len();
-                let mut visible_nodes = Vec::new();
-                for node in tc.nodes {
-                    if self
-                        .memory_owner(&node.memory_id)
-                        .await?
-                        .is_some_and(|owner| allowed.contains(&owner))
-                    {
-                        visible_nodes.push(ChainNode {
-                            memory_id: node.memory_id,
-                            content: node.content,
-                            relation: node.relation,
-                            depth: node.depth,
-                        });
-                    }
-                }
+                let visible_nodes = tc
+                    .nodes
+                    .into_iter()
+                    .filter(|node| allowed.contains(&node.memory_id))
+                    .map(|node| ChainNode {
+                        memory_id: node.memory_id,
+                        content: node.content,
+                        relation: node.relation,
+                        depth: node.depth,
+                    })
+                    .collect::<Vec<_>>();
                 let filtered_nodes = visible_nodes.len() != original_nodes;
                 chains.push(ReasoningChain {
                     seed: SearchResult {
@@ -232,19 +211,6 @@ impl HelixirClient {
         })
     }
 
-    async fn memory_owner(&self, memory_id: &str) -> Result<Option<String>, HelixirClientError> {
-        let value: serde_json::Value = self
-            .db
-            .execute_query("getMemory", &serde_json::json!({"memory_id": memory_id}))
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        Ok(value
-            .get("memory")
-            .and_then(|memory| memory.get("user_id"))
-            .and_then(|owner| owner.as_str())
-            .map(str::to_string))
-    }
-
     /// "How is A related to B?" — bidirectional path discovery between two
     /// anchor queries (elder-brain primitive).
     pub async fn connect_memories(
@@ -274,31 +240,25 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
-            .rbac()
-            .snapshot()
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        let path = match (path, policy.enabled) {
-            (Some(path), true) => {
-                let allowed = policy.readable_users(actor_id);
-                if let Some(allowed) = allowed {
-                    let mut visible = true;
-                    for node in &path.nodes {
-                        let owner = self.memory_owner(&node.memory_id).await?;
-                        // An unknown owner is not evidence of authorization.
-                        if !owner.is_some_and(|owner| allowed.contains(&owner)) {
-                            visible = false;
-                            break;
-                        }
-                    }
-                    visible.then_some(path)
-                } else {
-                    Some(path)
-                }
-            }
-            (None, true) => None,
-            (path, false) => path,
+        let path = if let Some(path) = path {
+            let memory_ids = path
+                .nodes
+                .iter()
+                .map(|node| node.memory_id.clone())
+                .collect::<Vec<_>>();
+            let visible = self
+                .rbac()
+                .visible_memory_ids(actor_id, &memory_ids)
+                .await
+                .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+            visible
+                .as_ref()
+                .map_or(true, |allowed| {
+                    memory_ids.iter().all(|id| allowed.contains(id))
+                })
+                .then_some(path)
+        } else {
+            None
         };
 
         Ok(match path {
@@ -369,28 +329,24 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
-            .rbac()
-            .snapshot()
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        if !policy.enabled {
-            return Ok(narrative);
-        }
-        let Some(allowed) = policy.readable_users(actor_id) else {
-            return Ok(narrative);
-        };
         let Some(narrative) = narrative else {
             return Ok(None);
         };
-        // The traversal expands through graph edges after seed filtering.  A
-        // single unknown or inaccessible owner would otherwise leak content.
-        for step in &narrative.steps {
-            let owner = self.memory_owner(&step.memory_id).await?;
-            if !owner.is_some_and(|owner| allowed.contains(&owner)) {
-                return Ok(None);
-            }
-        }
-        Ok(Some(narrative))
+        let memory_ids = narrative
+            .steps
+            .iter()
+            .map(|step| step.memory_id.clone())
+            .collect::<Vec<_>>();
+        let visible = self
+            .rbac()
+            .visible_memory_ids(actor_id, &memory_ids)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        Ok(visible
+            .as_ref()
+            .map_or(true, |allowed| {
+                memory_ids.iter().all(|id| allowed.contains(id))
+            })
+            .then_some(narrative))
     }
 }

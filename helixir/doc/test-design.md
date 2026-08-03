@@ -27,7 +27,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (v0.13.2 + installer foundation):** 219 unit tests with default features
+**Current (`codex/rbac-cli`):** 234 unit tests with default features
 (193 without the opt-in `nli` feature; `cargo test --lib`, run in CI) + **38
 HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -39,6 +39,12 @@ The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+`tests/rbac_e2e.rs` is an ignored, enabled-state live contract. It never turns
+RBAC off. It covers federated fingerprint equality, isolated-group inequality,
+materialized common visibility, viewer denial, detach-with-history, future
+isolation, historical in-place update denial, join backfill, cleanup, and the
+invariant that RBAC remains enabled.
 
 ### Unit-test distribution
 

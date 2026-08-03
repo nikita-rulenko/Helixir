@@ -256,6 +256,11 @@ enum RbacCmd {
         #[command(subcommand)]
         cmd: RbacGroupCmd,
     },
+    /// Manage federated deduplication and shared group visibility.
+    Dedup {
+        #[command(subcommand)]
+        cmd: RbacDedupCmd,
+    },
     /// Grant a global or group-scoped role.
     Grant {
         #[arg(long)]
@@ -309,6 +314,43 @@ enum RbacGroupCmd {
         json: bool,
     },
     /// Deactivate a group; grants remain in the audit history.
+    Delete {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RbacDedupCmd {
+    /// Create or update a dedup federation.
+    Create {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        description: String,
+    },
+    /// List active dedup federations and their current groups.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Join a group and grant it the federation's existing memory history.
+    Attach {
+        #[arg(long)]
+        group: String,
+        #[arg(long = "dedup-group")]
+        dedup_group: String,
+    },
+    /// Leave prospectively; historical memory access is retained.
+    Detach {
+        #[arg(long)]
+        group: String,
+    },
+    /// Deactivate an empty dedup federation.
     Delete {
         #[arg(long)]
         id: String,
@@ -565,6 +607,19 @@ mod rbac_cli_tests {
 
         let cli = Cli::try_parse_from(["helixir", "rbac", "status", "--json"])
             .expect("valid rbac status syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from([
+            "helixir",
+            "rbac",
+            "dedup",
+            "attach",
+            "--group",
+            "backend",
+            "--dedup-group",
+            "development",
+        ])
+        .expect("valid dedup attach syntax");
         assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
     }
 
@@ -894,6 +949,63 @@ async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
                 println!("group '{id}' deactivated");
             }
         },
+        RbacCmd::Dedup { cmd } => {
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "dedup group management")?;
+            match cmd {
+                RbacDedupCmd::Create {
+                    id,
+                    name,
+                    description,
+                } => {
+                    manager
+                        .create_dedup_group_as(&id, &name, &description, &actor)
+                        .await?;
+                    println!("dedup group '{id}' created/updated");
+                }
+                RbacDedupCmd::List { json } => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "dedup_groups": current.dedup_groups,
+                                "groups": current.groups,
+                            }))?
+                        );
+                    } else {
+                        for (id, dedup) in &current.dedup_groups {
+                            let members = current
+                                .groups
+                                .iter()
+                                .filter(|(_, group)| {
+                                    group.dedup_group_id.as_deref() == Some(id.as_str())
+                                })
+                                .map(|(group_id, _)| group_id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            println!("{id}\t{}\t{members}", dedup.name);
+                        }
+                    }
+                }
+                RbacDedupCmd::Attach { group, dedup_group } => {
+                    let backfilled = manager
+                        .attach_group_to_dedup_as(&group, &dedup_group, &actor)
+                        .await?;
+                    println!(
+                        "group '{group}' attached to dedup group '{dedup_group}' ({backfilled} historical memories linked)"
+                    );
+                }
+                RbacDedupCmd::Detach { group } => {
+                    manager.detach_group_from_dedup_as(&group, &actor).await?;
+                    println!("group '{group}' detached; historical access retained");
+                }
+                RbacDedupCmd::Delete { id, yes } => {
+                    anyhow::ensure!(yes, "deactivating a dedup group requires --yes");
+                    manager.deactivate_dedup_group_as(&id, &actor).await?;
+                    println!("dedup group '{id}' deactivated");
+                }
+            }
+        }
         RbacCmd::Grant { user, role, group } => {
             let role = parse_rbac_role(&role)?;
             let actor = rbac_actor();
@@ -915,7 +1027,7 @@ async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
                 .await?;
             println!("revoked {} from {}", role.label(), user);
         }
-        RbacCmd::Show { user, json } => {
+        RbacCmd::Show { user, json: _ } => {
             let actor = rbac_actor();
             if user.as_deref() != Some(actor.as_str()) {
                 require_rbac_admin(&current, &actor, "role inspection")?;
@@ -924,11 +1036,7 @@ async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
                 .as_deref()
                 .map(|id| serde_json::json!({"user": id, "roles": current.roles_for(id).into_iter().map(|(group, role)| serde_json::json!({"group": group, "role": role.label()})).collect::<Vec<_>>() }))
                 .unwrap_or_else(|| serde_json::to_value(&current.users).unwrap_or_default());
-            if json {
-                println!("{}", serde_json::to_string_pretty(&rows)?);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&rows)?);
-            }
+            println!("{}", serde_json::to_string_pretty(&rows)?);
         }
         RbacCmd::Check {
             user,
@@ -940,8 +1048,10 @@ async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
                 anyhow::bail!("RBAC check for another principal requires a global admin");
             }
             let allowed = match action.as_str() {
-                "read" => current.readable_users(&user).is_none_or(|users| {
-                    owner.as_deref().is_none_or(|target| users.contains(target))
+                "read" => current.readable_users(&user).map_or(true, |users| {
+                    owner
+                        .as_deref()
+                        .map_or(true, |target| users.contains(target))
                 }),
                 "write" => owner
                     .as_deref()

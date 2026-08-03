@@ -174,7 +174,12 @@ RBAC is stored in HelixDB and is the shared source of truth for CLI, MCP, and
 Rust. It is disabled by default for trusted-network compatibility and becomes
 deny-by-default when enabled. `actor_id` is the authenticated principal and is
 required on MCP calls when RBAC is enabled; `user_id` is the memory owner/target.
-Never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
+Enabled non-admin `add_memory` and `think_commit` calls must also pass one
+concrete `group_id`. Never pass a dedup federation id as the write group and
+never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
 `worker`, and `viewer` with the semantics documented in `integration/SKILLS.md`.
-Use `helixir rbac` for management and fail closed on database errors; a missing
+`helixir rbac dedup` creates and manages optional group federations: current
+members share dedup and visibility, leaving keeps historical edges but isolates
+future writes. Agents do not resolve this mapping themselves. Use `helixir rbac`
+for management and fail closed on database errors; a missing
 RBAC query is a deployment-readiness problem, not permission to use local ACLs.

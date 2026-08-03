@@ -31,23 +31,23 @@ impl HelixirClient {
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
-        let policy = self
+        let memory_ids = nodes
+            .iter()
+            .filter_map(|node| node.get("id").and_then(|value| value.as_str()))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let allowed_ids = self
             .rbac()
-            .snapshot()
+            .visible_memory_ids(actor_id, &memory_ids)
             .await
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
-        let allowed_ids = if policy.enabled {
-            policy.readable_users(actor_id)
-        } else {
-            None
-        };
         let visible_node_ids = nodes
             .iter()
             .filter(|node| {
                 allowed_ids.as_ref().map_or(true, |allowed| {
-                    node.get("user_id")
+                    node.get("id")
                         .and_then(|value| value.as_str())
-                        .is_some_and(|owner| allowed.contains(owner))
+                        .is_some_and(|id| allowed.contains(id))
                 })
             })
             .filter_map(|node| {

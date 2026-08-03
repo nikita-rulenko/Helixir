@@ -232,14 +232,25 @@ MCP server, and Rust facade. There is no local policy file to edit or cache.
 The feature is disabled by default to preserve the trusted-network deployment;
 when enabled it is deny-by-default and authorization failures are fail-closed.
 
-The graph contains `RbacConfig`, `RbacGroup`, and `RbacAssignment` nodes plus
-`RBAC_MEMBER_OF` and `MEMORY_IN_RBAC_GROUP` edges. `Memory.user_id` remains the
-author/owner. At the API boundary, `actor_id` is the authenticated principal
+The graph contains `RbacConfig`, `RbacGroup`, `RbacDedupGroup`, and
+`RbacAssignment` nodes plus membership, memory-visibility, and memory dedup
+provenance edges. `Memory.user_id` remains the author/owner. At the API
+boundary, `actor_id` is the authenticated principal
 whose grants are checked and `user_id` is the target owner. MCP calls must
 provide `actor_id` whenever RBAC is enabled; omission is accepted only while
 the disabled legacy trusted-network contract intentionally equates actor and
 owner.
-Never let a caller change `user_id` to bypass an `actor_id` check.
+Never let a caller change `user_id` to bypass an `actor_id` check. Enabled
+non-admin writes and `think_commit` calls must also pass one concrete
+`group_id`; do not pass a `dedup_group_id` there.
+
+An optional dedup federation deliberately gives several groups one fingerprint
+domain and common visibility. Agents always address their concrete group;
+`RbacManager` resolves its current federation. Joining grants the federation's
+existing history. Leaving retains already-materialized memory-to-group edges,
+but future federation memories omit the departed group and its own future
+writes use a private group fingerprint. Never delete historical visibility
+edges or merge fingerprints across federation boundaries.
 
 Role semantics are fixed:
 
@@ -250,8 +261,9 @@ Role semantics are fixed:
 - `worker`: read in assigned groups and write only memories authored by self;
 - `viewer`: read-only in explicitly assigned groups.
 
-Use the `helixir rbac` CLI family for management (`status`, `group`, `grant`,
-`revoke`, `enable`, `disable`, `check`). Do not infer access from a memory's
+Use the `helixir rbac` CLI family for management (`status`, `group`, `dedup`,
+`grant`, `revoke`, `enable`, `disable`, `check`). Dedup management is
+`dedup create|list|attach|detach|delete`; it requires a global admin. Do not infer access from a memory's
 text, metadata, or the presence of a graph edge alone; resolve active
 assignments through `RbacManager`. Global admin is required for management once
 RBAC is enabled. The CLI principal comes from `HELIXIR_RBAC_ACTOR`; do not add

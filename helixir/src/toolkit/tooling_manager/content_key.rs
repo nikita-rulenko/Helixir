@@ -17,6 +17,7 @@ pub struct MemoryBrief {
     pub memory_id: String,
     pub content: String,
     pub content_key: String,
+    pub security_domain: String,
 }
 
 impl ToolingManager {
@@ -127,20 +128,33 @@ impl ToolingManager {
             #[serde(default)]
             memories: Vec<Node>,
         }
-        self.db
+        let nodes = self
+            .db
             .execute_query::<Resp, _>("getRecentMemories", &serde_json::json!({ "limit": limit }))
             .await
-            .map(|r| {
-                r.memories
-                    .into_iter()
-                    .filter(|n| !n.memory_id.is_empty())
-                    .map(|n| MemoryBrief {
-                        memory_id: n.memory_id,
-                        content: n.content,
-                        content_key: n.content_key.unwrap_or_default(),
-                    })
-                    .collect()
+            .map(|response| response.memories)
+            .unwrap_or_default();
+        let ids = nodes
+            .iter()
+            .map(|node| node.memory_id.clone())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        let domains = crate::core::RbacManager::new(self.db.clone())
+            .memory_security_domains(&ids)
+            .await
+            .unwrap_or_default();
+        nodes
+            .into_iter()
+            .filter(|node| !node.memory_id.is_empty())
+            .map(|node| MemoryBrief {
+                security_domain: domains
+                    .get(&node.memory_id)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                memory_id: node.memory_id,
+                content: node.content,
+                content_key: node.content_key.unwrap_or_default(),
             })
-            .unwrap_or_default()
+            .collect()
     }
 }

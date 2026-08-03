@@ -97,6 +97,10 @@ struct PendingNode {
     #[serde(default)]
     user_id: String,
     #[serde(default)]
+    actor_id: String,
+    #[serde(default)]
+    group_id: String,
+    #[serde(default)]
     raw_message: String,
     #[serde(default)]
     agent_id: String,
@@ -169,13 +173,17 @@ impl ToolingManager {
         &self,
         message: &str,
         user_id: &str,
+        actor_id: &str,
         agent_id: Option<&str>,
         context_tags: Option<&str>,
+        group_id: Option<&str>,
     ) -> Result<EnqueuedInput, ToolingError> {
         let pending_id = format!("pi_{}", Uuid::new_v4().simple());
         let params = serde_json::json!({
             "pending_id": pending_id,
             "user_id": user_id,
+            "actor_id": actor_id,
+            "group_id": group_id.unwrap_or(""),
             "raw_message": message,
             "agent_id": agent_id.unwrap_or(""),
             "context_tags": context_tags.unwrap_or(""),
@@ -183,7 +191,7 @@ impl ToolingManager {
             "created_at": chrono::Utc::now().to_rfc3339(),
         });
         self.db
-            .execute_query::<serde_json::Value, _>("enqueuePendingInput", &params)
+            .execute_query::<serde_json::Value, _>("enqueuePendingInputScoped", &params)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
         info!("Ingest buffer: queued {pending_id} for user {user_id}");
@@ -340,6 +348,8 @@ impl ToolingManager {
 
         let agent = (!node.agent_id.is_empty()).then_some(node.agent_id.as_str());
         let tags = (!node.context_tags.is_empty()).then_some(node.context_tags.as_str());
+        let group = (!node.group_id.is_empty()).then_some(node.group_id.as_str());
+        let rbac = crate::core::RbacManager::new(Arc::clone(&self.db));
 
         let max_retries = self.config.ingest.max_retries;
         let deadline =
@@ -349,23 +359,45 @@ impl ToolingManager {
         let mut attempt = 0u32;
         let outcome = loop {
             attempt += 1;
+            if let Err(e) = rbac
+                .authorize_write_for_group(&node.actor_id, &node.user_id, group)
+                .await
+            {
+                last_err = e.to_string();
+                break None;
+            }
+            let scope = match rbac.resolve_write_scope(group).await {
+                Ok(scope) => scope,
+                Err(e) => {
+                    last_err = e.to_string();
+                    break None;
+                }
+            };
             match self
-                .add_memory(&node.raw_message, &node.user_id, agent, None, tags)
+                .add_memory_scoped(
+                    &node.raw_message,
+                    &node.user_id,
+                    agent,
+                    None,
+                    tags,
+                    &scope,
+                    &node.actor_id,
+                )
                 .await
             {
                 Ok(result) => break Some(result),
                 Err(e) => {
                     last_err = e.to_string();
-                    warn!(
-                        "Ingest worker: {} attempt {attempt}/{max_retries} failed: {last_err}",
-                        node.pending_id
-                    );
-                    if attempt >= max_retries || std::time::Instant::now() >= deadline {
-                        break None;
-                    }
-                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 }
             }
+            warn!(
+                "Ingest worker: {} attempt {attempt}/{max_retries} failed: {last_err}",
+                node.pending_id
+            );
+            if attempt >= max_retries || std::time::Instant::now() >= deadline {
+                break None;
+            }
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
         };
 
         match outcome {
@@ -373,6 +405,7 @@ impl ToolingManager {
                 let payload = serde_json::json!({
                     "memories_added": result.added.len(),
                     "memory_ids": result.added,
+                    "deduped": result.deduped,
                     "chunks_created": result.chunks_created,
                     "entities_extracted": result.entities_extracted,
                     "relations_created": result.reasoning_relations_created,

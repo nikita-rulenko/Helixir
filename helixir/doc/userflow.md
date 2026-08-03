@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `v0.6.0-dev`. Last verified: 2026-07-02._
+> _Reflects code as of `codex/rbac-cli`. Last verified: 2026-08-03._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
@@ -14,7 +14,7 @@ There are 20 tools, 2 prompts, 2 resources.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `add_memory` | `user_id`, `message` | `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when the ingest buffer needs more time. Passing `agent_id` also heartbeats swarm presence (#39). |
+| `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when buffered. |
 | `get_add_status` | `pending_id` | — | Polling a promised (buffered) `add_memory` to completion. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
 | `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |
@@ -42,7 +42,7 @@ question; the agent decides whether to ask the human.
 | `think_add` | `session_id`, `content` | `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step. |
 | `think_recall` | `session_id`, `query`, `parent_idx` | `user_id` | Pulling persistent memories into the live session. |
 | `think_conclude` | `session_id`, `conclusion` | `supporting_idx[]` | Marking a final answer in the session. |
-| `think_commit` | `session_id`, `user_id` | — | Persisting the conclusion (runs full `add_memory` pipeline). |
+| `think_commit` | `session_id`, `user_id` | `actor_id`, `group_id` | Persisting the conclusion through the same RBAC-scoped write pipeline. |
 | `think_discard` | `session_id` | — | Throwing away the session. Hot-path errors. |
 | `think_status` | `session_id` | — | Checking remaining time / thought count. |
 

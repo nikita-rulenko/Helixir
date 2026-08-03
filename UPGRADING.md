@@ -12,6 +12,29 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## Unreleased — graph-backed RBAC and dedup federations
+
+RBAC remains disabled by default for trusted-network installations. When an
+administrator enables it, HelixDB is the single source of truth for roles,
+groups, per-memory access edges, and dedup federations. Every enabled-mode
+write must name one concrete access `group_id`; administrators may attach
+multiple groups to a separate dedup federation so current members share
+deduplication and visibility without conflating that federation with the
+source group.
+
+Detaching a group is prospective: its historical memory edges remain readable,
+while later writes use the group's private dedup scope and receive no new
+federation access edge. Joining a federation backfills access to its existing
+history. Historical federation memories cannot be updated in place after the
+membership set changes; the write pipeline forks them through supersession.
+
+This upgrade adds nodes, edges, fields, and HQL routes. Stop HelixDB, back up
+the persistent volume, run `helix check`, rebuild/recreate the container
+against the same volume, replace the Helixir binaries, and restart MCP clients.
+The legacy `addMemoryKeyed` and `enqueuePendingInput` routes remain available
+during the binary rollout; new binaries use their additive scoped variants.
+Use `helixir rbac dedup --help` for federation management.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds

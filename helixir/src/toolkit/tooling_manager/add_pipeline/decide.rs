@@ -7,6 +7,7 @@
 use serde::Serialize;
 use tracing::{debug, warn};
 
+use crate::core::rbac::RbacMemoryScope;
 use crate::llm::decision::{MemoryDecision, MemoryOperation, SimilarMemory};
 use crate::llm::extractor::ExtractedMemory;
 use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
@@ -30,6 +31,7 @@ impl ToolingManager {
         skipped: &mut usize,
         chunks_created: &mut usize,
         relations_created: &mut usize,
+        scope: &RbacMemoryScope,
     ) -> Result<Option<String>, ToolingError> {
         // #34 2b: an adopted charter rule announces itself in its text
         // ("Charter rule [shape]: ..."). Stamp the exact rule tag so the
@@ -46,6 +48,8 @@ impl ToolingManager {
                 )
             });
         let tags: &str = rule_tag.as_deref().unwrap_or(tags);
+        let fingerprint_scope = scope.fingerprint_scope();
+        let fingerprint_scope = fingerprint_scope.as_deref();
 
         let memory_id = match decision.operation {
             MemoryOperation::Noop => {
@@ -68,8 +72,9 @@ impl ToolingManager {
                             "UPDATE merged_content is incoherent, falling back to ADD: {}...",
                             &merged.chars().take(60).collect::<String>()
                         );
-                        let (new_id, new_chunks) =
-                            self.store_new_memory(memory, user_id, vector, tags).await?;
+                        let (new_id, new_chunks) = self
+                            .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                            .await?;
                         *chunks_created += new_chunks;
                         let _ = self
                             .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -99,8 +104,9 @@ impl ToolingManager {
                         target_id.to_string()
                     }
                 } else {
-                    let (new_id, new_chunks) =
-                        self.store_new_memory(memory, user_id, vector, tags).await?;
+                    let (new_id, new_chunks) = self
+                        .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                        .await?;
                     *chunks_created += new_chunks;
                     let _ = self
                         .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -109,8 +115,9 @@ impl ToolingManager {
                 }
             }
             MemoryOperation::Supersede => {
-                let (new_id, new_chunks) =
-                    self.store_new_memory(memory, user_id, vector, tags).await?;
+                let (new_id, new_chunks) = self
+                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .await?;
                 *chunks_created += new_chunks;
                 let _ = self
                     .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -148,8 +155,9 @@ impl ToolingManager {
                 new_id
             }
             MemoryOperation::Contradict => {
-                let (new_id, new_chunks) =
-                    self.store_new_memory(memory, user_id, vector, tags).await?;
+                let (new_id, new_chunks) = self
+                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .await?;
                 *chunks_created += new_chunks;
                 let _ = self
                     .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -177,8 +185,9 @@ impl ToolingManager {
                 // reachable forever; the delete intent is preserved in the
                 // supersession reason and the charter escalates it to the
                 // agent via needs_clarification.
-                let (new_id, new_chunks) =
-                    self.store_new_memory(memory, user_id, vector, tags).await?;
+                let (new_id, new_chunks) = self
+                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .await?;
                 *chunks_created += new_chunks;
                 let _ = self
                     .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -232,8 +241,9 @@ impl ToolingManager {
                 unreachable!("Phase 1 should not produce cross-user operations");
             }
             MemoryOperation::Add => {
-                let (new_id, new_chunks) =
-                    self.store_new_memory(memory, user_id, vector, tags).await?;
+                let (new_id, new_chunks) = self
+                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .await?;
                 *chunks_created += new_chunks;
                 let _ = self
                     .add_memory_history_event(&new_id, "ADD", "", &memory.text, user_id)
@@ -263,6 +273,7 @@ impl ToolingManager {
                         vector,
                         &new_id,
                         relations_created,
+                        scope,
                     )
                     .await?;
                 }

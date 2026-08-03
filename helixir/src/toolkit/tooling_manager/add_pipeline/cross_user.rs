@@ -12,6 +12,7 @@
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
+use crate::core::rbac::{RbacManager, RbacMemoryScope};
 use crate::llm::decision::{MemoryOperation, SimilarMemory};
 use crate::llm::extractor::ExtractedMemory;
 
@@ -25,21 +26,35 @@ impl ToolingManager {
         vector: &[f32],
         new_memory_id: &str,
         _relations_created: &mut usize,
+        scope: &RbacMemoryScope,
     ) -> Result<(), ToolingError> {
         info!(
             "Phase 2: cross-user dedup for {} (user={})",
             new_memory_id, user_id
         );
-        let global_results = self
+        let requested = self.config.write.cross_user_dedup_top_k;
+        let mut global_results = self
             .search_engine
             .search_for_dedup(
                 &memory.text,
                 vector,
                 user_id,
-                self.config.write.cross_user_dedup_top_k,
+                requested.saturating_mul(10).max(100),
             )
             .await
             .unwrap_or_default();
+        let candidate_ids = global_results
+            .iter()
+            .map(|result| result.memory_id.clone())
+            .collect::<Vec<_>>();
+        let allowed = RbacManager::new(self.db.clone())
+            .memory_ids_in_scope(scope, &candidate_ids)
+            .await
+            .map_err(|error| ToolingError::Database(error.to_string()))?;
+        if let Some(allowed) = allowed {
+            global_results.retain(|result| allowed.contains(&result.memory_id));
+        }
+        global_results.truncate(requested);
 
         let cross_user_similar: Vec<SimilarMemory> = global_results
             .iter()

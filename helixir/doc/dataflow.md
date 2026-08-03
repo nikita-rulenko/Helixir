@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `codex/rbac-cli`. Last verified: 2026-08-03._
 
 This document walks the two pipelines that matter most:
 
@@ -14,6 +14,21 @@ welded together.
 ---
 
 ## 1. `add_memory` pipeline
+
+When RBAC is enabled, the facade authorizes `(actor_id, owner_id, group_id)`
+and resolves a write domain before extraction. A private group uses
+`rbac:group:<id>`; a federated group uses `rbac:dedup:<id>`; disabled mode keeps
+the legacy global domain. That domain salts `content_key`, filters both personal
+recall and Phase-2 collective candidates, and is stored as `Memory.rbac_scope`.
+After the decision, group visibility is materialized with
+`MEMORY_IN_RBAC_GROUP`; federation provenance uses
+`MEMORY_IN_RBAC_DEDUP_GROUP`.
+
+Federation membership is prospective. Detaching a group leaves historical
+memory-to-group edges intact but excludes it from future writes. An in-place
+update whose historical visibility differs from the current federation is
+forked into a new superseding version; direct mutation of that historical node
+is denied.
 
 ### High-level shape
 

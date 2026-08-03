@@ -246,7 +246,7 @@ impl Atropos<'_> {
             };
             let insight_id = match self
                 .tooling
-                .store_new_memory(&memory, "helixir", &vector, "moira-insight")
+                .store_new_memory(&memory, "helixir", &vector, "moira-insight", None)
                 .await
             {
                 Ok((id, _)) => id,

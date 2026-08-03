@@ -180,12 +180,13 @@ impl HelixirMcpServer {
 
         let result = self
             .fast_think
-            .commit_as(
+            .commit_as_in_group(
                 &params.session_id,
                 &self
                     .actor_id(params.actor_id.as_deref(), &params.user_id)
                     .await?,
                 &params.user_id,
+                params.group_id.as_deref(),
             )
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;

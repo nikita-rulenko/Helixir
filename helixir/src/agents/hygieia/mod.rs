@@ -244,7 +244,7 @@ impl<'a> Hygieia<'a> {
             };
             if let Err(e) = self
                 .tooling
-                .store_new_memory(&memory, "helixir", &vector, "ops-alert")
+                .store_new_memory(&memory, "helixir", &vector, "ops-alert", None)
                 .await
             {
                 warn!("hygieia: ops-alert memory store failed: {e}");

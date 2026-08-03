@@ -165,29 +165,21 @@ bug to file — not a feature to copy.
   Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
   None are configurable from env or `HelixirConfig`.
 
-- **Shared memory across users (deduplicated knowledge graph).** A fact is
-  stored exactly once as a `Memory` node, regardless of how many users know it.
-  This is a load-bearing invariant for anyone reading API responses.
-
-  Each user that knows the fact is connected to the same node by a
-  `User -[HasMemory]-> Memory` edge. The node's `user_count` field tracks how
-  many users are linked.
+- **Shared memory across users (scoped deduplicated knowledge graph).** Each
+  author retains a provenance-preserving `Memory` node. Equivalent records
+  share a `content_key`; collective results collapse that fingerprint group
+  and derive its holder count.
 
   The flow that creates this in `add_memory`:
   1. New `add_memory` call hits `tooling_manager::add_pipeline`.
-  2. If the (content + embedding) closely matches an existing `Memory`, the
-     pipeline emits `emit_memory_deduplicated(target_id, user_id)` instead of
-     creating a new node (see `add_pipeline.rs:405`).
-  3. In a background task, `link_user_to_memory_bg(db, user_id, memory_id)`:
-     - `getUser` / `addUser` to make sure the User node exists,
-     - `linkUserToMemory` to add the `HasMemory` edge,
-     - `getMemoryUsers` to recount, then `updateMemoryUserCount` to persist
-       the new `user_count`.
+  2. Personal and collective candidate recall is restricted to the resolved
+     security domain: global in trusted mode, a concrete group or explicit
+     dedup federation when RBAC is enabled.
+  3. Exact and NLI-confirmed consensus grouping may unify fingerprints only
+     inside that same domain.
 
   Consequences for API consumers:
-  - `list_memories(user_id=B)` legitimately returns memories whose serialised
-    `user_id` field is `A`, with `user_count >= 2`. Those records are linked
-    to `B` via `HasMemory`; the `user_id` field is just the original author.
+  - `Memory.user_id` is provenance, not authorization metadata.
   - `search_memory` honours a `scope` parameter:
     - `personal` — anchor the traversal on the caller's `HasMemory` edges.
     - `collective` / `all` — fan out across all `HasMemory` edges with
@@ -196,8 +188,9 @@ bug to file — not a feature to copy.
     `search_by_concept`) implicitly behave like `personal`: they return what
     the user knows, which includes shared knowledge.
 
-  This is not a privacy leak — see the closed-as-`not planned` discussion on
-  issue #21.
+  With RBAC enabled, reads are additionally intersected with materialized
+  `MEMORY_IN_RBAC_GROUP` edges. Cross-domain rows or dedup candidates are a
+  correctness and confidentiality defect.
 
 ## 5. Layer boundaries
 
@@ -325,16 +318,15 @@ separate stdio/gateway processes cannot process the same `PendingInput`.
 
 Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
 
-- One `Memory` node per fact, regardless of how many users know it.
-- Each knower is linked to that node by a `User -[HasMemory]-> Memory`
-  edge. The node's `user_count` field tracks the linkage count.
+- One provenance-preserving `Memory` node per author/fact record; equivalent
+  records share a security-scoped `content_key` consensus group.
+- `HAS_MEMORY` records authorship/stance. Enabled RBAC visibility is independent
+  and materialized with `MEMORY_IN_RBAC_GROUP`.
 - `add_memory` runs a two-phase pipeline:
   - Phase 1 — personal dedup; embedding-similarity match within the
     caller's memories.
-  - Phase 2 — collective check (background as of v0.2.2); if the same
-    fact already exists for another user, the decision engine emits
-    `LINK_EXISTING` and the new user's `HAS_MEMORY` edge points at the
-    shared Memory rather than producing a duplicate node.
+  - Phase 2 — collective check inside the same `rbac_scope`; identical
+    author nodes share the scoped fingerprint group.
 - Cross-user contradictions are wired through `CROSS_CONTRADICT`, which
   stores the new opinion alongside the existing one and links them with a
   `CONTRADICTS` edge.
@@ -407,10 +399,12 @@ instances** (memory only grows), supervised inside the daemon (§6 open items).
 ### 7.8 RBAC as a graph-backed policy service
 
 The optional RBAC layer is a HelixirDB-backed service (`core::rbac::RbacManager`),
-not a host-local ACL file. `RbacGroup`, `RbacAssignment`, and `RbacConfig`
-provide stable state and audit history; `RBAC_MEMBER_OF` and
-`MEMORY_IN_RBAC_GROUP` provide the graph traversals used to derive group and
-memory visibility. The CLI's `helixir rbac` family is a thin management client
+not a host-local ACL file. `RbacGroup`, `RbacDedupGroup`, `RbacAssignment`, and
+`RbacConfig` provide stable state and audit history; membership, visibility,
+and dedup-provenance edges define the security graph. A dedup federation gives
+its current groups one fingerprint domain and materializes new memories to
+every current member. Detach preserves historical group edges and excludes the
+group from future writes. The CLI's `helixir rbac` family is a thin management client
 over the same named HQL queries used by MCP and `HelixirClient` authorization.
 
 The layer is disabled by default for compatibility with Helixir's trusted

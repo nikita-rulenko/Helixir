@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use tracing::{debug, info, warn};
 
+use crate::core::rbac::{RbacManager, RbacMemoryScope};
 use crate::llm::decision::{MemoryOperation, SimilarMemory};
 use crate::llm::extractor::{ExtractedEntity, ExtractedMemory, ExtractedRelation};
 
@@ -21,6 +22,29 @@ impl ToolingManager {
         agent_id: Option<&str>,
         _metadata: Option<HashMap<String, serde_json::Value>>,
         context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, ToolingError> {
+        self.add_memory_scoped(
+            message,
+            user_id,
+            agent_id,
+            _metadata,
+            context_tags,
+            &RbacMemoryScope::Legacy,
+            user_id,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_memory_scoped(
+        &self,
+        message: &str,
+        user_id: &str,
+        agent_id: Option<&str>,
+        _metadata: Option<HashMap<String, serde_json::Value>>,
+        context_tags: Option<&str>,
+        scope: &RbacMemoryScope,
+        assigned_by: &str,
     ) -> Result<AddMemoryResult, ToolingError> {
         let preview: String = message.chars().take(50).collect();
         let tags = context_tags.unwrap_or("");
@@ -106,6 +130,8 @@ impl ToolingManager {
             user_id,
             agent_id,
             tags,
+            scope,
+            assigned_by,
         )
         .await
     }
@@ -122,6 +148,26 @@ impl ToolingManager {
         agent_id: Option<&str>,
         context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, ToolingError> {
+        self.add_prepared_memories_scoped(
+            memories,
+            user_id,
+            agent_id,
+            context_tags,
+            &RbacMemoryScope::Legacy,
+            user_id,
+        )
+        .await
+    }
+
+    pub async fn add_prepared_memories_scoped(
+        &self,
+        memories: Vec<ExtractedMemory>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+        scope: &RbacMemoryScope,
+        assigned_by: &str,
+    ) -> Result<AddMemoryResult, ToolingError> {
         info!(
             "Adding {} prepared memories for user={} (no extraction)",
             memories.len(),
@@ -135,6 +181,8 @@ impl ToolingManager {
             user_id,
             agent_id,
             context_tags.unwrap_or(""),
+            scope,
+            assigned_by,
         )
         .await
     }
@@ -151,6 +199,8 @@ impl ToolingManager {
         user_id: &str,
         agent_id: Option<&str>,
         tags: &str,
+        scope: &RbacMemoryScope,
+        assigned_by: &str,
     ) -> Result<AddMemoryResult, ToolingError> {
         let mut added_ids = Vec::new();
         let mut updated_ids = Vec::new();
@@ -180,19 +230,32 @@ impl ToolingManager {
         let mut recall: Vec<Vec<SimilarMemory>> = Vec::with_capacity(memories_to_store.len());
         for (i, memory) in memories_to_store.iter().enumerate() {
             let vector = &all_embeddings[i];
-            let similar_results = self
+            let recall_limit = self.config.write.recall_top_k;
+            let mut similar_results = self
                 .search_engine
                 .search(
                     &memory.text,
                     vector,
                     user_id,
                     crate::toolkit::mind_toolbox::search::SearchOptions::new(
-                        self.config.write.recall_top_k,
+                        recall_limit.saturating_mul(10).max(100),
                         "contextual",
                     ),
                 )
                 .await
                 .unwrap_or_default();
+            let candidate_ids = similar_results
+                .iter()
+                .map(|result| result.memory_id.clone())
+                .collect::<Vec<_>>();
+            let allowed = RbacManager::new(self.db.clone())
+                .memory_ids_in_scope(scope, &candidate_ids)
+                .await
+                .map_err(|error| ToolingError::Database(error.to_string()))?;
+            if let Some(allowed) = allowed {
+                similar_results.retain(|result| allowed.contains(&result.memory_id));
+            }
+            similar_results.truncate(recall_limit);
 
             let similar_memories: Vec<SimilarMemory> = similar_results
                 .iter()
@@ -381,6 +444,21 @@ impl ToolingManager {
                 });
             }
 
+            if matches!(decision.operation, MemoryOperation::Update)
+                && let Some(target_id) = decision.target_memory_id.clone()
+                && RbacManager::new(self.db.clone())
+                    .memory_requires_fork_for_scope(&target_id, scope)
+                    .await
+                    .map_err(|error| ToolingError::Database(error.to_string()))?
+            {
+                info!(
+                    "RBAC federation membership changed: UPDATE of {target_id} becomes SUPERSEDE so historical readers keep the old version"
+                );
+                decision.operation = MemoryOperation::Supersede;
+                decision.supersedes_memory_id = Some(target_id);
+                decision.merged_content = None;
+            }
+
             let memory_id = match self
                 .handle_memory_operation(
                     &decision,
@@ -396,6 +474,7 @@ impl ToolingManager {
                     &mut skipped,
                     &mut chunks_created,
                     &mut relations_created,
+                    scope,
                 )
                 .await?
             {
@@ -597,10 +676,20 @@ impl ToolingManager {
             match self.embedder.generate(message, true).await {
                 Ok(raw_vec) => {
                     match self
-                        .store_raw_source(&raw_mem, user_id, &raw_vec, tags)
+                        .store_raw_source(
+                            &raw_mem,
+                            user_id,
+                            &raw_vec,
+                            tags,
+                            scope.fingerprint_scope().as_deref(),
+                        )
                         .await
                     {
                         Ok(raw_id) => {
+                            RbacManager::new(self.db.clone())
+                                .link_memory_to_scope(&raw_id, scope, assigned_by)
+                                .await
+                                .map_err(|error| ToolingError::Database(error.to_string()))?;
                             debug!("Raw source stored: {}", raw_id);
                             chunks_created += 1;
                             // #82: family link — every atom points at the raw
@@ -639,6 +728,13 @@ impl ToolingManager {
             entities_linked,
             relations_created
         );
+
+        let rbac = RbacManager::new(self.db.clone());
+        for memory_id in added_ids.iter().chain(&updated_ids).chain(&deduped_ids) {
+            rbac.link_memory_to_scope(memory_id, scope, assigned_by)
+                .await
+                .map_err(|error| ToolingError::Database(error.to_string()))?;
+        }
 
         let mut metadata = HashMap::new();
         metadata.insert(

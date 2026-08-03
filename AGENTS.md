@@ -113,9 +113,10 @@ warnings, follows.
 - **A decision matrix on every write**: one of `ADD / UPDATE / SUPERSEDE /
   CONTRADICT / LINK_EXISTING / CROSS_CONTRADICT / NOOP / DELETE`. Append-only
   is not the default and is not desired.
-- **A shared graph across users**. A fact is stored once, linked to each
-  knower by a `HasMemory` edge, with `user_count` tracking the linkage.
-  `scope = personal | collective | all` is the access control surface.
+- **A shared graph across users**. Author-level `Memory` nodes share a scoped
+  `content_key` consensus group. Trusted mode deduplicates globally; enabled
+  RBAC deduplicates only inside a concrete group or explicit dedup federation.
+  `MEMORY_IN_RBAC_GROUP` edges are the enabled-mode access boundary.
 - **Two-tier memory**: persistent graph in HelixDB plus an ephemeral
   in-process FastThink scratchpad (`petgraph`) that never reaches the
   graph unless the agent calls `think_commit`.
@@ -124,9 +125,9 @@ warnings, follows.
 
 ### 1bis.2 What Helixir is not
 
-- Not user-isolated. Memory is shared at the graph level. If `list_memories`
-  returns a record whose `user_id` field belongs to user A while the caller
-  is user B, that is the `HasMemory` linkage at work — not a privacy bug.
+- Not a per-user chat silo. Memory can be shared at the graph level, but enabled
+  RBAC limits reads and dedup candidates by materialized group visibility and
+  the configured dedup federation. `Memory.user_id` is provenance, not ACL.
 - Not RAG. Vector search is one of three signals (vector + BM25 + smart
   traversal), and the write path actively curates what is stored.
 - Not extensible at runtime on the ontology side. The 8 types
@@ -144,7 +145,7 @@ of these.
 
 | Invariant | Where it lives | If you mistake it for a bug |
 |---|---|---|
-| Shared `Memory` across users; one node per fact, `HasMemory` per knower; `user_count >= 1` | `add_pipeline.rs` Phase 2 + `link_user_to_memory_bg` | You will try to add `user_id` filter to retrieval and break Hive dedup. |
+| Hive consensus is scoped by RBAC security domain; author nodes share `content_key` only inside a group/dedup federation | `add_pipeline/` + `RbacMemoryScope` | You will either break Hive consensus or leak isolated-group knowledge through global dedup. |
 | 8 ontology types are fixed in code and schema | `OntologyManager`, `data-model.md §4` | You will propose "dynamic ontology" and dilute the type space. |
 | `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class edges, not metadata | `ReasoningEngine`, `mind_toolbox/reasoning/` | You will collapse them into a single `metadata.reason` string and lose traversal. |
 | Decision matrix replaces append-only | `LLMDecisionEngine`, `add_pipeline.rs` | You will propose unconditional `ADD` and grow the corpus forever. |
@@ -491,15 +492,15 @@ section is the "before you file" checklist.
 ### 11.1 "Tool X returns memories that belong to other users"
 
 - Looks like a privacy leak / missing `user_id` filter.
-- Actually is the shared-memory graph at work. A `Memory` is stored once
-  and linked to each knower via `HasMemory`; `Memory.user_id` is the
-  original author, not an access tag. `user_count >= 2` means multiple
-  users know this fact.
-- **Do**: cross-check `architecture.md §4 "Shared memory across users"` and
-  `design-rationale.md §3.4`. If the caller wants strict isolation, that is
-  a `scope=personal` question, not a code defect.
-- **Do not** add a `user_id` predicate to retrieval — you will break Hive
-  dedup. Issue #21 (closed `not planned`) is the canonical precedent.
+- In trusted mode this may be the shared Hive graph at work: `Memory.user_id`
+  is provenance, not an access tag.
+- With RBAC enabled, it is correct only when the memory has a visible
+  `MEMORY_IN_RBAC_GROUP` edge. Dedup candidates must also share the exact
+  `Memory.rbac_scope` (`group:<id>` or `dedup:<id>`).
+- **Do**: cross-check `design-rationale.md §3.4`, the per-memory group edges,
+  and the stored RBAC scope before classifying the row.
+- **Do not** add a bare `user_id` predicate — it breaks federated Hive dedup;
+  filter by materialized memory-group edges instead.
 
 ### 11.2 "Field X is stored as a literal placeholder / dead string"
 

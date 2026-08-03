@@ -23,7 +23,13 @@ fn collapse_collective_duplicates(results: Vec<SearchMemoryResult>) -> Vec<Searc
             .get("memory_type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let key = content_key(&r.content, mtype);
+        let key = r
+            .metadata
+            .get("content_key")
+            .and_then(serde_json::Value::as_str)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| content_key(&r.content, mtype));
         *count.entry(key.clone()).or_insert(0) += 1;
         match rep.get(&key).copied() {
             // Already have a representative — keep whichever scored higher.
@@ -183,6 +189,46 @@ impl ToolingManager {
             .collect();
 
         if scope == "collective" || scope == "all" {
+            #[derive(serde::Deserialize)]
+            struct KeyedMemory {
+                #[serde(default)]
+                memory_id: String,
+                #[serde(default)]
+                content_key: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct KeyedMemories {
+                #[serde(default)]
+                memories: Vec<KeyedMemory>,
+            }
+            let ids = search_results
+                .iter()
+                .map(|result| result.memory_id.clone())
+                .collect::<Vec<_>>();
+            if !ids.is_empty()
+                && let Ok(response) = self
+                    .db
+                    .execute_query::<KeyedMemories, _>(
+                        "getMemoryContentKeysBatch",
+                        &serde_json::json!({"memory_ids": ids}),
+                    )
+                    .await
+            {
+                let keys = response
+                    .memories
+                    .into_iter()
+                    .filter(|memory| !memory.content_key.is_empty())
+                    .map(|memory| (memory.memory_id, memory.content_key))
+                    .collect::<HashMap<_, _>>();
+                for result in &mut search_results {
+                    if let Some(key) = keys.get(&result.memory_id) {
+                        result.metadata.insert(
+                            "content_key".to_string(),
+                            serde_json::Value::String(key.clone()),
+                        );
+                    }
+                }
+            }
             // #3a: fold same-fact-across-users into one row BEFORE ranking, so
             // the boost-sort operates on distinct knowledge, not duplicates.
             let before = search_results.len();
@@ -608,6 +654,27 @@ mod tests {
         ];
         let out = collapse_collective_duplicates(input);
         assert_eq!(out.len(), 2, "different memory_type must not collapse");
+    }
+
+    #[test]
+    fn collapse_respects_persisted_rbac_scoped_content_keys() {
+        let mut isolated_a = res("mem_a", "Shared wording", "fact", 0.9);
+        isolated_a.metadata.insert(
+            "content_key".to_string(),
+            serde_json::json!("rbac:group:a:key"),
+        );
+        let mut isolated_b = res("mem_b", "Shared wording", "fact", 0.8);
+        isolated_b.metadata.insert(
+            "content_key".to_string(),
+            serde_json::json!("rbac:group:b:key"),
+        );
+
+        let out = collapse_collective_duplicates(vec![isolated_a, isolated_b]);
+        assert_eq!(
+            out.len(),
+            2,
+            "identical text in isolated RBAC domains must not collapse"
+        );
     }
 
     #[test]

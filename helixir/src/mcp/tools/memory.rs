@@ -16,7 +16,7 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 #[tool_router(router = memory_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Store raw natural-language text in long-term memory. An LLM splits it into atomic typed facts (max 15 per call — split bigger inputs), embeds them, and wires them into the reasoning graph with typed edges. Use whenever the user states a fact, decision, preference, goal or outcome worth keeping across sessions.\
+        description = "Store raw natural-language text in long-term memory. An LLM splits it into atomic typed facts (max 15 per call — split bigger inputs), embeds them, and wires them into the reasoning graph with typed edges. Use whenever the user states a fact, decision, preference, goal or outcome worth keeping across sessions. With RBAC enabled, provide actor_id and the concrete access group_id; Helixir resolves any dedup federation automatically.\
         \nRESULT CONTRACT — read carefully:\
         \n- ok:true = SUCCESS. NEVER retry an ok:true result.\
         \n- ok:true + memory_ids = stored now.\
@@ -62,12 +62,13 @@ impl HelixirMcpServer {
             use crate::toolkit::tooling_manager::ingest_buffer::{STATUS_DONE, STATUS_FAILED};
             let enq = self
                 .client()
-                .add_buffered_as(
+                .add_buffered_as_in_group(
                     &actor_id,
                     &params.message,
                     &params.user_id,
                     params.agent_id.as_deref(),
                     None,
+                    params.group_id.as_deref(),
                 )
                 .await
                 .map_err(Self::convert_error)?;
@@ -130,12 +131,13 @@ impl HelixirMcpServer {
 
         let result = self
             .client()
-            .add_as(
+            .add_as_in_group(
                 &actor_id,
                 &params.message,
                 &params.user_id,
                 params.agent_id.as_deref(),
                 None,
+                params.group_id.as_deref(),
             )
             .await
             .map_err(Self::convert_error)?;
@@ -281,22 +283,6 @@ impl HelixirMcpServer {
         let actor_id = self
             .actor_id(params.actor_id.as_deref(), &params.user_id)
             .await?;
-        let policy = self
-            .client()
-            .rbac()
-            .snapshot()
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        if policy.enabled
-            && policy
-                .readable_users(&actor_id)
-                .is_some_and(|users| !users.contains(&params.user_id))
-        {
-            return Err(McpError::invalid_request(
-                format!("RBAC denied memory listing for '{}'", params.user_id),
-                None,
-            ));
-        }
         info!(
             "Listing memories for user={}, limit={}",
             params.user_id, limit
@@ -351,6 +337,26 @@ impl HelixirMcpServer {
                     .and_then(|v| v.as_str())
                     .map(|t| t == mem_type.as_str())
                     .unwrap_or(false)
+            });
+        }
+
+        let memory_ids = memories
+            .iter()
+            .filter_map(|memory| memory.get("memory_id").and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let visible = self
+            .client()
+            .rbac()
+            .visible_memory_ids(&actor_id, &memory_ids)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if let Some(visible) = visible {
+            memories.retain(|memory| {
+                memory
+                    .get("memory_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| visible.contains(id))
             });
         }
 
@@ -830,21 +836,23 @@ impl HelixirMcpServer {
             .search_by_tag("incomplete_thought", limit)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let policy = client
+        let memory_ids = results
+            .iter()
+            .map(|result| result.memory_id.clone())
+            .collect::<Vec<_>>();
+        let visible = client
             .rbac()
-            .snapshot()
+            .visible_memory_ids(&actor_id, &memory_ids)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let results = if policy.enabled {
-            policy.filter_results(&actor_id, results, |result| {
-                result
-                    .metadata
-                    .get("user_id")
-                    .and_then(|value| value.as_str())
+        let results = results
+            .into_iter()
+            .filter(|result| {
+                visible
+                    .as_ref()
+                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
             })
-        } else {
-            results
-        };
+            .collect::<Vec<_>>();
 
         if results.is_empty() {
             let json = Self::result_to_json(json!({

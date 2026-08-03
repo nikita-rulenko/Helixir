@@ -434,7 +434,7 @@ impl SearchEngine {
         if penalty >= 1.0 || results.is_empty() {
             return;
         }
-        let window = (limit * 3).clamp(limit, 60).min(results.len());
+        let window = superseded_window(limit, results.len());
         let ids: Vec<&str> = results[..window]
             .iter()
             .map(|r| r.memory_id.as_str())
@@ -569,6 +569,13 @@ impl SearchEngine {
     }
 }
 
+fn superseded_window(limit: usize, result_count: usize) -> usize {
+    limit
+        .saturating_mul(3)
+        .min(60usize.max(limit))
+        .min(result_count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,5 +630,17 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].memory_id, "dup");
         assert_eq!(out[1].memory_id, "b");
+    }
+
+    #[test]
+    fn superseded_window_accepts_internal_overfetch_above_sixty() {
+        assert_eq!(superseded_window(100, 250), 100);
+        assert_eq!(superseded_window(100, 40), 40);
+    }
+
+    #[test]
+    fn superseded_window_keeps_the_existing_small_limit_cap() {
+        assert_eq!(superseded_window(10, 100), 30);
+        assert_eq!(superseded_window(30, 100), 60);
     }
 }

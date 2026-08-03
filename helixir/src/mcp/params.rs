@@ -136,6 +136,10 @@ pub struct AddMemoryParams {
         description = "Optional authenticated principal performing the write. If omitted, user_id is the principal (legacy trusted-network mode)."
     )]
     pub actor_id: Option<String>,
+    #[schemars(
+        description = "Concrete RBAC group for this memory. Required for enabled non-admin writes; pass the access group id, never a dedup federation id. Helixir resolves any federation automatically. Omitted admin writes are admin-only."
+    )]
+    pub group_id: Option<String>,
     #[schemars(description = "Optional agent identifier that produced this memory.")]
     pub agent_id: Option<String>,
 }
@@ -326,6 +330,10 @@ pub struct ThinkCommitParams {
         description = "Optional authenticated principal performing the commit. If omitted, user_id is used for trusted-network compatibility."
     )]
     pub actor_id: Option<String>,
+    #[schemars(
+        description = "Concrete RBAC group for the committed conclusion. Required for enabled non-admin commits; never pass a dedup federation id."
+    )]
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
