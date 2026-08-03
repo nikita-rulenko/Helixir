@@ -109,12 +109,30 @@ pub(crate) fn doctor_config_ready() -> bool {
 }
 
 pub(crate) fn doctor_clients_ready() -> bool {
-    let mut selected = 0usize;
-    let mut ready = true;
-    for client in native_client_targets() {
-        selected += 1;
-        ready &= native_registration_exists(client, "helixir-local");
+    use helixir::installer::ClientKind;
+
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let manifest = match helixir::installer::manifest::read(&home.join(".helixir/install.json")) {
+        Ok(manifest) => manifest,
+        Err(_) => return false,
+    };
+    let selected: Vec<ClientKind> = manifest
+        .as_ref()
+        .map(|manifest| {
+            manifest
+                .clients
+                .iter()
+                .filter_map(|label| client_kind_from_label(label))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if selected.is_empty() {
+        return native_client_targets()
+            .into_iter()
+            .any(|client| native_registration_exists(client, "helixir-local"));
     }
+
     let server = helixir::installer::clients::StdioServer::new(
         std::env::current_exe()
             .ok()
@@ -124,24 +142,58 @@ pub(crate) fn doctor_clients_ready() -> bool {
             .to_string(),
     );
     let expected_command = server.json_entry()["command"].clone();
-    for (_, path) in client_targets() {
-        if !path.exists() {
-            continue;
+    selected.into_iter().all(|client| match client {
+        ClientKind::ClaudeCode | ClientKind::Codex => {
+            native_registration_exists(client, "helixir-local")
         }
-        selected += 1;
-        let present = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-            .and_then(|doc| {
-                doc.get("mcpServers")
-                    .and_then(|servers| servers.get("helixir-local"))
-                    .cloned()
-            })
-            .map(|entry| entry.get("command") == Some(&expected_command))
-            .unwrap_or(false);
-        ready &= present;
+        ClientKind::Cursor => {
+            let Some(path) =
+                helixir::installer::clients::default_json_config_path(ClientKind::Cursor, &home)
+            else {
+                return false;
+            };
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|doc| {
+                    doc.get("mcpServers")
+                        .and_then(|servers| servers.get("helixir-local"))
+                        .cloned()
+                })
+                .is_some_and(|entry| entry.get("command") == Some(&expected_command))
+        }
+    })
+}
+
+fn client_kind_from_label(label: &str) -> Option<helixir::installer::ClientKind> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "claude code" | "claude" => Some(helixir::installer::ClientKind::ClaudeCode),
+        "codex" => Some(helixir::installer::ClientKind::Codex),
+        "cursor" => Some(helixir::installer::ClientKind::Cursor),
+        _ => None,
     }
-    selected == 0 || ready
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_client_labels_map_only_supported_onboarding_clients() {
+        assert_eq!(
+            client_kind_from_label("Claude Code"),
+            Some(helixir::installer::ClientKind::ClaudeCode)
+        );
+        assert_eq!(
+            client_kind_from_label("Codex"),
+            Some(helixir::installer::ClientKind::Codex)
+        );
+        assert_eq!(
+            client_kind_from_label("Cursor"),
+            Some(helixir::installer::ClientKind::Cursor)
+        );
+        assert_eq!(client_kind_from_label("Gemini CLI"), None);
+    }
 }
 
 // Client wiring is implemented in the adjacent `wire` module.

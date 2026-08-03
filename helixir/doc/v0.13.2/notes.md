@@ -42,7 +42,7 @@ pulls retry through the official API, and final inventory is verified through
 
 ## Verification
 
-- 250 library tests and 7 CLI tests pass.
+- 250 library tests and 8 CLI tests pass.
 - The complete non-ignored all-target test surface passes.
 - Formatting, documentation lint, the exact CI Clippy gate, and default plus
   no-default all-target builds pass.

@@ -72,7 +72,7 @@ invariant that RBAC remains enabled.
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
 | Installer | `src/installer/` | 31 | Fresh and idempotent local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, local/remote doctor reports and malformed-config refusal. |
-| CLI onboarding | `src/bin/helixir/` | 7 | RBAC command parsing, deterministic local/remote onboarding flags, secret redaction, real remote embedding probe success/failure, local recovery selection, and the 500-line module budget. |
+| CLI onboarding | `src/bin/helixir/` | 8 | RBAC command parsing, deterministic local/remote onboarding flags, secret redaction, real remote embedding probe success/failure, local recovery selection, manifest-scoped client readiness, and the 500-line module budget. |
 
 ### Integration / E2E
 
