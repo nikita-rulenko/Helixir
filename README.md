@@ -104,11 +104,42 @@ curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install
 The script detects the host and downloads the matching release asset into a
 versioned `~/.helixir/versions/<version>` directory, switches the atomic
 `~/.helixir/current` pointer, then launches the guided `helixir onboard` flow.
-The flow offers Ollama, `llama3.2:3b`, and `nomic-embed-text`; installs and
-verifies the required local NLI safety model; provisions a persistent HelixDB
-volume with a pre-schema backup, central `helixir.toml`, and
-automatic Claude Code/Codex/Cursor registration. Use `--non-interactive` for
-automation and `--dry-run` to inspect the plan without changing the machine.
+The recommended flow installs and starts Ollama on macOS or Linux and provisions
+`nomic-embed-text`. A user may instead explicitly configure an OpenAI-compatible
+remote embedding provider, model, endpoint, and key. The flow also recommends an
+optional local fallback LLM from detected RAM (compact `llama3.2:3b`, balanced
+`qwen2.5:7b`, or `gpt-oss:20b`). Model pulls retry safely and are verified through
+Ollama's local API before onboarding succeeds. The required NLI safety model is
+always installed and verified. The same plan provisions a persistent
+HelixDB volume with a pre-schema backup, central `helixir.toml`, and automatic
+Claude Code/Codex/Cursor registration.
+
+Use `--dry-run` to inspect the plan. Automation can select exactly the same
+choices without prompts:
+
+```bash
+# Fully local defaults chosen for this machine
+helixir onboard --non-interactive
+
+# Explicit local fallback LLM
+helixir onboard --non-interactive --local-llm-model qwen2.5:7b
+
+# Keep the configured remote primary LLM; use local Nomic embeddings
+helixir onboard --non-interactive --no-local-llm
+
+# Explicit remote embeddings; provide the key through the protected config or env
+HELIX_EMBEDDING_API_KEY=... helixir onboard --non-interactive \
+  --remote-embeddings --embedding-provider openai \
+  --embedding-model text-embedding-3-small \
+  --embedding-url https://api.openai.com/v1
+```
+
+NLI and a verified embedding path are mandatory. Ollama plus
+`nomic-embed-text` is the default; remote embeddings must be selected and fully
+specified explicitly. `helixir doctor` sends a real embedding probe. If the
+remote path is missing or broken, it reports the failure, installs/starts Ollama,
+pulls Nomic, atomically switches the central config, and verifies the repair.
+`--no-local-llm` skips only the optional fallback LLM.
 
 Or install manually:
 
@@ -119,7 +150,7 @@ cd helixir
 make build          # Build release binaries for this host
 make install        # Versioned install + guided onboarding
 make onboard        # Re-run onboarding
-make doctor         # Read-only readiness report
+make doctor         # Readiness report + automatic embedding recovery
 ```
 
 ### Prerequisites
@@ -685,6 +716,8 @@ helixir-rs/
   helixir/
     src/
       bin/
+        helixir.rs              # Thin CLI bootstrap/dispatch root
+        helixir/                # Domain CLI modules (each <= 500 lines)
         helixir_mcp.rs          # MCP server entry point
         helixir_deploy.rs       # Schema deployment CLI
         helixir_bench.rs        # Latency bench + live probes (--chain/--add/--connect-probe)

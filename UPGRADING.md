@@ -58,6 +58,14 @@ factory boundary. A stale `HELIX_LLM_MODEL` value is logged and ignored when
 `HELIX_LLM_PROVIDER=cerebras`; DeepSeek and Ollama retain their independently
 configured model names. No API keys are stored or migrated by this change.
 
+Onboarding now requires a verified embedding strategy and mandatory NLI. The
+recommended default is Ollama plus Nomic; `--remote-embeddings` permits an
+explicit OpenAI-compatible provider/model/URL with the API key supplied through
+the protected config or `HELIX_EMBEDDING_API_KEY`. `helixir doctor` is no longer
+strictly read-only: a failed remote embedding probe visibly triggers installation
+of Ollama/Nomic and an atomic switch of the central embedding config. The CLI
+implementation is split under `src/bin/helixir/`; no CLI module exceeds 500 lines.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds

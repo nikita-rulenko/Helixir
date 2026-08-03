@@ -51,8 +51,10 @@ pub struct DoctorInputs {
     pub llm: Option<bool>,
     /// Whether selected embedding model is ready.
     pub embeddings: Option<bool>,
-    /// Whether Nomic is selected and ready.
+    /// Whether the required Nomic embedding model is ready through Ollama.
     pub nomic: Option<bool>,
+    /// Whether Nomic is the selected path or was activated as recovery.
+    pub nomic_required: bool,
     /// Whether the required NLI judge is ready.
     pub nli: Option<bool>,
     /// Whether MCP initialize/list-tools smoke passed.
@@ -105,7 +107,7 @@ impl DoctorReport {
             &mut checks,
             "nomic",
             inputs.nomic,
-            true,
+            inputs.nomic_required,
             "nomic-embed-text availability",
         );
         push_bool(
@@ -175,6 +177,7 @@ mod tests {
             llm: Some(true),
             embeddings: Some(true),
             nomic: Some(true),
+            nomic_required: true,
             nli: Some(true),
             mcp: Some(true),
             clients: Some(true),
@@ -199,6 +202,7 @@ mod tests {
             llm: Some(true),
             embeddings: Some(true),
             nomic: Some(true),
+            nomic_required: true,
             nli: None,
             mcp: Some(true),
             clients: Some(true),
@@ -216,5 +220,25 @@ mod tests {
                 .iter()
                 .any(|check| check.name == "nli" && check.status == CheckStatus::Fail)
         );
+    }
+
+    #[test]
+    fn healthy_remote_embeddings_do_not_require_preinstalled_nomic() {
+        let report = DoctorReport::from_inputs(&DoctorInputs {
+            binaries: Some(true),
+            config: Some(true),
+            backend: Some(true),
+            llm: Some(true),
+            embeddings: Some(true),
+            nomic: None,
+            nomic_required: false,
+            nli: Some(true),
+            mcp: Some(true),
+            clients: Some(true),
+        });
+        assert!(report.ready);
+        assert!(report.checks.iter().any(|check| {
+            check.name == "nomic" && check.status == CheckStatus::Skipped && !check.required
+        }));
     }
 }

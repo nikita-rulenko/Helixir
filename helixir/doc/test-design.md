@@ -1,7 +1,7 @@
 # Test design
 
 > _Reflects code as of `v0.13.2` plus `codex/rbac-cli`.
-> Last verified: 2026-08-03._
+> Last verified: 2026-08-04._
 
 ## 1. Stance
 
@@ -27,7 +27,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`codex/rbac-cli`):** 242 unit tests (`cargo test --lib`, run in CI)
+**Current (`codex/rbac-cli`):** 250 unit tests (`cargo test --lib`, run in CI)
 + **38
 HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -71,7 +71,8 @@ invariant that RBAC remains enabled.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 23 | Fresh and idempotent plan order, schema backup-before-deploy, Ollama/model command safety, required-step rollback, central TOML and manifest atomicity, native client command safety, atomic JSON registration, doctor reports and malformed-config refusal. |
+| Installer | `src/installer/` | 31 | Fresh and idempotent local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, local/remote doctor reports and malformed-config refusal. |
+| CLI onboarding | `src/bin/helixir/` | 7 | RBAC command parsing, deterministic local/remote onboarding flags, secret redaction, real remote embedding probe success/failure, local recovery selection, and the 500-line module budget. |
 
 ### Integration / E2E
 

@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod models;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -116,6 +117,40 @@ pub enum BackendChoice {
     JoinRemote { host: String, port: u16 },
 }
 
+/// Explicit configuration for an OpenAI-compatible remote embedding service.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteEmbeddingConfig {
+    /// Provider adapter name. The current remote adapter is `openai`.
+    pub provider: String,
+    /// Provider-specific embedding model name.
+    pub model: String,
+    /// OpenAI-compatible API root, without the trailing `/embeddings` path.
+    pub url: String,
+    /// Secret used only in the protected central config and health probe.
+    pub api_key: String,
+}
+
+impl fmt::Debug for RemoteEmbeddingConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RemoteEmbeddingConfig")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("url", &self.url)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Exactly one embedding strategy selected during onboarding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmbeddingChoice {
+    /// Recommended local path: Ollama plus `nomic-embed-text`.
+    LocalOllamaNomic,
+    /// Explicit OpenAI-compatible remote embedding service.
+    Remote(RemoteEmbeddingConfig),
+}
+
 /// User selections from an interactive UI or non-interactive flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallOptions {
@@ -123,12 +158,10 @@ pub struct InstallOptions {
     pub mode: MemoryMode,
     /// Backend ownership/connection choice.
     pub backend: BackendChoice,
-    /// Allow the installer to install Ollama when it is absent.
-    pub install_ollama: bool,
-    /// Local Ollama LLM to ensure is available, or `None` for remote-only LLM.
+    /// Optional local Ollama fallback LLM to ensure is available.
     pub local_llm_model: Option<String>,
-    /// Ensure the canonical Nomic embedding model is available through Ollama.
-    pub install_nomic: bool,
+    /// Required, fully specified embedding strategy.
+    pub embeddings: EmbeddingChoice,
     /// MCP clients selected for automatic registration.
     pub clients: BTreeSet<ClientKind>,
 }
@@ -138,9 +171,8 @@ impl Default for InstallOptions {
         Self {
             mode: MemoryMode::Collective,
             backend: BackendChoice::ProvisionLocal,
-            install_ollama: true,
             local_llm_model: Some(crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()),
-            install_nomic: true,
+            embeddings: EmbeddingChoice::LocalOllamaNomic,
             clients: BTreeSet::new(),
         }
     }
@@ -171,7 +203,7 @@ pub enum InstallAction {
     WriteCentralConfig,
     /// Register the stable MCP entry in one client.
     RegisterClient(ClientKind),
-    /// Run the final read-only installation doctor.
+    /// Run the final doctor, including local embedding recovery when needed.
     RunDoctor,
 }
 
@@ -209,9 +241,6 @@ pub enum PlanError {
     /// `ReuseDetected` was selected but discovery found nothing to reuse.
     #[error("no backend was detected; provision a local backend or join a remote one")]
     MissingDetectedBackend,
-    /// Local inference was requested without an existing/installable Ollama.
-    #[error("local models require Ollama, but it is absent and installation was declined")]
-    OllamaRequired,
 }
 
 /// Build a deterministic minimal plan from detected state and user choices.
@@ -254,7 +283,7 @@ impl Planner {
 
         steps.push(InstallStep::required(
             InstallAction::RunDoctor,
-            "prove the selected installation is ready without writing a test memory",
+            "prove readiness and recover broken embeddings without writing a test memory",
         ));
         Ok(InstallPlan { steps })
     }
@@ -336,7 +365,7 @@ impl Planner {
         {
             models.insert(model.to_string());
         }
-        if options.install_nomic {
+        if matches!(options.embeddings, EmbeddingChoice::LocalOllamaNomic) {
             models.insert(crate::DEFAULT_EMBEDDING_MODEL.to_string());
         }
         if models.is_empty() {
@@ -344,9 +373,6 @@ impl Planner {
         }
 
         if !state.ollama.installed {
-            if !options.install_ollama {
-                return Err(PlanError::OllamaRequired);
-            }
             steps.push(InstallStep::required(
                 InstallAction::InstallOllama,
                 "install the selected local model runtime",
@@ -359,10 +385,13 @@ impl Planner {
             ));
         }
         for model in models {
-            if !state.ollama.models.contains(&model) {
+            if !models::OllamaAdapter::has_model(&state.ollama.models, &model) {
+                let estimate = models::download_estimate(&model)
+                    .map(|size| format!("; estimated download {size}"))
+                    .unwrap_or_default();
                 steps.push(InstallStep::required(
                     InstallAction::PullOllamaModel(model.clone()),
-                    format!("make local model {model} available"),
+                    format!("make local model {model} available{estimate}"),
                 ));
             }
         }
@@ -545,7 +574,6 @@ mod tests {
         };
         let options = InstallOptions {
             local_llm_model: None,
-            install_nomic: false,
             ..InstallOptions::default()
         };
 
@@ -568,17 +596,130 @@ mod tests {
     }
 
     #[test]
-    fn local_models_require_existing_or_installable_ollama() {
+    fn local_embeddings_require_ollama_nomic_and_nli_without_a_local_llm() {
         let state = SystemState::default();
         let options = InstallOptions {
-            install_ollama: false,
+            local_llm_model: None,
             ..InstallOptions::default()
         };
 
-        assert_eq!(
-            Planner::build(&state, &options),
-            Err(PlanError::OllamaRequired)
+        let actions: Vec<_> = Planner::build(&state, &options)
+            .unwrap()
+            .steps
+            .into_iter()
+            .map(|step| step.action)
+            .collect();
+        assert!(actions.contains(&InstallAction::InstallOllama));
+        assert!(actions.contains(&InstallAction::StartOllama));
+        assert!(actions.contains(&InstallAction::PullOllamaModel(
+            crate::DEFAULT_EMBEDDING_MODEL.to_string()
+        )));
+        assert!(actions.contains(&InstallAction::DownloadNli));
+        assert!(!actions.contains(&InstallAction::PullOllamaModel(
+            crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()
+        )));
+    }
+
+    #[test]
+    fn explicit_remote_embeddings_skip_ollama_but_keep_nli_required() {
+        let state = SystemState::default();
+        let options = InstallOptions {
+            local_llm_model: None,
+            embeddings: EmbeddingChoice::Remote(RemoteEmbeddingConfig {
+                provider: "openai".to_string(),
+                model: "text-embedding-3-small".to_string(),
+                url: "https://example.invalid/v1".to_string(),
+                api_key: "must-not-leak".to_string(),
+            }),
+            ..InstallOptions::default()
+        };
+
+        let debug = format!("{options:?}");
+        assert!(!debug.contains("must-not-leak"));
+        let actions: Vec<_> = Planner::build(&state, &options)
+            .unwrap()
+            .steps
+            .into_iter()
+            .map(|step| step.action)
+            .collect();
+        assert!(!actions.contains(&InstallAction::InstallOllama));
+        assert!(!actions.contains(&InstallAction::StartOllama));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, InstallAction::PullOllamaModel(_)))
         );
+        assert!(actions.contains(&InstallAction::DownloadNli));
+    }
+
+    #[test]
+    fn healthy_remote_backend_and_embeddings_need_only_verification() {
+        let state = SystemState {
+            backend: BackendState::Remote {
+                host: "helix.internal".to_string(),
+                port: 6969,
+                healthy: true,
+            },
+            nli_installed: true,
+            central_config_matches: true,
+            ..SystemState::default()
+        };
+        let options = InstallOptions {
+            backend: BackendChoice::ReuseDetected,
+            local_llm_model: None,
+            embeddings: EmbeddingChoice::Remote(RemoteEmbeddingConfig {
+                provider: "openai".to_string(),
+                model: "text-embedding-3-small".to_string(),
+                url: "https://example.invalid/v1".to_string(),
+                api_key: "redacted".to_string(),
+            }),
+            ..InstallOptions::default()
+        };
+
+        let actions: Vec<_> = Planner::build(&state, &options)
+            .unwrap()
+            .steps
+            .into_iter()
+            .map(|step| step.action)
+            .collect();
+        assert_eq!(
+            actions,
+            vec![InstallAction::VerifyBackend, InstallAction::RunDoctor]
+        );
+    }
+
+    #[test]
+    fn implicit_latest_tag_does_not_schedule_duplicate_pull() {
+        let state = SystemState {
+            backend: BackendState::Local {
+                healthy: true,
+                schema_compatible: true,
+            },
+            ollama: OllamaState {
+                installed: true,
+                running: true,
+                models: ["nomic-embed-text:latest".to_string()]
+                    .into_iter()
+                    .collect(),
+            },
+            nli_installed: true,
+            central_config_matches: true,
+            ..SystemState::default()
+        };
+        let options = InstallOptions {
+            local_llm_model: None,
+            ..InstallOptions::default()
+        };
+
+        let actions: Vec<_> = Planner::build(&state, &options)
+            .unwrap()
+            .steps
+            .into_iter()
+            .map(|step| step.action)
+            .collect();
+        assert!(!actions.iter().any(
+            |action| matches!(action, InstallAction::PullOllamaModel(model) if model == crate::DEFAULT_EMBEDDING_MODEL)
+        ));
     }
 
     #[derive(Default)]

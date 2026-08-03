@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.13.2` plus `codex/rbac-cli`. Last verified: 2026-08-03._
+> _Reflects code as of `v0.13.2` plus `codex/rbac-cli`. Last verified: 2026-08-04._
 
 ## 1. System context
 
@@ -37,15 +37,21 @@ Installation is a control plane outside the runtime dependency stack:
 `src/installer/` detects machine state, builds a typed installation plan, and
 coordinates platform adapters through apply/rollback boundaries. Its client
 adapters use native Claude Code/Codex commands and strict Cursor JSON merges;
-provider secrets stay outside MCP entries. Model adapters emit shell-free
-Ollama commands and pin the mandatory NLI download to an immutable model
-revision; doctor readiness fails if the NLI judge is absent. The provider
+provider secrets stay outside MCP entries. Embeddings are a closed choice:
+recommended local Ollama/Nomic, or an explicitly configured OpenAI-compatible
+remote provider. Model adapters install/start Ollama through platform-owned argv
+boundaries, wait for its official local API, and retry pulls before verifying
+Nomic plus any selected fallback LLM through `/api/tags`. They also pin the
+mandatory NLI download to an immutable model revision. Doctor probes the selected
+embedding endpoint and visibly repairs a broken remote path by installing
+Ollama/Nomic and atomically switching the central config. The provider
 factory pins Cerebras requests to `gpt-oss-120b`, while DeepSeek and Ollama
 retain independently configured model names. The
 backend adapter snapshots the persistent Docker volume before schema changes,
 and the manifest records the selected version/models/clients atomically. The
 CLI and a future native UI are frontends over this module; they must not own
-Docker, model-download, or MCP-client mutation policy themselves.
+Docker, model-download, or MCP-client mutation policy themselves. The CLI root is
+thin; domain modules live under `src/bin/helixir/` and are capped at 500 lines.
 
 ## 2. Layers
 
@@ -132,7 +138,7 @@ bug to file — not a feature to copy.
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
-| Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports; frontends and platform adapters meet here |
+| Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports, explicit embedding strategies; frontends and platform adapters meet here |
 
 ## 4. Cross-cutting concerns
 

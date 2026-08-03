@@ -100,6 +100,11 @@ pub fn write_patch(path: &Path, patch: &ConfigPatch) -> Result<ConfigWriteResult
     };
     let (rendered, changed) = merge_patch(existing.as_deref(), patch)?;
     if !changed {
+        #[cfg(unix)]
+        if path.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
         return Ok(ConfigWriteResult {
             path: path.to_path_buf(),
             changed: false,
@@ -187,6 +192,23 @@ mod tests {
                 0o600
             );
         }
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn idempotent_write_repairs_insecure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = path("permissions");
+        fs::write(&path, "mode = \"Collective\"\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let result = write_patch(&path, &ConfigPatch::default().set("mode", "Collective")).unwrap();
+        assert!(!result.changed);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = fs::remove_file(path);
     }
 }
