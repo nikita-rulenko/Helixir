@@ -80,7 +80,7 @@ impl HelixirMcpServer {
             // it is delivered inline below, and its tombstone stays pollable.
             let outcomes = self
                 .client()
-                .drain_notices(&params.user_id, 20)
+                .drain_notices_as(&actor_id, &params.user_id, 20)
                 .await
                 .unwrap_or_default();
 
@@ -91,7 +91,12 @@ impl HelixirMcpServer {
             let ingest = &client.config().ingest;
             let confirmed = self
                 .client()
-                .await_add(&enq.pending_id, ingest.ack_wait_ms, ingest.ack_poll_ms)
+                .await_add_as(
+                    &actor_id,
+                    &enq.pending_id,
+                    ingest.ack_wait_ms,
+                    ingest.ack_poll_ms,
+                )
                 .await;
 
             let mut json = match confirmed {
@@ -160,15 +165,16 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Check the status of a buffered add_memory by its pending_id. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — outcomes are also delivered opportunistically as pending_outcomes on your next add_memory, so polling is not required."
+        description = "Check the status of a buffered add_memory by its pending_id. With RBAC enabled, pass actor_id; only the write owner, creator, or a global admin may inspect it. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — outcomes are also delivered opportunistically as pending_outcomes on your next add_memory, so polling is not required."
     )]
     async fn get_add_status(
         &self,
         Parameters(params): Parameters<GetAddStatusParams>,
     ) -> Result<CallToolResult, McpError> {
+        let actor_id = self.actor_id(params.actor_id.as_deref(), "default").await?;
         let status = self
             .client()
-            .add_status(&params.pending_id)
+            .add_status_as(&actor_id, &params.pending_id)
             .await
             .map_err(Self::convert_error)?;
         let json = Self::result_to_json(&status)?;

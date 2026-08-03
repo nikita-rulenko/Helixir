@@ -38,7 +38,8 @@ async fn stitch_builds_because_across_old_memories() {
 
     let client = HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
-    let tooling = client.tooling();
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     let user = format!("stitch_{run}");

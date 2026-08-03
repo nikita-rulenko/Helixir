@@ -224,13 +224,10 @@ grant principals, link memories through `MEMORY_IN_RBAC_GROUP`, and assert that
 revocation and cross-group reads cannot leak rows; it is gated by `HELIX_E2E=1`
 like the other database suites.
 
-The manual RBAC audit also exercises the CLI role matrix without mutating the
-live backend: admin, teamlead, groupadmin, moderator, worker, viewer, and an
-unassigned principal are checked for read/write/create-for decisions; CLI
-impersonation through `--actor` is rejected; and `HELIXIR_RBAC_ACTOR` is the
-only enabled-mode management identity. The current development HelixDB lacks
-the additive RBAC queries, so enabled E2E remains blocked by `NOT_FOUND` until
-the backup-first schema deployment is performed. Auxiliary lifecycle surfaces
-(FastThink session ownership, pending status/outbox, and low-level trusted
-tooling access) are tracked in issue #118, while multi-group owner semantics
-are tracked in #119; neither is treated as fully covered by this matrix.
+The live enabled-state suites keep RBAC on throughout. `rbac_e2e.rs` covers
+multi-group isolation and dedup-federation history. `rbac_secondary_e2e.rs`
+covers cross-principal FastThink lifecycle denial, pending owner/creator
+binding, private outbox reads, and global-admin-only low-level tooling. The CLI
+parser and pure policy matrix separately cover all roles, deny-by-default, and
+stable management syntax. `HELIXIR_RBAC_ACTOR` is the only enabled-mode CLI
+management identity; caller-supplied `--actor` impersonation is rejected.

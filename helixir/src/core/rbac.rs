@@ -290,6 +290,19 @@ impl RbacPolicy {
             .is_some_and(|binding| binding.global_roles.contains(&Role::Admin))
     }
 
+    /// Buffered write results are private operational data. The owner, the
+    /// principal that created the write, and global admins may inspect them;
+    /// ordinary group visibility is intentionally insufficient.
+    pub fn can_read_pending(&self, actor: &str, owner: &str, creator: &str) -> bool {
+        !self.enabled || self.is_admin(actor) || actor == owner || actor == creator
+    }
+
+    /// Outbox notices may contain failed raw inputs and charter escalations,
+    /// so they are private to the owner (plus global administrators).
+    pub fn can_read_outbox(&self, actor: &str, owner: &str) -> bool {
+        !self.enabled || self.is_admin(actor) || actor == owner
+    }
+
     /// Groups whose memories the actor can read.
     pub fn readable_groups(&self, actor: &str) -> Option<HashSet<String>> {
         if !self.enabled {
@@ -528,6 +541,32 @@ impl RbacManager {
         let policy = self.snapshot().await?;
         if policy.enabled && !policy.is_admin(actor) {
             bail!("RBAC management requires a global admin");
+        }
+        Ok(())
+    }
+
+    /// Authorize an explicitly privileged low-level maintenance surface.
+    pub async fn authorize_admin_surface(&self, actor: &str) -> Result<()> {
+        self.authorize_admin(actor).await
+    }
+
+    pub async fn authorize_pending_read(
+        &self,
+        actor: &str,
+        owner: &str,
+        creator: &str,
+    ) -> Result<()> {
+        let policy = self.snapshot().await?;
+        if !policy.can_read_pending(actor, owner, creator) {
+            bail!("RBAC denied pending result read for '{actor}'")
+        }
+        Ok(())
+    }
+
+    pub async fn authorize_outbox_read(&self, actor: &str, owner: &str) -> Result<()> {
+        let policy = self.snapshot().await?;
+        if !policy.can_read_outbox(actor, owner) {
+            bail!("RBAC denied outbox read for '{actor}' as owner '{owner}'")
         }
         Ok(())
     }
@@ -1473,6 +1512,23 @@ mod tests {
         let p = RbacPolicy::default();
         assert!(p.can_write("unknown"));
         assert!(p.readable_users("unknown").is_none());
+        assert!(p.can_read_pending("unknown", "owner", "creator"));
+        assert!(p.can_read_outbox("unknown", "owner"));
+    }
+
+    #[test]
+    fn pending_and_outbox_payloads_are_not_group_readable() {
+        let p = sample();
+        assert!(p.can_read_pending("root", "worker", "mod"));
+        assert!(p.can_read_pending("worker", "worker", "mod"));
+        assert!(p.can_read_pending("mod", "worker", "mod"));
+        assert!(!p.can_read_pending("viewer", "worker", "mod"));
+        assert!(!p.can_read_pending("lead", "worker", "mod"));
+
+        assert!(p.can_read_outbox("root", "worker"));
+        assert!(p.can_read_outbox("worker", "worker"));
+        assert!(!p.can_read_outbox("mod", "worker"));
+        assert!(!p.can_read_outbox("viewer", "worker"));
     }
 
     #[test]

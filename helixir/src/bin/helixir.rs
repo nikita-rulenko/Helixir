@@ -869,6 +869,16 @@ fn rbac_actor() -> String {
     std::env::var("HELIXIR_RBAC_ACTOR").unwrap_or_else(|_| "cli".to_string())
 }
 
+async fn privileged(
+    client: &HelixirClient,
+) -> Result<helixir::core::helixir_client::HelixirAdmin<'_>> {
+    let actor = rbac_actor();
+    client
+        .admin_as(&actor)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
 fn require_rbac_admin(
     policy: &helixir::core::rbac::RbacPolicy,
     actor: &str,
@@ -1358,6 +1368,7 @@ async fn daemon_run(
     max_hops: usize,
     cadence: [Option<u64>; 4],
 ) -> Result<()> {
+    let admin = privileged(client).await?;
     // Per-stage cadence: CLI flag → else moira.daemon.*_every_passes (config).
     let d = &client.config().moira.daemon;
     let [clotho_every, insight_every, merge_every, reconcile_every] = cadence;
@@ -1379,7 +1390,7 @@ async fn daemon_run(
         stitch_every: d.stitch_every_passes,
         verify_every: d.verify_every_passes,
     };
-    client
+    admin
         .daemon()
         .run(cfg, |pass, run| {
             for ins in &run.insights {
@@ -1412,6 +1423,7 @@ async fn pipeline_run(
     max_seeds: usize,
     max_hops: usize,
 ) -> Result<()> {
+    let admin = privileged(client).await?;
     let cfg = PassConfig {
         grow_threshold: threshold,
         max_seeds,
@@ -1419,7 +1431,7 @@ async fn pipeline_run(
         ..PassConfig::default()
     };
     println!("Orchestrated pass for '{user}' (Clotho → Lachesis → Atropos)...");
-    let run = client.orchestrator().full_pass(user, &cfg).await?;
+    let run = admin.orchestrator().full_pass(user, &cfg).await?;
     println!(
         "Clotho: matched={} minted={} reused={}",
         run.grow.tagged_by_match, run.grow.minted, run.grow.reused_mint
@@ -1453,7 +1465,8 @@ async fn atropos_run(
     max_seeds: usize,
     max_hops: usize,
 ) -> Result<()> {
-    let candidates = client.tooling().list_categories(limit).await?;
+    let admin = privileged(client).await?;
+    let candidates = admin.tooling().list_categories(limit).await?;
     let universe = resolve_universe(client, None).await?;
     let seeds: Vec<(String, String)> = candidates.iter().take(max_seeds).cloned().collect();
     println!(
@@ -1461,7 +1474,7 @@ async fn atropos_run(
         seeds.len(),
         candidates.len()
     );
-    let insights = client
+    let insights = admin
         .atropos()
         .curate(&seeds, &candidates, universe, max_hops)
         .await?;
@@ -1498,7 +1511,8 @@ async fn swarm_prune(client: &HelixirClient, agent_id: &str, yes: bool) -> Resul
         );
         return Ok(());
     }
-    client
+    privileged(client)
+        .await?
         .db()
         .execute_query::<serde_json::Value, _>(
             "dropPresenceByAgentId",
@@ -1510,7 +1524,8 @@ async fn swarm_prune(client: &HelixirClient, agent_id: &str, yes: bool) -> Resul
 }
 
 async fn charter_review(client: &HelixirClient) -> Result<()> {
-    let tooling = client.tooling();
+    let admin = privileged(client).await?;
+    let tooling = admin.tooling();
     let threshold = client.config().write.rule_propose_after;
     let rules = tooling.learned_charter_rules().await;
     let precedents = tooling.charter_precedent_counts().await;
@@ -1543,10 +1558,11 @@ async fn charter_review(client: &HelixirClient) -> Result<()> {
 }
 
 async fn categories(client: &HelixirClient, limit: i64) -> Result<()> {
-    let cats = client.tooling().list_categories(limit).await?;
+    let admin = privileged(client).await?;
+    let cats = admin.tooling().list_categories(limit).await?;
     let mut rows = Vec::with_capacity(cats.len());
     for (id, name) in cats {
-        let n = client.tooling().category_member_ids(&id).await?.len();
+        let n = admin.tooling().category_member_ids(&id).await?.len();
         rows.push((n, name, id));
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
@@ -1558,7 +1574,8 @@ async fn categories(client: &HelixirClient, limit: i64) -> Result<()> {
 }
 
 async fn clotho_seed(client: &HelixirClient) -> Result<()> {
-    let n = client.clotho().seed_dictionary().await?;
+    let admin = privileged(client).await?;
+    let n = admin.clotho().seed_dictionary().await?;
     println!("seeded {n} categories");
     journal("clotho", "seed", &format!("ensured {n} categories"));
     Ok(())
@@ -1571,14 +1588,15 @@ async fn clotho_tag(
     threshold: f64,
     top_k: i64,
 ) -> Result<()> {
-    let mems = client.tooling().list_user_memories(user, limit).await?;
+    let admin = privileged(client).await?;
+    let mems = admin.tooling().list_user_memories(user, limit).await?;
     println!(
         "Clotho tagging {} memories for '{user}' (bar {threshold})...",
         mems.len()
     );
     let (mut tags, mut escalations, mut tagged_mems) = (0usize, 0usize, 0usize);
     for (id, content) in &mems {
-        let outcome = client
+        let outcome = admin
             .clotho()
             .auto_tag(id, content, top_k, threshold)
             .await?;
@@ -1612,12 +1630,13 @@ async fn clotho_tag(
 }
 
 async fn clotho_grow(client: &HelixirClient, user: &str, limit: i64, threshold: f64) -> Result<()> {
-    let mems = client.tooling().list_user_memories(user, limit).await?;
+    let admin = privileged(client).await?;
+    let mems = admin.tooling().list_user_memories(user, limit).await?;
     println!(
         "Clotho grow-pass over {} memories for '{user}' (bar {threshold}); minting on miss...",
         mems.len()
     );
-    let s = client.clotho().grow_pass(&mems, threshold).await?;
+    let s = admin.clotho().grow_pass(&mems, threshold).await?;
     println!(
         "done: scanned={} matched={} minted={} reused={} failed={}",
         s.scanned, s.tagged_by_match, s.minted, s.reused_mint, s.failed
@@ -1639,8 +1658,9 @@ async fn lachesis_pmi(
     cat_b: &str,
     universe: Option<usize>,
 ) -> Result<()> {
+    let admin = privileged(client).await?;
     let universe = resolve_universe(client, universe).await?;
-    let p = client.lachesis().subset_pmi(cat_a, cat_b, universe).await?;
+    let p = admin.lachesis().subset_pmi(cat_a, cat_b, universe).await?;
     println!("PMI({cat_a}, {cat_b}) over N={universe} = {p:.4}");
     if p.is_finite() {
         println!(
@@ -1663,9 +1683,10 @@ async fn lachesis_route(
     universe: Option<usize>,
     max_hops: usize,
 ) -> Result<()> {
+    let admin = privileged(client).await?;
     let universe = resolve_universe(client, universe).await?;
-    let candidates = client.tooling().list_categories(500).await?;
-    let hypo = client
+    let candidates = admin.tooling().list_categories(500).await?;
+    let hypo = admin
         .lachesis()
         .route_subsets(seed, &candidates, universe, max_hops)
         .await?;
@@ -1743,7 +1764,12 @@ async fn chain(
 async fn resolve_universe(client: &HelixirClient, universe: Option<usize>) -> Result<usize> {
     match universe {
         Some(u) => Ok(u),
-        None => Ok(client.tooling().total_memory_count(1_000_000).await?.max(1)),
+        None => Ok(privileged(client)
+            .await?
+            .tooling()
+            .total_memory_count(1_000_000)
+            .await?
+            .max(1)),
     }
 }
 
@@ -3218,7 +3244,8 @@ fn nli_check() -> Result<()> {
 async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result<()> {
     use helixir::agents::atropos::Atropos;
     println!("Paraphrase backstop (#43/#55) — collective scan (cosine ≥ {threshold}) …");
-    let atropos = Atropos::new(client.tooling());
+    let admin = privileged(client).await?;
+    let atropos = Atropos::new(admin.tooling());
     let s = atropos.merge_paraphrases(limit, threshold).await?;
     println!(
         "  scanned {} memories, {} candidate pairs above threshold",
@@ -3243,8 +3270,9 @@ async fn merge_run(_client: &HelixirClient, _limit: i64, _threshold: f64) -> Res
 }
 
 async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
+    let admin = privileged(client).await?;
     println!("Backfilling content_key fingerprints (#43 migration)…");
-    let (scanned, updated) = client
+    let (scanned, updated) = admin
         .tooling()
         .backfill_content_keys(limit)
         .await
@@ -3259,7 +3287,8 @@ async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -
     use helixir::agents::atropos::reconcile::{DisputeKind, classify};
 
     if reconcile {
-        let s = client
+        let admin = privileged(client).await?;
+        let s = admin
             .atropos()
             .reconcile(user, limit)
             .await
@@ -3280,7 +3309,8 @@ async fn debt(client: &HelixirClient, user: &str, limit: i64, reconcile: bool) -
         return Ok(());
     }
 
-    let open = client
+    let admin = privileged(client).await?;
+    let open = admin
         .tooling()
         .gather_open_contradictions(user, limit)
         .await
@@ -3360,7 +3390,8 @@ async fn heartbeat(
     status: &str,
 ) -> Result<()> {
     let host = machine_host(host);
-    client
+    privileged(client)
+        .await?
         .tooling()
         .register_or_heartbeat(agent, role, &host, status)
         .await
@@ -3373,7 +3404,8 @@ async fn heartbeat(
 async fn swarm(client: &HelixirClient, window: Option<u64>) -> Result<()> {
     let window = window.unwrap_or(client.config().swarm.active_window_secs);
     let now = chrono::Utc::now();
-    let mut roster = client
+    let mut roster = privileged(client)
+        .await?
         .tooling()
         .list_swarm()
         .await
@@ -3578,7 +3610,8 @@ fn daemon_start(
 
 /// Foreground watchdog loop: sample the substrate, alert/heal per config.
 async fn watch_run(client: &HelixirClient, once: bool, interval: Option<u64>) -> Result<()> {
-    let tooling = client.tooling();
+    let admin = privileged(client).await?;
+    let tooling = admin.tooling();
     let watchdog = client.config().watchdog.clone();
     let period = interval.unwrap_or(watchdog.sample_interval_secs);
     let mut hygieia = helixir::agents::hygieia::Hygieia::new(tooling);

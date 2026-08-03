@@ -39,7 +39,7 @@ pub struct FastThinkManager {
 }
 
 impl FastThinkManager {
-    pub fn new(main_memory: Arc<HelixirClient>, limits: FastThinkLimits) -> Self {
+    pub(crate) fn new(main_memory: Arc<HelixirClient>, limits: FastThinkLimits) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             current: arc_swap::ArcSwap::from_pointee(FastThinkRuntime {
@@ -47,10 +47,6 @@ impl FastThinkManager {
                 main_memory,
             }),
         }
-    }
-
-    pub fn with_default_limits(main_memory: Arc<HelixirClient>) -> Self {
-        Self::new(main_memory, FastThinkLimits::default())
     }
 
     /// Publish a new runtime generation for sessions started after a hot
@@ -67,6 +63,7 @@ impl FastThinkManager {
         &self,
         session_id: &str,
         initial_thought: &str,
+        actor_id: Option<&str>,
     ) -> Result<NodeIndex, FastThinkError> {
         let mut sessions = self.sessions.write();
 
@@ -75,7 +72,7 @@ impl FastThinkManager {
         }
 
         let runtime = self.current.load_full();
-        let mut session = ThinkingSession::new(session_id);
+        let mut session = ThinkingSession::new(session_id, actor_id);
         let node = session.add_thought(
             initial_thought,
             ThoughtType::Initial,
@@ -103,6 +100,7 @@ impl FastThinkManager {
     pub fn add_thought(
         &self,
         session_id: &str,
+        actor_id: Option<&str>,
         content: &str,
         thought_type: ThoughtType,
         parent: Option<NodeIndex>,
@@ -112,6 +110,7 @@ impl FastThinkManager {
         let session = sessions
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
 
         let runtime = Arc::clone(&session.runtime);
         let node =
@@ -134,7 +133,7 @@ impl FastThinkManager {
         parent_thought: NodeIndex,
         user_id: &str,
     ) -> Result<Vec<NodeIndex>, FastThinkError> {
-        self.recall_as(session_id, query, parent_thought, user_id, user_id)
+        self.recall_as(session_id, query, parent_thought, None, user_id, user_id)
             .await
     }
 
@@ -143,6 +142,7 @@ impl FastThinkManager {
         session_id: &str,
         query: &str,
         parent_thought: NodeIndex,
+        session_actor: Option<&str>,
         actor_id: &str,
         user_id: &str,
     ) -> Result<Vec<NodeIndex>, FastThinkError> {
@@ -151,6 +151,7 @@ impl FastThinkManager {
             let session = sessions
                 .get_mut(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?;
+            session.authorize_actor(session_actor)?;
             session.status = SessionStatus::NeedsRecall;
             session.owner_hint = Some(user_id.to_string());
             Arc::clone(&session.runtime)
@@ -224,6 +225,7 @@ impl FastThinkManager {
             let session = sessions
                 .get_mut(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?;
+            session.authorize_actor(session_actor)?;
 
             // #78: recalled evidence must never trap the session at the cap —
             // stop short so a synthesis thought + the conclusion always fit.
@@ -269,6 +271,7 @@ impl FastThinkManager {
     pub fn conclude(
         &self,
         session_id: &str,
+        actor_id: Option<&str>,
         conclusion: &str,
         supporting_thoughts: &[NodeIndex],
     ) -> Result<NodeIndex, FastThinkError> {
@@ -276,6 +279,7 @@ impl FastThinkManager {
         let session = sessions
             .get_mut(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
 
         let runtime = Arc::clone(&session.runtime);
         let node = session.add_conclusion(conclusion, supporting_thoughts, &runtime.limits)?;
@@ -294,7 +298,7 @@ impl FastThinkManager {
         session_id: &str,
         user_id: &str,
     ) -> Result<CommitResult, FastThinkError> {
-        self.commit_as_in_group(session_id, user_id, user_id, None)
+        self.commit_as_in_group(session_id, None, user_id, user_id, None)
             .await
     }
 
@@ -304,19 +308,24 @@ impl FastThinkManager {
         actor_id: &str,
         user_id: &str,
     ) -> Result<CommitResult, FastThinkError> {
-        self.commit_as_in_group(session_id, actor_id, user_id, None)
+        self.commit_as_in_group(session_id, None, actor_id, user_id, None)
             .await
     }
 
     pub async fn commit_as_in_group(
         &self,
         session_id: &str,
+        session_actor: Option<&str>,
         actor_id: &str,
         user_id: &str,
         group_id: Option<&str>,
     ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
+            sessions
+                .get(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+                .authorize_actor(session_actor)?;
             sessions
                 .remove(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?
@@ -447,8 +456,16 @@ impl FastThinkManager {
         })
     }
 
-    pub fn discard(&self, session_id: &str) -> Result<DiscardResult, FastThinkError> {
+    pub fn discard(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<DiscardResult, FastThinkError> {
         let mut sessions = self.sessions.write();
+        sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?
+            .authorize_actor(actor_id)?;
         let session = sessions
             .remove(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
@@ -474,6 +491,10 @@ impl FastThinkManager {
     ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
+            sessions
+                .get(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+                .authorize_actor(None)?;
             sessions
                 .remove(session_id)
                 .ok_or(FastThinkError::SessionNotFound)?
@@ -586,19 +607,29 @@ impl FastThinkManager {
     }
 
     /// Thought ceiling for a particular session generation.
-    pub fn session_max_thoughts(&self, session_id: &str) -> Result<usize, FastThinkError> {
+    pub fn session_max_thoughts(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<usize, FastThinkError> {
         let sessions = self.sessions.read();
         let session = sessions
             .get(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
         Ok(session.runtime.limits.max_thoughts)
     }
 
-    pub fn get_session_status(&self, session_id: &str) -> Result<SessionInfo, FastThinkError> {
+    pub fn get_session_status(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<SessionInfo, FastThinkError> {
         let sessions = self.sessions.read();
         let session = sessions
             .get(session_id)
             .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
 
         Ok(SessionInfo {
             id: session.id.clone(),
@@ -662,7 +693,7 @@ impl FastThinkManager {
     }
 
     /// Shutdown auto-save: persist every still-active session as an
-    /// [INCOMPLETE] memory (via `commit_partial`) so reasoning survives the
+    /// `[INCOMPLETE]` memory (via `commit_partial`) so reasoning survives the
     /// process — one-shot MCP clients kill the server long before the
     /// session-TTL sweeper would fire. Sessions with no recall never learned
     /// an owner; they save under the `helixir` system user, and
@@ -742,7 +773,7 @@ mod tests {
         };
         let manager = FastThinkManager::new(Arc::clone(&client), old_limits);
         manager
-            .start_thinking("old", "before reload")
+            .start_thinking("old", "before reload", None)
             .expect("old session starts");
 
         let new_limits = FastThinkLimits {
@@ -751,11 +782,46 @@ mod tests {
         };
         manager.update_runtime(client, new_limits);
         manager
-            .start_thinking("new", "after reload")
+            .start_thinking("new", "after reload", None)
             .expect("new session starts");
 
-        assert_eq!(manager.session_max_thoughts("old").unwrap(), 11);
-        assert_eq!(manager.session_max_thoughts("new").unwrap(), 23);
+        assert_eq!(manager.session_max_thoughts("old", None).unwrap(), 11);
+        assert_eq!(manager.session_max_thoughts("new", None).unwrap(), 23);
         assert_eq!(manager.max_thoughts(), 23);
+    }
+
+    #[test]
+    fn bound_session_rejects_cross_principal_lifecycle_operations() {
+        let client =
+            Arc::new(HelixirClient::new(HelixirConfig::default()).expect("test client constructs"));
+        let manager = FastThinkManager::new(client, FastThinkLimits::default());
+        manager
+            .start_thinking("private", "secret analysis", Some("alice"))
+            .expect("session starts");
+
+        assert!(matches!(
+            manager.get_session_status("private", Some("mallory")),
+            Err(FastThinkError::Unauthorized)
+        ));
+        assert!(matches!(
+            manager.add_thought(
+                "private",
+                Some("mallory"),
+                "tamper",
+                ThoughtType::Reasoning,
+                None,
+                None,
+            ),
+            Err(FastThinkError::Unauthorized)
+        ));
+        assert!(matches!(
+            manager.discard("private", Some("mallory")),
+            Err(FastThinkError::Unauthorized)
+        ));
+
+        let status = manager
+            .get_session_status("private", Some("alice"))
+            .expect("owner still retains session");
+        assert_eq!(status.thought_count, 1);
     }
 }

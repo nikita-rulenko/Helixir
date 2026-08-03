@@ -35,6 +35,16 @@ The legacy `addMemoryKeyed` and `enqueuePendingInput` routes remain available
 during the binary rollout; new binaries use their additive scoped variants.
 Use `helixir rbac dedup --help` for federation management.
 
+Secondary surfaces now follow the same boundary. FastThink sessions are bound
+to the `actor_id` supplied at `think_start`, and enabled-mode callers must
+repeat it on every `think_*` lifecycle call. `get_add_status` also requires an
+actor: only the pending owner, creator, or global admin may inspect the result;
+outbox payloads are owner/admin-only. Rust callers that previously used
+`HelixirClient::tooling()`, `clotho()`, `lachesis()`, `atropos()`,
+`orchestrator()`, `daemon()`, or `db()` directly must obtain an authorized
+low-level handle with `client.admin_as(actor_id).await?` first. Restart MCP
+clients after replacing the binary so they reload the new tool schemas.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds

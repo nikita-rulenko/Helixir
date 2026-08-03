@@ -276,6 +276,10 @@ pub struct StartThinkingParams {
         description = "The opening thought or question to reason about (becomes the root node)."
     )]
     pub initial_thought: String,
+    #[schemars(
+        description = "Optional authenticated principal that owns this session. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -290,6 +294,10 @@ pub struct AddThoughtParams {
         description = "Index of the parent thought to attach under (from a previous response's thought_idx/root_thought_idx). Omit to attach to the root."
     )]
     pub parent_idx: Option<u32>,
+    #[schemars(
+        description = "Optional authenticated principal operating on the session. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -318,6 +326,10 @@ pub struct ThinkConcludeParams {
     pub conclusion: String,
     #[schemars(description = "Indices of the thoughts that support this conclusion.")]
     pub supporting_idx: Option<Vec<u32>>,
+    #[schemars(
+        description = "Optional authenticated principal operating on the session. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -340,12 +352,20 @@ pub struct ThinkCommitParams {
 pub struct ThinkDiscardParams {
     #[schemars(description = "The session_id to discard.")]
     pub session_id: String,
+    #[schemars(
+        description = "Optional authenticated principal operating on the session. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ThinkStatusParams {
     #[schemars(description = "The session_id to inspect.")]
     pub session_id: String,
+    #[schemars(
+        description = "Optional authenticated principal inspecting the session. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -432,4 +452,8 @@ pub struct ConnectMemoriesParams {
 pub struct GetAddStatusParams {
     #[schemars(description = "The pending_id returned by a buffered add_memory.")]
     pub pending_id: String,
+    #[schemars(
+        description = "Optional authenticated principal polling this write. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }

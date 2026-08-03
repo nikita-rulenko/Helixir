@@ -31,7 +31,8 @@ async fn reconcile_drains_preference_keeps_factual() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let tooling = client.tooling();
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     let user = format!("debt_{run}");
@@ -123,7 +124,7 @@ async fn reconcile_drains_preference_keeps_factual() {
     );
 
     // Reconcile: preference retired, superseded-factual retired, live factual kept.
-    let s = client
+    let s = admin
         .atropos()
         .reconcile(&user, 500)
         .await
@@ -164,7 +165,7 @@ async fn reconcile_drains_preference_keeps_factual() {
 
     // Idempotent: a second pass drains nothing new and re-surfaces nothing
     // (the outbox notice is already pending → deduped).
-    let s2 = client
+    let s2 = admin
         .atropos()
         .reconcile(&user, 500)
         .await

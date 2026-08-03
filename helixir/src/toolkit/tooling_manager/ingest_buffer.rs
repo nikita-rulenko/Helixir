@@ -89,6 +89,14 @@ pub struct PendingStatus {
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Authorization metadata is kept server-side and never serialized to the
+    /// caller before the RBAC decision has succeeded.
+    #[serde(skip)]
+    pub owner_id: String,
+    #[serde(skip)]
+    pub creator_id: String,
+    #[serde(skip)]
+    pub group_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +225,9 @@ impl ToolingManager {
                     status: "not_found".to_string(),
                     result: None,
                     error: None,
+                    owner_id: String::new(),
+                    creator_id: String::new(),
+                    group_id: String::new(),
                 });
             }
             Err(e) => return Err(ToolingError::Database(e.to_string())),
@@ -228,6 +239,9 @@ impl ToolingManager {
                 status: "not_found".to_string(),
                 result: None,
                 error: None,
+                owner_id: String::new(),
+                creator_id: String::new(),
+                group_id: String::new(),
             });
         };
 
@@ -241,6 +255,9 @@ impl ToolingManager {
             status: node.status,
             result,
             error,
+            owner_id: node.user_id,
+            creator_id: node.actor_id,
+            group_id: node.group_id,
         })
     }
 

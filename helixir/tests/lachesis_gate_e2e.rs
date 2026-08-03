@@ -34,6 +34,7 @@ async fn lachesis_gates_a_routed_chain() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     // Two clearly-distinct single facts — each must store exactly its own memory
     // (no dedup, no multi-split), so the BECAUSE edge we seed connects the two
@@ -73,13 +74,13 @@ async fn lachesis_gates_a_routed_chain() {
     // Strong edge (strength ≈ 0..100 → weight 0..1): a confident causal link,
     // like the ones the extractor mints. A weak strength would drag coherence
     // below the gate's bar and the chain would (correctly) read as apophenia.
-    client
+    admin
         .tooling()
         .record_causation(&id_a, &id_b, 90)
         .await
         .expect("seed BECAUSE edge");
 
-    let hypo = client
+    let hypo = admin
         .lachesis()
         .route(&id_a, &id_b, &user, 5)
         .await

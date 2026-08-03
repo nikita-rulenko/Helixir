@@ -412,6 +412,13 @@ network deployment. Once enabled, the service fails closed for unassigned
 principals and enforces the role matrix before writes/updates and after reads;
 the coarse `HELIXIR_MODE` capability gate remains independent.
 
+Low-level generative and maintenance APIs are exposed through
+`HelixirClient::admin_as(actor_id)` only. The raw ToolingManager/client agent
+accessors and constructor are crate-private, preventing external Rust callers
+and CLI commands such as `categories` from bypassing the same global-admin
+decision. FastThink sessions bind their lifecycle to the starting actor;
+pending write results and outbox notices retain stricter owner/creator privacy.
+
 MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`
 remains the memory owner/target. Omitting `actor_id` preserves the legacy

@@ -83,7 +83,7 @@ get cut off; a capture postponed to "the end" is a capture lost.
 | Everything for a user (audit/count) | `list_memories` | no relevance ranking |
 | The graph around a memory | `get_memory_graph` | nodes + typed edges |
 | Unfinished reasoning to resume | `search_incomplete_thoughts` | check when re-entering a topic |
-| Outcome of a buffered write | `get_add_status` | pass the `pending_id` |
+| Outcome of a buffered write | `get_add_status` | pass `pending_id` + your `actor_id` when RBAC is enabled |
 
 To correct or annotate a stored fact, use `update_memory(memory_id, ...)` —
 it amends without deleting; history is preserved.
@@ -102,13 +102,16 @@ synthesized conclusion with SUPPORTS provenance edges from that evidence
 fact needs no session — `add_memory` it.
 
 ```
-think_start(session_id="<you choose>", initial_thought="<the question>")
-think_add(session_id, content="<a step>", parent_idx=<prev idx>)   # repeat
-think_recall(session_id, query="<known facts>", parent_idx=<idx>)  # evidence in
-think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...])  # REQUIRED before commit
-think_commit(session_id, user_id="claude")   # persists once, in seconds
+think_start(session_id="<you choose>", initial_thought="<the question>", actor_id="claude")
+think_add(session_id, content="<a step>", parent_idx=<prev idx>, actor_id="claude")
+think_recall(session_id, query="<known facts>", parent_idx=<idx>, actor_id="claude")
+think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...], actor_id="claude")
+think_commit(session_id, user_id="claude", actor_id="claude", group_id="<concrete group>")
 ```
-Reuse one `session_id`. `think_discard(session_id)` throws it away unsaved.
+Reuse one `session_id` and, with RBAC enabled, the same `actor_id` on every
+lifecycle call. A session id is not a credential. `think_discard` is likewise
+actor-bound. Trusted-mode timeouts auto-save incomplete work; RBAC-mode
+timeouts fail closed because no owner/group was supplied for a partial write.
 
 Worked episode: "pick a retry policy" → think_start with the question →
 think_add the observation ("outages last under a minute") → think_recall
@@ -240,6 +243,12 @@ whose grants are checked and `user_id` is the target owner. MCP calls must
 provide `actor_id` whenever RBAC is enabled; omission is accepted only while
 the disabled legacy trusted-network contract intentionally equates actor and
 owner.
+FastThink lifecycle calls (`think_start/add/recall/conclude/status/discard/commit`)
+must repeat that same actor; cross-principal session access is denied. Poll
+`get_add_status` with `actor_id`: only the pending owner, its creator, or a
+global admin may read it. Outbox payloads are owner/admin-only even when a
+moderator or viewer can read the owner's group memories, because a failed
+notice can contain the original raw input.
 Never let a caller change `user_id` to bypass an `actor_id` check. Enabled
 non-admin writes and `think_commit` calls must also pass one concrete
 `group_id`; do not pass a `dedup_group_id` there.

@@ -270,7 +270,7 @@ impl Default for SearchModesConfig {
     }
 }
 impl SearchModesConfig {
-    /// Resolve the preset for a parsed [`SearchMode`].
+    /// Resolve the preset for a parsed [`crate::core::SearchMode`].
     #[must_use]
     pub fn for_mode(
         &self,

@@ -254,7 +254,13 @@ pub async fn ensure_seeded(client: &HelixirClient) -> usize {
             .collect();
         for (from_m, to_m, rt) in chains() {
             if let (Some(f), Some(t)) = (marker_ids.get(from_m), marker_ids.get(to_m)) {
-                let _ = client.tooling().add_typed_relation(f, t, rt, 80).await;
+                let _ = client
+                    .admin_as("codex")
+                    .await
+                    .expect("RBAC admin")
+                    .tooling()
+                    .add_typed_relation(f, t, rt, 80)
+                    .await;
             }
         }
     }

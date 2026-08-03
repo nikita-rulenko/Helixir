@@ -162,6 +162,7 @@ async fn causal_two_cycle_rejected_db() {
 
     let client = helixir::core::helixir_client::HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("cycle_{run}");
@@ -187,7 +188,7 @@ async fn causal_two_cycle_rejected_db() {
     let (a, b) = (&r.memory_ids[0], &r.memory_ids[1]);
 
     // Forward causal edge lands...
-    client
+    admin
         .tooling()
         .add_typed_relation(
             a,
@@ -198,7 +199,7 @@ async fn causal_two_cycle_rejected_db() {
         .await
         .expect("forward BECAUSE");
     // ...the reverse one must be soft-skipped (Ok, but NOT persisted).
-    client
+    admin
         .tooling()
         .add_typed_relation(
             b,

@@ -223,7 +223,7 @@ impl HelixirClient {
 
     /// Ingest buffer (#25): persist the raw input and return a `pending_id`
     /// immediately. A background worker drains the queue serially. Use
-    /// [`Self::add_status`] to poll for the result.
+    /// [`Self::add_status_as`] to poll for the result.
     pub async fn add_buffered(
         &self,
         message: &str,
@@ -280,7 +280,7 @@ impl HelixirClient {
     }
 
     /// Poll a queued input's status (and result once done).
-    pub async fn add_status(
+    pub(crate) async fn add_status(
         &self,
         pending_id: &str,
     ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::PendingStatus, HelixirClientError>
@@ -292,17 +292,36 @@ impl HelixirClient {
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
 
+    /// Poll a buffered write after authorizing the principal against the
+    /// persisted owner/creator metadata.
+    pub async fn add_status_as(
+        &self,
+        actor_id: &str,
+        pending_id: &str,
+    ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::PendingStatus, HelixirClientError>
+    {
+        let status = self.add_status(pending_id).await?;
+        if status.status != "not_found" {
+            self.rbac()
+                .authorize_pending_read(actor_id, &status.owner_id, &status.creator_id)
+                .await
+                .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        }
+        Ok(status)
+    }
+
     /// Confirm-or-promise (#63): poll a queued input until it reaches a
     /// terminal state (done/failed) or the wait budget runs out. Returns the
-    /// terminal [`PendingStatus`], or `None` if it is still processing when the
+    /// terminal `PendingStatus`, or `None` if it is still processing when the
     /// budget ends (the caller then returns an explicit "accepted" ack).
     ///
     /// This only *waits* — the serial worker still processes the queue one item
     /// at a time, so the buffer's parallel-write dedup-race protection is
     /// preserved. We just hand the caller a trustworthy result instead of a
     /// bare "pending" it would misread as failure.
-    pub async fn await_add(
+    pub(crate) async fn await_add_as(
         &self,
+        actor_id: &str,
         pending_id: &str,
         max_wait_ms: u64,
         poll_ms: u64,
@@ -311,7 +330,7 @@ impl HelixirClient {
         let poll = poll_ms.max(20);
         let mut waited = 0u64;
         loop {
-            if let Ok(st) = self.add_status(pending_id).await {
+            if let Ok(st) = self.add_status_as(actor_id, pending_id).await {
                 if st.status == STATUS_DONE || st.status == STATUS_FAILED {
                     return Some(st);
                 }
@@ -328,13 +347,18 @@ impl HelixirClient {
     /// Drain the user's outbox (прихожая): completed adds and escalations
     /// that landed while the agent was away. Marks them delivered and prunes
     /// their queue tombstones. The session-start counterpart to the buffer.
-    pub async fn drain_notices(
+    pub async fn drain_notices_as(
         &self,
+        actor_id: &str,
         user_id: &str,
         limit: usize,
     ) -> Result<Vec<crate::toolkit::tooling_manager::ingest_buffer::MemoryNotice>, HelixirClientError>
     {
         self.ensure_initialized().await?;
+        self.rbac()
+            .authorize_outbox_read(actor_id, user_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         self.tooling_manager
             .drain_notices(user_id, limit)
             .await

@@ -30,6 +30,12 @@ update whose historical visibility differs from the current federation is
 forked into a new superseding version; direct mutation of that historical node
 is denied.
 
+Buffered completion payloads follow a stricter owner boundary than memory
+reads: `get_add_status` is limited to the write owner, creator, or a global
+admin, while outbox notices are limited to the owner or a global admin. The
+actor-less MCP logging broadcast is disabled under RBAC because no principal
+is available to authorize a connection-level notification.
+
 ### High-level shape
 
 ```
@@ -257,8 +263,10 @@ FastThink keeps a `petgraph::stable_graph::StableDiGraph<Thought, Relation>`
 in-process. Only `think_commit` mutates HelixDB.
 
 Each session pins the client and limits from the runtime generation in which
-it started. A SIGHUP publishes a new generation for future sessions without
-changing the meaning or persistence target of an active reasoning graph.
+it started. With RBAC enabled it also pins the authenticated `actor_id`, and
+every lifecycle operation validates that binding before exposing or mutating
+the scratchpad. A SIGHUP publishes a new generation for future sessions
+without changing an active reasoning graph.
 
 ```
  think_start ─► creates session in memory only
@@ -284,11 +292,11 @@ changing the meaning or persistence target of an active reasoning graph.
  think_discard ─► drops the in-memory graph; nothing touches HelixDB.
 ```
 
-Timeout behavior: each session has a wall-clock limit (`FastThinkLimits::mcp`
-defaults to 90 s, 150 thoughts). On timeout during `think_add`, the manager
-auto-runs `commit_partial`, tagging the resulting Memory with
-`context_tags: incomplete_thought`. The MCP tool `search_incomplete_thoughts`
-recovers them.
+Timeout behavior: each session has a configured wall-clock and thought limit
+(90 s / 150 thoughts by default). Trusted mode auto-runs `commit_partial` on a
+`think_add` timeout. Enabled RBAC returns an error and retains the bound
+scratchpad for explicit discard, because the lifecycle call has no concrete
+owner/group with which to authorize a partial persistent write.
 
 ---
 

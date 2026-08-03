@@ -124,6 +124,27 @@ impl HelixirMcpServer {
         Ok(legacy_owner.to_string())
     }
 
+    /// Bind bearer-like ephemeral identifiers to a principal only when RBAC
+    /// is enabled. Trusted-network mode deliberately keeps legacy sessions
+    /// unbound so old clients do not need to repeat an actor on every call.
+    pub(super) async fn session_actor(
+        &self,
+        requested: Option<&str>,
+    ) -> Result<Option<String>, McpError> {
+        let policy = self
+            .client()
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if !policy.enabled {
+            return Ok(None);
+        }
+        requested.map(str::to_string).map(Some).ok_or_else(|| {
+            McpError::invalid_request("RBAC-enabled MCP calls require actor_id", None)
+        })
+    }
+
     /// #52: re-read the layered config (defaults -> helixir.toml -> env),
     /// build + initialize a NEW client, swap it in. The old client keeps
     /// serving whatever still holds it (in-flight requests, FastThink).

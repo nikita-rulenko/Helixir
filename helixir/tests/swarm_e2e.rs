@@ -32,7 +32,8 @@ async fn two_hosts_appear_in_one_roster() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let tooling = client.tooling();
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     let a = format!("agent_a_{run}");

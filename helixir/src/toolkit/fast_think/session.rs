@@ -9,6 +9,9 @@ use super::models::*;
 
 pub struct ThinkingSession {
     pub id: String,
+    /// Principal that owns this scratchpad while RBAC is enabled. Disabled
+    /// trusted-network sessions remain unbound for backwards compatibility.
+    pub actor_id: Option<String>,
     pub graph: StableDiGraph<Thought, ThoughtEdge>,
     pub entities: HashMap<String, ScratchEntity>,
     pub concepts: HashMap<String, ScratchConcept>,
@@ -25,9 +28,10 @@ pub struct ThinkingSession {
 }
 
 impl ThinkingSession {
-    pub fn new(session_id: &str) -> Self {
+    pub fn new(session_id: &str, actor_id: Option<&str>) -> Self {
         Self {
             id: session_id.to_string(),
+            actor_id: actor_id.map(str::to_string),
             graph: StableDiGraph::new(),
             entities: HashMap::new(),
             concepts: HashMap::new(),
@@ -39,6 +43,14 @@ impl ThinkingSession {
             status: SessionStatus::Thinking,
             owner_hint: None,
             root_thought: None,
+        }
+    }
+
+    pub fn authorize_actor(&self, actor_id: Option<&str>) -> Result<(), FastThinkError> {
+        match (self.actor_id.as_deref(), actor_id) {
+            (Some(owner), Some(actor)) if owner == actor => Ok(()),
+            (None, None) => Ok(()),
+            _ => Err(FastThinkError::Unauthorized),
         }
     }
 
@@ -447,7 +459,7 @@ mod evidence_tests {
     #[test]
     fn evidence_excludes_unrelated_recalls() {
         let limits = FastThinkLimits::default();
-        let mut s = ThinkingSession::new("t");
+        let mut s = ThinkingSession::new("t", None);
         let root = s
             .add_thought("pick a policy", ThoughtType::Initial, None, None, &limits)
             .unwrap();
@@ -489,5 +501,26 @@ mod evidence_tests {
             !ev.contains(&"mem_noise".to_string()),
             "unrelated recall must be excluded: {ev:?}"
         );
+    }
+
+    #[test]
+    fn bound_session_rejects_a_different_actor() {
+        let s = ThinkingSession::new("secured", Some("alice"));
+        assert!(s.authorize_actor(Some("alice")).is_ok());
+        assert!(matches!(
+            s.authorize_actor(Some("mallory")),
+            Err(FastThinkError::Unauthorized)
+        ));
+        assert!(matches!(
+            s.authorize_actor(None),
+            Err(FastThinkError::Unauthorized)
+        ));
+
+        let legacy = ThinkingSession::new("legacy", None);
+        assert!(legacy.authorize_actor(None).is_ok());
+        assert!(matches!(
+            legacy.authorize_actor(Some("alice")),
+            Err(FastThinkError::Unauthorized)
+        ));
     }
 }

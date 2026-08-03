@@ -15,7 +15,7 @@ There are 20 tools, 2 prompts, 2 resources.
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
 | `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when buffered. |
-| `get_add_status` | `pending_id` | — | Polling a promised (buffered) `add_memory` to completion. |
+| `get_add_status` | `pending_id` | `actor_id` | Polling a promised buffered write. Enabled RBAC permits only its owner, creator, or a global admin. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
 | `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |
 | `update_memory` | `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
@@ -38,13 +38,17 @@ question; the agent decides whether to ask the human.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `think_start` | `session_id`, `initial_thought` | — | Beginning a complex reasoning task. |
-| `think_add` | `session_id`, `content` | `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step. |
-| `think_recall` | `session_id`, `query`, `parent_idx` | `user_id` | Pulling persistent memories into the live session. |
-| `think_conclude` | `session_id`, `conclusion` | `supporting_idx[]` | Marking a final answer in the session. |
+| `think_start` | `session_id`, `initial_thought` | `actor_id` | Beginning a complex reasoning task; enabled RBAC binds the session to this actor. |
+| `think_add` | `session_id`, `content` | `actor_id`, `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step; enabled RBAC requires the bound actor. |
+| `think_recall` | `session_id`, `query`, `parent_idx` | `actor_id`, `user_id` | Pulling authorized persistent memories into the live session. |
+| `think_conclude` | `session_id`, `conclusion` | `actor_id`, `supporting_idx[]` | Marking a final answer in the actor-bound session. |
 | `think_commit` | `session_id`, `user_id` | `actor_id`, `group_id` | Persisting the conclusion through the same RBAC-scoped write pipeline. |
-| `think_discard` | `session_id` | — | Throwing away the session. Hot-path errors. |
-| `think_status` | `session_id` | — | Checking remaining time / thought count. |
+| `think_discard` | `session_id` | `actor_id` | Throwing away the actor's own session. |
+| `think_status` | `session_id` | `actor_id` | Checking the actor's own session status. |
+
+When RBAC is enabled, ingest completion logging notifications are disabled:
+they carry no request actor. Poll with `get_add_status`, or receive the result
+through the authorized opportunistic outbox on a later `add_memory` call.
 
 ### Prompts and resources
 
@@ -148,9 +152,11 @@ agent intent                                tool to call
                               └──────────────────────┘
 ```
 
-Wall-clock & thought-count limits live at `FastThinkLimits::mcp` (default
-90 s, 150 thoughts). On `Timeout` during `think_add`, the manager
-auto-commits the partial session — see `mcp/server.rs:322-340`.
+Wall-clock & thought-count limits come from `FastThinkConfig` (default
+90 s, 150 thoughts). In trusted mode a `think_add` timeout auto-commits an
+`incomplete_thought`. Enabled RBAC fails closed instead because `think_add`
+does not carry the explicit owner/group needed for a scoped write; the actor
+must discard and restart the timed-out session.
 
 ## 5. Anti-patterns the agent should refuse
 

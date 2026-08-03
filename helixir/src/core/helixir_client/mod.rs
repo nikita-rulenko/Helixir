@@ -19,7 +19,7 @@ mod graph;
 mod memory;
 mod types;
 
-pub use client::HelixirClient;
+pub use client::{HelixirAdmin, HelixirClient};
 pub use error::HelixirClientError;
 pub use memory::SearchParams;
 pub use types::{

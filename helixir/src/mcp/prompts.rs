@@ -123,6 +123,7 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 - RBAC is graph-backed HelixDB state and the single source of truth; never invent or cache local ACLs.
 - Disabled by default preserves trusted-network behavior. When enabled, authorization is deny-by-default and fail-closed.
 - `actor_id` is the authenticated principal; `user_id` is the memory owner or target. MCP calls must provide `actor_id` when RBAC is enabled; only disabled legacy trusted-network calls may use `user_id` as the actor. Never bypass checks by changing `user_id`.
+- FastThink session ids and pending ids are not credentials. Pass the same `actor_id` on every `think_*` lifecycle call and on `get_add_status`; cross-principal use is denied. Pending results are visible only to their owner, creator, or a global admin, and outbox payloads only to their owner or a global admin.
 - Roles are `admin` (global read/write), `teamlead` (read assigned groups), `groupadmin` (read/write assigned groups), `moderator` (read/write assigned groups), `worker` (read group and write own authored memories), and `viewer` (read-only assigned groups).
 - Every enabled non-admin `add_memory` and `think_commit` must name one concrete `group_id`. Never pass a dedup federation id as `group_id`.
 - An administrator may federate groups with `helixir rbac dedup`. The federation controls dedup and common visibility; agents still write to their concrete group. Leaving preserves historical visibility but isolates future writes. Never infer, cache, or override federation membership client-side.
@@ -381,37 +382,38 @@ For a single fact with no weighing, plain add_memory is correct.
    provenance edges from every recalled fact — the next agent (or the
    next session) inherits the WHY, not just the answer. It is fast
    (seconds).
-3. A timed-out session auto-saves as [INCOMPLETE] and is recoverable —
-   silent reasoning dies with the context window.
+3. Trusted-mode timeouts auto-save as [INCOMPLETE]. RBAC-mode timeouts fail
+   closed instead, because a partial commit has no explicit owner/group; discard
+   the session and restart it rather than guessing a security scope.
 
 ### Workflow:
 ```
-think_start(session_id, initial_thought)
+think_start(session_id, initial_thought, actor_id)
   |
-think_add(content, thought_type)     <- add reasoning steps
+think_add(content, thought_type, actor_id)     <- add reasoning steps
   |
-think_recall(query)                   <- pull facts from main memory (read-only)
+think_recall(query, actor_id)                   <- pull facts from main memory (read-only)
   |
-think_conclude(conclusion)            <- mark your decision
+think_conclude(conclusion, actor_id)            <- mark your decision
   |
-think_commit()                        <- save conclusion to persistent memory
+think_commit(actor_id, user_id, group_id)       <- save conclusion to persistent memory
 ```
 
 ### Worked episode (the shape to imitate):
 ```
-think_start(session_id="retry-policy", initial_thought="Pick a retry policy for the aurora service")
-think_add(content="transient outages last under a minute", thought_type="observation", parent_idx=0)
-think_recall(query="aurora service outages queue", parent_idx=0)   # pulls 2 known facts in
-think_conclude(conclusion="Exponential backoff capped at 90s with jitter", supporting_idx=[1])
-think_commit()   # -> one memory, SUPPORTS edges from the recalled facts
+think_start(session_id="retry-policy", initial_thought="Pick a retry policy for the aurora service", actor_id="agent")
+think_add(content="transient outages last under a minute", thought_type="observation", parent_idx=0, actor_id="agent")
+think_recall(query="aurora service outages queue", parent_idx=0, actor_id="agent")   # pulls 2 known facts in
+think_conclude(conclusion="Exponential backoff capped at 90s with jitter", supporting_idx=[1], actor_id="agent")
+think_commit(actor_id="agent", user_id="agent", group_id="team")   # -> one memory, SUPPORTS edges
 ```
 
 ### Thought types:
 `reasoning`, `hypothesis`, `observation`, `question`
 
 ### Utility:
-- `think_status()` — inspect the current session's thoughts so far
-- `think_discard()` — abandon a session without saving (use instead of committing a dead end)
+- `think_status(actor_id)` — inspect only your current session
+- `think_discard(actor_id)` — abandon only your session without saving
 
 </fastthink_protocol>
 

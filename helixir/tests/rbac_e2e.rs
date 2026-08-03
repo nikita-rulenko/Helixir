@@ -31,7 +31,11 @@ fn saved_id(result: &AddMemoryResult) -> Option<String> {
 }
 
 async fn content_key(client: &HelixirClient, memory_id: &str) -> String {
+    let actor = std::env::var("HELIXIR_RBAC_ACTOR").unwrap_or_else(|_| "codex".to_string());
     let response: serde_json::Value = client
+        .admin_as(&actor)
+        .await
+        .expect("RBAC admin")
         .db()
         .execute_query("getMemory", &serde_json::json!({"memory_id": memory_id}))
         .await

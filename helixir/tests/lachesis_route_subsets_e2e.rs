@@ -35,6 +35,8 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     let user = format!("lrs_{run}");
@@ -66,15 +68,11 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
     let universe = m.len();
 
     let cat = |n: &str| format!("{n}-{run}");
-    let ens = |name: String| {
-        let client = &client;
-        async move {
-            client
-                .tooling()
-                .ensure_category(&name, "test", "")
-                .await
-                .expect("ensure")
-        }
+    let ens = |name: String| async move {
+        tooling
+            .ensure_category(&name, "test", "")
+            .await
+            .expect("ensure")
     };
     let x = ens(cat("catX")).await;
     let y = ens(cat("catY")).await;
@@ -83,12 +81,10 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
 
     // Chain: X∩Y = {m1}, Y∩Z = {m2}, X∩Z = {} (X and Z connect only through Y).
     let tag = |id: &str, cat: &str| {
-        let client = &client;
         let id = id.to_string();
         let cat = cat.to_string();
         async move {
-            client
-                .tooling()
+            tooling
                 .tag_memory(&id, &cat, 90, "test")
                 .await
                 .expect("tag")
@@ -111,7 +107,7 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
         (z.clone(), "catZ".to_string()),
         (thick.clone(), "thick".to_string()),
     ];
-    let hypo = client
+    let hypo = admin
         .lachesis()
         .route_subsets(&x, &candidates, universe, 4)
         .await

@@ -38,12 +38,13 @@ async fn clotho_autotag_dictionary() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("clotho_{run}");
 
     // 1) Seed the controlled vocabulary (idempotent — shared global dictionary).
-    let seeded = client
+    let seeded = admin
         .clotho()
         .seed_dictionary()
         .await
@@ -75,7 +76,7 @@ async fn clotho_autotag_dictionary() {
         ("petro", petro, &b.memory_ids, &mut petro_tags),
     ] {
         for id in ids {
-            let outcome = client
+            let outcome = admin
                 .clotho()
                 .auto_tag(id, fact, 10, bar)
                 .await
@@ -96,7 +97,7 @@ async fn clotho_autotag_dictionary() {
     // an escalation (charter), not a silent tag.
     let mut arts_escalated = false;
     for id in &c.memory_ids {
-        let outcome = client
+        let outcome = admin
             .clotho()
             .auto_tag(id, arts, 10, bar)
             .await

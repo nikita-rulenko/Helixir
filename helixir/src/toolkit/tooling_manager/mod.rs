@@ -51,7 +51,7 @@ pub struct ToolingManager {
 }
 
 impl ToolingManager {
-    pub fn new(
+    pub(crate) fn new(
         db: Arc<HelixClient>,
         embedder: Arc<EmbeddingGenerator>,
         llm_provider: Arc<dyn LlmProvider>,
