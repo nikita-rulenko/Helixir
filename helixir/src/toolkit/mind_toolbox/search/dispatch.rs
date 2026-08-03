@@ -277,10 +277,10 @@ impl SearchEngine {
                 if let Some(r) = final_results.iter_mut().find(|r| r.memory_id == mem_id) {
                     r.user_count = user_count;
                     r.controversy = controversy;
-                    if let Some(distribution) = stances {
-                        if let Ok(value) = serde_json::to_value(&distribution) {
-                            r.metadata.insert("stances".to_string(), value);
-                        }
+                    if let Some(distribution) = stances
+                        && let Ok(value) = serde_json::to_value(&distribution)
+                    {
+                        r.metadata.insert("stances".to_string(), value);
                     }
                 }
             }
@@ -429,7 +429,7 @@ impl SearchEngine {
     /// returns, ranked below its successor. Checked only for the top window
     /// (a stale hub is by definition ranked high); best-effort — a DB error
     /// leaves ranking as-is.
-    async fn demote_superseded(&self, results: &mut Vec<UnifiedSearchResult>, limit: usize) {
+    async fn demote_superseded(&self, results: &mut [UnifiedSearchResult], limit: usize) {
         let penalty = self.config.retrieval.superseded_penalty;
         if penalty >= 1.0 || results.is_empty() {
             return;

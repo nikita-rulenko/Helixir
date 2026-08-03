@@ -102,27 +102,16 @@ mod tests {
 
     #[test]
     fn aligns_atoms_to_clause_sides() {
-        let atoms = vec![
+        let atoms = [
             "The deploy failed on the third stage.",
             "The auth token expired at midnight.",
         ];
-        let picked = pick_cause_effect(
-            &atoms.iter().map(|s| *s).collect::<Vec<_>>(),
-            "the token expired",
-            "the deploy failed",
-        );
+        let picked = pick_cause_effect(&atoms, "the token expired", "the deploy failed");
         assert_eq!(picked, Some((1, 0)), "cause=token atom, effect=deploy atom");
 
         // Both sides matching one atom → no pair.
-        let one = vec!["everything in one atom about deploy and token"];
-        assert!(
-            pick_cause_effect(
-                &one.iter().map(|s| *s).collect::<Vec<_>>(),
-                "token",
-                "deploy"
-            )
-            .is_none()
-        );
+        let one = ["everything in one atom about deploy and token"];
+        assert!(pick_cause_effect(&one, "token", "deploy").is_none());
     }
 }
 
@@ -194,15 +183,11 @@ mod structural_tests {
 
     #[test]
     fn alignment_reuses_the_causal_picker() {
-        let atoms = vec![
+        let atoms = [
             "The payments platform hosts every money-touching service.",
             "The billing worker sends the invoices.",
         ];
-        let picked = pick_cause_effect(
-            &atoms.iter().map(|s| *s).collect::<Vec<_>>(),
-            "the billing worker",
-            "the payments platform",
-        );
+        let picked = pick_cause_effect(&atoms, "the billing worker", "the payments platform");
         assert_eq!(
             picked,
             Some((1, 0)),

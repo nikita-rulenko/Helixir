@@ -64,14 +64,14 @@ impl ContextManager {
     fn add_to_cache(&self, context: ContextDef) {
         let mut cache = self.context_cache.write();
 
-        if cache.len() >= self.cache_size {
-            if let Some(oldest_key) = cache.keys().next().cloned() {
-                cache.remove(&oldest_key);
-                debug!(
-                    "Cache eviction: removed context {}",
-                    crate::safe_truncate(&oldest_key, 8)
-                );
-            }
+        if cache.len() >= self.cache_size
+            && let Some(oldest_key) = cache.keys().next().cloned()
+        {
+            cache.remove(&oldest_key);
+            debug!(
+                "Cache eviction: removed context {}",
+                crate::safe_truncate(&oldest_key, 8)
+            );
         }
 
         cache.insert(context.context_id.clone(), context);

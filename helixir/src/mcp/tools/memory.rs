@@ -38,17 +38,17 @@ impl HelixirMcpServer {
         // Rendezvous (#39): a writing agent announces its presence for free —
         // any agent that passes agent_id shows up in swarm_status with host +
         // "working" without a separate heartbeat call. Best-effort by design.
-        if let Some(agent_id) = params.agent_id.as_deref() {
-            if self.client().config().mode.collective_enabled() {
-                let role = self.client().config().swarm.default_role.clone();
-                if let Err(e) = self
-                    .client()
-                    .tooling()
-                    .register_or_heartbeat(agent_id, &role, machine_hostname(), "working")
-                    .await
-                {
-                    debug!("swarm heartbeat for {agent_id} failed (non-fatal): {e}");
-                }
+        if let Some(agent_id) = params.agent_id.as_deref()
+            && self.client().config().mode.collective_enabled()
+        {
+            let role = self.client().config().swarm.default_role.clone();
+            if let Err(e) = self
+                .client()
+                .tooling()
+                .register_or_heartbeat(agent_id, &role, machine_hostname(), "working")
+                .await
+            {
+                debug!("swarm heartbeat for {agent_id} failed (non-fatal): {e}");
             }
         }
 
@@ -223,13 +223,13 @@ impl HelixirMcpServer {
                     .map_err(|e| McpError::invalid_params(format!("time_to: {e}"), None))?,
             );
         }
-        if let (Some(f), Some(t)) = (&window.from, &window.to) {
-            if f > t {
-                return Err(McpError::invalid_params(
-                    format!("empty window: time_from {f} is after time_to {t}"),
-                    None,
-                ));
-            }
+        if let (Some(f), Some(t)) = (&window.from, &window.to)
+            && f > t
+        {
+            return Err(McpError::invalid_params(
+                format!("empty window: time_from {f} is after time_to {t}"),
+                None,
+            ));
         }
 
         let query_preview: String = params.query.chars().take(50).collect();
@@ -856,7 +856,7 @@ impl HelixirMcpServer {
             .filter(|result| {
                 visible
                     .as_ref()
-                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
+                    .is_none_or(|allowed| allowed.contains(&result.memory_id))
             })
             .collect::<Vec<_>>();
 

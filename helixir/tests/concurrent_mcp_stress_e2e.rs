@@ -67,7 +67,6 @@ fn concurrent_collective_search_does_not_crash() {
     let handles: Vec<thread::JoinHandle<usize>> = (0..AGENTS)
         .map(|i| {
             let run = run.clone();
-            let queries = queries;
             thread::spawn(move || {
                 // Each agent is its own MCP process — independent stdio child,
                 // exactly like separate clients (zeroclaw + a Claude session).

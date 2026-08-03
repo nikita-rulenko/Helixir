@@ -2,13 +2,13 @@
 //! providers, with optional Ollama fallback when the primary endpoint fails.
 //!
 //! Layout:
-//! - [`config`]    — [`EmbeddingConfig`] + provider defaults.
-//! - [`error`]     — [`EmbeddingError`].
-//! - [`wire`]      — request/response DTOs for Ollama and OpenAI batch/single.
-//! - [`cache`]     — in-process LRU+TTL embedding cache.
-//! - [`generator`] — [`EmbeddingGenerator`] struct, constructor, accessors.
-//! - [`single`]    — `generate` (one text) + provider routing + single-shot fallback.
-//! - [`batch`]     — `generate_batch` (many texts) + batched provider routing
+//! - `config`    — [`EmbeddingConfig`] + provider defaults.
+//! - `error`     — [`EmbeddingError`].
+//! - `wire`      — request/response DTOs for Ollama and OpenAI batch/single.
+//! - `cache`     — in-process LRU+TTL embedding cache.
+//! - `generator` — [`EmbeddingGenerator`] struct, constructor, accessors.
+//! - `single`    — `generate` (one text) + provider routing + single-shot fallback.
+//! - `batch`     — `generate_batch` (many texts) + batched provider routing
 //!   + per-item fallback fan-out.
 
 mod batch;

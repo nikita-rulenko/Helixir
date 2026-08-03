@@ -63,7 +63,7 @@ impl HelixirClient {
             .filter(|result| {
                 visible
                     .as_ref()
-                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
+                    .is_none_or(|allowed| allowed.contains(&result.memory_id))
             })
             .collect::<Vec<_>>();
 
@@ -253,9 +253,7 @@ impl HelixirClient {
                 .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
             visible
                 .as_ref()
-                .map_or(true, |allowed| {
-                    memory_ids.iter().all(|id| allowed.contains(id))
-                })
+                .is_none_or(|allowed| memory_ids.iter().all(|id| allowed.contains(id)))
                 .then_some(path)
         } else {
             None
@@ -344,9 +342,7 @@ impl HelixirClient {
             .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         Ok(visible
             .as_ref()
-            .map_or(true, |allowed| {
-                memory_ids.iter().all(|id| allowed.contains(id))
-            })
+            .is_none_or(|allowed| memory_ids.iter().all(|id| allowed.contains(id)))
             .then_some(narrative))
     }
 }

@@ -95,15 +95,14 @@ impl ToolingManager {
                         &serde_json::json!({"memory_id": mid}),
                     )
                     .await
+                    && let Some(mem) = result.memory
                 {
-                    if let Some(mem) = result.memory {
-                        nodes.push(serde_json::json!({
-                            "id": mem.memory_id,
-                            "content": mem.content,
-                            "type": mem.memory_type,
-                            "user_id": mem.user_id,
-                        }));
-                    }
+                    nodes.push(serde_json::json!({
+                        "id": mem.memory_id,
+                        "content": mem.content,
+                        "type": mem.memory_type,
+                        "user_id": mem.user_id,
+                    }));
                 }
 
                 #[derive(serde::Deserialize, Default)]

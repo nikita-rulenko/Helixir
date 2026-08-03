@@ -53,7 +53,7 @@ pub struct DoctorInputs {
     pub embeddings: Option<bool>,
     /// Whether Nomic is selected and ready.
     pub nomic: Option<bool>,
-    /// Whether NLI is selected and ready.
+    /// Whether the required NLI judge is ready.
     pub nli: Option<bool>,
     /// Whether MCP initialize/list-tools smoke passed.
     pub mcp: Option<bool>,
@@ -108,7 +108,13 @@ impl DoctorReport {
             true,
             "nomic-embed-text availability",
         );
-        push_bool(&mut checks, "nli", inputs.nli, false, "local NLI judge");
+        push_bool(
+            &mut checks,
+            "nli",
+            inputs.nli,
+            true,
+            "required local NLI judge",
+        );
         push_bool(
             &mut checks,
             "mcp",
@@ -169,7 +175,7 @@ mod tests {
             llm: Some(true),
             embeddings: Some(true),
             nomic: Some(true),
-            nli: None,
+            nli: Some(true),
             mcp: Some(true),
             clients: Some(true),
         };
@@ -180,12 +186,12 @@ mod tests {
             report
                 .checks
                 .iter()
-                .any(|check| check.status == CheckStatus::Skipped)
+                .all(|check| check.status == CheckStatus::Pass)
         );
     }
 
     #[test]
-    fn required_failure_blocks_but_optional_nli_can_be_skipped() {
+    fn required_failure_and_missing_nli_block_readiness() {
         let report = DoctorReport::from_inputs(&DoctorInputs {
             binaries: Some(true),
             config: Some(true),
@@ -208,7 +214,7 @@ mod tests {
             report
                 .checks
                 .iter()
-                .any(|check| check.name == "nli" && check.status == CheckStatus::Skipped)
+                .any(|check| check.name == "nli" && check.status == CheckStatus::Fail)
         );
     }
 }

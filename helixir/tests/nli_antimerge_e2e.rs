@@ -7,10 +7,8 @@
 //!
 //! ```text
 //! HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
-//!   cargo test -p helixir --features nli --test nli_antimerge_e2e -- --ignored --nocapture
+//!   cargo test -p helixir --test nli_antimerge_e2e -- --ignored --nocapture
 //! ```
-#![cfg(feature = "nli")]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;

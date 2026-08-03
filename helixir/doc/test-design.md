@@ -1,7 +1,7 @@
 # Test design
 
-> _Reflects code as of `v0.13.1` plus `codex/refactor-architecture-audit`.
-> Last verified: 2026-07-18._
+> _Reflects code as of `v0.13.2` plus `codex/rbac-cli`.
+> Last verified: 2026-08-03._
 
 ## 1. Stance
 
@@ -27,8 +27,8 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`codex/rbac-cli`):** 234 unit tests with default features
-(193 without the opt-in `nli` feature; `cargo test --lib`, run in CI) + **38
+**Current (`codex/rbac-cli`):** 242 unit tests (`cargo test --lib`, run in CI)
++ **38
 HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
@@ -39,6 +39,11 @@ The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+NLI is part of every build. Unit coverage verifies host-variant digest
+availability and the contradiction/paraphrase readiness contract; installer
+coverage requires NLI download before doctor, and doctor fails closed when the
+model is missing. CI runs the same full NLI-enabled surface on Ubuntu and macOS.
 
 `tests/rbac_e2e.rs` is an ignored, enabled-state live contract. It never turns
 RBAC off. It covers federated fingerprint equality, isolated-group inequality,
@@ -58,7 +63,7 @@ invariant that RBAC remains enabled.
 | DB client | `src/db/client.rs` | 2 | Constructor works; `from_env` constructor works. |
 | LLM decision | `src/llm/decision/engine.rs` | 6 | Builder constructors, cross-user prompt branches. |
 | LLM extractor | `src/llm/extractor.rs` | 1 | `ExtractionResult` serializes round-trip. |
-| LLM factory | `src/llm/factory.rs` | 4 | Constructs cerebras/ollama; unknown provider panics. |
+| LLM factory | `src/llm/factory.rs` | 10 | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
 | Helixir client | `src/core/helixir_client.rs` | 3 | Constructor, env constructor, config access. |
 | Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | 3 | `should_chunk`, Cyrillic split, semantic split. |
 | Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | 4 | Map preference, map skill, no-match, case-insensitive. |
@@ -154,13 +159,11 @@ before relying on it):
 
 ```
 cargo fmt --all -- --check
-cargo clippy --all-targets               # non-strict; warnings allowed for now
+cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps --document-private-items  # with RUSTDOCFLAGS=-D warnings
 cargo test --lib
-cargo build --locked                     # MSRV job pinned in CI
+cargo check --all-targets                 # MSRV 1.88 job pinned in CI
 ```
-
-If `clippy` is later promoted to `-D warnings`, the tier-2 tests above stop
-being regression bait.
 
 ### Tier 4 — refuse
 

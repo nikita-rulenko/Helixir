@@ -35,15 +35,15 @@ impl TimeWindow {
     }
 
     pub fn contains(&self, t: &DateTime<Utc>) -> bool {
-        if let Some(from) = &self.from {
-            if t < from {
-                return false;
-            }
+        if let Some(from) = &self.from
+            && t < from
+        {
+            return false;
         }
-        if let Some(to) = &self.to {
-            if t > to {
-                return false;
-            }
+        if let Some(to) = &self.to
+            && t > to
+        {
+            return false;
         }
         true
     }

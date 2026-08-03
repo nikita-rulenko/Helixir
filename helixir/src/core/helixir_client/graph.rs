@@ -44,7 +44,7 @@ impl HelixirClient {
         let visible_node_ids = nodes
             .iter()
             .filter(|node| {
-                allowed_ids.as_ref().map_or(true, |allowed| {
+                allowed_ids.as_ref().is_none_or(|allowed| {
                     node.get("id")
                         .and_then(|value| value.as_str())
                         .is_some_and(|id| allowed.contains(id))
@@ -61,7 +61,7 @@ impl HelixirClient {
             nodes: nodes
                 .into_iter()
                 .filter(|node| {
-                    allowed_ids.as_ref().map_or(true, |_| {
+                    allowed_ids.as_ref().is_none_or(|_| {
                         node.get("id")
                             .and_then(|value| value.as_str())
                             .is_some_and(|id| visible_node_ids.contains(id))
@@ -95,7 +95,7 @@ impl HelixirClient {
             edges: edges
                 .into_iter()
                 .filter(|edge| {
-                    allowed_ids.as_ref().map_or(true, |_| {
+                    allowed_ids.as_ref().is_none_or(|_| {
                         edge.get("source")
                             .and_then(|value| value.as_str())
                             .is_some_and(|source| visible_node_ids.contains(source))

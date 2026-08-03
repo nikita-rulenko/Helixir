@@ -45,6 +45,19 @@ outbox payloads are owner/admin-only. Rust callers that previously used
 low-level handle with `client.admin_as(actor_id).await?` first. Restart MCP
 clients after replacing the binary so they reload the new tool schemas.
 
+### Required NLI runtime and Cerebras model pin
+
+NLI is no longer an optional Cargo feature or onboarding choice. Every binary
+includes the NLI runtime, `helixir onboard` installs and load-verifies the host
+model, and `helixir doctor` fails readiness when it is missing. The crate-wide
+MSRV is therefore Rust 1.88. Release artifacts include the pinned ONNX Runtime
+library for their target platform.
+
+Helixir also pins every Cerebras request to `gpt-oss-120b` at the provider
+factory boundary. A stale `HELIX_LLM_MODEL` value is logged and ignored when
+`HELIX_LLM_PROVIDER=cerebras`; DeepSeek and Ollama retain their independently
+configured model names. No API keys are stored or migrated by this change.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds

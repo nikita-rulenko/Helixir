@@ -45,12 +45,12 @@ impl EmbeddingCache {
     pub fn get(&self, text: &str) -> Option<Vec<f32>> {
         let cache = self.cache.read().unwrap();
 
-        if let Some(entry) = cache.get(text) {
-            if entry.created_at.elapsed() < self.ttl {
-                let mut stats = self.stats.write().unwrap();
-                stats.hits += 1;
-                return Some(entry.embedding.clone());
-            }
+        if let Some(entry) = cache.get(text)
+            && entry.created_at.elapsed() < self.ttl
+        {
+            let mut stats = self.stats.write().unwrap();
+            stats.hits += 1;
+            return Some(entry.embedding.clone());
         }
 
         let mut stats = self.stats.write().unwrap();
@@ -61,14 +61,13 @@ impl EmbeddingCache {
     pub fn set(&self, text: &str, embedding: Vec<f32>) {
         let mut cache = self.cache.write().unwrap();
 
-        if cache.len() >= self.max_size {
-            if let Some(oldest_key) = cache
+        if cache.len() >= self.max_size
+            && let Some(oldest_key) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.created_at)
                 .map(|(k, _)| k.clone())
-            {
-                cache.remove(&oldest_key);
-            }
+        {
+            cache.remove(&oldest_key);
         }
 
         cache.insert(

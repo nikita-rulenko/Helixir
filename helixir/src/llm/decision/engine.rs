@@ -181,23 +181,22 @@ impl LLMDecisionEngine {
             a.score
                 .partial_cmp(&b.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        }) {
-            if top.score >= self.exact_duplicate_score {
-                info!(
-                    "Cosine gate: {:.3} >= {} — NOOP duplicate of {} (no LLM call)",
-                    top.score, self.exact_duplicate_score, top.id
-                );
-                return Ok(MemoryDecision {
-                    operation: MemoryOperation::Noop,
-                    target_memory_id: Some(top.id.clone()),
-                    confidence: 98,
-                    reasoning: format!(
-                        "cosine gate: {:.3} >= {} (exact duplicate)",
-                        top.score, self.exact_duplicate_score
-                    ),
-                    ..Default::default()
-                });
-            }
+        }) && top.score >= self.exact_duplicate_score
+        {
+            info!(
+                "Cosine gate: {:.3} >= {} — NOOP duplicate of {} (no LLM call)",
+                top.score, self.exact_duplicate_score, top.id
+            );
+            return Ok(MemoryDecision {
+                operation: MemoryOperation::Noop,
+                target_memory_id: Some(top.id.clone()),
+                confidence: 98,
+                reasoning: format!(
+                    "cosine gate: {:.3} >= {} (exact duplicate)",
+                    top.score, self.exact_duplicate_score
+                ),
+                ..Default::default()
+            });
         }
 
         Err(highly_similar)

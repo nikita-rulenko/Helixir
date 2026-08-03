@@ -217,16 +217,15 @@ impl ToolingManager {
             }
         }
 
-        if let Some(ref context_tag) = memory.context {
-            if let Err(e) = self
+        if let Some(ref context_tag) = memory.context
+            && let Err(e) = self
                 .link_memory_to_extracted_context(&memory_id, context_tag)
                 .await
-            {
-                warn!(
-                    "Failed to link memory {} to context '{}': {}",
-                    memory_id, context_tag, e
-                );
-            }
+        {
+            warn!(
+                "Failed to link memory {} to context '{}': {}",
+                memory_id, context_tag, e
+            );
         }
 
         debug!("Stored new memory: {}", memory_id);

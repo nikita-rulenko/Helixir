@@ -19,6 +19,9 @@ use super::phases::TraversalError;
 use crate::core::config::GraphConfig;
 use crate::db::HelixClient;
 
+type ParentStep = (String, &'static str, f64);
+type ChainStep = (String, Option<ParentStep>);
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PathNode {
     pub memory_id: String,
@@ -51,7 +54,7 @@ pub struct ConnectionPath {
 /// Per-side traversal state: parent pointers for path reconstruction.
 struct Wave {
     /// memory_id -> (parent memory_id, edge_type, weight); seeds map to None.
-    parents: HashMap<String, Option<(String, &'static str, f64)>>,
+    parents: HashMap<String, Option<ParentStep>>,
     frontier: Vec<String>,
 }
 
@@ -68,7 +71,7 @@ impl Wave {
 
     /// Walks parent pointers back to this wave's seed. Returns the chain
     /// seed-first: `[(seed, None), ..., (node, Some(edge to previous))]`.
-    fn chain_to(&self, node: &str) -> Vec<(String, Option<(String, &'static str, f64)>)> {
+    fn chain_to(&self, node: &str) -> Vec<ChainStep> {
         let mut chain = Vec::new();
         let mut current = node.to_string();
         loop {

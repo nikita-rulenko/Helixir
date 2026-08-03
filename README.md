@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.85+-orange?logo=rust" alt="Rust 1.85+"/>
+  <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -104,8 +104,9 @@ curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install
 The script detects the host and downloads the matching release asset into a
 versioned `~/.helixir/versions/<version>` directory, switches the atomic
 `~/.helixir/current` pointer, then launches the guided `helixir onboard` flow.
-The flow offers Ollama, `llama3.2:3b`, `nomic-embed-text`, optional NLI, a
-persistent HelixDB volume with a pre-schema backup, central `helixir.toml`, and
+The flow offers Ollama, `llama3.2:3b`, and `nomic-embed-text`; installs and
+verifies the required local NLI safety model; provisions a persistent HelixDB
+volume with a pre-schema backup, central `helixir.toml`, and
 automatic Claude Code/Codex/Cursor registration. Use `--non-interactive` for
 automation and `--dry-run` to inspect the plan without changing the machine.
 
@@ -123,7 +124,8 @@ make doctor         # Read-only readiness report
 
 ### Prerequisites
 
-- **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
+- **Rust 1.88+** — [rustup.rs](https://rustup.rs) (the local NLI judge is a
+  required component of every build)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **HelixDB CLI v2.3.5 — the version matters.** Helixir targets the v2
   (LMDB) generation of HelixDB. CLI **v3.x is NOT compatible**: it runs a
@@ -579,7 +581,7 @@ All settings are passed as environment variables.
 |:---------|:--------|:------------|
 | `HELIXIR_MODE` | `solo` | Privilege tier: `solo` (private, no cross-user), `collective` (shared consensus), `insights` (+ generative Moirai) |
 | `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
-| `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name |
+| `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name; Cerebras is pinned to `gpt-oss-120b` |
 | `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |

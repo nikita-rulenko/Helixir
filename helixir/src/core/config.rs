@@ -500,8 +500,9 @@ pub struct WriteConfig {
     /// proposes a standing rule. 0 disables precedent learning.
     pub rule_propose_after: usize,
     /// #96 Lever 2: route SUPPORTS/CONTRADICTS relation inference through the
-    /// local NLI judge instead of the LLM (self-gating: a lean build or a
-    /// missing model silently keeps everything on the LLM).
+    /// required local NLI judge instead of the LLM. A missing/corrupt model
+    /// keeps relation inference on the LLM, while onboarding/doctor report the
+    /// installation as unready.
     pub nli_route: bool,
     /// Minimum NLI softmax probability for a routed edge; unconfident pairs
     /// stay with the LLM.

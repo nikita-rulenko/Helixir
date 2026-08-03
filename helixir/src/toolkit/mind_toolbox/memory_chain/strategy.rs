@@ -109,10 +109,10 @@ impl MemoryChainStrategy {
         let mut memories = Vec::new();
 
         for mem in result.memories.into_iter().chain(result.parent_memories) {
-            if let Some(id) = mem.get("memory_id").and_then(|v| v.as_str()) {
-                if seen.insert(id.to_string()) {
-                    memories.push(mem);
-                }
+            if let Some(id) = mem.get("memory_id").and_then(|v| v.as_str())
+                && seen.insert(id.to_string())
+            {
+                memories.push(mem);
             }
         }
 
@@ -224,29 +224,29 @@ impl MemoryChainStrategy {
         }
 
         for (mem, relation) in neighbors {
-            if let Some(mem_id) = mem.get("memory_id").and_then(|v| v.as_str()) {
-                if visited.insert(mem_id.to_string()) {
-                    let content = mem
-                        .get("content")
+            if let Some(mem_id) = mem.get("memory_id").and_then(|v| v.as_str())
+                && visited.insert(mem_id.to_string())
+            {
+                let content = mem
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                chain.add_node(ChainNode {
+                    memory_id: mem_id.to_string(),
+                    content,
+                    memory_type: mem
+                        .get("memory_type")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                        .map(String::from),
+                    depth,
+                    relation_type: Some(relation.to_string()),
+                });
 
-                    chain.add_node(ChainNode {
-                        memory_id: mem_id.to_string(),
-                        content,
-                        memory_type: mem
-                            .get("memory_type")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        depth,
-                        relation_type: Some(relation.to_string()),
-                    });
+                chain.total_depth = chain.total_depth.max(depth);
 
-                    chain.total_depth = chain.total_depth.max(depth);
-
-                    Box::pin(self.expand_chain(chain, mem_id, depth + 1, config, visited)).await;
-                }
+                Box::pin(self.expand_chain(chain, mem_id, depth + 1, config, visited)).await;
             }
         }
     }

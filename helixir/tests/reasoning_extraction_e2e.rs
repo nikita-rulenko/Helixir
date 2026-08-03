@@ -171,10 +171,7 @@ fn associative_edges_built_on_fresh_write() {
             .iter()
             .filter_map(|e| e["edge_type"].as_str().map(str::to_string))
             .collect();
-        if edge_types
-            .iter()
-            .any(|t| ALL_EDGES.iter().any(|a| t.as_str() == *a))
-        {
+        if edge_types.iter().any(|t| ALL_EDGES.contains(&t.as_str())) {
             break;
         }
     }
@@ -183,7 +180,7 @@ fn associative_edges_built_on_fresh_write() {
     // arsenal member (HAS_MEMORY etc. structural edges are allowed through).
     let arsenal_edges: Vec<&String> = edge_types
         .iter()
-        .filter(|t| ALL_EDGES.iter().any(|a| t.as_str() == *a))
+        .filter(|t| ALL_EDGES.contains(&t.as_str()))
         .collect();
     assert!(
         !arsenal_edges.is_empty(),
@@ -209,7 +206,7 @@ fn associative_edges_built_on_fresh_write() {
 
     let associative: Vec<&String> = edge_types
         .iter()
-        .filter(|t| ASSOCIATIVE_EDGES.iter().any(|a| t.as_str() == *a))
+        .filter(|t| ASSOCIATIVE_EDGES.contains(&t.as_str()))
         .collect();
 
     println!("\n==== associative_edges_built_on_fresh_write ====");

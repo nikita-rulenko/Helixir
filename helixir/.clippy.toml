@@ -2,7 +2,7 @@
 # Equivalent to ruff for Python
 
 # MSRV - minimum supported Rust version
-msrv = "1.80"
+msrv = "1.88"
 
 # Cognitive complexity threshold
 cognitive-complexity-threshold = 15
@@ -18,4 +18,3 @@ disallowed-types = []
 
 # Enforce documentation
 missing-docs-in-crate-items = true
-

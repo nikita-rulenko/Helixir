@@ -14,6 +14,8 @@ use super::super::ToolingManager;
 use super::super::types::{AddMemoryResult, ToolingError};
 use crate::safe_truncate;
 
+type RelationInferenceJob = (String, String, Vec<(String, String)>);
+
 impl ToolingManager {
     pub async fn add_memory(
         &self,
@@ -213,7 +215,7 @@ impl ToolingManager {
         let mut chunks_created = 0usize;
         // (memory_id, text, context pairs) per stored atom — the LLM relation
         // inference runs over these concurrently in Phase D.
-        let mut infer_jobs: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
+        let mut infer_jobs: Vec<RelationInferenceJob> = Vec::new();
 
         debug!(
             "Batch-generating embeddings for {} memories",
@@ -467,7 +469,7 @@ impl ToolingManager {
                     agent_id,
                     tags,
                     vector,
-                    &similar_memories,
+                    similar_memories,
                     &mut added_ids,
                     &mut updated_ids,
                     &mut deduped_ids,
@@ -487,19 +489,18 @@ impl ToolingManager {
             // Backfill the from_id so resolve_contradiction(from_id, to_id) is
             // callable deterministically. Under charter_blocking the new atom
             // was stored as an ADD, so `memory_id` IS that new fact.
-            if let Some(ci) = clar_idx {
-                if let Some(c) = clarifications.get_mut(ci) {
-                    c.new_memory_id = Some(memory_id.clone());
-                }
+            if let Some(ci) = clar_idx
+                && let Some(c) = clarifications.get_mut(ci)
+            {
+                c.new_memory_id = Some(memory_id.clone());
             }
 
-            if let Some(old_id) = &deferred_target {
-                if let Err(e) = self
+            if let Some(old_id) = &deferred_target
+                && let Err(e) = self
                     .record_contradiction(&memory_id, old_id, "charter_deferred")
                     .await
-                {
-                    warn!("Charter blocking: deferred edge {memory_id} -> {old_id} failed: {e}");
-                }
+            {
+                warn!("Charter blocking: deferred edge {memory_id} -> {old_id} failed: {e}");
             }
 
             entities_linked += self
@@ -574,46 +575,45 @@ impl ToolingManager {
         // pipeline gets a BECAUSE edge wired by clause alignment — "reasons
         // in chains" must not depend on the model's mood (or its fallback
         // tier). The LLM path stays first; this fires only when it gave nothing.
-        if relations_created == 0 && stored_memory_ids.len() >= 2 {
-            if let Some(message) = raw_message {
-                if let Some((cause_text, effect_text)) =
-                    super::connective_backstop::split_causal(message)
+        if relations_created == 0
+            && stored_memory_ids.len() >= 2
+            && let Some(message) = raw_message
+            && let Some((cause_text, effect_text)) =
+                super::connective_backstop::split_causal(message)
+        {
+            let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
+            idx.sort_unstable();
+            let atom_texts: Vec<&str> = idx
+                .iter()
+                .map(|i| memories_to_store[*i].text.as_str())
+                .collect();
+            if let Some((c, e)) = super::connective_backstop::pick_cause_effect(
+                &atom_texts,
+                &cause_text,
+                &effect_text,
+            ) {
+                let from = &stored_memory_ids[&idx[c]];
+                let to = &stored_memory_ids[&idx[e]];
+                match self
+                    .reasoning_engine
+                    .add_relation(
+                        from,
+                        to,
+                        crate::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
+                        55,
+                        None,
+                    )
+                    .await
                 {
-                    let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
-                    idx.sort_unstable();
-                    let atom_texts: Vec<&str> = idx
-                        .iter()
-                        .map(|i| memories_to_store[*i].text.as_str())
-                        .collect();
-                    if let Some((c, e)) = super::connective_backstop::pick_cause_effect(
-                        &atom_texts,
-                        &cause_text,
-                        &effect_text,
-                    ) {
-                        let from = &stored_memory_ids[&idx[c]];
-                        let to = &stored_memory_ids[&idx[e]];
-                        match self
-                            .reasoning_engine
-                            .add_relation(
-                                from,
-                                to,
-                                crate::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
-                                55,
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                relations_created += 1;
-                                info!(
-                                    "connective backstop: BECAUSE {} -> {} (extractor emitted no relations for an explicitly causal message)",
-                                    safe_truncate(from, 12),
-                                    safe_truncate(to, 12)
-                                );
-                            }
-                            Err(err) => warn!("connective backstop failed: {err}"),
-                        }
+                    Ok(_) => {
+                        relations_created += 1;
+                        info!(
+                            "connective backstop: BECAUSE {} -> {} (extractor emitted no relations for an explicitly causal message)",
+                            safe_truncate(from, 12),
+                            safe_truncate(to, 12)
+                        );
                     }
+                    Err(err) => warn!("connective backstop failed: {err}"),
                 }
             }
         }
@@ -623,41 +623,37 @@ impl ToolingManager {
         // regardless of the model's mood. Fires whenever the connective is
         // present and two atoms align; add_relation's duplicate guard makes
         // it a no-op when the LLM already built the edge.
-        if stored_memory_ids.len() >= 2 {
-            if let Some(message) = raw_message {
-                if let Some((edge_type, from_text, to_text)) =
-                    super::connective_backstop::split_structural(message)
+        if stored_memory_ids.len() >= 2
+            && let Some(message) = raw_message
+            && let Some((edge_type, from_text, to_text)) =
+                super::connective_backstop::split_structural(message)
+        {
+            let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
+            idx.sort_unstable();
+            let atom_texts: Vec<&str> = idx
+                .iter()
+                .map(|i| memories_to_store[*i].text.as_str())
+                .collect();
+            if let Some((f, t)) =
+                super::connective_backstop::pick_cause_effect(&atom_texts, &from_text, &to_text)
+            {
+                let from = &stored_memory_ids[&idx[f]];
+                let to = &stored_memory_ids[&idx[t]];
+                match self
+                    .reasoning_engine
+                    .add_relation(from, to, edge_type, 60, None)
+                    .await
                 {
-                    let mut idx: Vec<usize> = stored_memory_ids.keys().copied().collect();
-                    idx.sort_unstable();
-                    let atom_texts: Vec<&str> = idx
-                        .iter()
-                        .map(|i| memories_to_store[*i].text.as_str())
-                        .collect();
-                    if let Some((f, t)) = super::connective_backstop::pick_cause_effect(
-                        &atom_texts,
-                        &from_text,
-                        &to_text,
-                    ) {
-                        let from = &stored_memory_ids[&idx[f]];
-                        let to = &stored_memory_ids[&idx[t]];
-                        match self
-                            .reasoning_engine
-                            .add_relation(from, to, edge_type, 60, None)
-                            .await
-                        {
-                            Ok(_) => {
-                                relations_created += 1;
-                                info!(
-                                    "structural backstop: {} {} -> {} (explicit connective in the input)",
-                                    edge_type.edge_name(),
-                                    safe_truncate(from, 12),
-                                    safe_truncate(to, 12)
-                                );
-                            }
-                            Err(e) => debug!("structural backstop skipped: {e}"),
-                        }
+                    Ok(_) => {
+                        relations_created += 1;
+                        info!(
+                            "structural backstop: {} {} -> {} (explicit connective in the input)",
+                            edge_type.edge_name(),
+                            safe_truncate(from, 12),
+                            safe_truncate(to, 12)
+                        );
                     }
+                    Err(e) => debug!("structural backstop skipped: {e}"),
                 }
             }
         }

@@ -113,7 +113,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "The Helixir crate MSRV is Rust 1.85; let-chain syntax must not be used.",
+        "The Helixir crate MSRV is Rust 1.88 because every build includes the mandatory NLI runtime.",
     ),
     (
         80,

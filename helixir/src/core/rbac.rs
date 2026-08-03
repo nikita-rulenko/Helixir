@@ -929,10 +929,10 @@ impl RbacManager {
             "created_at": Utc::now().to_rfc3339(),
             "metadata": "{}",
         });
-        if group.is_empty() {
-            if let Some(object) = params.as_object_mut() {
-                object.remove("group_id");
-            }
+        if group.is_empty()
+            && let Some(object) = params.as_object_mut()
+        {
+            object.remove("group_id");
         }
         self.db
             .execute_query::<serde_json::Value, _>(query, &params)

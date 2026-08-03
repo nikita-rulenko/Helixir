@@ -128,11 +128,11 @@ pub fn detect_intent(query: &str) -> Vec<&'static str> {
 
     for (intent, patterns) in INTENT_PATTERNS.iter() {
         for pattern in patterns {
-            if let Ok(regex) = Regex::new(pattern) {
-                if regex.is_match(query) {
-                    detected_intents.push(*intent);
-                    break;
-                }
+            if let Ok(regex) = Regex::new(pattern)
+                && regex.is_match(query)
+            {
+                detected_intents.push(*intent);
+                break;
             }
         }
     }

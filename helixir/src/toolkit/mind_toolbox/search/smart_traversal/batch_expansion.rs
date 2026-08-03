@@ -113,13 +113,15 @@ struct LevelBatchResponse {
     relation_in_n: Vec<BatchNode>,
 }
 
+type EdgeFamily<'a> = (&'a [BatchEdge], &'a [BatchNode], &'static str, f64, bool);
+
 /// `(edges, neighbour nodes, edge label, weight, incoming?)` per family.
 /// Weights + incoming dampeners come from config (passed in by the caller).
-fn families<'a>(
-    r: &'a LevelBatchResponse,
+fn families(
+    r: &LevelBatchResponse,
     ew: crate::core::config::EdgeWeights,
     ed: crate::core::config::EdgeDamping,
-) -> [(&'a [BatchEdge], &'a [BatchNode], &'static str, f64, bool); 8] {
+) -> [EdgeFamily<'_>; 8] {
     [
         (
             &r.implies_out_e,

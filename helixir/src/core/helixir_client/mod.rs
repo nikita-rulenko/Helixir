@@ -1,12 +1,12 @@
 //! Top-level facade `HelixirClient` — the single object that consumers create.
 //!
 //! Layout:
-//! - [`error`]   — [`HelixirClientError`] (one variant per failure boundary).
-//! - [`types`]   — public DTOs returned by client methods.
-//! - [`client`]  — [`HelixirClient`] struct, constructor, lifecycle, accessors.
-//! - [`memory`]  — `add` / `search` / `update` / `delete` methods.
-//! - [`graph`]   — `get_graph`.
-//! - [`concepts`] — `search_by_concept` / `search_reasoning_chain`.
+//! - `error`   — [`HelixirClientError`] (one variant per failure boundary).
+//! - `types`   — public DTOs returned by client methods.
+//! - `client`  — [`HelixirClient`] struct, constructor, lifecycle, accessors.
+//! - `memory`  — `add` / `search` / `update` / `delete` methods.
+//! - `graph`   — `get_graph`.
+//! - `concepts` — `search_by_concept` / `search_reasoning_chain`.
 //!
 //! Every method on `HelixirClient` lives in one of the four feature modules
 //! (`memory`, `graph`, `concepts`) as `impl HelixirClient { ... }`; the public
@@ -60,5 +60,18 @@ mod tests {
 
         assert_eq!(client.config().host, "localhost");
         assert_eq!(client.config().port, 6969);
+    }
+
+    #[test]
+    fn cerebras_model_is_normalized_to_gpt_oss() {
+        let config = HelixirConfig {
+            llm_provider: "cerebras".to_string(),
+            llm_model: "unexpected-model".to_string(),
+            ..HelixirConfig::default()
+        };
+        let client = HelixirClient::new(config).unwrap();
+
+        assert_eq!(client.config().llm_model, crate::DEFAULT_LLM_MODEL);
+        assert_eq!(client.llm_provider().model_name(), crate::DEFAULT_LLM_MODEL);
     }
 }

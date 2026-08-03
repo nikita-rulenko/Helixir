@@ -330,10 +330,10 @@ impl HelixirClient {
         let poll = poll_ms.max(20);
         let mut waited = 0u64;
         loop {
-            if let Ok(st) = self.add_status_as(actor_id, pending_id).await {
-                if st.status == STATUS_DONE || st.status == STATUS_FAILED {
-                    return Some(st);
-                }
+            if let Ok(st) = self.add_status_as(actor_id, pending_id).await
+                && (st.status == STATUS_DONE || st.status == STATUS_FAILED)
+            {
+                return Some(st);
             }
             if waited >= max_wait_ms {
                 return None;
@@ -423,7 +423,7 @@ impl HelixirClient {
             .filter(|result| {
                 visible
                     .as_ref()
-                    .map_or(true, |allowed| allowed.contains(&result.memory_id))
+                    .is_none_or(|allowed| allowed.contains(&result.memory_id))
             })
             .collect::<Vec<_>>();
 

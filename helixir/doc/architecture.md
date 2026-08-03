@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.13.2` plus the installer-onboarding branch. Last verified: 2026-07-20._
+> _Reflects code as of `v0.13.2` plus `codex/rbac-cli`. Last verified: 2026-08-03._
 
 ## 1. System context
 
@@ -38,7 +38,10 @@ Installation is a control plane outside the runtime dependency stack:
 coordinates platform adapters through apply/rollback boundaries. Its client
 adapters use native Claude Code/Codex commands and strict Cursor JSON merges;
 provider secrets stay outside MCP entries. Model adapters emit shell-free
-Ollama commands and pin NLI downloads to an immutable model revision. The
+Ollama commands and pin the mandatory NLI download to an immutable model
+revision; doctor readiness fails if the NLI judge is absent. The provider
+factory pins Cerebras requests to `gpt-oss-120b`, while DeepSeek and Ollama
+retain independently configured model names. The
 backend adapter snapshots the persistent Docker volume before schema changes,
 and the manifest records the selected version/models/clients atomically. The
 CLI and a future native UI are frontends over this module; they must not own

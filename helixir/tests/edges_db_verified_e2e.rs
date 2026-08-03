@@ -120,7 +120,7 @@ fn edges_persisted_with_correct_types_db() {
     // silent garbage, no corruption (the #P0 anti-regression).
     let invalid: Vec<&String> = all_edges
         .iter()
-        .filter(|t| !ARSENAL.iter().any(|a| t.as_str() == *a))
+        .filter(|t| !ARSENAL.contains(&t.as_str()))
         .collect();
     assert!(
         invalid.is_empty(),
@@ -130,7 +130,7 @@ fn edges_persisted_with_correct_types_db() {
 
     let associative: Vec<&String> = all_edges
         .iter()
-        .filter(|t| ASSOCIATIVE.iter().any(|a| t.as_str() == *a))
+        .filter(|t| ASSOCIATIVE.contains(&t.as_str()))
         .collect();
 
     println!("\n==== edges_persisted_with_correct_types_db ====");

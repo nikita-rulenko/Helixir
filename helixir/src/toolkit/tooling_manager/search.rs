@@ -46,12 +46,12 @@ fn collapse_collective_duplicates(results: Vec<SearchMemoryResult>) -> Vec<Searc
     }
     // Surface the consensus: how many distinct holder-rows folded into each one.
     for (key, &i) in &rep {
-        if let Some(&c) = count.get(key) {
-            if c > 1 {
-                out[i]
-                    .metadata
-                    .insert("collapsed_holders".to_string(), serde_json::json!(c));
-            }
+        if let Some(&c) = count.get(key)
+            && c > 1
+        {
+            out[i]
+                .metadata
+                .insert("collapsed_holders".to_string(), serde_json::json!(c));
         }
     }
     out
@@ -642,7 +642,7 @@ mod tests {
             .iter()
             .find(|r| r.content.contains("Postgres"))
             .expect("distinct fact present");
-        assert!(distinct.metadata.get("collapsed_holders").is_none());
+        assert!(!distinct.metadata.contains_key("collapsed_holders"));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::db::HelixClient;
@@ -66,7 +66,17 @@ impl<'a> HelixirAdmin<'a> {
 }
 
 impl HelixirClient {
-    pub fn new(config: HelixirConfig) -> Result<Self, HelixirClientError> {
+    pub fn new(mut config: HelixirConfig) -> Result<Self, HelixirClientError> {
+        if config.llm_provider.eq_ignore_ascii_case("cerebras")
+            && config.llm_model != crate::DEFAULT_LLM_MODEL
+        {
+            warn!(
+                configured_model = %config.llm_model,
+                enforced_model = crate::DEFAULT_LLM_MODEL,
+                "normalizing Cerebras model to Helixir's canonical gpt-oss model"
+            );
+            config.llm_model = crate::DEFAULT_LLM_MODEL.to_string();
+        }
         let db = Arc::new(
             HelixClient::new(&config.host, config.port)
                 .map_err(|e| HelixirClientError::Database(e.to_string()))?

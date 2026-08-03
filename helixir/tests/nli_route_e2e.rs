@@ -11,8 +11,6 @@
 //!   cargo test -p helixir --test nli_route_e2e -- --ignored --nocapture
 //! ```
 
-#![cfg(feature = "nli")]
-
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;

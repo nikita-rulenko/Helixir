@@ -85,8 +85,6 @@ pub struct SystemState {
     pub backend: BackendState,
     /// Current Ollama installation, service and models.
     pub ollama: OllamaState,
-    /// Whether this binary was built with local NLI support.
-    pub nli_supported: bool,
     /// Whether the NLI weights and tokenizer are installed and loadable.
     pub nli_installed: bool,
     /// Whether the resolved central config already matches the requested plan.
@@ -100,7 +98,6 @@ impl Default for SystemState {
         Self {
             backend: BackendState::Missing,
             ollama: OllamaState::default(),
-            nli_supported: cfg!(feature = "nli"),
             nli_installed: false,
             central_config_matches: false,
             client_registered: BTreeMap::new(),
@@ -132,8 +129,6 @@ pub struct InstallOptions {
     pub local_llm_model: Option<String>,
     /// Ensure the canonical Nomic embedding model is available through Ollama.
     pub install_nomic: bool,
-    /// Download the local NLI judge used by collective/insights modes.
-    pub install_nli: bool,
     /// MCP clients selected for automatic registration.
     pub clients: BTreeSet<ClientKind>,
 }
@@ -146,7 +141,6 @@ impl Default for InstallOptions {
             install_ollama: true,
             local_llm_model: Some(crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()),
             install_nomic: true,
-            install_nli: cfg!(feature = "nli"),
             clients: BTreeSet::new(),
         }
     }
@@ -218,9 +212,6 @@ pub enum PlanError {
     /// Local inference was requested without an existing/installable Ollama.
     #[error("local models require Ollama, but it is absent and installation was declined")]
     OllamaRequired,
-    /// NLI was selected with a lean binary that cannot load it.
-    #[error("this Helixir binary was built without the `nli` feature")]
-    NliUnsupported,
 }
 
 /// Build a deterministic minimal plan from detected state and user choices.
@@ -233,13 +224,10 @@ impl Planner {
         Self::plan_backend(state, options, &mut steps)?;
         Self::plan_local_models(state, options, &mut steps)?;
 
-        if options.install_nli && !state.nli_supported {
-            return Err(PlanError::NliUnsupported);
-        }
-        if options.install_nli && !state.nli_installed {
+        if !state.nli_installed {
             steps.push(InstallStep::required(
                 InstallAction::DownloadNli,
-                "install the contradiction-safe local NLI judge",
+                "install the required contradiction-safe local NLI judge",
             ));
         }
 
@@ -476,10 +464,7 @@ mod tests {
 
     #[test]
     fn fresh_local_plan_orders_backend_models_config_clients_then_doctor() {
-        let state = SystemState {
-            nli_supported: true,
-            ..SystemState::default()
-        };
+        let state = SystemState::default();
         let options = InstallOptions {
             clients: selected_clients(),
             ..InstallOptions::default()
@@ -527,7 +512,6 @@ mod tests {
                 running: true,
                 models,
             },
-            nli_supported: true,
             nli_installed: true,
             central_config_matches: true,
             client_registered: clients.iter().copied().map(|c| (c, true)).collect(),
@@ -557,13 +541,11 @@ mod tests {
                 healthy: true,
                 schema_compatible: false,
             },
-            nli_supported: true,
             ..SystemState::default()
         };
         let options = InstallOptions {
             local_llm_model: None,
             install_nomic: false,
-            install_nli: false,
             ..InstallOptions::default()
         };
 
@@ -587,13 +569,9 @@ mod tests {
 
     #[test]
     fn local_models_require_existing_or_installable_ollama() {
-        let state = SystemState {
-            nli_supported: true,
-            ..SystemState::default()
-        };
+        let state = SystemState::default();
         let options = InstallOptions {
             install_ollama: false,
-            install_nli: false,
             ..InstallOptions::default()
         };
 

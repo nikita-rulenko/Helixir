@@ -3,7 +3,8 @@
 //! The tool surface is split by domain so each file stays small and
 //! cohesive. Every submodule defines its own `#[tool_router(router = ...)]`
 //! block, which `rmcp` compiles into a public router constructor. We then
-//! combine those routers via the `+` operator in [`build_tool_router`].
+//! combine those routers via the `+` operator in
+//! [`HelixirMcpServer::build_tool_router`].
 //!
 //! - [`memory`] — long-term memory: add / search / list / update / graph /
 //!   concept / reasoning chain / incomplete thoughts.

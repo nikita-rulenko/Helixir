@@ -591,63 +591,6 @@ fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod rbac_cli_tests {
-    use super::{Cli, Cmd, require_rbac_admin};
-    use clap::Parser;
-    use helixir::core::rbac::{RbacPolicy, Role};
-
-    #[test]
-    fn parses_group_grant_and_status_commands() {
-        let cli = Cli::try_parse_from([
-            "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group", "alpha",
-        ])
-        .expect("valid rbac grant syntax");
-        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
-
-        let cli = Cli::try_parse_from(["helixir", "rbac", "status", "--json"])
-            .expect("valid rbac status syntax");
-        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
-
-        let cli = Cli::try_parse_from([
-            "helixir",
-            "rbac",
-            "dedup",
-            "attach",
-            "--group",
-            "backend",
-            "--dedup-group",
-            "development",
-        ])
-        .expect("valid dedup attach syntax");
-        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
-    }
-
-    #[test]
-    fn management_requires_global_admin_only_when_rbac_is_enabled() {
-        let mut enabled = RbacPolicy {
-            enabled: true,
-            ..Default::default()
-        };
-        enabled.assign_global("root", Role::Admin);
-
-        assert!(require_rbac_admin(&enabled, "root", "group management").is_ok());
-        assert!(require_rbac_admin(&enabled, "worker", "group management").is_err());
-        assert!(require_rbac_admin(&RbacPolicy::default(), "worker", "group management").is_ok());
-    }
-
-    #[test]
-    fn grant_cannot_spoof_actor_with_removed_cli_flag() {
-        assert!(
-            Cli::try_parse_from([
-                "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group",
-                "alpha", "--actor", "root",
-            ])
-            .is_err()
-        );
-    }
-}
-
 // ============ helixir config (#52) ============
 
 /// The file `config set/edit/apply` operates on: the resolved existing file,
@@ -1058,10 +1001,8 @@ async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
                 anyhow::bail!("RBAC check for another principal requires a global admin");
             }
             let allowed = match action.as_str() {
-                "read" => current.readable_users(&user).map_or(true, |users| {
-                    owner
-                        .as_deref()
-                        .map_or(true, |target| users.contains(target))
+                "read" => current.readable_users(&user).is_none_or(|users| {
+                    owner.as_deref().is_none_or(|target| users.contains(target))
                 }),
                 "write" => owner
                     .as_deref()
@@ -1805,7 +1746,7 @@ fn gather_config(interactive: bool, discovered: Option<(String, u16)>) -> Result
         port: e("HELIX_PORT", "6970"),
         instance: e("HELIX_INSTANCE", "bench"),
         llm_provider: e("HELIX_LLM_PROVIDER", "ollama"),
-        llm_model: e("HELIX_LLM_MODEL", "llama3.1:8b"),
+        llm_model: e("HELIX_LLM_MODEL", helixir::DEFAULT_LLM_MODEL),
         llm_key: e("HELIX_LLM_API_KEY", ""),
         emb_provider: e("HELIX_EMBEDDING_PROVIDER", "ollama"),
         emb_model: e("HELIX_EMBEDDING_MODEL", "nomic-embed-text"),
@@ -2157,24 +2098,17 @@ fn prompt_mode_recommendation() -> Result<MemoryMode> {
     ][idx])
 }
 
-/// During setup, for the collective/insights tiers, surface and optionally fetch
-/// the local NLI model (the paraphrase-merge judge). Solo skips it entirely.
-#[cfg(feature = "nli")]
-async fn maybe_setup_nli_model(mode: MemoryMode, interactive: bool, dry_run: bool) -> Result<()> {
+/// During setup, ensure the required local NLI model is present and loadable.
+async fn ensure_setup_nli_model(dry_run: bool) -> Result<()> {
     use helixir::llm::nli;
-    if !mode.collective_enabled() {
-        return Ok(());
-    }
     let s = nli::status();
     println!(
-        "Paraphrase merging ({}) uses a local NLI model — variant {} for {}.",
-        mode.label(),
-        s.variant_for_host,
-        s.host
+        "Helixir requires the local NLI safety model — variant {} for {}.",
+        s.variant_for_host, s.host
     );
-    if s.installed {
+    if s.installed && nli::verify_readiness().is_ok() {
         println!(
-            "  ✓ already installed ({:.0} MB at {}).\n",
+            "  ✓ already installed and verified ({:.0} MB at {}).\n",
             s.onnx_bytes as f64 / 1e6,
             s.dir.display()
         );
@@ -2184,34 +2118,12 @@ async fn maybe_setup_nli_model(mode: MemoryMode, interactive: bool, dry_run: boo
         println!("  (dry-run: would download ~90 MB)\n");
         return Ok(());
     }
-    let go = interactive
-        && Confirm::new()
-            .with_prompt("Download the NLI model now (~90 MB)?")
-            .default(true)
-            .interact()?;
-    if go {
-        let bytes = nli::download(false).await?;
-        match nli::NliJudge::load(&nli::NliJudge::default_dir()) {
-            Ok(_) => println!(
-                "  ✓ fetched {:.0} MB — NLI model ready.\n",
-                bytes as f64 / 1e6
-            ),
-            Err(e) => println!("  ⚠ downloaded but failed to load: {e}\n"),
-        }
-    } else {
-        println!("  skipped — run `helixir model download` when ready.\n");
-    }
-    Ok(())
-}
-
-/// No-op when built without the `nli` feature: paraphrase merging is unavailable,
-/// so setup just proceeds without offering the model.
-#[cfg(not(feature = "nli"))]
-async fn maybe_setup_nli_model(
-    _mode: MemoryMode,
-    _interactive: bool,
-    _dry_run: bool,
-) -> Result<()> {
+    let bytes = nli::download(s.installed).await?;
+    nli::verify_readiness().context("downloaded NLI model failed its readiness check")?;
+    println!(
+        "  ✓ fetched {:.0} MB — NLI model ready.\n",
+        bytes as f64 / 1e6
+    );
     Ok(())
 }
 
@@ -2240,9 +2152,8 @@ async fn setup_run(
     let mode_label = effective_mode.label();
     println!("Privilege tier: {mode_label} (HELIXIR_MODE).\n");
 
-    // Collective/insights use a local NLI model for contradiction-safe paraphrase
-    // merging — offer to fetch it now (solo never needs it).
-    maybe_setup_nli_model(effective_mode, interactive, dry_run).await?;
+    // NLI is a required write-safety component in every privilege tier.
+    ensure_setup_nli_model(dry_run).await?;
 
     // Gateway mode short-circuits DB discovery: clients talk to the per-host
     // gateway over HTTP, which holds the HELIX_* config — they carry none.
@@ -2368,7 +2279,6 @@ async fn detect_onboard_state() -> helixir::installer::SystemState {
             running: ollama_running,
             models,
         },
-        nli_supported: cfg!(feature = "nli"),
         nli_installed: onboard_nli_installed(),
         central_config_matches: false,
         client_registered: clients,
@@ -2463,14 +2373,8 @@ fn client_available(kind: helixir::installer::ClientKind) -> bool {
     }
 }
 
-#[cfg(feature = "nli")]
 fn onboard_nli_installed() -> bool {
-    helixir::llm::nli::status().installed
-}
-
-#[cfg(not(feature = "nli"))]
-const fn onboard_nli_installed() -> bool {
-    false
+    helixir::llm::nli::status().installed && helixir::llm::nli::verify_readiness().is_ok()
 }
 
 fn gather_onboard_options(
@@ -2535,15 +2439,6 @@ fn gather_onboard_options(
             options.local_llm_model = None;
             options.install_nomic = false;
         }
-
-        options.install_nli = if options.mode.collective_enabled() && state.nli_supported {
-            Confirm::new()
-                .with_prompt("Download the local NLI model for contradiction-safe merging?")
-                .default(true)
-                .interact()?
-        } else {
-            false
-        };
 
         let available: Vec<_> = state.client_registered.keys().copied().collect();
         if !available.is_empty() {
@@ -2758,7 +2653,7 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
             InstallAction::DeploySchema => {
                 let deploy = current_sibling("helixir-deploy");
                 let argv = helixir::installer::backend::deploy_schema(&deploy, &self.backend);
-                Self::run(&argv[0], &argv[1..].to_vec()).map_err(|error| error.to_string())
+                Self::run(&argv[0], &argv[1..]).map_err(|error| error.to_string())
             }
             InstallAction::VerifyBackend => {
                 if !backend_reachable(&self.backend.host, self.backend.port) {
@@ -2791,17 +2686,12 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                 Self::run(&command.program, &command.args).map_err(|error| error.to_string())
             }
             InstallAction::DownloadNli => {
-                #[cfg(feature = "nli")]
-                {
-                    helixir::llm::nli::download(false)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    Ok(())
-                }
-                #[cfg(not(feature = "nli"))]
-                {
-                    return Err("binary was built without NLI support".to_string());
-                }
+                helixir::llm::nli::download(true)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                helixir::llm::nli::verify_readiness()
+                    .map_err(|error| format!("verify downloaded NLI model: {error}"))?;
+                Ok(())
             }
             InstallAction::WriteCentralConfig => self
                 .write_central_config()
@@ -2942,11 +2832,7 @@ async fn doctor_run(json_output: bool) -> Result<()> {
     } else {
         true
     };
-    let nli_ready = if config.mode.collective_enabled() {
-        Some(onboard_nli_installed())
-    } else {
-        None
-    };
+    let nli_ready = Some(onboard_nli_installed());
     let binaries_ready = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
@@ -3003,9 +2889,9 @@ fn doctor_config_ready() -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return std::fs::metadata(path)
+        std::fs::metadata(path)
             .map(|meta| meta.permissions().mode() & 0o077 == 0)
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
     #[cfg(not(unix))]
     true
@@ -3124,7 +3010,6 @@ fn wire_entry_to_clients(
 
 // --- contradiction debt (#45): the Cutter's hygiene dashboard ---
 
-#[cfg(feature = "nli")]
 async fn model_cmd(sub: &ModelCmd) -> Result<()> {
     use helixir::llm::nli;
     match sub {
@@ -3166,14 +3051,6 @@ async fn model_cmd(sub: &ModelCmd) -> Result<()> {
     }
 }
 
-#[cfg(not(feature = "nli"))]
-async fn model_cmd(_sub: &ModelCmd) -> Result<()> {
-    anyhow::bail!(
-        "this build was compiled without the `nli` feature — rebuild with `--features nli` to use the model/NLI commands"
-    )
-}
-
-#[cfg(feature = "nli")]
 fn nli_check() -> Result<()> {
     use helixir::llm::nli::{NliJudge, NliLabel};
 
@@ -3240,7 +3117,6 @@ fn nli_check() -> Result<()> {
     }
 }
 
-#[cfg(feature = "nli")]
 async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result<()> {
     use helixir::agents::atropos::Atropos;
     println!("Paraphrase backstop (#43/#55) — collective scan (cosine ≥ {threshold}) …");
@@ -3260,13 +3136,6 @@ async fn merge_run(client: &HelixirClient, limit: i64, threshold: f64) -> Result
         s.contradictions_blocked
     );
     Ok(())
-}
-
-#[cfg(not(feature = "nli"))]
-async fn merge_run(_client: &HelixirClient, _limit: i64, _threshold: f64) -> Result<()> {
-    anyhow::bail!(
-        "this build was compiled without the `nli` feature — paraphrase merge is unavailable; rebuild with `--features nli`"
-    )
 }
 
 async fn backfill(client: &HelixirClient, limit: i64) -> Result<()> {
@@ -3425,8 +3294,8 @@ async fn swarm(client: &HelixirClient, window: Option<u64>) -> Result<()> {
         roster.len()
     );
     println!(
-        "     {:<22} {:<11} {:<16} {:<7} {}",
-        "agent", "role", "host", "age", "status"
+        "     {:<22} {:<11} {:<16} {:<7} status",
+        "agent", "role", "host", "age"
     );
     for a in &roster {
         let dot = if a.is_active(now, win) { "●" } else { "·" };
@@ -3482,10 +3351,10 @@ fn is_alive(_pid: i32) -> bool {
 /// the daemon (#43) and the gateway (#42). Returns the child pid.
 #[cfg(unix)]
 fn spawn_detached(name: &str, args: &[&str], extra: serde_json::Value) -> Result<(u32, PathBuf)> {
-    if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64())) {
-        if is_alive(pid as i32) {
-            anyhow::bail!("{name} already running (pid {pid}); `helixir {name} stop` first");
-        }
+    if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64()))
+        && is_alive(pid as i32)
+    {
+        anyhow::bail!("{name} already running (pid {pid}); `helixir {name} stop` first");
     }
     let exe = std::env::current_exe().context("current_exe")?;
     let log = helixir_dir()?.join(format!("{name}.log"));
@@ -3701,7 +3570,7 @@ fn watch_install() -> Result<()> {
                 "FAILED — run manually: launchctl load -w <plist>"
             }
         );
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -3755,7 +3624,7 @@ fn watch_uninstall() -> Result<()> {
             .status();
         std::fs::remove_file(&plist)?;
         println!("Removed {}.", plist.display());
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -3850,20 +3719,18 @@ fn daemon_status() -> Result<()> {
     if let Some(l) = state.get("log").and_then(|v| v.as_str()) {
         println!("  log: {l}");
     }
-    if let Ok(body) = std::fs::read_to_string(journal_path()) {
-        if let Some(last) = body
+    if let Ok(body) = std::fs::read_to_string(journal_path())
+        && let Some(last) = body
             .lines()
             .filter(|l| l.contains("\"agent\":\"daemon\""))
-            .last()
-        {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(last) {
-                println!(
-                    "  last pass: {} — {}",
-                    v.get("ts").and_then(|x| x.as_str()).unwrap_or("?"),
-                    v.get("detail").and_then(|x| x.as_str()).unwrap_or("")
-                );
-            }
-        }
+            .next_back()
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(last)
+    {
+        println!(
+            "  last pass: {} — {}",
+            v.get("ts").and_then(|x| x.as_str()).unwrap_or("?"),
+            v.get("detail").and_then(|x| x.as_str()).unwrap_or("")
+        );
     }
     Ok(())
 }
@@ -3966,14 +3833,13 @@ fn insight_journal_path() -> PathBuf {
 }
 
 fn write_insight(insight: &Insight) {
-    if let Ok(line) = serde_json::to_string(insight) {
-        if let Ok(mut f) = OpenOptions::new()
+    if let Ok(line) = serde_json::to_string(insight)
+        && let Ok(mut f) = OpenOptions::new()
             .create(true)
             .append(true)
             .open(insight_journal_path())
-        {
-            let _ = writeln!(f, "{line}");
-        }
+    {
+        let _ = writeln!(f, "{line}");
     }
 }
 
@@ -4029,4 +3895,61 @@ fn journal_tail(n: usize) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod rbac_cli_tests {
+    use super::{Cli, Cmd, require_rbac_admin};
+    use clap::Parser;
+    use helixir::core::rbac::{RbacPolicy, Role};
+
+    #[test]
+    fn parses_group_grant_and_status_commands() {
+        let cli = Cli::try_parse_from([
+            "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group", "alpha",
+        ])
+        .expect("valid rbac grant syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from(["helixir", "rbac", "status", "--json"])
+            .expect("valid rbac status syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from([
+            "helixir",
+            "rbac",
+            "dedup",
+            "attach",
+            "--group",
+            "backend",
+            "--dedup-group",
+            "development",
+        ])
+        .expect("valid dedup attach syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+    }
+
+    #[test]
+    fn management_requires_global_admin_only_when_rbac_is_enabled() {
+        let mut enabled = RbacPolicy {
+            enabled: true,
+            ..Default::default()
+        };
+        enabled.assign_global("root", Role::Admin);
+
+        assert!(require_rbac_admin(&enabled, "root", "group management").is_ok());
+        assert!(require_rbac_admin(&enabled, "worker", "group management").is_err());
+        assert!(require_rbac_admin(&RbacPolicy::default(), "worker", "group management").is_ok());
+    }
+
+    #[test]
+    fn grant_cannot_spoof_actor_with_removed_cli_flag() {
+        assert!(
+            Cli::try_parse_from([
+                "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group",
+                "alpha", "--actor", "root",
+            ])
+            .is_err()
+        );
+    }
 }

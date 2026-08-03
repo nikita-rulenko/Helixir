@@ -398,12 +398,11 @@ impl ThinkingSession {
         let mut pushed: HashSet<String> = HashSet::new();
         let mut seen: HashSet<NodeIndex> = HashSet::new();
         let push_recall = |t: &Thought, pushed: &mut HashSet<String>, out: &mut Vec<String>| {
-            if t.is_recall() {
-                if let Some(id) = &t.source_memory_id {
-                    if pushed.insert(id.clone()) {
-                        out.push(id.clone());
-                    }
-                }
+            if t.is_recall()
+                && let Some(id) = &t.source_memory_id
+                && pushed.insert(id.clone())
+            {
+                out.push(id.clone());
             }
         };
 

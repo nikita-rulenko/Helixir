@@ -266,11 +266,10 @@ impl<P: LlmProvider> LlmExtractor<P> {
     fn try_parse_extraction(&self, response: &str) -> Result<ExtractionResult, String> {
         serde_json::from_str::<ExtractionResult>(response)
             .or_else(|_| {
-                if let Some(start) = response.find('{') {
-                    if let Some(end) = response.rfind('}') {
-                        return serde_json::from_str(&response[start..=end])
-                            .map_err(|e| e.to_string());
-                    }
+                if let Some(start) = response.find('{')
+                    && let Some(end) = response.rfind('}')
+                {
+                    return serde_json::from_str(&response[start..=end]).map_err(|e| e.to_string());
                 }
                 Err("no JSON object found in response".to_string())
             })

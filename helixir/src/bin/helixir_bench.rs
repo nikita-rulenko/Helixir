@@ -1,8 +1,11 @@
 //! End-to-end latency benchmark for **Helixir** (not raw HelixDB HTTP).
 //!
 //! Exercises the same paths as MCP:
-//! - [`helixir::HelixirClient::search`] → embedding + [`SearchEngine`] (vector / BM25 / traversal per config).
-//! - [`helixir::HelixirClient::add`] → full `add_memory` pipeline (LLM extract, embed, decision, graph).
+//! - [`helixir::core::HelixirClient::search`] → embedding +
+//!   [`helixir::toolkit::mind_toolbox::search::SearchEngine`] (vector / BM25 /
+//!   traversal per config).
+//! - [`helixir::core::HelixirClient::add`] → full `add_memory` pipeline (LLM
+//!   extract, embed, decision, graph).
 //!
 //! **Setup:** point `HELIX_HOST` / `HELIX_PORT` at your HelixDB instance; set LLM and embedding env vars
 //! like for `helixir-mcp`. Optional graph bulk-load (Ansible + scripts) is only corpus prep — this binary

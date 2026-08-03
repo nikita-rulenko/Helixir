@@ -170,10 +170,10 @@ impl<'a> Hygieia<'a> {
     /// Cooldown-deduped per kind. Best-effort end to end.
     pub async fn alert(&mut self, kind: &str, summary: &str, detail: serde_json::Value) {
         let cooldown = Duration::from_secs(self.cfg().alert_cooldown_secs);
-        if let Some(t) = self.last_alert.get(kind) {
-            if t.elapsed() < cooldown {
-                return;
-            }
+        if let Some(t) = self.last_alert.get(kind)
+            && t.elapsed() < cooldown
+        {
+            return;
         }
         self.last_alert.insert(kind.to_string(), Instant::now());
 
@@ -340,34 +340,34 @@ impl<'a> Hygieia<'a> {
             // Ask for the full current charge; reclaim_step_mib stays as
             // the floor for tiny containers.
             let step = self.cfg().reclaim_step_mib.max(sample.used_mib as u64 + 64);
-            if reclaim_container_cache(&name, step).await {
-                if let Some(after) = sample_container_memory(&name).await {
-                    if after.pct() < self.cfg().mem_alert_pct {
-                        journal(&HealthEvent {
-                            at: chrono::Utc::now().to_rfc3339(),
-                            severity: "heal".into(),
-                            kind: "cache_reclaimed".into(),
-                            summary: format!(
-                                "container {name} memory was cache-bloated: {:.0} -> {:.0} MiB after reclaiming up to {step} MiB of page cache",
-                                sample.used_mib, after.used_mib
-                            ),
-                            detail: serde_json::json!({
-                                "before_mib": sample.used_mib,
-                                "after_mib": after.used_mib,
-                                "limit_mib": sample.limit_mib,
-                            }),
-                        });
-                        info!(
-                            "hygieia: cache valve — {name} {:.0} -> {:.0} MiB, no real pressure",
+            if reclaim_container_cache(&name, step).await
+                && let Some(after) = sample_container_memory(&name).await
+            {
+                if after.pct() < self.cfg().mem_alert_pct {
+                    journal(&HealthEvent {
+                        at: chrono::Utc::now().to_rfc3339(),
+                        severity: "heal".into(),
+                        kind: "cache_reclaimed".into(),
+                        summary: format!(
+                            "container {name} memory was cache-bloated: {:.0} -> {:.0} MiB after reclaiming up to {step} MiB of page cache",
                             sample.used_mib, after.used_mib
-                        );
-                        return;
-                    }
-                    // Pressure survived the reclaim: judge the restart bar
-                    // by the post-reclaim (live-heap) number, not the
-                    // cache-inflated one.
-                    live = after;
+                        ),
+                        detail: serde_json::json!({
+                            "before_mib": sample.used_mib,
+                            "after_mib": after.used_mib,
+                            "limit_mib": sample.limit_mib,
+                        }),
+                    });
+                    info!(
+                        "hygieia: cache valve — {name} {:.0} -> {:.0} MiB, no real pressure",
+                        sample.used_mib, after.used_mib
+                    );
+                    return;
                 }
+                // Pressure survived the reclaim: judge the restart bar
+                // by the post-reclaim (live-heap) number, not the
+                // cache-inflated one.
+                live = after;
             }
         }
 
@@ -666,10 +666,10 @@ impl Hygieia<'_> {
             .await;
             return;
         }
-        if let Some(age) = newest_backup_age_hours(&backup_dir) {
-            if age < cfg.backup_interval_hours {
-                return; // fresh enough
-            }
+        if let Some(age) = newest_backup_age_hours(&backup_dir)
+            && age < cfg.backup_interval_hours
+        {
+            return; // fresh enough
         }
 
         let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
