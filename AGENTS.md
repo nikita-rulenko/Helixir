@@ -577,3 +577,11 @@ Before filing **any** issue larger than P3:
 
 These three steps would have prevented issues #20, #21, #23, and #24 in
 this repo. They cost ~10 minutes per issue.
+
+## 12. HelixDB v2.3.5 + RBAC agent contract
+
+- `helix --version` must be `2.3.5`; never run `helix update` or use a v3/hyperscale binary.
+- HQL in this repository supports `//` line comments; `/* ... */` block comments are rejected.
+- Before schema/query changes, read `helixir/doc/data-model.md` and `helixir/doc/architecture.md`, keep migrations additive, avoid non-nullable fields on populated nodes, and run `helix check`.
+- Before a live schema transition, create a recoverable backup of the persistent volume, stop/rebuild/recreate against that same volume, deploy, and perform read-only health/query verification. Never deploy an unbacked live volume.
+- RBAC is graph-backed in HelixDB and is the single source of truth for Rust, MCP, and CLI. It is disabled by default; when enabled it is deny-by-default and fail-closed. `actor_id` is the authenticated principal and `user_id` is the memory owner/target. Use `helixir rbac`; do not introduce local ACLs.

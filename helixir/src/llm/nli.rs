@@ -209,6 +209,9 @@ mod tests {
 // ----------------------------------------------------------------------------
 
 const NLI_REPO: &str = "cross-encoder/nli-deberta-v3-xsmall";
+/// Immutable HuggingFace commit used by the downloader.  Model bytes are
+/// fetched from this revision rather than the mutable `main` branch.
+pub const NLI_REVISION: &str = "a150876415327c80daeff35ca6f68f5ed8cf5c24";
 const HF_BASE: &str = "https://huggingface.co";
 
 /// The remote ONNX path best matching this machine's arch / CPU features.
@@ -283,6 +286,11 @@ pub async fn download(force: bool) -> Result<u64> {
         ("tokenizer.json", "tokenizer.json"),
         ("config.json", "config.json"),
     ];
+    let staging = dir.join(format!(".download.{}", std::process::id()));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging).context("remove stale NLI staging directory")?;
+    }
+    std::fs::create_dir_all(&staging).context("create NLI staging directory")?;
     // Async client — the CLI runs inside a tokio runtime, so reqwest::blocking
     // would panic ("cannot drop a runtime in an async context").
     let client = reqwest::Client::builder()
@@ -295,7 +303,7 @@ pub async fn download(force: bool) -> Result<u64> {
         if dest.exists() && !force {
             continue;
         }
-        let url = format!("{HF_BASE}/{NLI_REPO}/resolve/main/{remote}");
+        let url = format!("{HF_BASE}/{NLI_REPO}/resolve/{NLI_REVISION}/{remote}");
         let bytes = client
             .get(&url)
             .send()
@@ -306,8 +314,25 @@ pub async fn download(force: bool) -> Result<u64> {
             .bytes()
             .await
             .context("read body")?;
-        std::fs::write(&dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+        // Never replace a known-good file with a truncated response.  Every
+        // selected file is staged first; the live directory is touched only
+        // after all HTTP responses completed successfully.
+        let temporary = staging.join(local);
+        if let Some(parent) = temporary.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&temporary, &bytes)
+            .with_context(|| format!("write {}", temporary.display()))?;
         total += bytes.len() as u64;
     }
+    for (_, local) in files {
+        let staged = staging.join(local);
+        if staged.exists() {
+            let dest = dir.join(local);
+            std::fs::rename(&staged, &dest)
+                .with_context(|| format!("install {}", dest.display()))?;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&staging);
     Ok(total)
 }

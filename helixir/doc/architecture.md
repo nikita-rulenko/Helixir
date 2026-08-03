@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.13.2` plus the installer-onboarding branch. Last verified: 2026-07-20._
 
 ## 1. System context
 
@@ -29,9 +29,20 @@
    └──────────────────────┘                └────────────────────────────┘
 ```
 
-There is also a second binary `helixir-deploy` (used by `install.sh`, `make
-setup`, and Ansible) which pushes `schema.hx` and `queries.hx` to HelixDB over
-HTTP. It does not participate at runtime.
+There is also a second binary `helixir-deploy` (used by `install.sh` and `make
+setup`) which pushes `schema.hx` and `queries.hx` to HelixDB over HTTP. It does
+not participate at runtime.
+
+Installation is a control plane outside the runtime dependency stack:
+`src/installer/` detects machine state, builds a typed installation plan, and
+coordinates platform adapters through apply/rollback boundaries. Its client
+adapters use native Claude Code/Codex commands and strict Cursor JSON merges;
+provider secrets stay outside MCP entries. Model adapters emit shell-free
+Ollama commands and pin NLI downloads to an immutable model revision. The
+backend adapter snapshots the persistent Docker volume before schema changes,
+and the manifest records the selected version/models/clients atomically. The
+CLI and a future native UI are frontends over this module; they must not own
+Docker, model-download, or MCP-client mutation policy themselves.
 
 ## 2. Layers
 
@@ -118,6 +129,7 @@ bug to file — not a feature to copy.
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
+| Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports; frontends and platform adapters meet here |
 
 ## 4. Cross-cutting concerns
 
@@ -391,3 +403,24 @@ category-bridge axis, **longest-chain reconstruction** (`HelixirClient::
 longest_chain`), and **per-edge reasoning weights** now flowing through PPR
 ranking + path confidence. In perspective the Moirai run as **N parallel
 instances** (memory only grows), supervised inside the daemon (§6 open items).
+
+### 7.8 RBAC as a graph-backed policy service
+
+The optional RBAC layer is a HelixirDB-backed service (`core::rbac::RbacManager`),
+not a host-local ACL file. `RbacGroup`, `RbacAssignment`, and `RbacConfig`
+provide stable state and audit history; `RBAC_MEMBER_OF` and
+`MEMORY_IN_RBAC_GROUP` provide the graph traversals used to derive group and
+memory visibility. The CLI's `helixir rbac` family is a thin management client
+over the same named HQL queries used by MCP and `HelixirClient` authorization.
+
+The layer is disabled by default for compatibility with Helixir's trusted
+network deployment. Once enabled, the service fails closed for unassigned
+principals and enforces the role matrix before writes/updates and after reads;
+the coarse `HELIXIR_MODE` capability gate remains independent.
+
+MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
+the authenticated principal whose grants are evaluated, while `user_id`
+remains the memory owner/target. Omitting `actor_id` preserves the legacy
+trusted-network contract by treating `user_id` as the principal; an
+authenticated gateway should populate it explicitly before enabling remote
+impersonation.

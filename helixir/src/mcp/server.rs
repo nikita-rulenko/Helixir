@@ -98,6 +98,32 @@ impl HelixirMcpServer {
         self.client.load_full()
     }
 
+    /// Resolve an MCP principal without allowing an enabled RBAC deployment
+    /// to fall back to a caller-controlled owner parameter.  The fallback is
+    /// retained only for the documented disabled/trusted-network mode.
+    pub(super) async fn actor_id(
+        &self,
+        requested: Option<&str>,
+        legacy_owner: &str,
+    ) -> Result<String, McpError> {
+        if let Some(actor) = requested {
+            return Ok(actor.to_string());
+        }
+        let policy = self
+            .client()
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if policy.enabled {
+            return Err(McpError::invalid_request(
+                "RBAC-enabled MCP calls require actor_id",
+                None,
+            ));
+        }
+        Ok(legacy_owner.to_string())
+    }
+
     /// #52: re-read the layered config (defaults -> helixir.toml -> env),
     /// build + initialize a NEW client, swap it in. The old client keeps
     /// serving whatever still holds it (in-flight requests, FastThink).

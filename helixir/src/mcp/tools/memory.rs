@@ -31,6 +31,9 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<AddMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Adding memory for user={}", params.user_id);
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         // Rendezvous (#39): a writing agent announces its presence for free —
         // any agent that passes agent_id shows up in swarm_status with host +
@@ -59,7 +62,8 @@ impl HelixirMcpServer {
             use crate::toolkit::tooling_manager::ingest_buffer::{STATUS_DONE, STATUS_FAILED};
             let enq = self
                 .client()
-                .add_buffered(
+                .add_buffered_as(
+                    &actor_id,
                     &params.message,
                     &params.user_id,
                     params.agent_id.as_deref(),
@@ -126,7 +130,8 @@ impl HelixirMcpServer {
 
         let result = self
             .client()
-            .add(
+            .add_as(
+                &actor_id,
                 &params.message,
                 &params.user_id,
                 params.agent_id.as_deref(),
@@ -175,6 +180,9 @@ impl HelixirMcpServer {
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
         let mode = params
             .mode
             .map(|m| m.as_str().to_string())
@@ -224,7 +232,8 @@ impl HelixirMcpServer {
 
         let results = self
             .client()
-            .search(
+            .search_as(
+                &actor_id,
                 &params.query,
                 &params.user_id,
                 crate::core::helixir_client::SearchParams {
@@ -269,6 +278,25 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
         let limit = params.limit.unwrap_or(100) as i64;
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
+        let policy = self
+            .client()
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if policy.enabled
+            && policy
+                .readable_users(&actor_id)
+                .is_some_and(|users| !users.contains(&params.user_id))
+        {
+            return Err(McpError::invalid_request(
+                format!("RBAC denied memory listing for '{}'", params.user_id),
+                None,
+            ));
+        }
         info!(
             "Listing memories for user={}, limit={}",
             params.user_id, limit
@@ -351,6 +379,27 @@ impl HelixirMcpServer {
             return Ok(CallToolResult::success(vec![Content::text(
                 payload.to_string(),
             )]));
+        }
+
+        let policy = self
+            .client()
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if policy.enabled {
+            let Some(actor_id) = params.actor_id.as_deref() else {
+                return Err(McpError::invalid_request(
+                    "RBAC-enabled roster discovery requires actor_id",
+                    None,
+                ));
+            };
+            if !policy.is_admin(actor_id) {
+                return Err(McpError::invalid_request(
+                    "RBAC denied roster discovery; global admin role required",
+                    None,
+                ));
+            }
         }
 
         let limit = params.limit.unwrap_or(50).max(1) as usize;
@@ -611,10 +660,13 @@ impl HelixirMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let id_preview: String = params.memory_id.chars().take(12).collect();
         info!("Updating memory: {}...", id_preview);
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         let result = self
             .client()
-            .update(&params.memory_id, &params.new_content, &params.user_id)
+            .update_as(&actor_id, &params.memory_id, &params.new_content)
             .await
             .map_err(Self::convert_error)?;
 
@@ -636,10 +688,14 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<GetMemoryGraphParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Getting memory graph for user={}", params.user_id);
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         let result = self
             .client()
-            .get_graph(
+            .get_graph_as(
+                &actor_id,
                 &params.user_id,
                 params.memory_id.as_deref(),
                 params.depth.map(|d| d as usize),
@@ -663,10 +719,14 @@ impl HelixirMcpServer {
             "Concept search: '{}' type={:?}",
             query_preview, params.concept_type
         );
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         let results = self
             .client()
-            .search_by_concept(
+            .search_by_concept_as(
+                &actor_id,
                 &params.query,
                 &params.user_id,
                 params.concept_type.map(|c| c.as_str()),
@@ -694,10 +754,14 @@ impl HelixirMcpServer {
 
         let query_preview: String = params.query.chars().take(30).collect();
         info!("Reasoning chain: '{}' mode={}", query_preview, chain_mode);
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         let result = self
             .client()
-            .search_reasoning_chain(
+            .search_reasoning_chain_as(
+                &actor_id,
                 &params.query,
                 &params.user_id,
                 Some(chain_mode),
@@ -725,10 +789,14 @@ impl HelixirMcpServer {
             params.query_a.chars().take(30).collect::<String>(),
             params.query_b.chars().take(30).collect::<String>()
         );
+        let actor_id = self
+            .actor_id(params.actor_id.as_deref(), &params.user_id)
+            .await?;
 
         let result = self
             .client()
-            .connect_memories(
+            .connect_memories_as(
+                &actor_id,
                 &params.query_a,
                 &params.query_b,
                 &params.user_id,
@@ -753,13 +821,30 @@ impl HelixirMcpServer {
         info!("Searching for incomplete thoughts");
 
         let limit = params.limit.unwrap_or(5) as usize;
+        let owner = params.user_id.as_deref().unwrap_or("");
+        let actor_id = self.actor_id(params.actor_id.as_deref(), owner).await?;
+        let client = self.client();
 
-        let results = self
-            .client()
+        let results = client
             .tooling()
             .search_by_tag("incomplete_thought", limit)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let policy = client
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let results = if policy.enabled {
+            policy.filter_results(&actor_id, results, |result| {
+                result
+                    .metadata
+                    .get("user_id")
+                    .and_then(|value| value.as_str())
+            })
+        } else {
+            results
+        };
 
         if results.is_empty() {
             let json = Self::result_to_json(json!({

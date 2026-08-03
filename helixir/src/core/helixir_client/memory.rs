@@ -28,7 +28,22 @@ impl HelixirClient {
         agent_id: Option<&str>,
         metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
-        self.add_with_tags(message, user_id, agent_id, metadata, None)
+        self.add_as(user_id, message, user_id, agent_id, metadata)
+            .await
+    }
+
+    /// Add a memory on behalf of an owner while authorizing the authenticated actor.
+    /// The owner remains the memory's provenance identity; `actor_id` is never
+    /// substituted into the stored `user_id` field.
+    pub async fn add_as(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        metadata: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_with_tags_as(actor_id, message, owner_id, agent_id, metadata, None)
             .await
     }
 
@@ -41,13 +56,46 @@ impl HelixirClient {
         metadata: Option<HashMap<String, serde_json::Value>>,
         context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_with_tags_as(user_id, message, user_id, agent_id, metadata, context_tags)
+            .await
+    }
+
+    /// Add a tagged memory with a distinct authenticated actor and owner.
+    pub async fn add_with_tags_as(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        metadata: Option<HashMap<String, serde_json::Value>>,
+        context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
+
+        self.rbac()
+            .authorize_write_for(actor_id, owner_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
 
         let result = self
             .tooling_manager
-            .add_memory(message, user_id, agent_id, metadata, context_tags)
+            .add_memory(message, owner_id, agent_id, metadata, context_tags)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
+
+        let rbac = self.rbac();
+        if rbac
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?
+            .enabled
+        {
+            for memory_id in &result.added {
+                rbac.link_memory_to_actor_groups(memory_id, owner_id)
+                    .await
+                    .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+            }
+        }
 
         Ok(AddMemoryResult {
             memories_added: result.added.len(),
@@ -71,13 +119,45 @@ impl HelixirClient {
         agent_id: Option<&str>,
         context_tags: Option<&str>,
     ) -> Result<AddMemoryResult, HelixirClientError> {
+        self.add_prepared_as(user_id, memories, user_id, agent_id, context_tags)
+            .await
+    }
+
+    /// Store prepared memories with a distinct authenticated actor and owner.
+    pub async fn add_prepared_as(
+        &self,
+        actor_id: &str,
+        memories: Vec<crate::llm::extractor::ExtractedMemory>,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+    ) -> Result<AddMemoryResult, HelixirClientError> {
         self.ensure_initialized().await?;
+
+        self.rbac()
+            .authorize_write_for(actor_id, owner_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
 
         let result = self
             .tooling_manager
-            .add_prepared_memories(memories, user_id, agent_id, context_tags)
+            .add_prepared_memories(memories, owner_id, agent_id, context_tags)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
+
+        let rbac = self.rbac();
+        if rbac
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?
+            .enabled
+        {
+            for memory_id in &result.added {
+                rbac.link_memory_to_actor_groups(memory_id, owner_id)
+                    .await
+                    .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+            }
+        }
 
         Ok(AddMemoryResult {
             memories_added: result.added.len(),
@@ -102,9 +182,27 @@ impl HelixirClient {
         context_tags: Option<&str>,
     ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::EnqueuedInput, HelixirClientError>
     {
+        self.add_buffered_as(user_id, message, user_id, agent_id, context_tags)
+            .await
+    }
+
+    /// Queue a memory with a distinct authenticated actor and owner.
+    pub async fn add_buffered_as(
+        &self,
+        actor_id: &str,
+        message: &str,
+        owner_id: &str,
+        agent_id: Option<&str>,
+        context_tags: Option<&str>,
+    ) -> Result<crate::toolkit::tooling_manager::ingest_buffer::EnqueuedInput, HelixirClientError>
+    {
         self.ensure_initialized().await?;
+        self.rbac()
+            .authorize_write_for(actor_id, owner_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         self.tooling_manager
-            .enqueue_input(message, user_id, agent_id, context_tags)
+            .enqueue_input(message, owner_id, agent_id, context_tags)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))
     }
@@ -181,6 +279,17 @@ impl HelixirClient {
         user_id: &str,
         params: SearchParams,
     ) -> Result<Vec<SearchResult>, HelixirClientError> {
+        self.search_as(user_id, query, user_id, params).await
+    }
+
+    /// Search memories as an authenticated actor, optionally targeting another owner.
+    pub async fn search_as(
+        &self,
+        actor_id: &str,
+        query: &str,
+        owner_id: &str,
+        params: SearchParams,
+    ) -> Result<Vec<SearchResult>, HelixirClientError> {
         self.ensure_initialized().await?;
 
         let mode = params
@@ -191,7 +300,7 @@ impl HelixirClient {
             .tooling_manager
             .search_memory(
                 query,
-                user_id,
+                owner_id,
                 crate::toolkit::tooling_manager::MemorySearchOptions {
                     limit: params.limit,
                     mode: mode.to_string(),
@@ -203,6 +312,18 @@ impl HelixirClient {
             )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
+
+        let policy = self
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        let results = policy.filter_results(actor_id, results, |result| {
+            result
+                .metadata
+                .get("user_id")
+                .and_then(|value| value.as_str())
+        });
 
         Ok(results
             .into_iter()
@@ -222,11 +343,45 @@ impl HelixirClient {
         new_content: &str,
         user_id: &str,
     ) -> Result<UpdateResult, HelixirClientError> {
+        self.update_as(user_id, memory_id, new_content).await
+    }
+
+    /// Update a memory as an authenticated actor. The stored owner is loaded
+    /// from HelixDB, so callers cannot change authorship by changing a parameter.
+    pub async fn update_as(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+        new_content: &str,
+    ) -> Result<UpdateResult, HelixirClientError> {
         self.ensure_initialized().await?;
+
+        let policy = self
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        if policy.enabled {
+            let response: serde_json::Value = self
+                .db
+                .execute_query("getMemory", &serde_json::json!({"memory_id": memory_id}))
+                .await
+                .map_err(|e| HelixirClientError::Operation(format!("load memory owner: {e}")))?;
+            let owner = response
+                .get("memory")
+                .and_then(|memory| memory.get("user_id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if owner.is_empty() || !policy.can_write_owner(actor_id, owner) {
+                return Err(HelixirClientError::Operation(format!(
+                    "RBAC denied update for actor '{actor_id}' on memory '{memory_id}'"
+                )));
+            }
+        }
 
         let updated = self
             .tooling_manager
-            .update_memory(memory_id, new_content, user_id)
+            .update_memory(memory_id, new_content, actor_id)
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 
@@ -238,7 +393,43 @@ impl HelixirClient {
     }
 
     pub async fn delete(&self, memory_id: &str) -> Result<bool, HelixirClientError> {
+        // The legacy signature has no authenticated actor.  It remains usable
+        // only while RBAC is disabled; enabled deployments must call
+        // `delete_as` so ownership is checked before mutation.
+        self.delete_as("", memory_id).await
+    }
+
+    /// Delete a memory as an authenticated actor.  This administrative API is
+    /// not exposed over MCP, but it still honors the same owner policy.
+    pub async fn delete_as(
+        &self,
+        actor_id: &str,
+        memory_id: &str,
+    ) -> Result<bool, HelixirClientError> {
         self.ensure_initialized().await?;
+
+        let policy = self
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        if policy.enabled {
+            let response: serde_json::Value = self
+                .db
+                .execute_query("getMemory", &serde_json::json!({"memory_id": memory_id}))
+                .await
+                .map_err(|e| HelixirClientError::Operation(format!("load memory owner: {e}")))?;
+            let owner = response
+                .get("memory")
+                .and_then(|memory| memory.get("user_id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if owner.is_empty() || !policy.can_write_owner(actor_id, owner) {
+                return Err(HelixirClientError::Operation(format!(
+                    "RBAC denied delete for actor '{actor_id}' on memory '{memory_id}'"
+                )));
+            }
+        }
 
         self.tooling_manager
             .delete_memory(memory_id)

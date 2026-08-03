@@ -132,6 +132,10 @@ pub struct AddMemoryParams {
         description = "Who this memory belongs to (e.g. 'claude', 'developer'). Use the SAME id consistently to build a coherent personal memory; it also scopes later searches."
     )]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the write. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Optional agent identifier that produced this memory.")]
     pub agent_id: Option<String>,
 }
@@ -144,6 +148,10 @@ pub struct SearchMemoryParams {
         description = "Whose memory to search (must match the user_id used on add_memory)."
     )]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Max results. Default depends on mode (~5–20).")]
     pub limit: Option<i32>,
     #[schemars(
@@ -184,12 +192,20 @@ pub struct UpdateMemoryParams {
     pub new_content: String,
     #[schemars(description = "Owner of the memory.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the update. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct GetMemoryGraphParams {
     #[schemars(description = "Whose graph to read.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal reading the graph. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(
         description = "Optional center node (mem_… / raw_…). Omit for the user's whole local graph; provide an id to get the ego-network around that memory."
     )]
@@ -204,6 +220,10 @@ pub struct SearchByConceptParams {
     pub query: String,
     #[schemars(description = "Owner of the memories to search.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(
         description = "Restrict to one ontology type (e.g. only 'goal' or 'preference'). Omit to search all types."
     )]
@@ -222,6 +242,10 @@ pub struct SearchReasoningChainParams {
     pub query: String,
     #[schemars(description = "Owner of the memories.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Which direction to walk the chain. Default 'both'.")]
     pub chain_mode: Option<ChainMode>,
     #[schemars(description = "Maximum chain depth (hops). Default 5.")]
@@ -276,6 +300,10 @@ pub struct ThinkRecallParams {
         description = "Whose main memory to recall from. Omit to use the session's default scope."
     )]
     pub user_id: Option<String>,
+    #[schemars(
+        description = "Optional authenticated principal performing the recall; required to differ from user_id when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -294,6 +322,10 @@ pub struct ThinkCommitParams {
     pub session_id: String,
     #[schemars(description = "Owner under whom the conclusion is stored in main memory.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the commit. If omitted, user_id is used for trusted-network compatibility."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -312,12 +344,20 @@ pub struct ThinkStatusParams {
 pub struct SearchIncompleteThoughtsParams {
     #[schemars(description = "Maximum number of results. Default 5.")]
     pub limit: Option<i32>,
+    #[schemars(description = "Optional owner whose incomplete thoughts to inspect.")]
+    pub user_id: Option<String>,
+    #[schemars(description = "Optional authenticated principal. Required when RBAC is enabled.")]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ListMemoriesParams {
     #[schemars(description = "Whose memories to list.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal listing memories. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Max results. Default 100.")]
     pub limit: Option<i32>,
     #[schemars(description = "Optional: return only memories of this ontology type.")]
@@ -330,6 +370,10 @@ pub struct ListUsersParams {
         description = "Max identities to return, newest first. Default 50. The roster can be large, so this is a deliberately small window for orientation, not a full dump."
     )]
     pub limit: Option<i32>,
+    #[schemars(
+        description = "Optional authenticated principal requesting the roster. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -368,6 +412,10 @@ pub struct ConnectMemoriesParams {
     pub query_b: String,
     #[schemars(description = "Owner of the memories to route between.")]
     pub user_id: String,
+    #[schemars(
+        description = "Optional authenticated principal performing the path search. If omitted, user_id is the principal (legacy trusted-network mode)."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Maximum total hops between the two anchors. Default 4.")]
     pub max_depth: Option<i32>,
 }

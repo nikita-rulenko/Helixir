@@ -133,6 +133,11 @@ impl HelixirClient {
         &self.db
     }
 
+    /// Access the HelixDB-backed RBAC manager used by CLI and MCP paths.
+    pub fn rbac(&self) -> crate::core::rbac::RbacManager {
+        crate::core::rbac::RbacManager::new(Arc::clone(&self.db))
+    }
+
     pub fn embedder(&self) -> &EmbeddingGenerator {
         &self.embedder
     }

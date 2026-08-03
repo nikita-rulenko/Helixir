@@ -27,7 +27,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (v0.13.1 + refactor audit):** 196 unit tests with default features
+**Current (v0.13.2 + installer foundation):** 219 unit tests with default features
 (193 without the opt-in `nli` feature; `cargo test --lib`, run in CI) + **38
 HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -60,6 +60,7 @@ worker while swapping its `ToolingManager`.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
+| Installer | `src/installer/` | 23 | Fresh and idempotent plan order, schema backup-before-deploy, Ollama/model command safety, required-step rollback, central TOML and manifest atomicity, native client command safety, atomic JSON registration, doctor reports and malformed-config refusal. |
 
 ### Integration / E2E
 
@@ -206,3 +207,24 @@ key** — passing proves the read path makes zero LLM calls:
 Run via the commands in the root README §Development. Quality bars are
 regression guards set slightly below measured baselines; raising the
 baselines is feature work, not test work.
+
+## RBAC coverage
+
+The RBAC unit matrix in `core::rbac` covers all six roles, deny-by-default,
+worker authorship, viewer write denial, global admin bypass, and cross-group
+isolation. The CLI binary tests cover stable parsing for the `helixir rbac`
+command family. The live follow-up suite should create two groups in HelixDB,
+grant principals, link memories through `MEMORY_IN_RBAC_GROUP`, and assert that
+revocation and cross-group reads cannot leak rows; it is gated by `HELIX_E2E=1`
+like the other database suites.
+
+The manual RBAC audit also exercises the CLI role matrix without mutating the
+live backend: admin, teamlead, groupadmin, moderator, worker, viewer, and an
+unassigned principal are checked for read/write/create-for decisions; CLI
+impersonation through `--actor` is rejected; and `HELIXIR_RBAC_ACTOR` is the
+only enabled-mode management identity. The current development HelixDB lacks
+the additive RBAC queries, so enabled E2E remains blocked by `NOT_FOUND` until
+the backup-first schema deployment is performed. Auxiliary lifecycle surfaces
+(FastThink session ownership, pending status/outbox, and low-level trusted
+tooling access) are tracked in issue #118, while multi-group owner semantics
+are tracked in #119; neither is treated as fully covered by this matrix.

@@ -134,6 +134,18 @@ impl FastThinkManager {
         parent_thought: NodeIndex,
         user_id: &str,
     ) -> Result<Vec<NodeIndex>, FastThinkError> {
+        self.recall_as(session_id, query, parent_thought, user_id, user_id)
+            .await
+    }
+
+    pub async fn recall_as(
+        &self,
+        session_id: &str,
+        query: &str,
+        parent_thought: NodeIndex,
+        actor_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<NodeIndex>, FastThinkError> {
         let runtime = {
             let mut sessions = self.sessions.write();
             let session = sessions
@@ -146,7 +158,8 @@ impl FastThinkManager {
 
         let mut memories = runtime
             .main_memory
-            .search(
+            .search_as(
+                actor_id,
                 query,
                 user_id,
                 crate::core::helixir_client::SearchParams {
@@ -178,7 +191,8 @@ impl FastThinkManager {
         if memories.is_empty() && runtime.limits.recall_fallback_max > 0 {
             let mut wide = runtime
                 .main_memory
-                .search(
+                .search_as(
+                    actor_id,
                     query,
                     user_id,
                     crate::core::helixir_client::SearchParams {
@@ -280,6 +294,15 @@ impl FastThinkManager {
         session_id: &str,
         user_id: &str,
     ) -> Result<CommitResult, FastThinkError> {
+        self.commit_as(session_id, user_id, user_id).await
+    }
+
+    pub async fn commit_as(
+        &self,
+        session_id: &str,
+        actor_id: &str,
+        user_id: &str,
+    ) -> Result<CommitResult, FastThinkError> {
         let session = {
             let mut sessions = self.sessions.write();
             sessions
@@ -331,13 +354,13 @@ impl FastThinkManager {
             session
                 .runtime
                 .main_memory
-                .add_prepared(atoms, user_id, None, None)
+                .add_prepared_as(actor_id, atoms, user_id, None, None)
                 .await
         } else {
             session
                 .runtime
                 .main_memory
-                .add(&conclusion_content, user_id, None, None)
+                .add_as(actor_id, &conclusion_content, user_id, None, None)
                 .await
         }
         .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;

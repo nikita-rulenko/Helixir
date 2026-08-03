@@ -183,3 +183,78 @@ search_memory(query="deploys", user_id="claude",
                 event_date: "2026-05-12T...", edge: "BECAUSE"}}
 ```
 RIGHT: "Related, from May 12: …" — WRONG: presenting the May row as June.
+
+## HelixDB v2.3.5 schema/query discipline
+
+Helixir is pinned to **Helix CLI v2.3.5** (the LMDB-era v2 engine). Do not run
+`helix update`, use a v3/hyperscale binary, or mix v3 deployment instructions
+into this repository: v3 has a different runtime and will not register this
+schema. The project contract is `helix.toml` at the repository root with
+`queries = "helixir/schema"`, `helixir/schema/schema.hx`, and
+`helixir/schema/queries.hx`.
+
+Before touching a schema or query:
+
+1. Read the relevant `helixir/doc/data-model.md` and `helixir/doc/architecture.md`.
+2. Make additive changes where possible. Existing populated nodes must not
+   receive a new non-nullable field without a migration plan; HelixDB does not
+   migrate existing data for us.
+3. Keep schema types exact and explicit. `id` is reserved; use domain keys such
+   as `group_id` or `assignment_id`. Node and edge types must match every
+   `N<>`, `Out<>`, `In<>`, `AddN<>`, and `AddE<>` use in HQL.
+4. Keep queries strongly typed and start each traversal from a source step.
+   Query names are API names and must match the Rust caller exactly. Use
+   `AddE<Kind>::From(source)::To(target)` with both endpoints; use `UPDATE` only
+   on nodes/edges, never vectors. `UpsertN` is available in the pinned v2.3.5
+   toolchain and is used only with a stable domain key.
+
+The safe deployment sequence is mandatory:
+
+```text
+helix --version                         # must report 2.3.5
+helix check                             # compile/type-check schema + queries
+helix backup <instance> -o <backup-dir> # snapshot before a schema transition
+# stop the instance, rebuild/recreate against the SAME persistent volume
+# deploy with the repository's configured v2 flow (`helix push <instance>`)
+# or the packaged `helixir-deploy` adapter when operating the self-hosted port
+# verify health and call a read-only query before enabling new features
+```
+
+Never deploy a changed schema directly to a live persistent volume without a
+backup. A query returning `NOT_FOUND` for a newly added RBAC query means the
+backend has the old schema; it is a deployment state, not permission to fall
+back to local files or silently disable authorization.
+
+## RBAC operating contract
+
+RBAC state is a graph in HelixDB and is the single source of truth for the CLI,
+MCP server, and Rust facade. There is no local policy file to edit or cache.
+The feature is disabled by default to preserve the trusted-network deployment;
+when enabled it is deny-by-default and authorization failures are fail-closed.
+
+The graph contains `RbacConfig`, `RbacGroup`, and `RbacAssignment` nodes plus
+`RBAC_MEMBER_OF` and `MEMORY_IN_RBAC_GROUP` edges. `Memory.user_id` remains the
+author/owner. At the API boundary, `actor_id` is the authenticated principal
+whose grants are checked and `user_id` is the target owner. MCP calls must
+provide `actor_id` whenever RBAC is enabled; omission is accepted only while
+the disabled legacy trusted-network contract intentionally equates actor and
+owner.
+Never let a caller change `user_id` to bypass an `actor_id` check.
+
+Role semantics are fixed:
+
+- `admin`: global unrestricted read/write;
+- `teamlead`: read-only in assigned groups;
+- `groupadmin`: unrestricted read/write in assigned groups;
+- `moderator`: read/write in assigned groups;
+- `worker`: read in assigned groups and write only memories authored by self;
+- `viewer`: read-only in explicitly assigned groups.
+
+Use the `helixir rbac` CLI family for management (`status`, `group`, `grant`,
+`revoke`, `enable`, `disable`, `check`). Do not infer access from a memory's
+text, metadata, or the presence of a graph edge alone; resolve active
+assignments through `RbacManager`. Global admin is required for management once
+RBAC is enabled. The CLI principal comes from `HELIXIR_RBAC_ACTOR`; do not add
+or rely on a user-supplied actor flag. If the RBAC schema is absent, report deployment readiness and
+preserve the documented disabled mode; do not treat connection or permission
+errors as disabled RBAC.

@@ -116,10 +116,17 @@ impl HelixirMcpServer {
 
         let parent = petgraph::stable_graph::NodeIndex::new(params.parent_idx as usize);
         let user_id = params.user_id.as_deref().unwrap_or("default");
+        let actor_id = self.actor_id(params.actor_id.as_deref(), user_id).await?;
 
         let results = self
             .fast_think
-            .recall(&params.session_id, &params.query, parent, user_id)
+            .recall_as(
+                &params.session_id,
+                &params.query,
+                parent,
+                &actor_id,
+                user_id,
+            )
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -173,7 +180,13 @@ impl HelixirMcpServer {
 
         let result = self
             .fast_think
-            .commit(&params.session_id, &params.user_id)
+            .commit_as(
+                &params.session_id,
+                &self
+                    .actor_id(params.actor_id.as_deref(), &params.user_id)
+                    .await?,
+                &params.user_id,
+            )
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 

@@ -254,6 +254,52 @@ QUERY searchConceptsByName(name: String) =>
   concepts <- N<Concept>::WHERE(_::{name}::EQ(name))
   RETURN concepts
 
+// RBAC management surface.  These queries are deliberately additive and
+// return the audit rows needed by the Helixir-side authorizer.  No caller is
+// trusted to filter grants locally before authorization; the DB is the source
+// of truth and revocation is represented by `active = 0`.
+QUERY getRbacConfig() =>
+  config <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))::FIRST
+  RETURN config
+QUERY setRbacEnabled(enabled: I64, updated_at: String, updated_by: String) =>
+  existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- existing::UpsertN({ config_id: "default", enabled: enabled, updated_at: updated_at, updated_by: updated_by })
+  RETURN config
+QUERY createRbacGroup(group_id: String, name: String, description: String, created_at: String, metadata: String) =>
+  existing <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))
+  group <- existing::UpsertN({ group_id: group_id, name: name, description: description, created_at: created_at, active: 1, metadata: metadata })
+  RETURN group
+QUERY getRbacGroups() =>
+  groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
+  RETURN groups
+QUERY deactivateRbacGroup(group_id: String) =>
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  updated <- group::UPDATE({ active: 0 })
+  RETURN updated
+QUERY getRbacAssignments() =>
+  assignments <- N<RbacAssignment>::WHERE(_::{active}::EQ(1))
+  RETURN assignments
+QUERY grantRbacRole(assignment_id: String, subject_id: String, role: String, group_id: String, granted_by: String, created_at: String, metadata: String) =>
+  existing <- N<RbacAssignment>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: group_id, granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
+  user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  membership <- AddE<RBAC_MEMBER_OF>({ assignment_id: assignment_id, role: role, granted_by: granted_by, granted_at: created_at, active: 1 })::From(user)::To(group)
+  RETURN assignment, membership
+QUERY grantRbacGlobalRole(assignment_id: String, subject_id: String, role: String, granted_by: String, created_at: String, metadata: String) =>
+  existing <- N<RbacAssignment>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: "", granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
+  RETURN assignment
+QUERY revokeRbacRole(subject_id: String, role: String, group_id: String, revoked_at: String) =>
+  assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
+  updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
+  RETURN updated
+QUERY linkMemoryToRbacGroup(memory_id: String, group_id: String, assigned_by: String, assigned_at: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  link <- AddE<MEMORY_IN_RBAC_GROUP>({ assigned_by: assigned_by, assigned_at: assigned_at })::From(memory)::To(group)
+  RETURN link
+
 QUERY checkOntologyInitialized() =>
   thing <- N<Concept>::WHERE(_::{concept_id}::EQ("Thing"))::FIRST
   RETURN thing

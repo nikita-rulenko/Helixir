@@ -1,12 +1,16 @@
-.PHONY: build test test-e2e-hive check run deploy-schema setup config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build test test-e2e-hive check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
 MCP_BIN    := $(BINARY_DIR)/helixir-mcp
 DEPLOY_BIN := $(BINARY_DIR)/helixir-deploy
 SCHEMA_DIR := helixir/schema
+VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
+INSTALL_ROOT ?= $(HOME)/.helixir
+INSTALL_VERSION_DIR := $(INSTALL_ROOT)/versions/$(VERSION)
 HELIX_HOST ?= localhost
 HELIX_PORT ?= 6969
+ONBOARD_ARGS ?=
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -15,17 +19,25 @@ help: ## Show this help
 build: ## Build release binaries
 	cd helixir && $(CARGO) build --release
 
-install: build ## Install binaries to ~/.helixir/bin (what agent configs should point at)
-	@# Agents must NOT execute target/release/ directly: cargo replaces those
-	@# files on every rebuild, and macOS can SIGKILL a RUNNING process whose
-	@# backing executable changed (observed live: a zeroclaw session's MCP died
-	@# mid-conversation minutes after a rebuild). `install` copies to a stable
-	@# path; rebuilds never touch what agents are running until you re-install.
-	mkdir -p $(HOME)/.helixir/bin
-	install -m755 helixir/target/release/helixir-mcp $(HOME)/.helixir/bin/helixir-mcp
-	install -m755 helixir/target/release/helixir $(HOME)/.helixir/bin/helixir
-	mkdir -p $(HOME)/.local/bin && ln -sf $(HOME)/.helixir/bin/helixir $(HOME)/.local/bin/helixir
-	@echo "installed: ~/.helixir/bin/{helixir,helixir-mcp}; point MCP configs at ~/.helixir/bin/helixir-mcp"
+install: build ## Install versioned binaries/assets and run guided onboarding
+	@set -eu; \
+	mkdir -p "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/bin"; \
+	install -m755 "$(BINARY_DIR)/helixir-mcp" "$(INSTALL_VERSION_DIR)/helixir-mcp"; \
+	install -m755 "$(BINARY_DIR)/helixir" "$(INSTALL_VERSION_DIR)/helixir"; \
+	install -m755 "$(DEPLOY_BIN)" "$(INSTALL_VERSION_DIR)/helixir-deploy"; \
+	rm -rf "$(INSTALL_VERSION_DIR)/schema"; cp -R "$(SCHEMA_DIR)" "$(INSTALL_VERSION_DIR)/schema"; \
+	ln -sfn "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/current"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir" "$(INSTALL_ROOT)/bin/helixir"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir-mcp" "$(INSTALL_ROOT)/bin/helixir-mcp"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir-deploy" "$(INSTALL_ROOT)/bin/helixir-deploy"; \
+	printf '%s\n' 'installed: $(INSTALL_ROOT)/current (version $(VERSION))'; \
+	"$(INSTALL_ROOT)/current/helixir" onboard $(ONBOARD_ARGS)
+
+onboard: ## Run the interactive onboarding orchestrator
+	"$(INSTALL_ROOT)/bin/helixir" onboard $(ONBOARD_ARGS)
+
+doctor: ## Run the read-only installation doctor
+	"$(INSTALL_ROOT)/bin/helixir" doctor
 
 test: ## Run all tests
 	cd helixir && $(CARGO) test

@@ -84,6 +84,8 @@ impl ToolingManager {
                     content: String,
                     #[serde(default, deserialize_with = "nullable_string")]
                     memory_type: String,
+                    #[serde(default, deserialize_with = "nullable_string")]
+                    user_id: String,
                 }
 
                 if let Ok(result) = self
@@ -99,6 +101,7 @@ impl ToolingManager {
                             "id": mem.memory_id,
                             "content": mem.content,
                             "type": mem.memory_type,
+                            "user_id": mem.user_id,
                         }));
                     }
                 }

@@ -7,6 +7,11 @@ MEMORY CHARTER (the constitution — these override everything else):
 - C3: preferences, goals and opinions are never rewritten silently. A reversed preference may be a real change of mind, a different context, or an extraction error — when a rewrite touches one of these types, the system defers it for a human-level answer; your verdict should already lean ADD or CONTRADICT rather than SUPERSEDE unless the evidence is unmistakable.
 - C5: low-confidence rewrites escalate. If you are not sure the two statements are the same subject and the new one genuinely replaces the old, choose ADD.
 
+RBAC boundary:
+- This engine decides memory curation only; it must never grant, revoke, or infer access.
+- Cross-user LINK_EXISTING and CROSS_CONTRADICT preserve provenance but do not grant visibility or permission.
+- Preserve `user_id` ownership/provenance. Actor authorization is resolved by `RbacManager` outside the decision matrix.
+
 Your goal is to:
 1. Prevent duplicate information
 2. Keep memory coherent and up-to-date
@@ -101,6 +106,8 @@ pub fn build_decision_prompt(
 {similar_str}
 
 **User ID:** {user_id}
+
+**RBAC boundary:** `user_id` identifies memory ownership/provenance, not an access grant. Do not treat cross-user similarity or linkage as permission; authorization is handled by `RbacManager`.
 
 **Your Task:**
 Decide what to do with the new memory. Choose ONE operation.
@@ -238,6 +245,8 @@ Rules: be conservative with DELETE; SUPERSEDE for temporal evolution AND wheneve
 ALSO build typed edges: for each item, set `relates_to` to a list of [candidate_id, EDGE_TYPE] for every candidate the item genuinely connects to (even when the operation is ADD/NOOP — keep the graph connected). EDGE_TYPE, most specific first: BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS (causal) or RELATES_TO / PART_OF / IS_A (associative). Do not default to IMPLIES; use RELATES_TO for plain topical relatedness. Use each candidate's `type:` (ontology) as a signal.
 
 **User ID:** {user_id}
+
+**RBAC boundary:** `user_id` is provenance, not an access grant. Cross-user similarity/linkage never grants visibility; authorization is handled by `RbacManager`.
 
 {items_str}
 

@@ -258,3 +258,26 @@ There is no automated migration framework today. The current playbook is:
 
 If a migration framework is needed in the future, the likely shape is a
 per-tag set of HQL scripts plus an upgrade tool. No such tool exists today.
+
+## 8. RBAC graph (opt-in)
+
+RBAC is stored in HelixDB and is the single source of truth shared by the CLI,
+MCP server, and library facade. `RbacGroup` names a team, while
+`RbacAssignment` is an auditable grant (`subject_id`, `role`, `group_id`,
+`active`, grant/revoke timestamps). `RBAC_MEMBER_OF` is the traversable
+principal-to-group edge and `MEMORY_IN_RBAC_GROUP` links authored memories to
+the groups active for their author. `RbacConfig` holds the explicit
+`enabled = 0|1` switch; disabled keeps the trusted-network behavior.
+
+The existing `Memory.user_id` remains the author/owner and is never replaced by
+a group id. Authorization resolves the actor's active assignments, derives the
+groups and owners reachable through the graph, and then applies the role matrix:
+global admin is unrestricted; team lead is read-only in assigned groups;
+group admin and moderator can read/write their groups; worker can write only
+their own authored memories; viewer is read-only. Revocation deactivates the
+assignment and preserves its audit history.
+
+At the API boundary, `actor_id` is intentionally distinct from `Memory.user_id`:
+the former is the principal being authorized, the latter is the owner whose
+memory is read or written. The optional field defaults to `user_id` for
+backward-compatible trusted-network deployments.

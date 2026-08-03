@@ -5,6 +5,54 @@ N::User {
   created_at: String,
   metadata: String DEFAULT "{}"
 }
+
+// RBAC is persisted in HelixDB, not in a host-local config file.  Assignments
+// are immutable-ish audit rows: revocation flips `active` to 0 and preserves
+// who granted the role and when.
+N::RbacGroup {
+  group_id: String,
+  name: String,
+  description: String DEFAULT "",
+  created_at: String,
+  active: I64 DEFAULT 1,
+  metadata: String DEFAULT "{}"
+}
+N::RbacAssignment {
+  assignment_id: String,
+  subject_id: String,
+  role: String,
+  group_id: String DEFAULT "",
+  granted_by: String DEFAULT "",
+  created_at: String,
+  revoked_at: String DEFAULT "",
+  active: I64 DEFAULT 1,
+  metadata: String DEFAULT "{}"
+}
+N::RbacConfig {
+  config_id: String,
+  enabled: I64 DEFAULT 0,
+  updated_at: String,
+  updated_by: String DEFAULT ""
+}
+E::RBAC_MEMBER_OF {
+  From: User,
+  To: RbacGroup,
+  Properties: {
+    assignment_id: String,
+    role: String,
+    granted_by: String,
+    granted_at: String,
+    active: I64
+  }
+}
+E::MEMORY_IN_RBAC_GROUP {
+  From: Memory,
+  To: RbacGroup,
+  Properties: {
+    assigned_by: String,
+    assigned_at: String
+  }
+}
 N::Session {
   session_id: String,
   started_at: String,

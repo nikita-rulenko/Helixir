@@ -101,12 +101,13 @@ Three principles drive every design decision; the long version lives in [`helixi
 curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install.sh | bash
 ```
 
-The script will:
-1. Check prerequisites (Rust, Docker)
-2. Clone the repo and build from source
-3. Start HelixDB via Docker
-4. Deploy the graph schema
-5. Generate MCP config for your IDE
+The script detects the host and downloads the matching release asset into a
+versioned `~/.helixir/versions/<version>` directory, switches the atomic
+`~/.helixir/current` pointer, then launches the guided `helixir onboard` flow.
+The flow offers Ollama, `llama3.2:3b`, `nomic-embed-text`, optional NLI, a
+persistent HelixDB volume with a pre-schema backup, central `helixir.toml`, and
+automatic Claude Code/Codex/Cursor registration. Use `--non-interactive` for
+automation and `--dry-run` to inspect the plan without changing the machine.
 
 Or install manually:
 
@@ -114,9 +115,10 @@ Or install manually:
 git clone https://github.com/nikita-rulenko/Helixir.git
 cd helixir
 
-make build          # Build release binary
-make setup          # Start HelixDB + deploy schema
-make config         # Print MCP config to paste into your IDE
+make build          # Build release binaries for this host
+make install        # Versioned install + guided onboarding
+make onboard        # Re-run onboarding
+make doctor         # Read-only readiness report
 ```
 
 ### Prerequisites
@@ -446,6 +448,12 @@ Beyond the MCP server, the `helixir` binary drives and monitors the generative a
 helixir setup                          # interactive: configure + wire the MCP server into
                                        #   Claude Code / Claude Desktop / Cursor / Gemini CLI
 helixir mode                           # show the privilege tier (solo | collective | insights)
+helixir rbac status --json              # inspect the HelixDB-backed RBAC graph
+helixir rbac group create --id alpha --name "Alpha team"
+helixir rbac grant --user alice --role worker --group alpha
+helixir rbac grant --user root --role admin
+helixir rbac enable                     # opt into deny-by-default role enforcement
+helixir rbac check --user alice --action read --owner bob
 helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
 helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
 helixir categories                     # the category dictionary + member counts (coverage)
@@ -472,6 +480,16 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   from the re-read file and swapped atomically, no Claude Desktop reboot.
 #   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
 ```
+
+RBAC grants, groups, audit rows, and the enabled switch live in HelixDB. The
+CLI is only a management client over the same HQL contract used by MCP and the
+library; there is no authoritative local policy file. Enforcement is disabled
+by default to preserve the trusted-network deployment, and becomes
+deny-by-default after `helixir rbac enable`.
+When enforcement is enabled, management commands resolve the authenticated CLI
+principal from `HELIXIR_RBAC_ACTOR`; there is intentionally no `--actor` escape
+hatch. A global `admin` is required for grants, revocations, group changes, and
+role/roster inspection.
 
 The gateway deliberately assumes a trusted network by default: it listens on
 `gateway.default_bind` (`0.0.0.0:8765`) without authentication. To enable

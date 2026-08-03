@@ -196,8 +196,18 @@ jobs:
         with:
           path: artifacts
 
+      - name: Create release checksums
+        shell: bash
+        run: |
+          : > artifacts/SHA256SUMS
+          while IFS= read -r -d '' file; do
+            sha256sum "$file" | sed "s#  .*#  $(basename "$file")#" >> artifacts/SHA256SUMS
+          done < <(find artifacts -type f -name '*.tar.gz' -print0)
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/SHA256SUMS
           generate_release_notes: true

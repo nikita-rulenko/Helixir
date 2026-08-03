@@ -656,6 +656,21 @@ mod tests {
         assert!(!prompt.contains("DIFFERENT USER"));
     }
 
+    #[test]
+    fn test_prompt_keeps_rbac_outside_curation() {
+        use super::super::prompt::{
+            SYSTEM_PROMPT, build_batch_decision_prompt, build_decision_prompt,
+        };
+
+        let prompt = build_decision_prompt("Rust is my language", &[], "user_a");
+        assert!(SYSTEM_PROMPT.contains("RBAC boundary"));
+        assert!(prompt.contains("user_id"));
+        assert!(prompt.contains("authorization is handled by `RbacManager`"));
+
+        let batch = build_batch_decision_prompt(&[(0, "Rust is my language", &[])], "user_a");
+        assert!(batch.contains("Cross-user similarity/linkage never grants visibility"));
+    }
+
     /// #96 Lever 1.5: a scripted provider returning queued responses, with a
     /// call counter — proves batch reliability without a live LLM.
     struct ScriptedProvider {

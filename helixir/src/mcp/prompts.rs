@@ -118,6 +118,15 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 
 </core_behavior>
 
+## RBAC AUTHORIZATION PROTOCOL
+
+- RBAC is graph-backed HelixDB state and the single source of truth; never invent or cache local ACLs.
+- Disabled by default preserves trusted-network behavior. When enabled, authorization is deny-by-default and fail-closed.
+- `actor_id` is the authenticated principal; `user_id` is the memory owner or target. MCP calls must provide `actor_id` when RBAC is enabled; only disabled legacy trusted-network calls may use `user_id` as the actor. Never bypass checks by changing `user_id`.
+- Roles are `admin` (global read/write), `teamlead` (read assigned groups), `groupadmin` (read/write assigned groups), `moderator` (read/write assigned groups), `worker` (read group and write own authored memories), and `viewer` (read-only assigned groups).
+- Use `helixir rbac` for management. A missing RBAC query means the deployment is incomplete; it is not permission to silently fall back to a local ACL. Connection and permission errors must surface as errors.
+- Schema/query work targets Helix CLI v2.3.5; HQL supports `//` line comments only. Validate with `helix check` and use backup-first deployment for live changes.
+
 <tool_selection>
 
 ## TOOL DECISION TREE

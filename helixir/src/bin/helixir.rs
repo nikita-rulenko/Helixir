@@ -20,12 +20,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dialoguer::{Confirm, Input, MultiSelect, Select};
-use helixir::HelixClient;
 use helixir::agents::atropos::Insight;
 use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 use helixir::core::config::MemoryMode;
+use helixir::core::rbac::Role;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -213,8 +213,108 @@ enum Cmd {
         #[arg(long)]
         mode: Option<String>,
     },
+    /// Build and apply the guided installation plan.
+    Onboard {
+        /// Skip prompts and use HELIX_* values plus deterministic defaults.
+        #[arg(long = "non-interactive")]
+        non_interactive: bool,
+        /// Print the plan without applying platform changes.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Privilege tier to provision (solo | collective | insights).
+        #[arg(long)]
+        mode: Option<String>,
+    },
+    /// Read-only readiness report for binaries, backend, providers, MCP and clients.
+    Doctor {
+        /// Emit a stable machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
     Mode,
+    /// Manage HelixDB-backed role assignments and groups.
+    Rbac {
+        #[command(subcommand)]
+        cmd: RbacCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum RbacCmd {
+    /// Show the persisted RBAC state.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable deny-by-default RBAC enforcement in HelixDB.
+    Enable,
+    /// Disable RBAC enforcement while preserving all grants.
+    Disable,
+    /// Manage named groups.
+    Group {
+        #[command(subcommand)]
+        cmd: RbacGroupCmd,
+    },
+    /// Grant a global or group-scoped role.
+    Grant {
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// Revoke an existing role assignment (audit row is retained).
+    Revoke {
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// Print roles for one user, or all active assignments.
+    Show {
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check whether a principal can read or write a memory owner.
+    Check {
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value = "read")]
+        action: String,
+        #[arg(long)]
+        owner: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RbacGroupCmd {
+    /// Create or update a group.
+    Create {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        description: String,
+    },
+    /// List active groups.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Deactivate a group; grants remain in the audit history.
+    Delete {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -449,6 +549,50 @@ fn mode_gate(cmd: &Cmd, mode: MemoryMode) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod rbac_cli_tests {
+    use super::{Cli, Cmd, require_rbac_admin};
+    use clap::Parser;
+    use helixir::core::rbac::{RbacPolicy, Role};
+
+    #[test]
+    fn parses_group_grant_and_status_commands() {
+        let cli = Cli::try_parse_from([
+            "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group", "alpha",
+        ])
+        .expect("valid rbac grant syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from(["helixir", "rbac", "status", "--json"])
+            .expect("valid rbac status syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+    }
+
+    #[test]
+    fn management_requires_global_admin_only_when_rbac_is_enabled() {
+        let mut enabled = RbacPolicy {
+            enabled: true,
+            ..Default::default()
+        };
+        enabled.assign_global("root", Role::Admin);
+
+        assert!(require_rbac_admin(&enabled, "root", "group management").is_ok());
+        assert!(require_rbac_admin(&enabled, "worker", "group management").is_err());
+        assert!(require_rbac_admin(&RbacPolicy::default(), "worker", "group management").is_ok());
+    }
+
+    #[test]
+    fn grant_cannot_spoof_actor_with_removed_cli_flag() {
+        assert!(
+            Cli::try_parse_from([
+                "helixir", "rbac", "grant", "--user", "alice", "--role", "worker", "--group",
+                "alpha", "--actor", "root",
+            ])
+            .is_err()
+        );
+    }
+}
+
 // ============ helixir config (#52) ============
 
 /// The file `config set/edit/apply` operates on: the resolved existing file,
@@ -658,6 +802,162 @@ fn print_mode() -> Result<()> {
     Ok(())
 }
 
+fn parse_rbac_role(raw: &str) -> Result<Role> {
+    Role::parse(raw).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown RBAC role '{raw}'; use admin, teamlead, groupadmin, moderator, worker, viewer"
+        )
+    })
+}
+
+fn rbac_actor() -> String {
+    std::env::var("HELIXIR_RBAC_ACTOR").unwrap_or_else(|_| "cli".to_string())
+}
+
+fn require_rbac_admin(
+    policy: &helixir::core::rbac::RbacPolicy,
+    actor: &str,
+    action: &str,
+) -> Result<()> {
+    if policy.enabled && !policy.is_admin(actor) {
+        anyhow::bail!("{action} requires a global admin (set HELIXIR_RBAC_ACTOR)");
+    }
+    Ok(())
+}
+
+async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()> {
+    let manager = client.rbac();
+    let current = manager
+        .snapshot()
+        .await
+        .context("read RBAC state from HelixDB")?;
+    match cmd {
+        RbacCmd::Status { json } => {
+            if json {
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "RBAC status inspection")?;
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&current)?);
+            } else {
+                println!(
+                    "RBAC: {}",
+                    if current.enabled {
+                        "enabled"
+                    } else {
+                        "disabled (full trust)"
+                    }
+                );
+                println!(
+                    "groups: {}  principals: {}",
+                    current.groups.len(),
+                    current.users.len()
+                );
+            }
+        }
+        RbacCmd::Enable | RbacCmd::Disable => {
+            let enabled = matches!(cmd, RbacCmd::Enable);
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "RBAC management")?;
+            manager.set_enabled(enabled, &actor).await?;
+            println!("RBAC {}", if enabled { "enabled" } else { "disabled" });
+        }
+        RbacCmd::Group { cmd } => match cmd {
+            RbacGroupCmd::Create {
+                id,
+                name,
+                description,
+            } => {
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "group management")?;
+                manager
+                    .create_group_as(&id, &name, &description, &actor)
+                    .await?;
+                println!("group '{id}' created/updated");
+            }
+            RbacGroupCmd::List { json } => {
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "group listing")?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&current.groups)?);
+                } else {
+                    for (id, group) in current.groups {
+                        println!("{id}\t{}\t{}", group.name, group.description);
+                    }
+                }
+            }
+            RbacGroupCmd::Delete { id, yes } => {
+                anyhow::ensure!(yes, "deactivating a group requires --yes");
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "group management")?;
+                manager.deactivate_group_as(&id, &actor).await?;
+                println!("group '{id}' deactivated");
+            }
+        },
+        RbacCmd::Grant { user, role, group } => {
+            let role = parse_rbac_role(&role)?;
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "grant")?;
+            manager.grant(&user, role, group.as_deref(), &actor).await?;
+            println!(
+                "granted {} to {}{}",
+                role.label(),
+                user,
+                group.map(|g| format!(" in {g}")).unwrap_or_default()
+            );
+        }
+        RbacCmd::Revoke { user, role, group } => {
+            let role = parse_rbac_role(&role)?;
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "revoke")?;
+            manager
+                .revoke_as(&user, role, group.as_deref(), &actor)
+                .await?;
+            println!("revoked {} from {}", role.label(), user);
+        }
+        RbacCmd::Show { user, json } => {
+            let actor = rbac_actor();
+            if user.as_deref() != Some(actor.as_str()) {
+                require_rbac_admin(&current, &actor, "role inspection")?;
+            }
+            let rows: serde_json::Value = user
+                .as_deref()
+                .map(|id| serde_json::json!({"user": id, "roles": current.roles_for(id).into_iter().map(|(group, role)| serde_json::json!({"group": group, "role": role.label()})).collect::<Vec<_>>() }))
+                .unwrap_or_else(|| serde_json::to_value(&current.users).unwrap_or_default());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            }
+        }
+        RbacCmd::Check {
+            user,
+            action,
+            owner,
+        } => {
+            let actor = rbac_actor();
+            if current.enabled && actor != user && !current.is_admin(&actor) {
+                anyhow::bail!("RBAC check for another principal requires a global admin");
+            }
+            let allowed = match action.as_str() {
+                "read" => current.readable_users(&user).is_none_or(|users| {
+                    owner.as_deref().is_none_or(|target| users.contains(target))
+                }),
+                "write" => owner
+                    .as_deref()
+                    .map(|target| current.can_write_owner(&user, target))
+                    .unwrap_or_else(|| current.can_write(&user)),
+                other => anyhow::bail!("unknown action '{other}'; use read or write"),
+            };
+            println!("{}", if allowed { "allowed" } else { "denied" });
+            if !allowed {
+                anyhow::bail!("RBAC denied");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -800,6 +1100,22 @@ async fn main() -> Result<()> {
         .await;
     }
 
+    // `onboard` only detects the machine and constructs a typed plan; it does
+    // not require a HelixDB connection. Platform executors are deliberately
+    // kept behind the installer module so a future native UI can reuse them.
+    if let Cmd::Onboard {
+        non_interactive,
+        dry_run,
+        mode,
+    } = &cli.cmd
+    {
+        return onboard_run(!non_interactive, *dry_run, mode.clone()).await;
+    }
+
+    if let Cmd::Doctor { json } = &cli.cmd {
+        return doctor_run(*json).await;
+    }
+
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
     mode_gate(&cli.cmd, client.config().mode)?;
     if matches!(&cli.cmd, Cmd::Watch { .. }) {
@@ -847,7 +1163,10 @@ async fn main() -> Result<()> {
             user,
             topic,
             max_hops,
-        } => chain(&client, &user, &topic, max_hops).await?,
+        } => {
+            let actor = rbac_actor();
+            chain(&client, &actor, &user, &topic, max_hops).await?
+        }
         Cmd::Journal { tail } => journal_tail(tail)?,
         Cmd::Atropos {
             limit,
@@ -908,6 +1227,9 @@ async fn main() -> Result<()> {
         },
         Cmd::Health { .. } => unreachable!("health handled before client init"),
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
+        Cmd::Onboard { .. } => unreachable!("onboard handled before client init"),
+        Cmd::Doctor { .. } => unreachable!("doctor handled before client init"),
+        Cmd::Rbac { cmd } => rbac_run(&client, cmd).await?,
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
         Cmd::Mode => unreachable!("mode handled before client init"),
         Cmd::Model { .. } => unreachable!("model handled before client init"),
@@ -1276,8 +1598,17 @@ async fn lachesis_route(
     Ok(())
 }
 
-async fn chain(client: &HelixirClient, user: &str, topic: &str, max_hops: usize) -> Result<()> {
-    match client.longest_chain(topic, user, max_hops).await? {
+async fn chain(
+    client: &HelixirClient,
+    actor: &str,
+    user: &str,
+    topic: &str,
+    max_hops: usize,
+) -> Result<()> {
+    match client
+        .longest_chain_as(actor, topic, user, max_hops)
+        .await?
+    {
         Some(n) => {
             println!(
                 "longest chain: {} hops, confidence {:.4}",
@@ -1430,38 +1761,150 @@ fn client_targets() -> Vec<(String, PathBuf)> {
         home.join(".config/Claude/claude_desktop_config.json")
     };
     vec![
-        ("Claude Code".to_string(), home.join(".claude.json")),
         ("Claude Desktop".to_string(), desktop),
         ("Cursor".to_string(), home.join(".cursor/mcp.json")),
         ("Gemini CLI".to_string(), home.join(".gemini/settings.json")),
     ]
 }
 
+/// Native CLI clients own their configuration and must not be treated as JSON
+/// files. Returns only clients whose executable can be resolved from PATH (or
+/// the known Codex.app location).
+fn native_client_targets() -> Vec<helixir::installer::ClientKind> {
+    use helixir::installer::ClientKind;
+    [ClientKind::ClaudeCode, ClientKind::Codex]
+        .into_iter()
+        .filter(|client| {
+            let executable = match client {
+                ClientKind::ClaudeCode => "claude",
+                ClientKind::Codex => "codex",
+                ClientKind::Cursor => return false,
+            };
+            helixir::installer::clients::resolve_command(executable).is_some()
+                || (*client == ClientKind::Codex
+                    && Path::new("/Applications/Codex.app/Contents/Resources/codex").exists())
+        })
+        .collect()
+}
+
+fn native_client_executable(client: helixir::installer::ClientKind) -> Option<PathBuf> {
+    let command = match client {
+        helixir::installer::ClientKind::ClaudeCode => "claude",
+        helixir::installer::ClientKind::Codex => "codex",
+        helixir::installer::ClientKind::Cursor => return None,
+    };
+    helixir::installer::clients::resolve_command(command).or_else(|| {
+        (client == helixir::installer::ClientKind::Codex)
+            .then(|| PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"))
+            .filter(|path| path.exists())
+    })
+}
+
+/// Whether a native client already owns a server with this name.
+fn native_registration_exists(client: helixir::installer::ClientKind, server_name: &str) -> bool {
+    let Some(executable) = native_client_executable(client) else {
+        return false;
+    };
+    Command::new(executable)
+        .args(["mcp", "get", server_name])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Register Claude Code/Codex using their native CLI commands. No provider
+/// environment is passed; the command points at a stable MCP binary and the
+/// future central config path will be the only allowed non-secret env value.
+fn wire_native_clients(
+    server: &helixir::installer::clients::StdioServer,
+    interactive: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let available = native_client_targets();
+    if available.is_empty() {
+        return Ok(());
+    }
+    let selected = if interactive {
+        let labels: Vec<_> = available.iter().map(|client| client.label()).collect();
+        let picks = MultiSelect::new()
+            .with_prompt("Register Helixir through native client CLIs?")
+            .items(&labels)
+            .defaults(&vec![true; available.len()])
+            .interact()?;
+        picks
+            .into_iter()
+            .map(|idx| available[idx])
+            .collect::<Vec<_>>()
+    } else {
+        available
+    };
+    for client in selected {
+        if native_registration_exists(client, "helixir-local") {
+            println!(
+                "  ✓ {}: helixir-local already exists; leaving it untouched",
+                client.label()
+            );
+            continue;
+        }
+        let command =
+            helixir::installer::clients::native_add_command(client, "helixir-local", server);
+        if dry_run {
+            println!(
+                "  [dry-run] {}: {}",
+                client.label(),
+                command.argv().join(" ")
+            );
+            continue;
+        }
+        let Some(executable) = native_client_executable(client) else {
+            println!(
+                "  ✗ {}: executable disappeared during setup",
+                client.label()
+            );
+            continue;
+        };
+        let status = Command::new(executable)
+            .args(&command.args)
+            .status()
+            .with_context(|| format!("run {} MCP registration", client.label()))?;
+        anyhow::ensure!(
+            status.success(),
+            "{} MCP registration exited with {status}",
+            client.label()
+        );
+        anyhow::ensure!(
+            native_registration_exists(client, "helixir-local"),
+            "{} registration could not be verified",
+            client.label()
+        );
+        println!("  ✓ {}: helixir-local registered", client.label());
+    }
+    Ok(())
+}
+
 /// Merge the `helixir-local` MCP entry into a client's config JSON (creating
 /// `mcpServers` if absent), backing the file up first. Non-destructive: other
 /// servers and keys are preserved.
 fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool) -> Result<()> {
-    let mut root: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(path)?)
-            .unwrap_or_else(|_| serde_json::json!({}))
+    let existing = if path.exists() {
+        Some(std::fs::read_to_string(path)?)
     } else {
-        serde_json::json!({})
+        None
     };
-    if !root.is_object() {
-        root = serde_json::json!({});
+    let merged = helixir::installer::client_config::merge_mcp_server(
+        existing.as_deref(),
+        "helixir-local",
+        entry,
+    )
+    .with_context(|| format!("refusing unsafe update of {}", path.display()))?;
+
+    if !merged.changed {
+        println!(
+            "  ✓ {name}: helixir-local already matches {}",
+            path.display()
+        );
+        return Ok(());
     }
-    let servers = root
-        .as_object_mut()
-        .unwrap()
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-    if !servers.is_object() {
-        *servers = serde_json::json!({});
-    }
-    servers
-        .as_object_mut()
-        .unwrap()
-        .insert("helixir-local".to_string(), entry.clone());
 
     if dry_run {
         println!(
@@ -1471,11 +1914,12 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
         return Ok(());
     }
     if path.exists() {
-        std::fs::copy(path, PathBuf::from(format!("{}.bak", path.display()))).ok();
+        std::fs::copy(path, PathBuf::from(format!("{}.bak", path.display())))
+            .with_context(|| format!("back up {}", path.display()))?;
     } else if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    std::fs::write(path, serde_json::to_string_pretty(&root)?)?;
+    std::fs::write(path, serde_json::to_string_pretty(&merged.document)?)?;
     println!(
         "  ✓ {name}: wired helixir-local → {} (backup .bak)",
         path.display()
@@ -1483,20 +1927,28 @@ fn wire_client(name: &str, path: &Path, entry: &serde_json::Value, dry_run: bool
     Ok(())
 }
 
-/// Probe one `host:port` for a live HelixDB via the real client health check,
-/// bounded so a filtered port cannot hang the wizard.
+/// Probe one `host:port` without constructing the full reqwest client.
+///
+/// The CLI wizard must remain usable on macOS machines where the system proxy
+/// API can panic while a reqwest client is being created. A TCP handshake is a
+/// conservative liveness signal; schema/query verification belongs to the
+/// installer executor and doctor.
 async fn probe_backend(host: &str, port: u16) -> bool {
-    let Ok(client) = HelixClient::new(host, port) else {
-        return false;
-    };
-    let probe = async {
-        let _ = client.connect().await;
-        client.health_check().await
-    };
-    matches!(
-        tokio::time::timeout(Duration::from_millis(1500), probe).await,
-        Ok(Ok(()))
-    )
+    use std::net::ToSocketAddrs;
+
+    let address = format!("{host}:{port}");
+    tokio::task::spawn_blocking(move || {
+        address
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addresses| addresses.next())
+            .map(|address| {
+                std::net::TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok()
+            })
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Probe the local machine for a live HelixDB so a second client connects to the
@@ -1526,21 +1978,14 @@ async fn discover_backends() -> Vec<(String, u16)> {
 /// health check before we tell the user their clients are wired.
 async fn verify_backend(cfg: &SetupConfig) -> Result<()> {
     let port: u16 = cfg.port.parse().context("HelixDB port must be a number")?;
-    let client = HelixClient::new(&cfg.host, port).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let probe = async {
-        let _ = client.connect().await;
-        client
-            .health_check()
-            .await
-            .map_err(|e| anyhow::anyhow!("health check failed: {e}"))
-    };
-    match tokio::time::timeout(Duration::from_secs(5), probe).await {
-        Ok(inner) => inner,
-        Err(_) => anyhow::bail!(
-            "timed out after 5s — no HelixDB answering at {}:{}",
+    if probe_backend(&cfg.host, port).await {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "no HelixDB listener at {}:{} (TCP probe timed out)",
             cfg.host,
             port
-        ),
+        )
     }
 }
 
@@ -1740,8 +2185,730 @@ async fn setup_run(
     }
 
     let entry = mcp_entry(&cfg);
+    if target.is_none() {
+        let native_server = helixir::installer::clients::StdioServer::new(cfg.mcp_bin.clone());
+        wire_native_clients(&native_server, interactive, dry_run)?;
+    }
     let source = format!("helixir-mcp at {}", cfg.mcp_bin);
     wire_entry_to_clients(entry, target, interactive, dry_run, &source)
+}
+
+/// Build the read-only machine snapshot consumed by the installer planner.
+///
+/// This deliberately does not start services, download models, or write client
+/// configuration. Those effects belong to platform executors behind the
+/// `installer` module; keeping detection pure makes `--dry-run` trustworthy.
+async fn detect_onboard_state() -> helixir::installer::SystemState {
+    use helixir::installer::{BackendState, ClientKind, OllamaState, SystemState};
+    use std::collections::BTreeMap;
+
+    let backend = match detect_local_backend_tcp() {
+        Some(_) => BackendState::Local {
+            healthy: true,
+            // Schema compatibility is verified by the backend executor. Treat
+            // it as unknown here so a future apply phase always protects data
+            // before a schema-affecting transition.
+            schema_compatible: false,
+        },
+        None => BackendState::Missing,
+    };
+
+    let (ollama_installed, ollama_running, models) = detect_ollama().await;
+    let mut clients = BTreeMap::new();
+    if client_available(ClientKind::ClaudeCode) {
+        clients.insert(ClientKind::ClaudeCode, false);
+    }
+    if client_available(ClientKind::Codex) {
+        clients.insert(ClientKind::Codex, false);
+    }
+    if client_available(ClientKind::Cursor) {
+        clients.insert(ClientKind::Cursor, false);
+    }
+
+    SystemState {
+        backend,
+        ollama: OllamaState {
+            installed: ollama_installed,
+            running: ollama_running,
+            models,
+        },
+        nli_supported: cfg!(feature = "nli"),
+        nli_installed: onboard_nli_installed(),
+        central_config_matches: false,
+        client_registered: clients,
+    }
+}
+
+/// Lightweight backend discovery for onboarding. Using a TCP connect here is
+/// intentional: constructing the full reqwest/Helix client consults macOS
+/// system proxy state and makes a supposedly read-only plan depend on that
+/// platform service. Schema and health verification belong to the executor.
+fn detect_local_backend_tcp() -> Option<u16> {
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    for port in [
+        std::env::var("HELIX_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok()),
+        Some(helixir::DEFAULT_HELIX_PORT),
+        Some(6970),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let address = (host.as_str(), port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addresses| addresses.next());
+        if let Some(address) = address
+            && TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+        {
+            return Some(port);
+        }
+    }
+    None
+}
+
+async fn detect_ollama() -> (bool, bool, std::collections::BTreeSet<String>) {
+    use std::collections::BTreeSet;
+
+    let installed = Command::new("ollama")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !installed {
+        return (false, false, BTreeSet::new());
+    }
+
+    let models_output = Command::new("ollama").arg("list").output().ok();
+    let models = models_output
+        .as_ref()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .skip(1)
+                .filter_map(|line| line.split_whitespace().next())
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let running = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], 11_434)),
+        Duration::from_millis(500),
+    )
+    .is_ok();
+    (true, running, models)
+}
+
+fn client_available(kind: helixir::installer::ClientKind) -> bool {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let command_available = |name: &str| {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {name}")])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    };
+    match kind {
+        helixir::installer::ClientKind::ClaudeCode => {
+            command_available("claude") || home.join(".claude.json").exists()
+        }
+        helixir::installer::ClientKind::Codex => {
+            command_available("codex")
+                || home.join(".codex/config.toml").exists()
+                || Path::new("/Applications/Codex.app/Contents/Resources/codex").exists()
+        }
+        helixir::installer::ClientKind::Cursor => {
+            command_available("cursor") || home.join(".cursor").exists()
+        }
+    }
+}
+
+#[cfg(feature = "nli")]
+fn onboard_nli_installed() -> bool {
+    helixir::llm::nli::status().installed
+}
+
+#[cfg(not(feature = "nli"))]
+const fn onboard_nli_installed() -> bool {
+    false
+}
+
+fn gather_onboard_options(
+    state: &helixir::installer::SystemState,
+    interactive: bool,
+    mode: Option<String>,
+) -> Result<helixir::installer::InstallOptions> {
+    use helixir::installer::{BackendChoice, InstallOptions};
+    use std::collections::BTreeSet;
+
+    let env_mode = std::env::var("HELIXIR_MODE").unwrap_or_default();
+    let effective_mode = match mode {
+        Some(value) => MemoryMode::parse(&value),
+        None if !env_mode.trim().is_empty() => MemoryMode::parse(&env_mode),
+        None if interactive => prompt_mode_recommendation()?,
+        None => MemoryMode::Collective,
+    };
+
+    let backend =
+        if !matches!(state.backend, helixir::installer::BackendState::Missing) && interactive {
+            let options = [
+                "reuse the detected HelixDB",
+                "provision a Helixir-managed local HelixDB",
+            ];
+            match Select::new()
+                .with_prompt("Backend")
+                .default(0)
+                .items(&options)
+                .interact()?
+            {
+                0 => BackendChoice::ReuseDetected,
+                _ => BackendChoice::ProvisionLocal,
+            }
+        } else {
+            BackendChoice::ProvisionLocal
+        };
+
+    let mut options = InstallOptions {
+        mode: effective_mode,
+        backend,
+        clients: state.client_registered.keys().copied().collect(),
+        ..InstallOptions::default()
+    };
+
+    if interactive {
+        let local = Confirm::new()
+            .with_prompt("Install/use Ollama and local models?")
+            .default(true)
+            .interact()?;
+        options.install_ollama = local;
+        if local {
+            let model = Input::<String>::new()
+                .with_prompt("Local LLM model")
+                .default(helixir::DEFAULT_LLM_FALLBACK_MODEL.to_string())
+                .interact_text()?;
+            options.local_llm_model = Some(model);
+            options.install_nomic = Confirm::new()
+                .with_prompt("Download Nomic embedding model (nomic-embed-text)?")
+                .default(true)
+                .interact()?;
+        } else {
+            options.local_llm_model = None;
+            options.install_nomic = false;
+        }
+
+        options.install_nli = if options.mode.collective_enabled() && state.nli_supported {
+            Confirm::new()
+                .with_prompt("Download the local NLI model for contradiction-safe merging?")
+                .default(true)
+                .interact()?
+        } else {
+            false
+        };
+
+        let available: Vec<_> = state.client_registered.keys().copied().collect();
+        if !available.is_empty() {
+            let labels: Vec<_> = available.iter().map(|client| client.label()).collect();
+            let selected = MultiSelect::new()
+                .with_prompt("Register Helixir in which clients?")
+                .items(&labels)
+                .defaults(&vec![true; available.len()])
+                .interact()?;
+            options.clients = selected.into_iter().map(|idx| available[idx]).collect();
+        } else {
+            options.clients = BTreeSet::new();
+        }
+    }
+
+    Ok(options)
+}
+
+fn install_action_label(action: &helixir::installer::InstallAction) -> String {
+    use helixir::installer::InstallAction;
+    match action {
+        InstallAction::ProvisionBackend => "Provision persistent HelixDB".to_string(),
+        InstallAction::StartBackend => "Start detected HelixDB".to_string(),
+        InstallAction::BackupBackend => "Back up HelixDB before schema transition".to_string(),
+        InstallAction::DeploySchema => "Deploy compatible Helixir schema".to_string(),
+        InstallAction::VerifyBackend => "Verify backend health and schema".to_string(),
+        InstallAction::InstallOllama => "Install Ollama".to_string(),
+        InstallAction::StartOllama => "Start Ollama".to_string(),
+        InstallAction::PullOllamaModel(model) => format!("Pull Ollama model {model}"),
+        InstallAction::DownloadNli => "Download and verify NLI model".to_string(),
+        InstallAction::WriteCentralConfig => "Write protected ~/.helixir/helixir.toml".to_string(),
+        InstallAction::RegisterClient(client) => {
+            format!("Register helixir-local in {}", client.label())
+        }
+        InstallAction::RunDoctor => "Run non-mutating helixir doctor".to_string(),
+    }
+}
+
+async fn onboard_run(interactive: bool, dry_run: bool, mode: Option<String>) -> Result<()> {
+    println!("Helixir onboarding plan\n");
+    let state = detect_onboard_state().await;
+    let options = gather_onboard_options(&state, interactive, mode)?;
+    let plan = helixir::installer::Planner::build(&state, &options)
+        .map_err(|error| anyhow::anyhow!("cannot build a safe install plan: {error}"))?;
+
+    println!("Selected tier: {}", options.mode.label());
+    println!("\nOrdered actions:");
+    for (index, step) in plan.steps.iter().enumerate() {
+        println!(
+            "  {:>2}. {} — {}",
+            index + 1,
+            install_action_label(&step.action),
+            step.reason
+        );
+    }
+
+    if dry_run {
+        println!("\nDry run: no system changes were made.");
+    } else {
+        println!("\nApplying plan...");
+        let executor = OnboardExecutor::new(&options);
+        let report = helixir::installer::apply_plan(&executor, &plan).await;
+        for step in &report.steps {
+            let marker = if step.succeeded { "✓" } else { "✗" };
+            println!("  {marker} {}", install_action_label(&step.action));
+            if let Some(detail) = &step.detail {
+                println!("      {detail}");
+            }
+        }
+        if report.rollback_attempted {
+            println!("  rollback: attempted");
+        }
+        if let Some(error) = report.rollback_error {
+            println!("  rollback error: {error}");
+        }
+        anyhow::ensure!(
+            report.ready,
+            "onboarding failed; inspect the step report above"
+        );
+        write_install_manifest(&options)?;
+        println!("\nOnboarding complete. Run `helixir doctor` to re-check readiness.");
+    }
+    Ok(())
+}
+
+fn write_install_manifest(options: &helixir::installer::InstallOptions) -> Result<()> {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    let install_dir = std::env::current_exe()?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let models = options
+        .local_llm_model
+        .iter()
+        .cloned()
+        .chain(
+            options
+                .install_nomic
+                .then(|| helixir::DEFAULT_EMBEDDING_MODEL.to_string()),
+        )
+        .collect();
+    let clients = options
+        .clients
+        .iter()
+        .map(|client| client.label().to_string())
+        .collect();
+    let manifest = helixir::installer::manifest::InstallManifest {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        install_dir,
+        backend_volume: "helixdb_data".to_string(),
+        models,
+        clients,
+        last_backup: None,
+    };
+    helixir::installer::manifest::write(&home.join(".helixir/install.json"), &manifest)
+        .map_err(Into::into)
+}
+
+/// Concrete local executor for the CLI frontend.  It deliberately shells out
+/// only through `Command` argv vectors and keeps client/provider secrets in the
+/// central config rather than MCP JSON files.
+struct OnboardExecutor {
+    options: helixir::installer::InstallOptions,
+    backend: helixir::installer::backend::BackendSpec,
+    backup_dir: PathBuf,
+    backup_name: String,
+}
+
+impl OnboardExecutor {
+    fn new(options: &helixir::installer::InstallOptions) -> Self {
+        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        Self {
+            options: options.clone(),
+            backend: helixir::installer::backend::BackendSpec {
+                host: match &options.backend {
+                    helixir::installer::BackendChoice::JoinRemote { host, .. } => host.clone(),
+                    _ => "localhost".to_string(),
+                },
+                schema_dir: schema_dir_for_install(),
+                ..Default::default()
+            },
+            backup_dir: home.join(".helixir/backups"),
+            backup_name: format!(
+                "helixdb-{}.tar.gz",
+                chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            ),
+        }
+    }
+
+    fn run(program: &str, args: &[String]) -> Result<()> {
+        let status = Command::new(program)
+            .args(args)
+            .status()
+            .with_context(|| format!("run {program}"))?;
+        anyhow::ensure!(status.success(), "{program} exited with {status}");
+        Ok(())
+    }
+
+    fn run_docker(&self, command: helixir::installer::backend::DockerCommand) -> Result<()> {
+        Self::run("docker", &command.args)
+    }
+
+    fn write_central_config(&self) -> Result<()> {
+        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        let path = home.join(".helixir/helixir.toml");
+        let mut patch = helixir::installer::config::ConfigPatch::default()
+            .set("mode", format!("{:?}", self.options.mode))
+            .set(
+                "host",
+                match &self.options.backend {
+                    helixir::installer::BackendChoice::JoinRemote { host, .. } => host.clone(),
+                    _ => "localhost".to_string(),
+                },
+            )
+            .set("port", self.backend.port.to_string())
+            .set("instance", "default")
+            .set("embedding_provider", "ollama")
+            .set("embedding_model", helixir::DEFAULT_EMBEDDING_MODEL)
+            .set("embedding_url", helixir::DEFAULT_OLLAMA_URL);
+        if let Some(model) = &self.options.local_llm_model {
+            patch = patch.set("llm_provider", "ollama").set("llm_model", model);
+        }
+        helixir::installer::config::write_patch(&path, &patch)
+            .map_err(Into::into)
+            .map(|_| ())
+    }
+}
+
+#[async_trait::async_trait]
+impl helixir::installer::PlanExecutor for OnboardExecutor {
+    async fn apply(
+        &self,
+        action: &helixir::installer::InstallAction,
+    ) -> std::result::Result<(), String> {
+        use helixir::installer::InstallAction;
+        let result: std::result::Result<(), String> = match action {
+            InstallAction::ProvisionBackend => self
+                .run_docker(helixir::installer::backend::provision(&self.backend))
+                .map_err(|error| error.to_string()),
+            InstallAction::StartBackend => self
+                .run_docker(helixir::installer::backend::start(&self.backend))
+                .map_err(|error| error.to_string()),
+            InstallAction::BackupBackend => {
+                std::fs::create_dir_all(&self.backup_dir).map_err(|error| error.to_string())?;
+                self.run_docker(helixir::installer::backend::backup(
+                    &self.backend,
+                    &self.backup_dir,
+                    &self.backup_name,
+                ))
+                .map_err(|error| error.to_string())
+            }
+            InstallAction::DeploySchema => {
+                let deploy = current_sibling("helixir-deploy");
+                let argv = helixir::installer::backend::deploy_schema(&deploy, &self.backend);
+                Self::run(&argv[0], &argv[1..].to_vec()).map_err(|error| error.to_string())
+            }
+            InstallAction::VerifyBackend => {
+                if !backend_reachable(&self.backend.host, self.backend.port) {
+                    return Err(format!(
+                        "HelixDB is not reachable on port {}",
+                        self.backend.port
+                    ));
+                }
+                Ok(())
+            }
+            InstallAction::InstallOllama => {
+                if resolve_program("brew").is_some() {
+                    Self::run("brew", &["install".to_string(), "ollama".to_string()])
+                        .map_err(|error| error.to_string())
+                } else {
+                    return Err("Ollama is not installed; install it from https://ollama.com/download and rerun onboarding".to_string());
+                }
+            }
+            InstallAction::StartOllama => {
+                Command::new("ollama")
+                    .arg("serve")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|error| format!("start ollama: {error}"))?;
+                Ok(())
+            }
+            InstallAction::PullOllamaModel(model) => {
+                let command = helixir::installer::models::OllamaAdapter::pull(model);
+                Self::run(&command.program, &command.args).map_err(|error| error.to_string())
+            }
+            InstallAction::DownloadNli => {
+                #[cfg(feature = "nli")]
+                {
+                    helixir::llm::nli::download(false)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    Ok(())
+                }
+                #[cfg(not(feature = "nli"))]
+                {
+                    return Err("binary was built without NLI support".to_string());
+                }
+            }
+            InstallAction::WriteCentralConfig => self
+                .write_central_config()
+                .map_err(|error| error.to_string()),
+            InstallAction::RegisterClient(client) => {
+                let server = helixir::installer::clients::StdioServer::new(
+                    current_sibling("helixir-mcp").display().to_string(),
+                );
+                match client {
+                    helixir::installer::ClientKind::Cursor => {
+                        let home = PathBuf::from(
+                            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+                        );
+                        let path =
+                            helixir::installer::clients::default_json_config_path(*client, &home)
+                                .ok_or_else(|| "Cursor home not found".to_string())?;
+                        helixir::installer::clients::register_json_client(
+                            &path,
+                            "helixir-local",
+                            &server,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        Ok(())
+                    }
+                    _ => {
+                        let executable = native_client_executable(*client)
+                            .ok_or_else(|| "native client executable not found".to_string())?;
+                        if !native_registration_exists(*client, "helixir-local") {
+                            let command = helixir::installer::clients::native_add_command(
+                                *client,
+                                "helixir-local",
+                                &server,
+                            );
+                            let status = Command::new(executable)
+                                .args(command.args)
+                                .status()
+                                .map_err(|error| error.to_string())?;
+                            if !status.success() {
+                                return Err(format!(
+                                    "{} registration exited with {status}",
+                                    client.label()
+                                ));
+                            }
+                        }
+                        if !native_registration_exists(*client, "helixir-local") {
+                            return Err(format!(
+                                "{} registration could not be verified",
+                                client.label()
+                            ));
+                        }
+                        Ok(())
+                    }
+                }
+            }
+            InstallAction::RunDoctor => {
+                if !doctor_config_ready() {
+                    return Err("central config is not ready".to_string());
+                }
+                if detect_local_backend_tcp().is_none() {
+                    return Err("backend verification failed".to_string());
+                }
+                Ok(())
+            }
+        };
+        result
+    }
+
+    async fn rollback(
+        &self,
+        completed: &[helixir::installer::InstallAction],
+    ) -> std::result::Result<(), String> {
+        use helixir::installer::InstallAction;
+        if completed
+            .iter()
+            .any(|action| matches!(action, InstallAction::BackupBackend))
+        {
+            let _ = self.run_docker(helixir::installer::backend::stop(&self.backend));
+            self.run_docker(helixir::installer::backend::restore(
+                &self.backend,
+                &self.backup_dir,
+                &self.backup_name,
+            ))
+            .map_err(|error| error.to_string())?;
+            let _ = self.run_docker(helixir::installer::backend::start(&self.backend));
+        }
+        Ok(())
+    }
+}
+
+fn resolve_program(name: &str) -> Option<PathBuf> {
+    helixir::installer::clients::resolve_command(name)
+}
+
+fn backend_reachable(host: &str, port: u16) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    (host, port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addresses| addresses.next())
+        .and_then(|address| TcpStream::connect_timeout(&address, Duration::from_millis(500)).ok())
+        .is_some()
+}
+
+fn current_sibling(name: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(name)))
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn schema_dir_for_install() -> PathBuf {
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("schema")));
+    sibling
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("helixir/schema"))
+}
+
+/// Run the read-only readiness gate. This function never initializes an MCP
+/// client or writes to HelixDB, so it cannot create memories as a side effect.
+async fn doctor_run(json_output: bool) -> Result<()> {
+    let config = helixir::core::config::HelixirConfig::from_env();
+    let (ollama_installed, ollama_running, models) = detect_ollama().await;
+    let llm_ready = if config.llm_provider.eq_ignore_ascii_case("ollama") {
+        ollama_running && models.contains(&config.llm_model)
+    } else {
+        config.llm_api_key.is_some()
+    };
+    let embeddings_ready = if config.embedding_provider.eq_ignore_ascii_case("ollama") {
+        ollama_running && models.contains(&config.embedding_model)
+    } else {
+        config.embedding_api_key.is_some()
+    };
+    let nomic_ready = if config.embedding_model == helixir::DEFAULT_EMBEDDING_MODEL {
+        ollama_running && models.contains(helixir::DEFAULT_EMBEDDING_MODEL)
+    } else {
+        true
+    };
+    let nli_ready = if config.mode.collective_enabled() {
+        Some(onboard_nli_installed())
+    } else {
+        None
+    };
+    let binaries_ready = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
+        .map(|mcp| mcp.exists())
+        .unwrap_or(false);
+    let inputs = helixir::installer::doctor::DoctorInputs {
+        binaries: Some(binaries_ready),
+        config: Some(doctor_config_ready()),
+        backend: Some(detect_local_backend_tcp().is_some()),
+        llm: Some(llm_ready),
+        embeddings: Some(embeddings_ready),
+        nomic: Some(nomic_ready),
+        nli: nli_ready,
+        mcp: Some(binaries_ready),
+        clients: Some(doctor_clients_ready()),
+    };
+    let report = helixir::installer::doctor::DoctorReport::from_inputs(&inputs);
+    if json_output {
+        println!("{}", report.to_json()?);
+    } else {
+        println!("Helixir doctor (read-only)");
+        for check in &report.checks {
+            let marker = match check.status {
+                helixir::installer::doctor::CheckStatus::Pass => "✓",
+                helixir::installer::doctor::CheckStatus::Warn => "!",
+                helixir::installer::doctor::CheckStatus::Skipped => "-",
+                helixir::installer::doctor::CheckStatus::Fail => "✗",
+            };
+            println!("  {marker} {:<12} {}", check.name, check.detail);
+        }
+        println!("\nready: {}", report.ready);
+        if !ollama_installed {
+            println!("note: Ollama is not installed; use `helixir onboard` to select it.");
+        }
+    }
+    if report.ready {
+        Ok(())
+    } else {
+        anyhow::bail!("doctor found required components that are not ready")
+    }
+}
+
+fn doctor_config_ready() -> bool {
+    let path = helixir::core::config::HelixirConfig::config_file_path().or_else(|| {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".helixir/helixir.toml"))
+    });
+    let Some(path) = path else { return false };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    if toml::from_str::<helixir::core::config::HelixirConfig>(&contents).is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o077 == 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+fn doctor_clients_ready() -> bool {
+    let mut selected = 0usize;
+    let mut ready = true;
+    for client in native_client_targets() {
+        selected += 1;
+        ready &= native_registration_exists(client, "helixir-local");
+    }
+    let server = helixir::installer::clients::StdioServer::new(
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
+            .unwrap_or_else(|| PathBuf::from("helixir-mcp"))
+            .display()
+            .to_string(),
+    );
+    let expected_command = server.json_entry()["command"].clone();
+    for (_, path) in client_targets() {
+        if !path.exists() {
+            continue;
+        }
+        selected += 1;
+        let present = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|doc| {
+                doc.get("mcpServers")
+                    .and_then(|servers| servers.get("helixir-local"))
+                    .cloned()
+            })
+            .map(|entry| entry.get("command") == Some(&expected_command))
+            .unwrap_or(false);
+        ready &= present;
+    }
+    selected == 0 || ready
 }
 
 /// Wire a prepared MCP entry into clients: an explicit `--target` file, else the

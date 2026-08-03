@@ -150,3 +150,31 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
   #         rotation policy changed — the graph links it as the cause."
   # WRONG: listing the May fact as a June event.
   ```
+
+## HelixDB v2.3.5 and RBAC runbook
+
+This integration template targets the repository's pinned Helix CLI v2.3.5.
+Never use `helix update` or a v3/hyperscale binary for this project. Schema and
+query changes are authored in `helixir/schema/schema.hx` and
+`helixir/schema/queries.hx`; HQL supports `//` line comments only, not
+`/* ... */` block comments.
+
+For every schema/query change, read the data model and architecture docs, keep
+changes additive, avoid adding non-nullable fields to populated nodes, and run
+`helix check` before deployment. Query names are a typed API contract. Keep
+node/edge types and traversal directions exact, use both endpoints for
+`AddE<Kind>::From(... )::To(... )`, and do not update vectors with `UPDATE`.
+
+The deployment gate is: `helix --version` → `helix check` →
+`helix backup <instance> -o <dir>` → stop/rebuild/recreate against the same
+persistent volume → deploy with the configured v2 flow → health/read-only query
+verification. Do not mutate a live volume without a recoverable backup.
+
+RBAC is stored in HelixDB and is the shared source of truth for CLI, MCP, and
+Rust. It is disabled by default for trusted-network compatibility and becomes
+deny-by-default when enabled. `actor_id` is the authenticated principal and is
+required on MCP calls when RBAC is enabled; `user_id` is the memory owner/target.
+Never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
+`worker`, and `viewer` with the semantics documented in `integration/SKILLS.md`.
+Use `helixir rbac` for management and fail closed on database errors; a missing
+RBAC query is a deployment-readiness problem, not permission to use local ACLs.
