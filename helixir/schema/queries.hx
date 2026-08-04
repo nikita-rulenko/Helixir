@@ -42,6 +42,9 @@ QUERY getMemoryUserCount(memory_id: String) =>
 QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+QUERY addMemoryKeyedScoped(memory_id: String, content_key: String, rbac_scope: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, rbac_scope: rbac_scope, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
+  RETURN memory
 // Consensus over a fingerprint group: how many distinct holders across all
 // personal nodes that share this content_key.
 QUERY getContentKeyGroupUserCount(content_key: String) =>
@@ -51,6 +54,9 @@ QUERY getContentKeyGroupUserCount(content_key: String) =>
 // All personal nodes for a fingerprint group (collective view groups by these).
 QUERY getMemoriesByContentKey(content_key: String) =>
   memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  RETURN memories
+QUERY getMemoryContentKeysBatch(memory_ids: [String]) =>
+  memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
   RETURN memories
 // Backfill: stamp a content_key fingerprint onto an existing node (hash is
 // computed in Rust; HelixDB only stores it).
@@ -253,6 +259,117 @@ QUERY addCodeExample(example_id: String, code: String, language: String, descrip
 QUERY searchConceptsByName(name: String) =>
   concepts <- N<Concept>::WHERE(_::{name}::EQ(name))
   RETURN concepts
+
+// RBAC management surface.  These queries are deliberately additive and
+// return the audit rows needed by the Helixir-side authorizer.  No caller is
+// trusted to filter grants locally before authorization; the DB is the source
+// of truth and revocation is represented by `active = 0`.
+QUERY getRbacConfig() =>
+  config <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))::FIRST
+  RETURN config
+QUERY setRbacEnabled(enabled: I64, updated_at: String, updated_by: String) =>
+  existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- existing::UpsertN({ config_id: "default", enabled: enabled, updated_at: updated_at, updated_by: updated_by })
+  RETURN config
+QUERY createRbacGroup(group_id: String, name: String, description: String, created_at: String, metadata: String) =>
+  existing <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))
+  group <- existing::UpsertN({ group_id: group_id, name: name, description: description, created_at: created_at, active: 1, metadata: metadata })
+  RETURN group
+QUERY getRbacGroups() =>
+  groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
+  RETURN groups
+QUERY deactivateRbacGroup(group_id: String) =>
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  updated <- group::UPDATE({ active: 0 })
+  RETURN updated
+QUERY createRbacDedupGroup(dedup_group_id: String, name: String, description: String, created_at: String, metadata: String) =>
+  existing <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))
+  dedup_group <- existing::UpsertN({ dedup_group_id: dedup_group_id, name: name, description: description, created_at: created_at, active: 1, metadata: metadata })
+  RETURN dedup_group
+QUERY getRbacDedupGroups() =>
+  dedup_groups <- N<RbacDedupGroup>::WHERE(_::{active}::EQ(1))
+  RETURN dedup_groups
+QUERY deactivateRbacDedupGroup(dedup_group_id: String) =>
+  dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
+  updated <- dedup_group::UPDATE({ active: 0 })
+  RETURN updated
+QUERY getRbacDedupMemberships() =>
+  groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
+  dedup_groups <- N<RbacDedupGroup>::WHERE(_::{active}::EQ(1))
+  links <- groups::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::{active}::EQ(1))
+  RETURN groups, links, dedup_groups
+QUERY setRbacGroupDedupMembership(group_id: String, dedup_group_id: String, assigned_by: String, assigned_at: String) =>
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
+  existing <- group::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::ToN::{dedup_group_id}::EQ(dedup_group_id))
+  membership <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at, removed_at: "", active: 1 })::From(group)::To(dedup_group)
+  RETURN membership
+QUERY clearRbacGroupDedupMembership(group_id: String, removed_at: String) =>
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  current <- group::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::{active}::EQ(1))
+  updated <- current::UPDATE({ active: 0, removed_at: removed_at })
+  RETURN updated
+QUERY getRbacAssignments() =>
+  assignments <- N<RbacAssignment>::WHERE(_::{active}::EQ(1))
+  RETURN assignments
+QUERY getAllRbacAssignments() =>
+  assignments <- N<RbacAssignment>
+  RETURN assignments
+QUERY grantRbacRole(assignment_id: String, subject_id: String, role: String, group_id: String, granted_by: String, created_at: String, metadata: String) =>
+  existing <- N<RbacAssignment>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: group_id, granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
+  user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  existing_membership <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  membership <- existing_membership::UpsertE({ assignment_id: assignment_id, role: role, granted_by: granted_by, granted_at: created_at, active: 1 })::From(user)::To(group)
+  RETURN assignment, membership
+QUERY grantRbacGlobalRole(assignment_id: String, subject_id: String, role: String, granted_by: String, created_at: String, metadata: String) =>
+  existing <- N<RbacAssignment>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: "", granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
+  RETURN assignment
+QUERY revokeRbacRole(subject_id: String, role: String, group_id: String, revoked_at: String) =>
+  assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
+  updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
+  RETURN updated
+QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, assignment_id: String, revoked_at: String) =>
+  assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
+  updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
+  user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
+  memberships <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))::WHERE(_::{active}::EQ(1))
+  membership_updated <- memberships::UPDATE({ active: 0 })
+  RETURN updated, membership_updated
+QUERY linkMemoryToRbacGroup(memory_id: String, group_id: String, assigned_by: String, assigned_at: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  existing <- memory::OutE<MEMORY_IN_RBAC_GROUP>::WHERE(_::ToN::{group_id}::EQ(group_id))
+  link <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at })::From(memory)::To(group)
+  RETURN link
+QUERY unlinkMemoryFromRbacGroup(memory_id: String, group_id: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  DROP memory::OutE<MEMORY_IN_RBAC_GROUP>::WHERE(_::ToN::{group_id}::EQ(group_id))
+  RETURN "deleted"
+QUERY linkMemoryToRbacDedupGroup(memory_id: String, dedup_group_id: String, assigned_by: String, assigned_at: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
+  existing <- memory::OutE<MEMORY_IN_RBAC_DEDUP_GROUP>::WHERE(_::ToN::{dedup_group_id}::EQ(dedup_group_id))
+  link <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at })::From(memory)::To(dedup_group)
+  RETURN link
+QUERY getMemoryRbacGroupsBatch(memory_ids: [String]) =>
+  memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
+  links <- memories::OutE<MEMORY_IN_RBAC_GROUP>
+  groups <- memories::Out<MEMORY_IN_RBAC_GROUP>
+  RETURN memories, links, groups
+QUERY getMemoryRbacScopesBatch(memory_ids: [String]) =>
+  memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
+  group_links <- memories::OutE<MEMORY_IN_RBAC_GROUP>
+  groups <- memories::Out<MEMORY_IN_RBAC_GROUP>
+  dedup_links <- memories::OutE<MEMORY_IN_RBAC_DEDUP_GROUP>
+  dedup_groups <- memories::Out<MEMORY_IN_RBAC_DEDUP_GROUP>
+  RETURN memories, group_links, groups, dedup_links, dedup_groups
+QUERY getMemoriesInRbacDedupGroup(dedup_group_id: String) =>
+  dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
+  memories <- dedup_group::In<MEMORY_IN_RBAC_DEDUP_GROUP>
+  RETURN memories
 
 QUERY checkOntologyInitialized() =>
   thing <- N<Concept>::WHERE(_::{concept_id}::EQ("Thing"))::FIRST
@@ -782,6 +899,9 @@ QUERY getMemoryStances(memory_id: String) =>
   RETURN stance_edges, knowers
 QUERY enqueuePendingInput(pending_id: String, user_id: String, raw_message: String, agent_id: String, context_tags: String, status: String, created_at: String) =>
   pending <- AddN<PendingInput>({ pending_id: pending_id, user_id: user_id, raw_message: raw_message, agent_id: agent_id, context_tags: context_tags, status: status, created_at: created_at })
+  RETURN pending
+QUERY enqueuePendingInputScoped(pending_id: String, user_id: String, actor_id: String, group_id: String, raw_message: String, agent_id: String, context_tags: String, status: String, created_at: String) =>
+  pending <- AddN<PendingInput>({ pending_id: pending_id, user_id: user_id, actor_id: actor_id, group_id: group_id, raw_message: raw_message, agent_id: agent_id, context_tags: context_tags, status: status, created_at: created_at })
   RETURN pending
 QUERY getPendingInputsByStatus(status: String, limit: I64) =>
   pending <- N<PendingInput>::WHERE(_::{status}::EQ(status))::RANGE(0, limit)

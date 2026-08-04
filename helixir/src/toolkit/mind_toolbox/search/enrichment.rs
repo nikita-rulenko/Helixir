@@ -1,7 +1,7 @@
 //! Collective-scope enrichment: `user_count` and `ControversyInfo` lookups
 //! that run in parallel for `scope=collective|all` searches.
 //!
-//! Used by [`super::dispatch::SearchEngine::search`]; kept as static methods
+//! Used by [`crate::toolkit::mind_toolbox::search::SearchEngine::search`]; kept as static methods
 //! so they can be spawned without a `Self` borrow.
 
 use crate::db::HelixClient;

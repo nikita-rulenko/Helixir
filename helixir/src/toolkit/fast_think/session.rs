@@ -9,6 +9,9 @@ use super::models::*;
 
 pub struct ThinkingSession {
     pub id: String,
+    /// Principal that owns this scratchpad while RBAC is enabled. Disabled
+    /// trusted-network sessions remain unbound for backwards compatibility.
+    pub actor_id: Option<String>,
     pub graph: StableDiGraph<Thought, ThoughtEdge>,
     pub entities: HashMap<String, ScratchEntity>,
     pub concepts: HashMap<String, ScratchConcept>,
@@ -25,9 +28,10 @@ pub struct ThinkingSession {
 }
 
 impl ThinkingSession {
-    pub fn new(session_id: &str) -> Self {
+    pub fn new(session_id: &str, actor_id: Option<&str>) -> Self {
         Self {
             id: session_id.to_string(),
+            actor_id: actor_id.map(str::to_string),
             graph: StableDiGraph::new(),
             entities: HashMap::new(),
             concepts: HashMap::new(),
@@ -39,6 +43,14 @@ impl ThinkingSession {
             status: SessionStatus::Thinking,
             owner_hint: None,
             root_thought: None,
+        }
+    }
+
+    pub fn authorize_actor(&self, actor_id: Option<&str>) -> Result<(), FastThinkError> {
+        match (self.actor_id.as_deref(), actor_id) {
+            (Some(owner), Some(actor)) if owner == actor => Ok(()),
+            (None, None) => Ok(()),
+            _ => Err(FastThinkError::Unauthorized),
         }
     }
 
@@ -386,12 +398,11 @@ impl ThinkingSession {
         let mut pushed: HashSet<String> = HashSet::new();
         let mut seen: HashSet<NodeIndex> = HashSet::new();
         let push_recall = |t: &Thought, pushed: &mut HashSet<String>, out: &mut Vec<String>| {
-            if t.is_recall() {
-                if let Some(id) = &t.source_memory_id {
-                    if pushed.insert(id.clone()) {
-                        out.push(id.clone());
-                    }
-                }
+            if t.is_recall()
+                && let Some(id) = &t.source_memory_id
+                && pushed.insert(id.clone())
+            {
+                out.push(id.clone());
             }
         };
 
@@ -436,58 +447,5 @@ impl ThinkingSession {
 }
 
 #[cfg(test)]
-mod evidence_tests {
-    use super::*;
-    use crate::toolkit::fast_think::limits::FastThinkLimits;
-    use crate::toolkit::fast_think::models::{ThoughtEdge, ThoughtType};
-
-    /// Only recalls in the conclusion's supporting subtree are evidence — a
-    /// broad exploratory recall on an unrelated branch must NOT become
-    /// SUPPORTS provenance (the inflation observed live: ~105 edges).
-    #[test]
-    fn evidence_excludes_unrelated_recalls() {
-        let limits = FastThinkLimits::default();
-        let mut s = ThinkingSession::new("t");
-        let root = s
-            .add_thought("pick a policy", ThoughtType::Initial, None, None, &limits)
-            .unwrap();
-        let obs = s
-            .add_thought(
-                "outages are short",
-                ThoughtType::Observation,
-                Some(root),
-                Some(ThoughtEdge::LeadsTo),
-                &limits,
-            )
-            .unwrap();
-        let used = s
-            .add_recalled_thought("queue fact", "mem_used", 0.9, obs, &limits)
-            .unwrap();
-        let _ = used;
-        // Unrelated branch with its own recall.
-        let side = s
-            .add_thought(
-                "tangent",
-                ThoughtType::Question,
-                Some(root),
-                Some(ThoughtEdge::LeadsTo),
-                &limits,
-            )
-            .unwrap();
-        s.add_recalled_thought("noise fact", "mem_noise", 0.9, side, &limits)
-            .unwrap();
-
-        s.add_conclusion("backoff with jitter", &[obs], &limits)
-            .unwrap();
-
-        let ev = s.get_conclusion_evidence_ids();
-        assert!(
-            ev.contains(&"mem_used".to_string()),
-            "supporting recall kept: {ev:?}"
-        );
-        assert!(
-            !ev.contains(&"mem_noise".to_string()),
-            "unrelated recall must be excluded: {ev:?}"
-        );
-    }
-}
+#[path = "session_evidence_tests.rs"]
+mod evidence_tests;

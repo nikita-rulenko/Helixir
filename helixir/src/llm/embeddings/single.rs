@@ -15,11 +15,9 @@ impl EmbeddingGenerator {
             return Err(EmbeddingError::EmptyText);
         }
 
-        if use_cache {
-            if let Some(cached) = self.cache.get(text) {
-                debug!("Cache HIT for: {}...", crate::safe_truncate(text, 50));
-                return Ok(cached);
-            }
+        if use_cache && let Some(cached) = self.cache.get(text) {
+            debug!("Cache HIT for: {}...", crate::safe_truncate(text, 50));
+            return Ok(cached);
         }
 
         let result = match self.provider.as_str() {

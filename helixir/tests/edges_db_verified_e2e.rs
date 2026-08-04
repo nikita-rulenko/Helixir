@@ -120,7 +120,7 @@ fn edges_persisted_with_correct_types_db() {
     // silent garbage, no corruption (the #P0 anti-regression).
     let invalid: Vec<&String> = all_edges
         .iter()
-        .filter(|t| !ARSENAL.iter().any(|a| t.as_str() == *a))
+        .filter(|t| !ARSENAL.contains(&t.as_str()))
         .collect();
     assert!(
         invalid.is_empty(),
@@ -130,7 +130,7 @@ fn edges_persisted_with_correct_types_db() {
 
     let associative: Vec<&String> = all_edges
         .iter()
-        .filter(|t| ASSOCIATIVE.iter().any(|a| t.as_str() == *a))
+        .filter(|t| ASSOCIATIVE.contains(&t.as_str()))
         .collect();
 
     println!("\n==== edges_persisted_with_correct_types_db ====");
@@ -162,6 +162,7 @@ async fn causal_two_cycle_rejected_db() {
 
     let client = helixir::core::helixir_client::HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("cycle_{run}");
@@ -187,7 +188,7 @@ async fn causal_two_cycle_rejected_db() {
     let (a, b) = (&r.memory_ids[0], &r.memory_ids[1]);
 
     // Forward causal edge lands...
-    client
+    admin
         .tooling()
         .add_typed_relation(
             a,
@@ -198,7 +199,7 @@ async fn causal_two_cycle_rejected_db() {
         .await
         .expect("forward BECAUSE");
     // ...the reverse one must be soft-skipped (Ok, but NOT persisted).
-    client
+    admin
         .tooling()
         .add_typed_relation(
             b,

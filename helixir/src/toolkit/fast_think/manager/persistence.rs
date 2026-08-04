@@ -1,0 +1,414 @@
+//! FastThink commit and discard operations.
+
+use super::*;
+
+impl FastThinkManager {
+    pub async fn commit_as_in_group(
+        &self,
+        session_id: &str,
+        session_actor: Option<&str>,
+        actor_id: &str,
+        user_id: &str,
+        group_id: Option<&str>,
+    ) -> Result<CommitResult, FastThinkError> {
+        let session = {
+            let mut sessions = self.sessions.write();
+            sessions
+                .get(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+                .authorize_actor(session_actor)?;
+            sessions
+                .remove(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+        };
+
+        let conclusions = session.get_conclusions();
+        if conclusions.is_empty() {
+            return Err(FastThinkError::NoConclusion);
+        }
+
+        let conclusion_content = session.build_conclusion_content();
+        // Evidence = recalls the conclusion rests on; fall back to all recalls
+        // only when the session graph is too flat to tell (old behaviour).
+        let mut supporting_ids: Vec<String> = session.get_conclusion_evidence_ids();
+        if supporting_ids.is_empty() {
+            supporting_ids = session.get_supporting_memory_ids();
+        }
+        let ft = &session.runtime.main_memory.tooling().config.fast_think;
+
+        // The session already IS the structure — conclusions are explicit,
+        // typed and atomized by the agent. Re-running LLM extraction over them
+        // re-discovers what we hold (and used to dominate commit latency at
+        // 40-96s). Fast path: hand the conclusions to the pipeline as prepared
+        // atoms — dedup, charter and typed-edge enrichment all still apply.
+        // A wall-of-text conclusion still earns full extraction: atomizing it
+        // is worth the wait.
+        let fast = conclusion_content.len() <= ft.commit_extract_over_chars;
+        let (certainty, importance, support_strength) = (
+            ft.commit_certainty as i32,
+            ft.commit_importance as i32,
+            ft.commit_support_strength as i32,
+        );
+
+        let result = if fast {
+            let atoms: Vec<crate::llm::extractor::ExtractedMemory> = conclusions
+                .iter()
+                .map(|(_, t)| crate::llm::extractor::ExtractedMemory {
+                    text: t.content.clone(),
+                    // A committed conclusion is decided-but-derived knowledge.
+                    memory_type: "fact".to_string(),
+                    certainty,
+                    importance,
+                    entities: vec![],
+                    context: None,
+                })
+                .collect();
+            session
+                .runtime
+                .main_memory
+                .add_prepared_as_in_group(actor_id, atoms, user_id, None, None, group_id)
+                .await
+        } else {
+            session
+                .runtime
+                .main_memory
+                .add_as_in_group(actor_id, &conclusion_content, user_id, None, None, group_id)
+                .await
+        }
+        .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
+
+        // Recalled evidence becomes SUPPORTS provenance edges (LLM-free) —
+        // not "[Evidence: ...]" text glued into the content.
+        let committed_ids: Vec<String> = if result.memory_ids.is_empty() {
+            result.deduped.clone()
+        } else {
+            result.memory_ids.clone()
+        };
+        for sid in &supporting_ids {
+            for mid in &committed_ids {
+                if sid == mid {
+                    continue;
+                }
+                if let Err(e) = session
+                    .runtime
+                    .main_memory
+                    .tooling()
+                    .reasoning_engine
+                    .add_relation(
+                        sid,
+                        mid,
+                        crate::toolkit::mind_toolbox::reasoning::ReasoningType::Supports,
+                        support_strength,
+                        None,
+                    )
+                    .await
+                {
+                    debug!("commit: evidence SUPPORTS {sid} -> {mid} failed (non-fatal): {e}");
+                }
+            }
+        }
+
+        // The fast path skipped extraction, so entity discovery moves OFF the
+        // critical path: one background extraction call links entities to the
+        // stored conclusion after the agent already has its ack.
+        if fast && !committed_ids.is_empty() {
+            let client = Arc::clone(&session.runtime.main_memory);
+            let text = conclusion_content.clone();
+            let uid = user_id.to_string();
+            let ids = committed_ids.clone();
+            tokio::spawn(async move {
+                client
+                    .tooling()
+                    .extract_and_link_entities(&text, &uid, &ids)
+                    .await;
+            });
+        }
+
+        let pipeline_entities = result.entities_extracted;
+        let pipeline_relations = result.relations_created + supporting_ids.len();
+
+        info!(
+            session_id = session_id,
+            memory_id = ?committed_ids.first(),
+            fast_path = fast,
+            thoughts_processed = session.thought_count(),
+            entities_extracted = pipeline_entities + session.entity_count(),
+            relations_created = pipeline_relations,
+            elapsed_ms = session.elapsed().as_millis(),
+            "Committed thinking session to main memory"
+        );
+
+        Ok(CommitResult {
+            memory_id: committed_ids.first().cloned().unwrap_or_default(),
+            thoughts_processed: session.thought_count(),
+            entities_extracted: pipeline_entities + session.entity_count(),
+            concepts_mapped: pipeline_relations + session.concept_count(),
+            elapsed: session.elapsed(),
+        })
+    }
+
+    pub fn discard(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<DiscardResult, FastThinkError> {
+        let mut sessions = self.sessions.write();
+        sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?
+            .authorize_actor(actor_id)?;
+        let session = sessions
+            .remove(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+
+        info!(
+            session_id = session_id,
+            thoughts = session.thought_count(),
+            elapsed_ms = session.elapsed().as_millis(),
+            "Discarded thinking session"
+        );
+
+        Ok(DiscardResult {
+            thoughts_discarded: session.thought_count(),
+            elapsed: session.elapsed(),
+        })
+    }
+
+    pub async fn commit_partial(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        reason: &str,
+    ) -> Result<CommitResult, FastThinkError> {
+        let session = {
+            let mut sessions = self.sessions.write();
+            sessions
+                .get(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+                .authorize_actor(None)?;
+            sessions
+                .remove(session_id)
+                .ok_or(FastThinkError::SessionNotFound)?
+        };
+
+        let thoughts: Vec<String> = session
+            .graph
+            .node_indices()
+            .filter_map(|idx| session.graph.node_weight(idx))
+            .map(|t| format!("- [{}] {}", t.thought_type, t.content))
+            .collect();
+
+        if thoughts.is_empty() {
+            return Err(FastThinkError::NoConclusion);
+        }
+
+        let partial_content = format!(
+            "FastThink session interrupted ({})\n\nThoughts:\n{}\n\n[Action: Continue research with think_start]",
+            reason,
+            thoughts.join("\n")
+        );
+
+        // Use add_with_tags to mark as incomplete_thought - tag is inherited by all extracted facts
+        let result = session
+            .runtime
+            .main_memory
+            .add_with_tags(
+                &partial_content,
+                user_id,
+                None,
+                None,
+                Some("incomplete_thought"),
+            )
+            .await
+            .map_err(|e| FastThinkError::CommitFailed(e.to_string()))?;
+
+        let pipeline_entities = result.entities_extracted;
+        let pipeline_relations = result.relations_created;
+
+        warn!(
+            session_id = session_id,
+            reason = reason,
+            memory_id = ?result.memory_ids.first(),
+            thoughts_processed = session.thought_count(),
+            entities_extracted = pipeline_entities,
+            "Committed PARTIAL thinking session to main memory"
+        );
+
+        Ok(CommitResult {
+            memory_id: result.memory_ids.first().cloned().unwrap_or_default(),
+            thoughts_processed: session.thought_count(),
+            entities_extracted: pipeline_entities + session.entity_count(),
+            concepts_mapped: pipeline_relations + session.concept_count(),
+            elapsed: session.elapsed(),
+        })
+    }
+
+    pub fn extract_entity(
+        &self,
+        session_id: &str,
+        thought_idx: NodeIndex,
+        name: &str,
+        entity_type: ScratchEntityType,
+    ) -> Result<String, FastThinkError> {
+        let mut sessions = self.sessions.write();
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+
+        let runtime = Arc::clone(&session.runtime);
+        session.extract_entity(thought_idx, name, entity_type, &runtime.limits)
+    }
+
+    pub fn map_to_concept(
+        &self,
+        session_id: &str,
+        thought_idx: NodeIndex,
+        concept_name: &str,
+        parent_concept: Option<&str>,
+    ) -> Result<String, FastThinkError> {
+        let mut sessions = self.sessions.write();
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+
+        let runtime = Arc::clone(&session.runtime);
+        session.map_to_concept(thought_idx, concept_name, parent_concept, &runtime.limits)
+    }
+
+    pub fn link_thoughts(
+        &self,
+        session_id: &str,
+        from: NodeIndex,
+        to: NodeIndex,
+        edge_type: ThoughtEdge,
+    ) -> Result<(), FastThinkError> {
+        let mut sessions = self.sessions.write();
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+
+        session.link_thoughts(from, to, edge_type)?;
+        Ok(())
+    }
+
+    /// The session thought ceiling — exposed so surfaces (think_status) can
+    /// report headroom. think_conclude bypasses this cap by design.
+    pub fn max_thoughts(&self) -> usize {
+        self.current.load().limits.max_thoughts
+    }
+
+    /// Thought ceiling for a particular session generation.
+    pub fn session_max_thoughts(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<usize, FastThinkError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
+        Ok(session.runtime.limits.max_thoughts)
+    }
+
+    pub fn get_session_status(
+        &self,
+        session_id: &str,
+        actor_id: Option<&str>,
+    ) -> Result<SessionInfo, FastThinkError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+        session.authorize_actor(actor_id)?;
+
+        Ok(SessionInfo {
+            id: session.id.clone(),
+            status: session.status.clone(),
+            thought_count: session.thought_count(),
+            entity_count: session.entity_count(),
+            concept_count: session.concept_count(),
+            current_depth: session.current_depth,
+            elapsed: session.elapsed(),
+            has_conclusion: !session.get_conclusions().is_empty(),
+        })
+    }
+
+    pub fn get_thought_chain(
+        &self,
+        session_id: &str,
+        thought_idx: NodeIndex,
+    ) -> Result<Vec<ThoughtInfo>, FastThinkError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(session_id)
+            .ok_or(FastThinkError::SessionNotFound)?;
+
+        let chain = session.get_chain_to_root(thought_idx);
+
+        Ok(chain
+            .iter()
+            .filter_map(|&idx| {
+                session.get_thought(idx).map(|t| ThoughtInfo {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    thought_type: t.thought_type.clone(),
+                    certainty: t.certainty,
+                    depth: t.depth,
+                })
+            })
+            .collect())
+    }
+
+    pub fn cleanup_stale(&self) -> usize {
+        let mut sessions = self.sessions.write();
+        let before = sessions.len();
+
+        sessions.retain(|id, session| {
+            let keep = session.last_activity.elapsed() < session.runtime.limits.session_ttl;
+            if !keep {
+                info!(session_id = id, "Cleaned up stale session");
+            }
+            keep
+        });
+
+        before - sessions.len()
+    }
+
+    pub fn active_session_count(&self) -> usize {
+        self.sessions.read().len()
+    }
+
+    pub fn list_sessions(&self) -> Vec<String> {
+        self.sessions.read().keys().cloned().collect()
+    }
+
+    /// Shutdown auto-save: persist every still-active session as an
+    /// `[INCOMPLETE]` memory (via `commit_partial`) so reasoning survives the
+    /// process — one-shot MCP clients kill the server long before the
+    /// session-TTL sweeper would fire. Sessions with no recall never learned
+    /// an owner; they save under the `helixir` system user, and
+    /// `search_incomplete_thoughts` finds them regardless (tag search is
+    /// user-agnostic). Returns how many sessions were saved.
+    pub async fn save_all_interrupted(&self, reason: &str) -> usize {
+        let ids = self.list_sessions();
+        let mut saved = 0usize;
+        for id in ids {
+            let owner = {
+                let sessions = self.sessions.read();
+                sessions.get(&id).and_then(|s| s.owner_hint.clone())
+            }
+            .unwrap_or_else(|| "helixir".to_string());
+            match self.commit_partial(&id, &owner, reason).await {
+                Ok(_) => {
+                    info!(session_id = %id, owner = %owner, "Auto-saved interrupted FastThink session");
+                    saved += 1;
+                }
+                // NoConclusion = empty session — nothing worth keeping.
+                Err(FastThinkError::NoConclusion) => {}
+                Err(e) => warn!(session_id = %id, "Shutdown auto-save failed: {e}"),
+            }
+        }
+        saved
+    }
+}

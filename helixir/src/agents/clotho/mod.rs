@@ -342,17 +342,16 @@ impl<'a> Clotho<'a> {
         // fragment the vocabulary: "graph db" next to "graph databases"),
         // reuse the existing entry instead of minting a synonym.
         let bar = self.tooling.config.moira.clotho.alias_threshold;
-        if !emb.is_empty() {
-            if let Some((cid, cname, cemb)) = dict
+        if !emb.is_empty()
+            && let Some((cid, cname, cemb)) = dict
                 .iter()
                 .map(|(cid, cname, cemb)| (cid, cname, cemb, cosine(&emb, cemb)))
                 .filter(|(_, _, _, s)| *s >= bar)
                 .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(cid, cname, cemb, _)| (cid.clone(), cname.clone(), cemb.clone()))
-            {
-                debug!("mint convergence: '{name}' reuses existing category '{cname}'");
-                return Ok(Some((cid, cname, cemb)));
-            }
+        {
+            debug!("mint convergence: '{name}' reuses existing category '{cname}'");
+            return Ok(Some((cid, cname, cemb)));
         }
 
         let cid = self

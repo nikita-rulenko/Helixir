@@ -51,7 +51,7 @@ pub struct ToolingManager {
 }
 
 impl ToolingManager {
-    pub fn new(
+    pub(crate) fn new(
         db: Arc<HelixClient>,
         embedder: Arc<EmbeddingGenerator>,
         llm_provider: Arc<dyn LlmProvider>,
@@ -177,13 +177,13 @@ impl ToolingManager {
         }
 
         let probe = serde_json::json!({ "text": "helixir-startup-probe", "limit": 1 });
-        match self
+        if self
             .db
             .execute_query::<serde_json::Value, _>("searchMemoriesByBm25", &probe)
             .await
+            .is_err()
         {
-            Err(_) => missing.push("searchMemoriesByBm25 (BM25 hybrid)"),
-            Ok(_) => {}
+            missing.push("searchMemoriesByBm25 (BM25 hybrid)");
         }
 
         // smartVectorSearchWithChunksCutoff ships in the same schema as the

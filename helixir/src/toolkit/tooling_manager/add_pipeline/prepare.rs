@@ -56,7 +56,7 @@ impl ToolingManager {
         let lower = text.to_lowercase();
 
         let sentence_count = text
-            .split(|c: char| c == '.' || c == '!' || c == '?')
+            .split(['.', '!', '?'])
             .filter(|s| s.trim().len() > 10)
             .count();
 
@@ -79,7 +79,7 @@ impl ToolingManager {
 
     fn count_distinct_subjects(text: &str) -> usize {
         let subject_indicators: Vec<&str> = text
-            .split(|c: char| c == '.' || c == ';' || c == ',')
+            .split(['.', ';', ','])
             .filter(|s| s.trim().len() > 5)
             .filter_map(|s| {
                 let trimmed = s.trim();

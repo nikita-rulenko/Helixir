@@ -38,6 +38,7 @@ async fn cross_domain_bridge_via_category() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("xcat_{run}");
@@ -56,7 +57,7 @@ async fn cross_domain_bridge_via_category() {
     // Clotho substrate: ONE shared category, unique to this run so the bridge is
     // unambiguous. Tag every fact each side produced — the perpendicular axis the
     // two memories now share.
-    let cat = client
+    let cat = admin
         .tooling()
         .ensure_category(
             &format!("raw-material-{run}"),
@@ -66,7 +67,7 @@ async fn cross_domain_bridge_via_category() {
         .await
         .expect("ensure_category");
     for id in a.memory_ids.iter().chain(b.memory_ids.iter()) {
-        client
+        admin
             .tooling()
             .tag_memory(id, &cat, 80, "test")
             .await

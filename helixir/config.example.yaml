@@ -17,7 +17,7 @@
 # Used for: memory extraction, reasoning, decision making
 # NOTE: MCP server overrides this via ~/.cursor/mcp.json env vars!
 llm_provider: "cerebras"  # Options: "cerebras", "openai", "ollama"
-llm_model: "llama3.3-70b"
+llm_model: "gpt-oss-120b"
 llm_temperature: 0.3
 llm_api_key: null  # REQUIRED for Cerebras! Set via HELIX_LLM_API_KEY env var
 
@@ -43,7 +43,7 @@ timeout: 30
 
 # --- PRODUCTION: Fast Inference + Local Embeddings ---
 # llm_provider: "cerebras"
-# llm_model: "llama3.3-70b"  # Ultra-fast, 70B params, excellent reasoning
+# llm_model: "gpt-oss-120b"  # Canonical Helixir write-path model
 # llm_api_key: "your-cerebras-api-key"
 #
 # embedding_provider: "ollama"
@@ -52,7 +52,7 @@ timeout: 30
 
 # --- DEVELOPMENT: All Local (Ollama) ---
 # llm_provider: "ollama"
-# llm_model: "gemma2"  # 9.2B params, good for extraction
+# llm_model: "llama3.2:3b"  # Local fallback model
 # llm_base_url: "http://localhost:11434"
 #
 # embedding_provider: "ollama"
@@ -75,14 +75,14 @@ timeout: 30
 # === LLM Models (Text Generation) ===
 #
 # BEST for Memory Extraction & Reasoning:
-# - cerebras/llama3.3-70b        ⚡ Ultra-fast, 70x faster than GPUs, excellent reasoning
+# - cerebras/gpt-oss-120b        ⚡ Canonical hosted write-path model
 # - openai/gpt-4o                🎯 Best quality, structured output, expensive
 # - openai/gpt-4o-mini           💰 Good balance quality/cost
-# - ollama/gemma2:latest         🏠 Local, 9.2B params, great for extraction
+# - ollama/llama3.2:3b           🏠 Tested local fallback
 # - ollama/llama3:70b            🏠 Local, 70B params, needs beefy GPU
 #
 # FAST for Development:
-# - cerebras/llama3.1-8b         ⚡ Very fast, good for prototyping
+# - deepseek/deepseek-v4-flash   ⚡ Hosted fallback for extraction
 # - ollama/qwen2.5:7b            🏠 Local, fast, multilingual
 #
 # === Embedding Models ===
@@ -123,4 +123,3 @@ timeout: 30
 # export HELIX_LLM_API_KEY="your-api-key"
 # export HELIX_EMBEDDING_PROVIDER="ollama"
 # export HELIX_EMBEDDING_URL="http://localhost:11434"
-

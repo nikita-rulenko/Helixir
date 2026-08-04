@@ -8,10 +8,10 @@
 //!   `SmartTraversalV2`) re-exported for direct use by tests.
 //!
 //! Layout:
-//! - [`engine`]     — `SearchEngine` struct, constructor, per-backend facades.
-//! - [`dispatch`]   — mode-driven [`SearchEngine::search`] + dedup probe.
-//! - [`enrichment`] — collective-scope `user_count` / controversy lookups.
-//! - [`types`]      — `SearchError`, `SearchEngineConfig`, `UnifiedSearchResult`,
+//! - `engine`     — `SearchEngine` struct, constructor, per-backend facades.
+//! - `dispatch`   — mode-driven [`SearchEngine::search`] + dedup probe.
+//! - `enrichment` — collective-scope `user_count` / controversy lookups.
+//! - `types`      — `SearchError`, `SearchEngineConfig`, `UnifiedSearchResult`,
 //!   `ControversyInfo`.
 //!
 //! Resolution of the historical duplication noted in

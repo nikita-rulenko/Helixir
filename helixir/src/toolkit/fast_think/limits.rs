@@ -132,11 +132,13 @@ mod tests {
     /// here would resurrect the unbounded-recall bug with green builds.
     #[test]
     fn from_config_carries_recall_knobs() {
-        let mut c = crate::core::config::FastThinkConfig::default();
-        c.max_recall_results = 3;
-        c.recall_min_score = 0.42;
-        c.recall_fallback_min_score = 0.33;
-        c.recall_fallback_max = 2;
+        let c = crate::core::config::FastThinkConfig {
+            max_recall_results: 3,
+            recall_min_score: 0.42,
+            recall_fallback_min_score: 0.33,
+            recall_fallback_max: 2,
+            ..crate::core::config::FastThinkConfig::default()
+        };
         let limits = FastThinkLimits::from_config(&c);
         assert_eq!(limits.max_recall_results, 3);
         assert!((limits.recall_min_score - 0.42).abs() < f32::EPSILON);

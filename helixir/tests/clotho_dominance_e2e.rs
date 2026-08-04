@@ -35,10 +35,11 @@ async fn dominance_gate_keeps_domains_disjoint() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
     // Ensure the dictionary has the broad domains both facts could grab at the
     // noise floor (agriculture/raw-material/technology), so the gate has
     // something to suppress.
-    client.clotho().seed_dictionary().await.expect("seed");
+    admin.clotho().seed_dictionary().await.expect("seed");
 
     let run = token();
     let user = format!("dom_{run}");
@@ -52,7 +53,7 @@ async fn dominance_gate_keeps_domains_disjoint() {
     let a_id = a.memory_ids.first().expect("ag id").clone();
 
     // Grow pass with the dominance gate.
-    let stats = client
+    let stats = admin
         .clotho()
         .grow_pass(
             &[
@@ -68,14 +69,14 @@ async fn dominance_gate_keeps_domains_disjoint() {
         stats.tagged_by_match, stats.minted, stats.reused_mint
     );
 
-    let s_cats: HashSet<String> = client
+    let s_cats: HashSet<String> = admin
         .tooling()
         .memory_category_names(&s_id)
         .await
         .expect("sw cats")
         .into_iter()
         .collect();
-    let a_cats: HashSet<String> = client
+    let a_cats: HashSet<String> = admin
         .tooling()
         .memory_category_names(&a_id)
         .await

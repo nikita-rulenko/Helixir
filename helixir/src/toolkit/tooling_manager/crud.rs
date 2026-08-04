@@ -97,27 +97,28 @@ impl ToolingManager {
                 &serde_json::json!({"memory_id": memory_id}),
             )
             .await
+            && let Some(mem) = result.memory
+            && !mem.id.is_empty()
         {
-            if let Some(mem) = result.memory {
-                if !mem.id.is_empty() {
-                    #[derive(serde::Deserialize)]
-                    #[allow(dead_code)] // HelixDB ack envelope; `embedding` mirrored for schema-error visibility.
-                    struct EmbeddingResult {
-                        #[serde(default)]
-                        embedding: serde_json::Value,
-                    }
-
-                    let _ = self.db.execute_query::<EmbeddingResult, _>(
-                        "addMemoryEmbedding",
-                        &serde_json::json!({
-                            "memory_id": mem.id,
-                            "vector_data": vector.iter().map(|&x| x as f64).collect::<Vec<f64>>(),
-                            "embedding_model": self.embedder.model(),
-                            "created_at": now,
-                        }),
-                    ).await;
-                }
+            #[derive(serde::Deserialize)]
+            #[allow(dead_code)] // HelixDB ack envelope; `embedding` mirrored for schema-error visibility.
+            struct EmbeddingResult {
+                #[serde(default)]
+                embedding: serde_json::Value,
             }
+
+            let _ = self
+                .db
+                .execute_query::<EmbeddingResult, _>(
+                    "addMemoryEmbedding",
+                    &serde_json::json!({
+                        "memory_id": mem.id,
+                        "vector_data": vector.iter().map(|&x| x as f64).collect::<Vec<f64>>(),
+                        "embedding_model": self.embedder.model(),
+                        "created_at": now,
+                    }),
+                )
+                .await;
         }
 
         Ok(true)

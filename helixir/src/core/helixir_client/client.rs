@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::db::HelixClient;
@@ -26,8 +26,57 @@ pub struct HelixirClient {
     pub(super) is_initialized: Arc<AtomicBool>,
 }
 
+/// Actor-authorized access to Helixir's generative/maintenance internals.
+///
+/// These APIs operate below the per-memory facade and therefore require a
+/// global administrator whenever RBAC is enabled. Keeping the raw accessors
+/// crate-private prevents external Rust callers from bypassing that decision.
+pub struct HelixirAdmin<'a> {
+    client: &'a HelixirClient,
+}
+
+impl<'a> HelixirAdmin<'a> {
+    pub fn db(&self) -> &'a HelixClient {
+        &self.client.db
+    }
+
+    pub fn tooling(&self) -> &'a ToolingManager {
+        &self.client.tooling_manager
+    }
+
+    pub fn clotho(&self) -> crate::agents::clotho::Clotho<'a> {
+        crate::agents::clotho::Clotho::new(self.tooling())
+    }
+
+    pub fn lachesis(&self) -> crate::agents::lachesis::Lachesis<'a> {
+        crate::agents::lachesis::Lachesis::new(self.tooling())
+    }
+
+    pub fn atropos(&self) -> crate::agents::atropos::Atropos<'a> {
+        crate::agents::atropos::Atropos::new(self.tooling())
+    }
+
+    pub fn orchestrator(&self) -> crate::agents::orchestrator::Orchestrator<'a> {
+        crate::agents::orchestrator::Orchestrator::new(self.tooling())
+    }
+
+    pub fn daemon(&self) -> crate::agents::daemon::Daemon<'a> {
+        crate::agents::daemon::Daemon::new(self.tooling())
+    }
+}
+
 impl HelixirClient {
-    pub fn new(config: HelixirConfig) -> Result<Self, HelixirClientError> {
+    pub fn new(mut config: HelixirConfig) -> Result<Self, HelixirClientError> {
+        if config.llm_provider.eq_ignore_ascii_case("cerebras")
+            && config.llm_model != crate::DEFAULT_LLM_MODEL
+        {
+            warn!(
+                configured_model = %config.llm_model,
+                enforced_model = crate::DEFAULT_LLM_MODEL,
+                "normalizing Cerebras model to Helixir's canonical gpt-oss model"
+            );
+            config.llm_model = crate::DEFAULT_LLM_MODEL.to_string();
+        }
         let db = Arc::new(
             HelixClient::new(&config.host, config.port)
                 .map_err(|e| HelixirClientError::Database(e.to_string()))?
@@ -129,8 +178,13 @@ impl HelixirClient {
         &self.config
     }
 
-    pub fn db(&self) -> &HelixClient {
+    pub(crate) fn db(&self) -> &HelixClient {
         &self.db
+    }
+
+    /// Access the HelixDB-backed RBAC manager used by CLI and MCP paths.
+    pub fn rbac(&self) -> crate::core::rbac::RbacManager {
+        crate::core::rbac::RbacManager::new(Arc::clone(&self.db))
     }
 
     pub fn embedder(&self) -> &EmbeddingGenerator {
@@ -141,8 +195,18 @@ impl HelixirClient {
         &*self.llm_provider
     }
 
-    pub fn tooling(&self) -> &ToolingManager {
+    pub(crate) fn tooling(&self) -> &ToolingManager {
         &self.tooling_manager
+    }
+
+    /// Enter the low-level maintenance surface as an authenticated principal.
+    pub async fn admin_as(&self, actor_id: &str) -> Result<HelixirAdmin<'_>, HelixirClientError> {
+        self.ensure_initialized().await?;
+        self.rbac()
+            .authorize_admin_surface(actor_id)
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        Ok(HelixirAdmin { client: self })
     }
 
     /// Share the tooling generation with process-owned background services.
@@ -150,37 +214,6 @@ impl HelixirClient {
     /// multiple client generations, while the ingest serializer is singular.
     pub(crate) fn tooling_arc(&self) -> Arc<ToolingManager> {
         Arc::clone(&self.tooling_manager)
-    }
-
-    /// Clotho the Spinner (#33 / Moira) — the auto-tagging agent over the
-    /// category dictionary. Borrows the toolkit it drives.
-    pub fn clotho(&self) -> crate::agents::clotho::Clotho<'_> {
-        crate::agents::clotho::Clotho::new(self.tooling())
-    }
-
-    /// Lachesis the Measurer (#39 / Moira) — routes chains and gates them
-    /// against apophenia, labelling survivors as hypotheses-requiring-
-    /// verification. Borrows the toolkit it routes over.
-    pub fn lachesis(&self) -> crate::agents::lachesis::Lachesis<'_> {
-        crate::agents::lachesis::Lachesis::new(self.tooling())
-    }
-
-    /// Atropos the Cutter (#48 / Moira) — curates Lachesis threads into ranked,
-    /// deduped insights with provenance. Borrows the toolkit.
-    pub fn atropos(&self) -> crate::agents::atropos::Atropos<'_> {
-        crate::agents::atropos::Atropos::new(self.tooling())
-    }
-
-    /// The Moira orchestrator (#41) — runs the full Clotho→Lachesis→Atropos
-    /// scenario as one pass. Borrows the toolkit.
-    pub fn orchestrator(&self) -> crate::agents::orchestrator::Orchestrator<'_> {
-        crate::agents::orchestrator::Orchestrator::new(self.tooling())
-    }
-
-    /// The Moira daemon (#42) — schedules orchestrator passes (continuous vs
-    /// on-call). Borrows the toolkit.
-    pub fn daemon(&self) -> crate::agents::daemon::Daemon<'_> {
-        crate::agents::daemon::Daemon::new(self.tooling())
     }
 }
 

@@ -225,6 +225,9 @@ async fn read_path_e2e() {
     // back THROUGH THE GRAPH — flagged as a flashback with its event date,
     // never hidden and never disguised as an in-window row.
     let _ = client
+        .admin_as("codex")
+        .await
+        .expect("RBAC admin")
         .tooling()
         .add_typed_relation(
             "gold_aged_event",

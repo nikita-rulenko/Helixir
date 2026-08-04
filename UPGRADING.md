@@ -12,6 +12,71 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.13.2 → v0.13.3 — graph-backed RBAC onboarding
+
+New and upgraded installations enable RBAC by default through the reserved
+`onboarding` group. The bootstrap grants one operator global `admin`, migrates
+existing users into `onboarding`, enrolls selected agent clients as
+`groupadmin`, attaches every legacy memory to the group, verifies coverage,
+and only then enables enforcement. `--legacy-trusted-mode` is the explicit
+escape hatch for installations that deliberately keep RBAC disabled.
+
+HelixDB is the single source of truth for the principal registry, roles,
+groups, per-memory access edges, and dedup federations. Active or historical
+membership in `onboarding` makes a principal visible in `helixir rbac user`;
+removal deactivates grants but retains the User node and audit history. An
+administrator enrolls a new principal with `helixir rbac group add-user
+--group onboarding --user <id>`, then may assign other groups. Enrolled
+onboarding writers may omit `group_id`; every write outside that group must
+name one concrete access group. Administrators may attach multiple groups to a
+separate dedup federation so current members share deduplication and visibility
+without conflating that federation with the source group.
+
+Detaching a group is prospective: its historical memory edges remain readable,
+while later writes use the group's private dedup scope and receive no new
+federation access edge. Joining a federation backfills access to its existing
+history. Historical federation memories cannot be updated in place after the
+membership set changes; the write pipeline forks them through supersession.
+
+This upgrade adds nodes, edges, fields, and HQL routes. Stop HelixDB, back up
+the persistent volume, run `helix check`, rebuild/recreate the container
+against the same volume, replace the Helixir binaries, and restart MCP clients.
+The legacy `addMemoryKeyed` and `enqueuePendingInput` routes remain available
+during the binary rollout; new binaries use their additive scoped variants.
+Use `helixir rbac user --help`, `helixir rbac group --help`, and
+`helixir rbac dedup --help` for registry, membership, and federation management.
+
+Secondary surfaces now follow the same boundary. FastThink sessions are bound
+to the `actor_id` supplied at `think_start`, and enabled-mode callers must
+repeat it on every `think_*` lifecycle call. `get_add_status` also requires an
+actor: only the pending owner, creator, or global admin may inspect the result;
+outbox payloads are owner/admin-only. Rust callers that previously used
+`HelixirClient::tooling()`, `clotho()`, `lachesis()`, `atropos()`,
+`orchestrator()`, `daemon()`, or `db()` directly must obtain an authorized
+low-level handle with `client.admin_as(actor_id).await?` first. Restart MCP
+clients after replacing the binary so they reload the new tool schemas.
+
+### Required NLI runtime and Cerebras model pin
+
+NLI is no longer an optional Cargo feature or onboarding choice. Every binary
+includes the NLI runtime, `helixir onboard` installs and load-verifies the host
+model, and `helixir doctor` fails readiness when it is missing. The crate-wide
+MSRV is therefore Rust 1.88. Release artifacts include the pinned ONNX Runtime
+library for their target platform.
+
+Helixir also pins every Cerebras request to `gpt-oss-120b` at the provider
+factory boundary. A stale `HELIX_LLM_MODEL` value is logged and ignored when
+`HELIX_LLM_PROVIDER=cerebras`; DeepSeek and Ollama retain their independently
+configured model names. No API keys are stored or migrated by this change.
+
+Onboarding now requires a verified embedding strategy and mandatory NLI. The
+recommended default is Ollama plus Nomic; `--remote-embeddings` permits an
+explicit OpenAI-compatible provider/model/URL with the API key supplied through
+the protected config or `HELIX_EMBEDDING_API_KEY`. `helixir doctor` is no longer
+strictly read-only: a failed remote embedding probe visibly triggers installation
+of Ollama/Nomic and an atomic switch of the central embedding config. The CLI
+implementation is split under `src/bin/helixir/`; no CLI module exceeds 500 lines.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds
@@ -21,6 +86,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.13.3** | The onboarding graph | Guided onboarding now enables graph-backed RBAC through the reserved `onboarding` group, preserves only genuinely legacy unscoped memories in that shared domain, installs one canonical agent skill, and exposes stable user/group CLI JSON for the upcoming UI. **Back up and rebuild HelixDB before replacing binaries** because the release adds RBAC registry and memory-edge queries. Run `helixir doctor`; it requires NLI and either verified local Ollama/Nomic embeddings or an explicit working remote embedding endpoint. |
 | **v0.13.2** | The guarded reload | Hot reload now publishes one coherent runtime generation while one process-owned ingest worker follows the active client; an atomic `claimPendingInput` query prevents duplicate queue work across processes. **Back up the data volume and redeploy the schema** before replacing the binary, then restart MCP clients/gateways. Gateway bearer auth is optional and off by default; enable it with `gateway.auth_token`, `HELIXIR_GATEWAY_TOKEN`, or `helixir config`, and use `helixir gateway --require-auth` when startup must fail closed. |
 | **v0.13.1** | The honest valve | The Hygieia cache valve and `memprobe --reclaim` now ask cgroup reclaim for the FULL current charge instead of a fixed 1024MiB step — under-asking produced false "live heap" verdicts and premature restarts (#89 forensics). Restart a running `helixir watch` to pick it up. |
 | **v0.13.0** | The self-steering release | `helixir config get/set/edit/apply` hot-reloads running MCP/gateway processes via SIGHUP (client rebuilt from the re-read `helixir.toml`, swapped atomically) — **restart MCP clients once on this binary before your first `apply`** (older binaries exit on SIGHUP). Hygieia self-restarts the database container on genuine live-heap pressure (`watchdog.mem_restart_pct`, 92; needs `allow_container_restart`). linux-x86_64 + windows artifacts are full-featured again (NLI; the ONNX runtime ships in the tarball — keep it next to the binaries). `chunking.enable_embeddings` removed (the machinery was dead, #86). |

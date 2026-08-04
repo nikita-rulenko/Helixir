@@ -2,7 +2,8 @@
 //!
 //! The manager owns two synchronized in-memory maps (`entity_id → Entity` and
 //! `name → entity_id`) and falls back to HelixDB on miss. Eviction is naive
-//! (drop the first entry in iteration order) — see TODO inside [`Self::add_to_cache`].
+//! (drop the first entry in iteration order) — see TODO inside
+//! [`EntityManager::add_to_cache`].
 
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -39,13 +40,12 @@ impl EntityManager {
         let mut cache = self.entity_cache.write();
         let mut name_map = self.name_to_id.write();
 
-        if cache.len() >= self.cache_size {
-            if let Some(oldest_id) = cache.keys().next().cloned() {
-                if let Some(evicted) = cache.remove(&oldest_id) {
-                    name_map.remove(&evicted.name.to_lowercase());
-                    debug!("Cache eviction: {} (size: {})", oldest_id, self.cache_size);
-                }
-            }
+        if cache.len() >= self.cache_size
+            && let Some(oldest_id) = cache.keys().next().cloned()
+            && let Some(evicted) = cache.remove(&oldest_id)
+        {
+            name_map.remove(&evicted.name.to_lowercase());
+            debug!("Cache eviction: {} (size: {})", oldest_id, self.cache_size);
         }
 
         cache.insert(entity.entity_id.clone(), entity.clone());

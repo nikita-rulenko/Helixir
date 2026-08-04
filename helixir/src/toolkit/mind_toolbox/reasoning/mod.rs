@@ -3,14 +3,14 @@
 //! inference of relations between similar memories.
 //!
 //! Layout:
-//! - [`types`]  — pure data types ([`ReasoningType`], [`ReasoningRelation`],
+//! - `types`  — pure data types ([`ReasoningType`], [`ReasoningRelation`],
 //!   [`ReasoningChain`], [`CacheStats`], [`ReasoningError`]) plus the
 //!   `project_relation` projection helper.
-//! - [`engine`] — [`ReasoningEngine`] struct, constructor, cache management,
+//! - `engine` — [`ReasoningEngine`] struct, constructor, cache management,
 //!   `build_reasoning_trail` formatter.
-//! - [`edges`]  — `add_relation` + `edge_exists` (CRUD on reasoning edges).
-//! - [`chain`]  — `get_chain` BFS traversal across the 8 logical directions.
-//! - [`infer`]  — `infer_relations` (LLM-guided relation extraction).
+//! - `edges`  — `add_relation` + `edge_exists` (CRUD on reasoning edges).
+//! - `chain`  — `get_chain` BFS traversal across the 8 logical directions.
+//! - `infer`  — `infer_relations` (LLM-guided relation extraction).
 //!
 //! Public surface kept identical to the pre-split `engine.rs`.
 

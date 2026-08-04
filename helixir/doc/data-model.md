@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.6.0-dev`. Last verified: 2026-07-02._
+> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (153 HQL queries that materialize the
+and `helixir/schema/queries.hx` (160 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -12,12 +12,12 @@ contract). Anything below disagreeing with those files is the bug.
                   ┌─────────────────────────────┐
                   │  HelixDB (graph + vector)   │
                   │                             │
-                  │   18 node types             │
+                  │   22 node types             │
                   │    + 5 vector-index types   │
-                  │   37 edge types             │
+                  │   29 edge types             │
                   │     ├── active in code      │
                   │     └── reserved (see §3)   │
-                  │   153 named HQL queries     │
+                  │   160 named HQL queries     │
                   │   vector dim: 768 (default) │
                   └─────────────────────────────┘
 ```
@@ -57,7 +57,10 @@ Nodes group into five purposes:
 | **User** | `user_id`, `name`, `email`, `created_at`, `metadata` | One per identity. |
 | **Agent** | `agent_id`, `role`, `capabilities`, `agent_version`, `host`, `last_seen`, `status` | Tracks which agent wrote which memory — and, since #39, doubles as the swarm presence record: `add_memory(agent_id=…)` heartbeats it (`heartbeatAgent`), `swarm_status` reads the roster. |
 | **Session** | `session_id`, `started_at`, `ended_at`, `status`, `session_type` | Reserved — no code path creates Sessions yet. |
-| **Memory** | `memory_id`, `user_id`, `content`, `memory_type`, `certainty`, `importance`, `created_at/updated_at`, `valid_from/until`, `immutable`, `verified`, `context_tags`, `source`, `metadata`, `is_deleted/deleted_at/deleted_by`, `user_count` | Core unit. `user_count` is the Hive Memory dedup counter. |
+| **Memory** | `memory_id`, `content_key`, `rbac_scope`, `user_id`, `content`, `memory_type`, `certainty`, `importance`, `created_at/updated_at`, `valid_from/until`, `immutable`, `verified`, `context_tags`, `source`, `metadata`, `is_deleted/deleted_at/deleted_by`, `user_count` | Core unit. `content_key` and `rbac_scope` keep Hive consensus inside its security domain. |
+| **RbacGroup** | `group_id`, `name`, `description`, `active` | Concrete access group. |
+| **RbacDedupGroup** | `dedup_group_id`, `name`, `description`, `active` | Optional federation whose current groups share dedup and new-memory visibility. |
+| **RbacAssignment / RbacConfig** | subject/role/group audit fields; enabled flag | HelixDB-backed authorization source of truth. |
 | **MemoryChunk** | `chunk_id`, `position`, `parent_memory_id`, `content`, `token_count` | For long memories split for retrieval. |
 | **Entity** | `entity_id`, `name`, `entity_type`, `properties`, `aliases` | LLM-extracted, deduplicated by name/aliases. |
 | **Concept** | `concept_id`, `name`, `level`, `description`, `parent_id`, `properties` | Ontology node. `parent_id` denormalizes the `IS_A` edge — see §6. |
@@ -258,3 +261,48 @@ There is no automated migration framework today. The current playbook is:
 
 If a migration framework is needed in the future, the likely shape is a
 per-tag set of HQL scripts plus an upgrade tool. No such tool exists today.
+
+## 8. RBAC graph and compatibility bootstrap
+
+RBAC is stored in HelixDB and is the single source of truth shared by the CLI,
+MCP server, and library facade. `RbacGroup` names a team, while
+`RbacAssignment` is an auditable grant (`subject_id`, `role`, `group_id`,
+`active`, grant/revoke timestamps). `RBAC_MEMBER_OF` is the traversable
+principal-to-group edge and `MEMORY_IN_RBAC_GROUP` links authored memories to
+the groups active for their author. `RbacConfig` holds the explicit
+`enabled = 0|1` switch. The schema-level default remains `0` so a partially
+executed deployment cannot lock out existing data. Onboarding creates the
+reserved `onboarding` group, grants existing users `worker`, selected clients
+`groupadmin`, materializes every legacy
+memory edge, verifies coverage, and only then changes the switch to `1`.
+`--legacy-trusted-mode` is the explicit path that leaves it disabled.
+
+The compatibility group intentionally stores an empty `Memory.rbac_scope` and
+uses the legacy unsalted `content_key`, while `MEMORY_IN_RBAC_GROUP` supplies
+the access boundary. This lets old and new onboarding-group memories deduplicate
+without exposing future custom groups. Those custom groups and dedup
+federations continue to use salted security domains.
+
+An active `RBAC_MEMBER_OF` edge into `onboarding` marks a principal as
+enrolled. Revocation sets the assignment and edge inactive but retains both the
+User node and `RbacAssignment` audit row. The administrative registry is a
+projection of these nodes plus matching Agent presence; it is not separately
+persisted.
+
+The `onboarding` group is reserved: management APIs reject deactivation and
+dedup-federation membership because either operation would break its registry
+or legacy-fingerprint contract. Enabled policy also rejects revocation of its
+last global administrator.
+
+The existing `Memory.user_id` remains the author/owner and is never replaced by
+a group id. Authorization resolves the actor's active assignments, derives the
+groups and owners reachable through the graph, and then applies the role matrix:
+global admin is unrestricted; team lead is read-only in assigned groups;
+group admin and moderator can read/write their groups; worker can write only
+their own authored memories; viewer is read-only. Revocation deactivates the
+assignment and preserves its audit history.
+
+At the API boundary, `actor_id` is intentionally distinct from `Memory.user_id`:
+the former is the principal being authorized, the latter is the owner whose
+memory is read or written. The optional field defaults to `user_id` for
+backward-compatible trusted-network deployments.

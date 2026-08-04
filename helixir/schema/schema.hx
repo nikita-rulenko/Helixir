@@ -5,6 +5,80 @@ N::User {
   created_at: String,
   metadata: String DEFAULT "{}"
 }
+
+// RBAC is persisted in HelixDB, not in a host-local config file.  Assignments
+// are immutable-ish audit rows: revocation flips `active` to 0 and preserves
+// who granted the role and when.
+N::RbacGroup {
+  group_id: String,
+  name: String,
+  description: String DEFAULT "",
+  created_at: String,
+  active: I64 DEFAULT 1,
+  metadata: String DEFAULT "{}"
+}
+N::RbacDedupGroup {
+  dedup_group_id: String,
+  name: String,
+  description: String DEFAULT "",
+  created_at: String,
+  active: I64 DEFAULT 1,
+  metadata: String DEFAULT "{}"
+}
+N::RbacAssignment {
+  assignment_id: String,
+  subject_id: String,
+  role: String,
+  group_id: String DEFAULT "",
+  granted_by: String DEFAULT "",
+  created_at: String,
+  revoked_at: String DEFAULT "",
+  active: I64 DEFAULT 1,
+  metadata: String DEFAULT "{}"
+}
+N::RbacConfig {
+  config_id: String,
+  enabled: I64 DEFAULT 0,
+  updated_at: String,
+  updated_by: String DEFAULT ""
+}
+E::RBAC_MEMBER_OF {
+  From: User,
+  To: RbacGroup,
+  Properties: {
+    assignment_id: String,
+    role: String,
+    granted_by: String,
+    granted_at: String,
+    active: I64
+  }
+}
+E::MEMORY_IN_RBAC_GROUP {
+  From: Memory,
+  To: RbacGroup,
+  Properties: {
+    assigned_by: String,
+    assigned_at: String
+  }
+}
+E::RBAC_GROUP_IN_DEDUP_GROUP {
+  From: RbacGroup,
+  To: RbacDedupGroup,
+  Properties: {
+    assigned_by: String,
+    assigned_at: String,
+    removed_at: String,
+    active: I64
+  }
+}
+E::MEMORY_IN_RBAC_DEDUP_GROUP {
+  From: Memory,
+  To: RbacDedupGroup,
+  Properties: {
+    assigned_by: String,
+    assigned_at: String
+  }
+}
 N::Session {
   session_id: String,
   started_at: String,
@@ -27,6 +101,7 @@ N::Agent {
 N::Memory {
   memory_id: String,
   INDEX content_key: String DEFAULT "",
+  rbac_scope: String DEFAULT "",
   user_id: String DEFAULT "",
   content: String,
   memory_type: String DEFAULT "fact",
@@ -311,6 +386,8 @@ V::ConceptEmbedding {
 N::PendingInput {
   pending_id: String,
   user_id: String DEFAULT "",
+  actor_id: String DEFAULT "",
+  group_id: String DEFAULT "",
   raw_message: String,
   agent_id: String DEFAULT "",
   context_tags: String DEFAULT "",
