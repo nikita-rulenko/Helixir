@@ -20,6 +20,9 @@ pub struct InstallManifest {
     pub models: Vec<String>,
     /// Clients registered by onboarding.
     pub clients: Vec<String>,
+    /// Selected graph-backed authorization profile.
+    #[serde(default)]
+    pub rbac: Option<super::rbac::RbacManifest>,
     /// Most recent backend snapshot, when one exists.
     pub last_backup: Option<PathBuf>,
 }
@@ -80,6 +83,12 @@ mod tests {
             backend_volume: "helixdb_data".to_string(),
             models: vec!["nomic-embed-text".to_string()],
             clients: vec!["codex".to_string()],
+            rbac: Some(super::super::rbac::RbacManifest {
+                enabled: true,
+                operator_id: "root".to_string(),
+                group_id: crate::core::ONBOARDING_GROUP_ID.to_string(),
+                principals: vec!["codex".to_string()],
+            }),
             last_backup: None,
         };
         write(&path, &value).unwrap();

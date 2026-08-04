@@ -62,6 +62,7 @@ add_memory(message="<one plain natural-language sentence>", user_id="claude")
   overwrite silently.
 - **`ok:true`** → success, never retry. **`deduped` set with `memories_added=0`**
   (`saved>0`) → already known (success).
+- Non-empty **`updated`** lists existing memory ids changed by the decision matrix.
 - **`{ok:true, status:"accepted", pending_id}`** → buffered write finishing;
   success, searchable in seconds. Only **`ok:false`** is a real failure.
 - **Don't store** ephemeral chatter, secrets, or facts derivable from code/git.
@@ -232,8 +233,9 @@ back to local files or silently disable authorization.
 
 RBAC state is a graph in HelixDB and is the single source of truth for the CLI,
 MCP server, and Rust facade. There is no local policy file to edit or cache.
-The feature is disabled by default to preserve the trusted-network deployment;
-when enabled it is deny-by-default and authorization failures are fail-closed.
+New onboarding enables RBAC by default through the reserved `onboarding`
+enrollment/compatibility group; `--legacy-trusted-mode` is the explicit disabled escape
+hatch. Enabled authorization is deny-by-default and fail-closed.
 
 The graph contains `RbacConfig`, `RbacGroup`, `RbacDedupGroup`, and
 `RbacAssignment` nodes plus membership, memory-visibility, and memory dedup
@@ -249,9 +251,19 @@ must repeat that same actor; cross-principal session access is denied. Poll
 global admin may read it. Outbox payloads are owner/admin-only even when a
 moderator or viewer can read the owner's group memories, because a failed
 notice can contain the original raw input.
-Never let a caller change `user_id` to bypass an `actor_id` check. Enabled
-non-admin writes and `think_commit` calls must also pass one concrete
-`group_id`; do not pass a `dedup_group_id` there.
+Never let a caller change `user_id` to bypass an `actor_id` check. Enrolled
+compatibility-profile writers may omit `group_id`; Helixir routes the write to
+`onboarding` and preserves legacy dedup fingerprints. Writes to any other
+group must pass one concrete `group_id`; do not pass a `dedup_group_id` there.
+Only the bootstrap operator receives global admin; never grant every detected
+agent control-plane access.
+
+Active or historical `onboarding` membership is the principal registry. An
+administrator enrolls a new principal with `helixir rbac group add-user --group
+onboarding --user <id>`, then may assign other groups. `helixir rbac user list`
+projects users, active roles, assignment history, and Agent presence directly
+from HelixDB. Removing a group membership deactivates the grants but retains the
+User node and audit history; never maintain a second registry in local files.
 
 An optional dedup federation deliberately gives several groups one fingerprint
 domain and common visibility. Agents always address their concrete group;
@@ -270,7 +282,7 @@ Role semantics are fixed:
 - `worker`: read in assigned groups and write only memories authored by self;
 - `viewer`: read-only in explicitly assigned groups.
 
-Use the `helixir rbac` CLI family for management (`status`, `group`, `dedup`,
+Use the `helixir rbac` CLI family for management (`bootstrap`, `status`, `group`, `dedup`,
 `grant`, `revoke`, `enable`, `disable`, `check`). Dedup management is
 `dedup create|list|attach|detach|delete`; it requires a global admin. Do not infer access from a memory's
 text, metadata, or the presence of a graph edge alone; resolve active

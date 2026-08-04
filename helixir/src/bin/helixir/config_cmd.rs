@@ -43,21 +43,47 @@ pub(crate) fn config_target_path() -> Result<PathBuf> {
     Ok(helixir_dir()?.join("helixir.toml"))
 }
 
+fn is_secret_key(key: &str) -> bool {
+    let normalized = key.trim().to_ascii_lowercase().replace('-', "_");
+    normalized == "key"
+        || normalized == "token"
+        || normalized == "password"
+        || normalized == "secret"
+        || normalized == "credential"
+        || normalized.ends_with("_key")
+        || normalized.ends_with("_token")
+        || normalized.ends_with("_password")
+        || normalized.ends_with("_secret")
+        || normalized.ends_with("_credential")
+}
+
+fn redact_secrets(value: &mut toml::Value) {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, value) in table.iter_mut() {
+                if is_secret_key(key) {
+                    *value = toml::Value::String("<redacted>".to_string());
+                } else {
+                    redact_secrets(value);
+                }
+            }
+        }
+        toml::Value::Array(values) => values.iter_mut().for_each(redact_secrets),
+        _ => {}
+    }
+}
+
+fn redacted_toml(content: &str) -> Result<String> {
+    let mut value: toml::Value = toml::from_str(content).context("parse helixir.toml")?;
+    redact_secrets(&mut value);
+    toml::to_string_pretty(&value).context("serialize redacted helixir.toml")
+}
+
 pub(crate) fn config_get(raw: bool) -> Result<()> {
     if raw {
         let p = config_target_path()?;
         match std::fs::read_to_string(&p) {
-            Ok(s) => {
-                let mut doc: toml_edit::DocumentMut = s.parse().context("parse helixir.toml")?;
-                if let Some(token) = doc
-                    .get_mut("gateway")
-                    .and_then(toml_edit::Item::as_table_mut)
-                    .and_then(|gateway| gateway.get_mut("auth_token"))
-                {
-                    *token = toml_edit::value("<redacted>");
-                }
-                print!("{doc}");
-            }
+            Ok(s) => print!("{}", redacted_toml(&s)?),
             Err(_) => println!(
                 "# {} does not exist — everything is at defaults",
                 p.display()
@@ -65,13 +91,11 @@ pub(crate) fn config_get(raw: bool) -> Result<()> {
         }
         return Ok(());
     }
-    let mut resolved = helixir::core::config::HelixirConfig::from_env();
-    if resolved.gateway.auth_token.is_some() {
-        resolved.gateway.auth_token = Some("<redacted>".to_string());
-    }
+    let resolved = helixir::core::config::HelixirConfig::from_env();
+    let serialized = toml::to_string_pretty(&resolved).context("serialize resolved config")?;
     println!(
         "# RESOLVED config: defaults -> helixir.toml -> env (env wins)\n{}",
-        toml::to_string_pretty(&resolved).context("serialize resolved config")?
+        redacted_toml(&serialized)?
     );
     Ok(())
 }
@@ -107,7 +131,7 @@ pub(crate) fn config_set(key: &str, value: &str) -> Result<()> {
     let out = doc.to_string();
     config_validate(&out)?; // never persist a file the loader would reject
     std::fs::write(&p, out).with_context(|| format!("write {}", p.display()))?;
-    let displayed_value = if key == "gateway.auth_token" {
+    let displayed_value = if key.rsplit('.').next().is_some_and(is_secret_key) {
         "<redacted>"
     } else {
         value
@@ -239,4 +263,61 @@ pub(crate) fn print_mode() -> Result<()> {
         println!("\nRaise it: HELIXIR_MODE=collective|insights, or `helixir setup --mode <tier>`.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn classifies_current_and_future_secret_fields() {
+        for key in [
+            "api_key",
+            "llm_api_key",
+            "deepseek_api_key",
+            "embedding_api_key",
+            "auth_token",
+            "service-password",
+            "client_secret",
+            "credential",
+        ] {
+            assert!(is_secret_key(key), "{key} must be secret");
+        }
+        for key in ["model", "max_tokens", "base_url", "monkey"] {
+            assert!(!is_secret_key(key), "{key} must remain inspectable");
+        }
+    }
+
+    #[test]
+    fn redacts_nested_secrets_and_preserves_normal_values() {
+        let redacted = redacted_toml(
+            r#"
+llm_api_key = "llm-secret"
+embedding_api_key = "embedding-secret"
+deepseek_api_key = "deepseek-secret"
+model = "gpt-oss-120b"
+
+[gateway]
+auth_token = "gateway-secret"
+
+[[fallback_chain]]
+provider = "remote"
+api_key = "fallback-secret"
+"#,
+        )
+        .expect("redact config");
+
+        for secret in [
+            "llm-secret",
+            "embedding-secret",
+            "deepseek-secret",
+            "gateway-secret",
+            "fallback-secret",
+        ] {
+            assert!(!redacted.contains(secret));
+        }
+        assert_eq!(redacted.matches("<redacted>").count(), 5);
+        assert!(redacted.contains("gpt-oss-120b"));
+        assert!(redacted.contains("remote"));
+    }
 }

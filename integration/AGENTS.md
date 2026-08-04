@@ -42,6 +42,7 @@ constraint, outcome, or gotcha**, store it:
   standing rule; never overwrite silently.
 - `ok:true` → success, never retry. `deduped` set with `memories_added=0`
   (`saved>0`) → already known (success, not failure).
+- Non-empty `updated` lists existing memory ids changed by the decision matrix.
 - `{ok:true, status:"accepted", pending_id}` → buffered write still finishing;
   success, searchable in seconds. Only `ok:false` (`status:"failed"`) is a failure.
 - Don't store ephemeral chatter, secrets, or anything derivable from code/git.
@@ -171,13 +172,19 @@ persistent volume → deploy with the configured v2 flow → health/read-only qu
 verification. Do not mutate a live volume without a recoverable backup.
 
 RBAC is stored in HelixDB and is the shared source of truth for CLI, MCP, and
-Rust. It is disabled by default for trusted-network compatibility and becomes
-deny-by-default when enabled. `actor_id` is the authenticated principal and is
-required on MCP calls when RBAC is enabled; `user_id` is the memory owner/target.
-Enabled non-admin `add_memory` and `think_commit` calls must also pass one
-concrete `group_id`. Never pass a dedup federation id as the write group and
+Rust. New onboarding enables it through the reserved `onboarding`
+enrollment/compatibility group; `--legacy-trusted-mode` is the explicit disabled escape
+hatch. Enabled authorization is deny-by-default. `actor_id` is the
+authenticated principal and is required on MCP calls; `user_id` is the memory
+owner/target. Enrolled compatibility writers may omit `group_id`; other
+non-admin `add_memory` and `think_commit` calls must pass one concrete group.
+Never pass a dedup federation id as the write group and
 never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
 `worker`, and `viewer` with the semantics documented in `integration/SKILLS.md`.
+Active or historical `onboarding` membership defines the graph-backed principal
+registry. Use `helixir rbac user` and `helixir rbac group add-user/remove-user`;
+new principals must enter `onboarding` before an administrator assigns other
+groups, and removal preserves the User node and assignment history.
 `helixir rbac dedup` creates and manages optional group federations: current
 members share dedup and visibility, leaving keeps historical edges but isolates
 future writes. Agents do not resolve this mapping themselves. Use `helixir rbac`

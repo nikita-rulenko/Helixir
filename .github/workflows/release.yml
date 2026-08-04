@@ -144,6 +144,7 @@ jobs:
           cp target/${{ matrix.target }}/release/helixir-mcp${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-deploy${{ matrix.ext || '' }} dist/
           cp -r schema dist/
+          cp -r skills dist/
           # #80: full-feature artifacts carry the ONNX Runtime next to the
           # binaries (linux links with rpath $ORIGIN; windows finds the DLL
           # in the exe directory). Keep them together when relocating.

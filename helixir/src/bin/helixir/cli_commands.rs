@@ -2,6 +2,17 @@ use super::*;
 
 #[derive(Subcommand)]
 pub(crate) enum RbacCmd {
+    /// Bootstrap the onboarding enrollment group and migrate legacy state.
+    Bootstrap {
+        /// Global operator id. Defaults to HELIXIR_RBAC_ACTOR or the OS user.
+        #[arg(long)]
+        operator: Option<String>,
+        /// Principal to enroll as groupadmin; repeat for multiple MCP clients.
+        #[arg(long = "principal")]
+        principals: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the persisted RBAC state.
     Status {
         #[arg(long)]
@@ -15,6 +26,11 @@ pub(crate) enum RbacCmd {
     Group {
         #[command(subcommand)]
         cmd: RbacGroupCmd,
+    },
+    /// Inspect the graph-backed user/agent registry.
+    User {
+        #[command(subcommand)]
+        cmd: RbacUserCmd,
     },
     /// Manage federated deduplication and shared group visibility.
     Dedup {
@@ -73,12 +89,48 @@ pub(crate) enum RbacGroupCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Add a registered or new user to this group.
+    AddUser {
+        #[arg(long)]
+        group: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value = "worker")]
+        role: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove every active role for a user in this group; history is retained.
+    RemoveUser {
+        #[arg(long)]
+        group: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Deactivate a group; grants remain in the audit history.
     Delete {
         #[arg(long)]
         id: String,
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum RbacUserCmd {
+    /// List registered users, active roles, role history, and agent presence.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one registered user.
+    Show {
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 

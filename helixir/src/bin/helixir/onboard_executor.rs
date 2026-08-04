@@ -6,6 +6,7 @@ pub(crate) struct OnboardExecutor {
     backup_dir: PathBuf,
     backup_name: String,
     embedding_repaired: std::sync::atomic::AtomicBool,
+    rbac_enabled_before: std::sync::Mutex<Option<bool>>,
 }
 
 impl OnboardExecutor {
@@ -27,6 +28,7 @@ impl OnboardExecutor {
                 chrono::Utc::now().format("%Y%m%d-%H%M%S")
             ),
             embedding_repaired: std::sync::atomic::AtomicBool::new(false),
+            rbac_enabled_before: std::sync::Mutex::new(None),
         }
     }
 
@@ -284,6 +286,17 @@ impl OnboardExecutor {
         }
         Ok(())
     }
+
+    async fn verify_selected_rbac(&self) -> Result<()> {
+        let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)?;
+        let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+        let state = helixir::installer::rbac::inspect(&manager).await?;
+        anyhow::ensure!(
+            state.satisfies(&self.options.rbac),
+            "selected RBAC profile is not ready"
+        );
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -350,56 +363,50 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
             InstallAction::WriteCentralConfig => self
                 .write_central_config()
                 .map_err(|error| error.to_string()),
-            InstallAction::RegisterClient(client) => {
-                let server = helixir::installer::clients::StdioServer::new(
-                    current_sibling("helixir-mcp").display().to_string(),
-                );
-                match client {
-                    helixir::installer::ClientKind::Cursor => {
-                        let home = PathBuf::from(
-                            std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
-                        );
-                        let path =
-                            helixir::installer::clients::default_json_config_path(*client, &home)
-                                .ok_or_else(|| "Cursor home not found".to_string())?;
-                        helixir::installer::clients::register_json_client(
-                            &path,
-                            "helixir-local",
-                            &server,
-                        )
-                        .map_err(|error| error.to_string())?;
-                        Ok(())
-                    }
-                    _ => {
-                        let executable = native_client_executable(*client)
-                            .ok_or_else(|| "native client executable not found".to_string())?;
-                        if !native_registration_exists(*client, "helixir-local") {
-                            let command = helixir::installer::clients::native_add_command(
-                                *client,
-                                "helixir-local",
-                                &server,
-                            );
-                            let status = Command::new(executable)
-                                .args(command.args)
-                                .status()
-                                .map_err(|error| error.to_string())?;
-                            if !status.success() {
-                                return Err(format!(
-                                    "{} registration exited with {status}",
-                                    client.label()
-                                ));
-                            }
-                        }
-                        if !native_registration_exists(*client, "helixir-local") {
-                            return Err(format!(
-                                "{} registration could not be verified",
-                                client.label()
-                            ));
-                        }
-                        Ok(())
-                    }
-                }
+            InstallAction::BootstrapRbac {
+                operator_id,
+                principals,
+            } => {
+                let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
+                    .map_err(|error| error.to_string())?;
+                let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+                let enabled_before = manager
+                    .snapshot()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .enabled;
+                *self
+                    .rbac_enabled_before
+                    .lock()
+                    .map_err(|_| "RBAC rollback state lock is poisoned".to_string())? =
+                    Some(enabled_before);
+                manager
+                    .bootstrap_compatibility(operator_id, principals)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(())
             }
+            InstallAction::DisableRbac { operator_id } => {
+                let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
+                    .map_err(|error| error.to_string())?;
+                let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+                let enabled_before = manager
+                    .snapshot()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .enabled;
+                *self
+                    .rbac_enabled_before
+                    .lock()
+                    .map_err(|_| "RBAC rollback state lock is poisoned".to_string())? =
+                    Some(enabled_before);
+                manager
+                    .set_enabled(false, operator_id)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            InstallAction::RegisterClient(client) => register_onboard_client(*client),
+            InstallAction::InstallAgentSkill(clients) => install_agent_skills(clients),
             InstallAction::RunDoctor => {
                 if !doctor_config_ready() {
                     return Err("central config is not ready".to_string());
@@ -408,6 +415,9 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                     return Err("backend verification failed".to_string());
                 }
                 self.verify_selected_models()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                self.verify_selected_rbac()
                     .await
                     .map_err(|error| error.to_string())?;
                 Ok(())
@@ -421,6 +431,40 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
         completed: &[helixir::installer::InstallAction],
     ) -> std::result::Result<(), String> {
         use helixir::installer::InstallAction;
+        if completed
+            .iter()
+            .any(|action| matches!(action, InstallAction::BootstrapRbac { .. }))
+            && self
+                .rbac_enabled_before
+                .lock()
+                .map_err(|_| "RBAC rollback state lock is poisoned".to_string())?
+                .is_some_and(|enabled| !enabled)
+        {
+            let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
+                .map_err(|error| error.to_string())?;
+            let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+            manager
+                .set_enabled(false, &self.options.rbac.operator_id)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        if completed
+            .iter()
+            .any(|action| matches!(action, InstallAction::DisableRbac { .. }))
+            && self
+                .rbac_enabled_before
+                .lock()
+                .map_err(|_| "RBAC rollback state lock is poisoned".to_string())?
+                .is_some_and(|enabled| enabled)
+        {
+            let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
+                .map_err(|error| error.to_string())?;
+            let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+            manager
+                .set_enabled(true, &self.options.rbac.operator_id)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         if completed
             .iter()
             .any(|action| matches!(action, InstallAction::BackupBackend))

@@ -69,6 +69,12 @@ pub(crate) use embedding_recovery::*;
 #[path = "helixir/onboard_utils.rs"]
 mod onboard_utils;
 pub(crate) use onboard_utils::*;
+#[path = "helixir/onboard_skills.rs"]
+mod onboard_skills;
+pub(crate) use onboard_skills::*;
+#[path = "helixir/onboard_clients.rs"]
+mod onboard_clients;
+pub(crate) use onboard_clients::*;
 #[path = "helixir/doctor.rs"]
 mod doctor;
 pub(crate) use doctor::*;

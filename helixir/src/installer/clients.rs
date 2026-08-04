@@ -5,6 +5,7 @@
 //! JSON merge. This module builds commands and performs atomic JSON replacement
 //! without ever accepting provider secrets as part of a client entry.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,8 @@ pub struct StdioServer {
     pub command: String,
     /// Arguments passed after the command.
     pub args: Vec<String>,
+    /// Non-secret process environment, such as the stable RBAC principal id.
+    pub env: BTreeMap<String, String>,
 }
 
 impl StdioServer {
@@ -31,7 +34,15 @@ impl StdioServer {
         Self {
             command: command.into(),
             args: Vec::new(),
+            env: BTreeMap::new(),
         }
+    }
+
+    /// Add one non-secret environment value to the MCP process description.
+    #[must_use]
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.insert(key.into(), value.into());
+        self
     }
 
     /// Render the minimal JSON entry used by file-based MCP clients.
@@ -43,6 +54,12 @@ impl StdioServer {
             entry.insert(
                 "args".to_string(),
                 Value::Array(self.args.iter().cloned().map(Value::String).collect()),
+            );
+        }
+        if !self.env.is_empty() {
+            entry.insert(
+                "env".to_string(),
+                serde_json::to_value(&self.env).unwrap_or_default(),
             );
         }
         Value::Object(entry)
@@ -96,6 +113,10 @@ pub fn native_add_command(
             // Cursor is file-configured and should never reach the native path.
             args.push("unsupported-json-client".to_string());
         }
+    }
+    for (key, value) in &server.env {
+        args.push("--env".to_string());
+        args.push(format!("{key}={value}"));
     }
     args.push("--".to_string());
     args.push(server.command.clone());
@@ -280,6 +301,28 @@ mod tests {
                 "/stable/helixir-mcp"
             ]
         );
+    }
+
+    #[test]
+    fn actor_environment_is_rendered_without_provider_secrets() {
+        let server =
+            StdioServer::new("/stable/helixir-mcp").with_env("HELIXIR_RBAC_ACTOR", "codex");
+        let codex = native_add_command(ClientKind::Codex, "helixir-local", &server);
+        assert_eq!(
+            codex.argv(),
+            vec![
+                "codex",
+                "mcp",
+                "add",
+                "helixir-local",
+                "--env",
+                "HELIXIR_RBAC_ACTOR=codex",
+                "--",
+                "/stable/helixir-mcp"
+            ]
+        );
+        assert_eq!(server.json_entry()["env"]["HELIXIR_RBAC_ACTOR"], "codex");
+        assert!(!server.json_entry().to_string().contains("API_KEY"));
     }
 
     #[test]

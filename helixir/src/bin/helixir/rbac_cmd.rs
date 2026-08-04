@@ -12,6 +12,14 @@ pub(crate) fn rbac_actor() -> String {
     std::env::var("HELIXIR_RBAC_ACTOR").unwrap_or_else(|_| "cli".to_string())
 }
 
+fn bootstrap_operator(explicit: Option<String>) -> String {
+    explicit
+        .or_else(|| std::env::var("HELIXIR_RBAC_ACTOR").ok())
+        .or_else(|| std::env::var("USER").ok())
+        .or_else(|| std::env::var("USERNAME").ok())
+        .unwrap_or_else(|| "helixir-operator".to_string())
+}
+
 pub(crate) async fn privileged(
     client: &HelixirClient,
 ) -> Result<helixir::core::helixir_client::HelixirAdmin<'_>> {
@@ -40,6 +48,29 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
         .await
         .context("read RBAC state from HelixDB")?;
     match cmd {
+        RbacCmd::Bootstrap {
+            operator,
+            principals,
+            json,
+        } => {
+            let operator = bootstrap_operator(operator);
+            let report = manager
+                .bootstrap_compatibility(&operator, &principals)
+                .await
+                .context("bootstrap RBAC onboarding profile")?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "RBAC onboarding profile enabled: operator={}, group={}, principals={}, users={}, memories={}",
+                    report.operator_id,
+                    report.group_id,
+                    report.principals_enrolled.len(),
+                    report.users_registered,
+                    report.memories_seen
+                );
+            }
+        }
         RbacCmd::Status { json } => {
             if json {
                 let actor = rbac_actor();
@@ -87,11 +118,75 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                 let actor = rbac_actor();
                 require_rbac_admin(&current, &actor, "group listing")?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&current.groups)?);
+                    let groups = current
+                        .groups
+                        .iter()
+                        .map(|(group_id, group)| {
+                            serde_json::json!({
+                                "group_id": group_id,
+                                "name": group.name,
+                                "description": group.description,
+                                "dedup_group_id": group.dedup_group_id,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({"groups": groups}))?
+                    );
                 } else {
                     for (id, group) in current.groups {
                         println!("{id}\t{}\t{}", group.name, group.description);
                     }
+                }
+            }
+            RbacGroupCmd::AddUser {
+                group,
+                user,
+                role,
+                json,
+            } => {
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "group membership management")?;
+                let role = parse_rbac_role(&role)?;
+                manager
+                    .add_user_to_group(&user, &group, role, &actor)
+                    .await?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "user_id": user,
+                            "group_id": group,
+                            "role": role.label(),
+                            "active": true,
+                        }))?
+                    );
+                } else {
+                    println!("added '{user}' to '{group}' as {}", role.label());
+                }
+            }
+            RbacGroupCmd::RemoveUser { group, user, json } => {
+                let actor = rbac_actor();
+                require_rbac_admin(&current, &actor, "group membership management")?;
+                let revoked = manager
+                    .remove_user_from_group(&user, &group, &actor)
+                    .await?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "user_id": user,
+                            "group_id": group,
+                            "revoked_roles": revoked,
+                            "active": false,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "removed '{user}' from '{group}' ({} role assignments revoked)",
+                        revoked.len()
+                    );
                 }
             }
             RbacGroupCmd::Delete { id, yes } => {
@@ -102,6 +197,63 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                 println!("group '{id}' deactivated");
             }
         },
+        RbacCmd::User { cmd } => {
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "user registry inspection")?;
+            let users = manager.principal_registry(&actor).await?;
+            match cmd {
+                RbacUserCmd::List { json } => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({"users": users}))?
+                        );
+                    } else {
+                        for user in users {
+                            let groups = user
+                                .active_roles
+                                .iter()
+                                .filter_map(|role| role.group_id.as_deref())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            println!(
+                                "{}\t{}\t{}\t{}",
+                                user.user_id,
+                                if user.enrolled {
+                                    "enrolled"
+                                } else {
+                                    "inactive"
+                                },
+                                groups,
+                                if user.agent_present {
+                                    user.agent_status.as_str()
+                                } else {
+                                    "user"
+                                }
+                            );
+                        }
+                    }
+                }
+                RbacUserCmd::Show { user, json } => {
+                    let record = users
+                        .into_iter()
+                        .find(|record| record.user_id == user)
+                        .ok_or_else(|| anyhow::anyhow!("unknown user '{user}'"))?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&record)?);
+                    } else {
+                        println!("{}\t{}", record.user_id, record.name);
+                        for role in record.active_roles {
+                            println!(
+                                "  {}\t{}",
+                                role.group_id.as_deref().unwrap_or("global"),
+                                role.role
+                            );
+                        }
+                    }
+                }
+            }
+        }
         RbacCmd::Dedup { cmd } => {
             let actor = rbac_actor();
             require_rbac_admin(&current, &actor, "dedup group management")?;

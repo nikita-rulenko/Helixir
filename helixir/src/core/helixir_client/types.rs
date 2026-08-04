@@ -12,6 +12,10 @@ use std::collections::HashMap;
 pub struct AddMemoryResult {
     pub memories_added: usize,
     pub memory_ids: Vec<String>,
+    /// Existing memory ids whose content was changed by the write decision.
+    /// Empty for fresh adds, dedup no-ops, and decisions that do not update.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub updated: Vec<String>,
     /// #44: existing memory_ids this write deduped to (already known, not newly
     /// stored). Empty when everything was a fresh add. Lets the agent distinguish
     /// saved-new from linked-to-existing instead of seeing an empty memory_ids.
@@ -26,6 +30,22 @@ pub struct AddMemoryResult {
     /// ask the human or apply a learned rule.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs_clarification: Vec<crate::toolkit::tooling_manager::types::Clarification>,
+}
+
+impl From<crate::toolkit::tooling_manager::AddMemoryResult> for AddMemoryResult {
+    fn from(result: crate::toolkit::tooling_manager::AddMemoryResult) -> Self {
+        Self {
+            memories_added: result.added.len(),
+            memory_ids: result.added,
+            updated: result.updated,
+            deduped: result.deduped,
+            chunks_created: result.chunks_created,
+            entities_extracted: result.entities_extracted,
+            relations_created: result.reasoning_relations_created,
+            stats: result.metadata,
+            needs_clarification: result.needs_clarification,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,4 +135,33 @@ pub struct ConnectionNode {
 pub struct ConnectionEdge {
     pub edge_type: String,
     pub weight: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AddMemoryResult;
+
+    #[test]
+    fn add_result_projection_preserves_updated_ids() {
+        let internal = crate::toolkit::tooling_manager::AddMemoryResult {
+            added: vec![],
+            updated: vec!["mem_updated".to_string()],
+            deleted: vec![],
+            deduped: vec![],
+            skipped: 0,
+            entities_extracted: 0,
+            reasoning_relations_created: 0,
+            chunks_created: 0,
+            metadata: Default::default(),
+            needs_clarification: vec![],
+        };
+
+        let public = AddMemoryResult::from(internal);
+
+        assert_eq!(public.updated, ["mem_updated"]);
+        assert_eq!(
+            serde_json::to_value(public).expect("serialize add result")["updated"],
+            serde_json::json!(["mem_updated"])
+        );
+    }
 }

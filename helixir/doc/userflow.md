@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `codex/rbac-cli`. Last verified: 2026-08-03._
+> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
@@ -14,7 +14,7 @@ There are 20 tools, 2 prompts, 2 resources.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when buffered. |
+| `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` plus `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` when buffered. |
 | `get_add_status` | `pending_id` | `actor_id` | Polling a promised buffered write. Enabled RBAC permits only its owner, creator, or a global admin. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
 | `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |

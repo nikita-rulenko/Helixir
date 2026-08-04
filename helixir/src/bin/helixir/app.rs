@@ -149,9 +149,17 @@ pub(crate) async fn run() -> Result<()> {
         dry_run,
         mode,
         models,
+        security,
     } = &cli.cmd
     {
-        return onboard_run(!non_interactive, *dry_run, mode.clone(), models.clone()).await;
+        return onboard_run(
+            !non_interactive,
+            *dry_run,
+            mode.clone(),
+            models.clone(),
+            security.clone(),
+        )
+        .await;
     }
 
     if let Cmd::Doctor { json } = &cli.cmd {

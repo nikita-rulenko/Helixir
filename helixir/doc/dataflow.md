@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `codex/rbac-cli`. Last verified: 2026-08-03._
+> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
 
 This document walks the two pipelines that matter most:
 
@@ -23,6 +23,12 @@ recall and Phase-2 collective candidates, and is stored as `Memory.rbac_scope`.
 After the decision, group visibility is materialized with
 `MEMORY_IN_RBAC_GROUP`; federation provenance uses
 `MEMORY_IN_RBAC_DEDUP_GROUP`.
+
+For principals enrolled in the reserved `onboarding` compatibility group,
+an omitted `group_id` is resolved server-side to that group from the same policy
+snapshot used for authorization. Its scope keeps the legacy unsalted
+fingerprint but still materializes `MEMORY_IN_RBAC_GROUP`, allowing upgraded
+and new trusted-network memories to deduplicate without losing RBAC visibility.
 
 Federation membership is prospective. Detaching a group leaves historical
 memory-to-group edges intact but excludes it from future writes. An in-place
@@ -120,8 +126,9 @@ is available to authorize a connection-level notification.
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
- AddMemoryResult { memories_added, memory_ids, chunks_created,
-                   entities_extracted, relations_created, stats }
+ AddMemoryResult { memories_added, memory_ids, updated, deduped,
+                   chunks_created, entities_extracted, relations_created,
+                   stats, needs_clarification }
 ```
 
 ### Decision matrix

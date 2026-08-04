@@ -4,7 +4,8 @@ pub(crate) async fn detect_onboard_state() -> helixir::installer::SystemState {
     use helixir::installer::{BackendState, ClientKind, OllamaState, SystemState};
     use std::collections::BTreeMap;
 
-    let backend = match detect_local_backend_tcp() {
+    let detected_port = detect_local_backend_tcp();
+    let backend = match detected_port {
         Some(_) => BackendState::Local {
             healthy: true,
             // Schema compatibility is verified by the backend executor. Treat
@@ -16,6 +17,10 @@ pub(crate) async fn detect_onboard_state() -> helixir::installer::SystemState {
     };
 
     let (ollama_installed, ollama_running, models) = detect_ollama().await;
+    let rbac = match detected_port {
+        Some(port) => detect_rbac_install_state(port).await,
+        None => helixir::installer::rbac::RbacInstallState::default(),
+    };
     let mut clients = BTreeMap::new();
     if client_available(ClientKind::ClaudeCode) {
         clients.insert(ClientKind::ClaudeCode, false);
@@ -37,7 +42,23 @@ pub(crate) async fn detect_onboard_state() -> helixir::installer::SystemState {
         nli_installed: onboard_nli_installed(),
         central_config_matches: false,
         client_registered: clients,
+        rbac,
     }
+}
+
+async fn detect_rbac_install_state(port: u16) -> helixir::installer::rbac::RbacInstallState {
+    use helixir::core::RbacManager;
+    use helixir::installer::rbac::RbacInstallState;
+    use std::sync::Arc;
+
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let Ok(db) = helixir::db::HelixClient::new(&host, port) else {
+        return RbacInstallState::default();
+    };
+    let manager = RbacManager::new(Arc::new(db));
+    helixir::installer::rbac::inspect(&manager)
+        .await
+        .unwrap_or_default()
 }
 
 /// Lightweight backend discovery for onboarding. Using a TCP connect here is

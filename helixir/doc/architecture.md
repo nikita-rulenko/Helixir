@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.13.2` plus `codex/rbac-cli`. Last verified: 2026-08-04._
+> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
 
 ## 1. System context
 
@@ -51,7 +51,10 @@ backend adapter snapshots the persistent Docker volume before schema changes,
 and the manifest records the selected version/models/clients atomically. The
 CLI and a future native UI are frontends over this module; they must not own
 Docker, model-download, or MCP-client mutation policy themselves. The CLI root is
-thin; domain modules live under `src/bin/helixir/` and are capped at 500 lines.
+thin; domain modules live under `src/bin/helixir/`. The same 500-line budget
+applies to every maintained Rust source file under `src/`, with
+`tests/module_budget.rs` preventing regressions. Large responsibilities are
+split into private submodules while their public facades remain stable.
 
 ## 2. Layers
 
@@ -122,10 +125,10 @@ bug to file — not a feature to copy.
 
 | Component | File / module | Owns |
 |---|---|---|
-| MCP server | `src/mcp/server.rs` | Tool dispatch, parameter typing, JSON responses |
+| MCP server | `src/mcp/server.rs`, `src/mcp/tools/` | Tool dispatch, parameter typing, JSON responses; memory tools are split by write, read, swarm, and graph responsibility |
 | MCP process runtime | `src/mcp/server.rs` | One ingest worker, hot-reload generations, optional gateway bearer authentication |
 | `HelixirClient` | `src/core/helixir_client.rs` | Public facade; nothing else may be a public entry point |
-| `HelixirConfig` | `src/core/config.rs` | Configuration shape + env parsing (currently partial, see #10) |
+| `HelixirConfig` | `src/core/config.rs`, `src/core/config/` | Configuration shape + env parsing (currently partial, see #10) |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
 | `ToolingManager` | `src/toolkit/tooling_manager/` | Pipeline orchestration; the only struct allowed to wire all sub-managers together |
 | `ChunkingManager` | `src/toolkit/mind_toolbox/chunking/` | Long-memory chunking (storage/reconstruction only — per-chunk vectors rejected in #86) |
@@ -133,12 +136,13 @@ bug to file — not a feature to copy.
 | `OntologyManager` | `src/toolkit/mind_toolbox/ontology/` | Concept hierarchy, classification, mapping |
 | `ReasoningEngine` | `src/toolkit/mind_toolbox/reasoning/engine.rs` | IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS edges and traversal |
 | `SearchEngine` | `src/toolkit/mind_toolbox/search/mod.rs` | All read paths: vector, BM25, hybrid, smart traversal, onto-search |
-| `FastThinkManager` | `src/toolkit/fast_think/` | Ephemeral reasoning sessions on `petgraph` |
+| `FastThinkManager` | `src/toolkit/fast_think/` | Ephemeral reasoning sessions on `petgraph`; lifecycle and persistence operations are separate private modules |
 | `LlmExtractor` | `src/llm/extractor.rs` | Prompted atomization + structured JSON parsing |
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
 | Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports, explicit embedding strategies; frontends and platform adapters meet here |
+| RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |
 
 ## 4. Cross-cutting concerns
 
@@ -407,7 +411,7 @@ instances** (memory only grows), supervised inside the daemon (§6 open items).
 
 ### 7.8 RBAC as a graph-backed policy service
 
-The optional RBAC layer is a HelixirDB-backed service (`core::rbac::RbacManager`),
+The RBAC layer is a HelixirDB-backed service (`core::rbac::RbacManager`),
 not a host-local ACL file. `RbacGroup`, `RbacDedupGroup`, `RbacAssignment`, and
 `RbacConfig` provide stable state and audit history; membership, visibility,
 and dedup-provenance edges define the security graph. A dedup federation gives
@@ -416,8 +420,14 @@ every current member. Detach preserves historical group edges and excludes the
 group from future writes. The CLI's `helixir rbac` family is a thin management client
 over the same named HQL queries used by MCP and `HelixirClient` authorization.
 
-The layer is disabled by default for compatibility with Helixir's trusted
-network deployment. Once enabled, the service fails closed for unassigned
+Fresh onboarding enables the layer through a reserved `onboarding`
+enrollment/compatibility group. The bootstrap creates one global operator,
+registers existing users as workers, grants detected clients group-admin rights
+only in that group, attaches legacy memories, and
+then enables enforcement. Compatibility writes keep unsalted legacy
+fingerprints while materializing group visibility, so upgraded and new rows
+deduplicate together. `--legacy-trusted-mode` deliberately leaves the persisted
+switch disabled. Once enabled, the service fails closed for unassigned
 principals and enforces the role matrix before writes/updates and after reads;
 the coarse `HELIXIR_MODE` capability gate remains independent.
 
@@ -427,6 +437,13 @@ accessors and constructor are crate-private, preventing external Rust callers
 and CLI commands such as `categories` from bypassing the same global-admin
 decision. FastThink sessions bind their lifecycle to the starting actor;
 pending write results and outbox notices retain stricter owner/creator privacy.
+
+Active onboarding membership is the admission event for the administrative
+principal registry. `RbacManager::principal_registry` projects User nodes,
+active and historical assignments, and matching Agent presence directly from
+HelixDB. Removing a membership deactivates assignments without deleting the
+User or audit history. The CLI's JSON projection is the contract intended for
+the future UI; no UI-owned ACL or registry is permitted.
 
 MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`

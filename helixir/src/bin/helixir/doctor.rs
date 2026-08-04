@@ -46,6 +46,7 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
         .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
         .map(|mcp| mcp.exists())
         .unwrap_or(false);
+    let rbac_ready = doctor_rbac_ready().await;
     let inputs = helixir::installer::doctor::DoctorInputs {
         binaries: Some(binaries_ready),
         config: Some(doctor_config_ready()),
@@ -57,6 +58,7 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
         nli: nli_ready,
         mcp: Some(binaries_ready),
         clients: Some(doctor_clients_ready()),
+        rbac: Some(rbac_ready),
     };
     let report = helixir::installer::doctor::DoctorReport::from_inputs(&inputs);
     if json_output {
@@ -83,6 +85,43 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("doctor found required components that are not ready")
+    }
+}
+
+async fn doctor_rbac_ready() -> bool {
+    use std::sync::Arc;
+
+    let Some(port) = detect_local_backend_tcp() else {
+        return false;
+    };
+    let config = helixir::core::config::HelixirConfig::from_env();
+    let Ok(db) = helixir::db::HelixClient::new(&config.host, port) else {
+        return false;
+    };
+    let manager = helixir::core::RbacManager::new(Arc::new(db));
+    let Ok(state) = helixir::installer::rbac::inspect(&manager).await else {
+        return false;
+    };
+    let manifest = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|home| {
+            helixir::installer::manifest::read(&home.join(".helixir/install.json"))
+                .ok()
+                .flatten()
+        });
+    match manifest.and_then(|manifest| manifest.rbac) {
+        Some(expected) => state.satisfies(&helixir::installer::rbac::RbacInstallOptions {
+            enabled: expected.enabled,
+            operator_id: expected.operator_id,
+            principals: expected.principals.into_iter().collect(),
+        }),
+        None => {
+            state.enabled
+                && state.compatibility_group_exists
+                && !state.global_admins.is_empty()
+                && state.all_users_enrolled
+                && state.all_memories_covered
+        }
     }
 }
 

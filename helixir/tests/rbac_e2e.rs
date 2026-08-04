@@ -26,6 +26,7 @@ fn saved_id(result: &AddMemoryResult) -> Option<String> {
     result
         .memory_ids
         .first()
+        .or_else(|| result.updated.first())
         .or_else(|| result.deduped.first())
         .cloned()
 }
@@ -89,6 +90,20 @@ async fn rbac_dedup_federation_preserves_history_and_isolates_future_writes() {
     rbac.attach_group_to_dedup_as(&group_b, &dedup_group, &admin)
         .await
         .expect("attach B");
+
+    for user in [
+        &worker_a,
+        &worker_b,
+        &worker_c,
+        &multi_group_worker,
+        &viewer_a,
+        &viewer_b,
+        &viewer_c,
+    ] {
+        rbac.grant(user, Role::Worker, Some("onboarding"), &admin)
+            .await
+            .expect("enroll fixture user");
+    }
 
     for (user, role, group) in [
         (&worker_a, Role::Worker, &group_a),
@@ -166,19 +181,27 @@ async fn rbac_dedup_federation_preserves_history_and_isolates_future_writes() {
         .expect("restricted viewer");
     assert_eq!(c_visible, std::collections::HashSet::from([c_id.clone()]));
 
+    let default_group_result = client
+        .add_prepared_as_in_group(
+            &multi_group_worker,
+            vec![fact(format!(
+                "compatibility-routed multi-group fact {suffix}"
+            ))],
+            &multi_group_worker,
+            Some("rbac-e2e"),
+            None,
+            None,
+        )
+        .await
+        .expect("omitted group routes through onboarding");
+    let default_group_id = saved_id(&default_group_result).expect("default-group saved id");
     assert!(
-        client
-            .add_prepared_as_in_group(
-                &multi_group_worker,
-                vec![fact(format!("ambiguous multi-group fact {suffix}"))],
-                &multi_group_worker,
-                Some("rbac-e2e"),
-                None,
-                None,
-            )
+        rbac.memory_group_map(std::slice::from_ref(&default_group_id))
             .await
-            .is_err(),
-        "a multi-group worker must select one concrete access group"
+            .expect("default-group projection")
+            .get(&default_group_id)
+            .is_some_and(|groups| groups.contains("onboarding")),
+        "an enrolled multi-group writer must route an omitted group to onboarding"
     );
     let multi_group_result = client
         .add_prepared_as_in_group(
@@ -247,7 +270,10 @@ async fn rbac_dedup_federation_preserves_history_and_isolates_future_writes() {
         "historical federation memory must not mutate in place"
     );
 
-    let future_text = format!("post-detach exact fact {suffix}");
+    // Use a second nonce so the write is not semantically close to the fixture's
+    // pre-detach fact. This test owns RBAC/dedup isolation, not the LLM decision
+    // engine's similarity threshold.
+    let future_text = format!("post-detach exact fact {}", token());
     let future_a_result = client
         .add_prepared_as_in_group(
             &worker_a,
@@ -259,6 +285,7 @@ async fn rbac_dedup_federation_preserves_history_and_isolates_future_writes() {
         )
         .await
         .expect("future A write");
+    eprintln!("future A add result: {future_a_result:?}");
     let future_a = saved_id(&future_a_result).expect("future A saved memory id");
     let future_b_result = client
         .add_prepared_as_in_group(
@@ -311,6 +338,19 @@ async fn rbac_dedup_federation_preserves_history_and_isolates_future_writes() {
         rbac.revoke_as(user, role, Some(group), &admin)
             .await
             .expect("revoke role");
+    }
+    for user in [
+        &worker_a,
+        &worker_b,
+        &worker_c,
+        &multi_group_worker,
+        &viewer_a,
+        &viewer_b,
+        &viewer_c,
+    ] {
+        rbac.revoke_as(user, Role::Worker, Some("onboarding"), &admin)
+            .await
+            .expect("offboard fixture user");
     }
     for group in [&group_a, &group_c] {
         rbac.detach_group_from_dedup_as(group, &admin)

@@ -1,6 +1,6 @@
 # Data model (datadesign)
 
-> _Reflects code as of `codex/rbac-cli`. Last verified: 2026-08-03._
+> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
 and `helixir/schema/queries.hx` (160 HQL queries that materialize the
@@ -262,7 +262,7 @@ There is no automated migration framework today. The current playbook is:
 If a migration framework is needed in the future, the likely shape is a
 per-tag set of HQL scripts plus an upgrade tool. No such tool exists today.
 
-## 8. RBAC graph (opt-in)
+## 8. RBAC graph and compatibility bootstrap
 
 RBAC is stored in HelixDB and is the single source of truth shared by the CLI,
 MCP server, and library facade. `RbacGroup` names a team, while
@@ -270,7 +270,29 @@ MCP server, and library facade. `RbacGroup` names a team, while
 `active`, grant/revoke timestamps). `RBAC_MEMBER_OF` is the traversable
 principal-to-group edge and `MEMORY_IN_RBAC_GROUP` links authored memories to
 the groups active for their author. `RbacConfig` holds the explicit
-`enabled = 0|1` switch; disabled keeps the trusted-network behavior.
+`enabled = 0|1` switch. The schema-level default remains `0` so a partially
+executed deployment cannot lock out existing data. Onboarding creates the
+reserved `onboarding` group, grants existing users `worker`, selected clients
+`groupadmin`, materializes every legacy
+memory edge, verifies coverage, and only then changes the switch to `1`.
+`--legacy-trusted-mode` is the explicit path that leaves it disabled.
+
+The compatibility group intentionally stores an empty `Memory.rbac_scope` and
+uses the legacy unsalted `content_key`, while `MEMORY_IN_RBAC_GROUP` supplies
+the access boundary. This lets old and new onboarding-group memories deduplicate
+without exposing future custom groups. Those custom groups and dedup
+federations continue to use salted security domains.
+
+An active `RBAC_MEMBER_OF` edge into `onboarding` marks a principal as
+enrolled. Revocation sets the assignment and edge inactive but retains both the
+User node and `RbacAssignment` audit row. The administrative registry is a
+projection of these nodes plus matching Agent presence; it is not separately
+persisted.
+
+The `onboarding` group is reserved: management APIs reject deactivation and
+dedup-federation membership because either operation would break its registry
+or legacy-fingerprint contract. Enabled policy also rejects revocation of its
+last global administrator.
 
 The existing `Memory.user_id` remains the author/owner and is never replaced by
 a group id. Authorization resolves the actor's active assignments, derives the

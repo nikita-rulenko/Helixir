@@ -5,10 +5,11 @@ pub(crate) async fn onboard_run(
     dry_run: bool,
     mode: Option<String>,
     model_args: OnboardModelArgs,
+    security_args: OnboardSecurityArgs,
 ) -> Result<()> {
     println!("Helixir onboarding plan\n");
     let state = detect_onboard_state().await;
-    let options = gather_onboard_options(&state, interactive, mode, &model_args)?;
+    let options = gather_onboard_options(&state, interactive, mode, &model_args, &security_args)?;
     let plan = helixir::installer::Planner::build(&state, &options)
         .map_err(|error| anyhow::anyhow!("cannot build a safe install plan: {error}"))?;
 
@@ -40,6 +41,15 @@ pub(crate) async fn onboard_run(
         }
     }
     println!("Local NLI judge: required");
+    if options.rbac.enabled {
+        println!(
+            "RBAC: enabled after safe bootstrap (operator {}, onboarding group {})",
+            options.rbac.operator_id,
+            helixir::core::ONBOARDING_GROUP_ID
+        );
+    } else {
+        println!("RBAC: disabled by explicit legacy trusted-mode selection");
+    }
     println!("\nOrdered actions:");
     for (index, step) in plan.steps.iter().enumerate() {
         println!(
@@ -108,6 +118,16 @@ pub(crate) fn write_install_manifest(options: &helixir::installer::InstallOption
         backend_volume: "helixdb_data".to_string(),
         models,
         clients,
+        rbac: Some(helixir::installer::rbac::RbacManifest {
+            enabled: options.rbac.enabled,
+            operator_id: options.rbac.operator_id.clone(),
+            group_id: if options.rbac.enabled {
+                helixir::core::ONBOARDING_GROUP_ID.to_string()
+            } else {
+                String::new()
+            },
+            principals: options.rbac.principals.iter().cloned().collect(),
+        }),
         last_backup: None,
     };
     helixir::installer::manifest::write(&home.join(".helixir/install.json"), &manifest)

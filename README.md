@@ -439,7 +439,7 @@ more than it reserves.
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
 | `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
 | `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
 | `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
@@ -481,11 +481,14 @@ Beyond the MCP server, the `helixir` binary drives and monitors the generative a
 helixir setup                          # interactive: configure + wire the MCP server into
                                        #   Claude Code / Claude Desktop / Cursor / Gemini CLI
 helixir mode                           # show the privilege tier (solo | collective | insights)
+helixir onboard                        # backend, models, RBAC, MCP, skills, doctor
+helixir rbac bootstrap --operator root --principal codex --principal claude
 helixir rbac status --json              # inspect the HelixDB-backed RBAC graph
 helixir rbac group create --id alpha --name "Alpha team"
-helixir rbac grant --user alice --role worker --group alpha
+helixir rbac group add-user --group onboarding --user alice --role worker
+helixir rbac group add-user --group alpha --user alice --role worker
 helixir rbac grant --user root --role admin
-helixir rbac enable                     # opt into deny-by-default role enforcement
+helixir rbac enable                     # enable an already prepared custom policy
 helixir rbac check --user alice --action read --owner bob
 helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
 helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
@@ -512,13 +515,36 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   hot-reloads running MCP/gateway processes via SIGHUP — the client is rebuilt
 #   from the re-read file and swapped atomically, no Claude Desktop reboot.
 #   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
+#   get/get --raw and set confirmations redact every *_key, *_token,
+#   *_password, *_secret, and *_credential field.
 ```
 
 RBAC grants, groups, audit rows, and the enabled switch live in HelixDB. The
 CLI is only a management client over the same HQL contract used by MCP and the
-library; there is no authoritative local policy file. Enforcement is disabled
-by default to preserve the trusted-network deployment, and becomes
-deny-by-default after `helixir rbac enable`.
+library; there is no authoritative local policy file. New onboarding safely
+enables enforcement by creating `onboarding`, granting one operator global
+admin, enrolling legacy users as workers and detected clients as group admins,
+and attaching all legacy
+memories before flipping the switch. This preserves the old shared data plane
+and legacy dedup while keeping the RBAC control plane restricted. Pass
+`--legacy-trusted-mode` to onboarding only when RBAC-disabled operation is an
+explicit deployment choice.
+
+The `onboarding` membership is the registry admission event. Administrators
+can inspect the graph-derived registry and assign working groups without a
+second policy store:
+
+```bash
+helixir rbac user list --json
+helixir rbac user show --user alice --json
+helixir rbac group add-user --group onboarding --user alice --role worker --json
+helixir rbac group add-user --group development --user alice --role worker --json
+helixir rbac group remove-user --group development --user alice --json
+```
+
+Removal deactivates assignments but retains the User node and role history.
+The reserved `onboarding` group cannot be deleted or placed in a dedup
+federation, and enabled policy refuses to revoke its last global administrator.
 When enforcement is enabled, management commands resolve the authenticated CLI
 principal from `HELIXIR_RBAC_ACTOR`; there is intentionally no `--actor` escape
 hatch. A global `admin` is required for grants, revocations, group changes, and
@@ -527,11 +553,15 @@ role/roster inspection.
 The gateway deliberately assumes a trusted network by default: it listens on
 `gateway.default_bind` (`0.0.0.0:8765`) without authentication. To enable
 bearer authentication, set `gateway.auth_token` with `helixir config set` or
-provide `HELIXIR_GATEWAY_TOKEN`, then run `helixir config apply`. The token is
-redacted from `helixir config get` output. `helixir gateway start --require-auth`
+provide `HELIXIR_GATEWAY_TOKEN`, then run `helixir config apply`. Tokens and
+provider credentials are redacted from both resolved and raw config output.
+`helixir gateway start --require-auth`
 is the fail-closed variant: it serves `503` until a token is configured.
 
-`helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.
+`helixir onboard` is the complete path: it provisions dependencies, bootstraps
+RBAC, writes a stable per-client `HELIXIR_RBAC_ACTOR`, installs the canonical
+Helixir Agent Skill, registers MCP non-destructively, and finishes with doctor.
+`helixir setup` remains the lightweight MCP-only path.
 
 ## Integration
 

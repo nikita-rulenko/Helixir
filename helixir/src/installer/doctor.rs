@@ -61,6 +61,8 @@ pub struct DoctorInputs {
     pub mcp: Option<bool>,
     /// Whether selected clients see `helixir-local`.
     pub clients: Option<bool>,
+    /// Whether the selected graph-backed authorization profile is ready.
+    pub rbac: Option<bool>,
 }
 
 impl DoctorReport {
@@ -116,6 +118,13 @@ impl DoctorReport {
             inputs.nli,
             true,
             "required local NLI judge",
+        );
+        push_bool(
+            &mut checks,
+            "rbac",
+            inputs.rbac,
+            true,
+            "graph-backed authorization profile",
         );
         push_bool(
             &mut checks,
@@ -181,6 +190,7 @@ mod tests {
             nli: Some(true),
             mcp: Some(true),
             clients: Some(true),
+            rbac: Some(true),
         };
         let report = DoctorReport::from_inputs(&inputs);
         assert!(report.ready);
@@ -206,6 +216,7 @@ mod tests {
             nli: None,
             mcp: Some(true),
             clients: Some(true),
+            rbac: Some(true),
         });
         assert!(!report.ready);
         assert!(
@@ -235,6 +246,7 @@ mod tests {
             nli: Some(true),
             mcp: Some(true),
             clients: Some(true),
+            rbac: Some(true),
         });
         assert!(report.ready);
         assert!(report.checks.iter().any(|check| {

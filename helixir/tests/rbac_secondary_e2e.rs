@@ -27,6 +27,11 @@ async fn secondary_surfaces_are_actor_bound_and_fail_closed() {
     rbac.create_group_as(&group, &group, "secondary RBAC E2E", &admin)
         .await
         .expect("create group");
+    for user in [&worker, &viewer] {
+        rbac.grant(user, Role::Worker, Some("onboarding"), &admin)
+            .await
+            .expect("enroll fixture user");
+    }
     rbac.grant(&worker, Role::Worker, Some(&group), &admin)
         .await
         .expect("grant worker");
@@ -170,6 +175,11 @@ async fn secondary_surfaces_are_actor_bound_and_fail_closed() {
     rbac.revoke_as(&viewer, Role::Viewer, Some(&group), &admin)
         .await
         .expect("revoke viewer");
+    for user in [&worker, &viewer] {
+        rbac.revoke_as(user, Role::Worker, Some("onboarding"), &admin)
+            .await
+            .expect("offboard fixture user");
+    }
     rbac.deactivate_group_as(&group, &admin)
         .await
         .expect("deactivate group");

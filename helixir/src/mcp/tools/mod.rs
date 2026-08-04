@@ -6,13 +6,16 @@
 //! combine those routers via the `+` operator in
 //! [`HelixirMcpServer::build_tool_router`].
 //!
-//! - [`memory`] — long-term memory: add / search / list / update / graph /
-//!   concept / reasoning chain / incomplete thoughts.
+//! - `memory_*` — long-term memory split into write, read, swarm, and graph domains.
 //! - [`think`] — FastThink ephemeral working-memory sessions.
 
 use super::server::HelixirMcpServer;
 
-mod memory;
+mod memory_graph;
+mod memory_read;
+mod memory_support;
+mod memory_swarm;
+mod memory_write;
 mod think;
 
 impl HelixirMcpServer {
@@ -22,6 +25,10 @@ impl HelixirMcpServer {
     /// `vis = "pub(super)"` from its module. The `+` operator on
     /// `ToolRouter<Self>` merges entries into a single router.
     pub(super) fn build_tool_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
-        Self::memory_router() + Self::think_router()
+        Self::memory_write_router()
+            + Self::memory_read_router()
+            + Self::memory_swarm_router()
+            + Self::memory_graph_router()
+            + Self::think_router()
     }
 }

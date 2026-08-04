@@ -5,6 +5,7 @@ pub(crate) fn gather_onboard_options(
     interactive: bool,
     mode: Option<String>,
     model_args: &OnboardModelArgs,
+    security_args: &OnboardSecurityArgs,
 ) -> Result<helixir::installer::InstallOptions> {
     use helixir::installer::{BackendChoice, EmbeddingChoice, InstallOptions};
     use std::collections::BTreeSet;
@@ -113,6 +114,57 @@ pub(crate) fn gather_onboard_options(
             options.clients = BTreeSet::new();
         }
     }
+
+    let rbac_enabled = if security_args.legacy_trusted_mode {
+        false
+    } else if interactive {
+        Confirm::new()
+            .with_prompt("Enable RBAC with the shared onboarding group?")
+            .default(true)
+            .interact()?
+    } else {
+        true
+    };
+    let operator_default = security_args
+        .rbac_operator
+        .clone()
+        .or_else(|| std::env::var("HELIXIR_RBAC_ACTOR").ok())
+        .or_else(|| std::env::var("USER").ok())
+        .or_else(|| std::env::var("USERNAME").ok())
+        .unwrap_or_else(|| "helixir-operator".to_string());
+    let operator_id = if interactive && rbac_enabled && security_args.rbac_operator.is_none() {
+        Input::<String>::new()
+            .with_prompt("Initial RBAC administrator id")
+            .default(operator_default)
+            .interact_text()?
+    } else {
+        operator_default
+    };
+    anyhow::ensure!(
+        !rbac_enabled || !operator_id.trim().is_empty(),
+        "RBAC operator id cannot be empty"
+    );
+    let mut principals = security_args
+        .rbac_principals
+        .iter()
+        .map(|principal| principal.trim())
+        .filter(|principal| !principal.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    principals.extend(
+        options
+            .clients
+            .iter()
+            .map(|client| client.principal_id().to_string()),
+    );
+    if rbac_enabled {
+        principals.insert(operator_id.trim().to_string());
+    }
+    options.rbac = helixir::installer::rbac::RbacInstallOptions {
+        enabled: rbac_enabled,
+        operator_id: operator_id.trim().to_string(),
+        principals,
+    };
 
     Ok(options)
 }
@@ -262,8 +314,17 @@ pub(crate) fn install_action_label(action: &helixir::installer::InstallAction) -
         InstallAction::PullOllamaModel(model) => format!("Pull Ollama model {model}"),
         InstallAction::DownloadNli => "Download and verify NLI model".to_string(),
         InstallAction::WriteCentralConfig => "Write protected ~/.helixir/helixir.toml".to_string(),
+        InstallAction::BootstrapRbac { .. } => {
+            "Bootstrap graph-backed RBAC onboarding profile".to_string()
+        }
+        InstallAction::DisableRbac { .. } => {
+            "Disable RBAC for explicit legacy trusted-network mode".to_string()
+        }
         InstallAction::RegisterClient(client) => {
             format!("Register helixir-local in {}", client.label())
+        }
+        InstallAction::InstallAgentSkill(_) => {
+            "Install canonical Helixir memory/RBAC Agent Skill".to_string()
         }
         InstallAction::RunDoctor => "Run helixir doctor with embedding recovery".to_string(),
     }

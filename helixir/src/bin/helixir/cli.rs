@@ -33,6 +33,19 @@ pub(crate) struct OnboardModelArgs {
     pub(crate) embedding_url: Option<String>,
 }
 
+#[derive(Args, Debug, Clone, Default)]
+pub(crate) struct OnboardSecurityArgs {
+    /// Keep the historical RBAC-disabled trusted-network mode.
+    #[arg(long)]
+    pub(crate) legacy_trusted_mode: bool,
+    /// Initial global administrator id.
+    #[arg(long, value_name = "ID")]
+    pub(crate) rbac_operator: Option<String>,
+    /// Additional onboarding group principal; repeat for multiple agents.
+    #[arg(long = "rbac-principal", value_name = "ID")]
+    pub(crate) rbac_principals: Vec<String>,
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Cmd {
     /// Show, edit, validate and hot-apply the layered config (#52)
@@ -221,6 +234,9 @@ pub(crate) enum Cmd {
         /// Deterministic local-model choices shared with interactive onboarding.
         #[command(flatten)]
         models: OnboardModelArgs,
+        /// RBAC-by-default security profile choices.
+        #[command(flatten)]
+        security: OnboardSecurityArgs,
     },
     /// Readiness report; repairs broken embeddings with Ollama/Nomic.
     Doctor {

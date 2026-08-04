@@ -5,6 +5,7 @@ BINARY_DIR := helixir/target/release
 MCP_BIN    := $(BINARY_DIR)/helixir-mcp
 DEPLOY_BIN := $(BINARY_DIR)/helixir-deploy
 SCHEMA_DIR := helixir/schema
+SKILLS_DIR := helixir/skills
 VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
 INSTALL_ROOT ?= $(HOME)/.helixir
 INSTALL_VERSION_DIR := $(INSTALL_ROOT)/versions/$(VERSION)
@@ -26,6 +27,7 @@ install: build ## Install versioned binaries/assets and run guided onboarding
 	install -m755 "$(BINARY_DIR)/helixir" "$(INSTALL_VERSION_DIR)/helixir"; \
 	install -m755 "$(DEPLOY_BIN)" "$(INSTALL_VERSION_DIR)/helixir-deploy"; \
 	rm -rf "$(INSTALL_VERSION_DIR)/schema"; cp -R "$(SCHEMA_DIR)" "$(INSTALL_VERSION_DIR)/schema"; \
+	rm -rf "$(INSTALL_VERSION_DIR)/skills"; cp -R "$(SKILLS_DIR)" "$(INSTALL_VERSION_DIR)/skills"; \
 	ln -sfn "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/current"; \
 	ln -sfn "$(INSTALL_ROOT)/current/helixir" "$(INSTALL_ROOT)/bin/helixir"; \
 	ln -sfn "$(INSTALL_ROOT)/current/helixir-mcp" "$(INSTALL_ROOT)/bin/helixir-mcp"; \

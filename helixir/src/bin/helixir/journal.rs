@@ -110,8 +110,37 @@ mod rbac_cli_tests {
         .expect("valid rbac grant syntax");
         assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
 
+        let cli = Cli::try_parse_from(["helixir", "rbac", "user", "list", "--json"])
+            .expect("valid principal registry syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from([
+            "helixir",
+            "rbac",
+            "group",
+            "add-user",
+            "--group",
+            "onboarding",
+            "--user",
+            "alice",
+        ])
+        .expect("valid group membership syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
         let cli = Cli::try_parse_from(["helixir", "rbac", "status", "--json"])
             .expect("valid rbac status syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
+        let cli = Cli::try_parse_from([
+            "helixir",
+            "rbac",
+            "bootstrap",
+            "--operator",
+            "root",
+            "--principal",
+            "codex",
+        ])
+        .expect("valid rbac bootstrap syntax");
         assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
 
         let cli = Cli::try_parse_from([
@@ -187,6 +216,26 @@ mod rbac_cli_tests {
         assert!(matches!(
             without_local_llm.cmd,
             Cmd::Onboard { models, .. } if models.no_local_llm
+        ));
+
+        let legacy = Cli::try_parse_from([
+            "helixir",
+            "onboard",
+            "--non-interactive",
+            "--legacy-trusted-mode",
+            "--rbac-operator",
+            "root",
+            "--rbac-principal",
+            "codex",
+            "--dry-run",
+        ])
+        .expect("valid explicit legacy-security syntax");
+        assert!(matches!(
+            legacy.cmd,
+            Cmd::Onboard { security, .. }
+                if security.legacy_trusted_mode
+                    && security.rbac_operator.as_deref() == Some("root")
+                    && security.rbac_principals == ["codex"]
         ));
 
         assert!(
