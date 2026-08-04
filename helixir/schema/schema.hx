@@ -39,6 +39,8 @@ N::RbacAssignment {
 N::RbacConfig {
   config_id: String,
   enabled: I64 DEFAULT 0,
+  migration_state: String DEFAULT "pending",
+  migration_kind: String DEFAULT "",
   updated_at: String,
   updated_by: String DEFAULT ""
 }

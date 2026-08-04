@@ -88,33 +88,33 @@ credential. Commit one coherent conclusion; discard dead ends.
 
 ## RBAC operating contract
 
-RBAC is graph-backed in HelixDB and is the single source of truth for the Rust
-facade, MCP, and CLI. New onboarding enables it by default through the reserved
-`onboarding` enrollment/compatibility group:
+RBAC is permanently enabled, graph-backed in HelixDB, and the single source of
+truth for the Rust facade, MCP, and CLI. Bootstrap creates two reserved groups:
 
 - one operator receives global `admin`;
-- existing users receive `worker` and detected agent principals receive
-  `groupadmin` only in `onboarding`;
-- existing memories receive `MEMORY_IN_RBAC_GROUP` edges before enforcement;
-- omitted write `group_id` is automatically routed to `onboarding` for
-  enrolled writers;
-- compatibility writes preserve legacy-global fingerprints, so upgraded and
-  new memories continue to deduplicate together.
+- `default` receives all pre-RBAC memories and principals as equal
+  `groupadmin` peers, preserving legacy full-trust visibility and fingerprints;
+- `onboarding` admits newly discovered principals as `worker` before an admin
+  assigns normal working groups;
+- omitted `group_id` is inferred only when exactly one reserved workspace is
+  writable; ambiguous membership fails closed;
+- the transition is one-way, checkpointed, idempotent, and resumable. Never
+  disable RBAC to recover from an interrupted bootstrap.
 
-The onboarding group recreates the historical shared data plane, not the control
-plane. Never grant every agent global `admin`. The explicit
-`--legacy-trusted-mode` onboarding option keeps RBAC disabled when an operator
-deliberately chooses the old model.
+`default` recreates the historical shared data plane, not the control plane.
+Never grant every agent global `admin`; full-trust compatibility comes from
+equal group-admin membership in `default`.
 
-Active or historical `onboarding` membership is the graph-backed principal
-registry. New principals must enter through `onboarding` before an admin assigns
-other groups. Removing a principal from a group deactivates its grants but keeps
-the User node and assignment history; never maintain a second local user list.
+Active or historical membership in either reserved group is part of the
+graph-backed principal registry. New principals must enter through `onboarding`
+before an admin assigns other groups. Removing a principal from a group
+deactivates its grants but keeps the User node and assignment history; never
+maintain a second local user list.
 
-When using any non-default group, pass its concrete `group_id` on
+When writing to any working group, pass its concrete `group_id` on
 `add_memory` and `think_commit`. Never pass a dedup federation id. An omitted
-group remains admin-only for principals not enrolled in the compatibility
-group. Authorization is deny-by-default and fail-closed.
+group is accepted only when Helixir can infer exactly one reserved workspace.
+Authorization is deny-by-default and fail-closed.
 
 Roles:
 

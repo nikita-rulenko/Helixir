@@ -420,14 +420,13 @@ every current member. Detach preserves historical group edges and excludes the
 group from future writes. The CLI's `helixir rbac` family is a thin management client
 over the same named HQL queries used by MCP and `HelixirClient` authorization.
 
-Fresh onboarding enables the layer through a reserved `onboarding`
-enrollment/compatibility group. The bootstrap creates one global operator,
-registers existing users as workers, grants detected clients group-admin rights
-only in that group, attaches legacy memories, and
-then enables enforcement. Compatibility writes keep unsalted legacy
-fingerprints while materializing group visibility, so upgraded and new rows
-deduplicate together. `--legacy-trusted-mode` deliberately leaves the persisted
-switch disabled. Once enabled, the service fails closed for unassigned
+Bootstrap creates two reserved workspaces. `default` receives pre-RBAC memories
+and principals as equal group admins, recreating the historical shared data
+plane with unsalted legacy fingerprints. `onboarding` admits newly discovered
+principals as workers before an administrator assigns working groups. The
+chosen fresh/legacy branch and `pending → migrating → active` phase are stored
+in `RbacConfig`, so interruption is resumed idempotently and never rolled back
+to disabled enforcement. The service fails closed for unassigned
 principals and enforces the role matrix before writes/updates and after reads;
 the coarse `HELIXIR_MODE` capability gate remains independent.
 
@@ -438,8 +437,8 @@ and CLI commands such as `categories` from bypassing the same global-admin
 decision. FastThink sessions bind their lifecycle to the starting actor;
 pending write results and outbox notices retain stricter owner/creator privacy.
 
-Active onboarding membership is the admission event for the administrative
-principal registry. `RbacManager::principal_registry` projects User nodes,
+Active or historical membership in either reserved workspace contributes to
+the administrative principal registry. `RbacManager::principal_registry` projects User nodes,
 active and historical assignments, and matching Agent presence directly from
 HelixDB. Removing a membership deactivates assignments without deleting the
 User or audit history. The CLI's JSON projection is the contract intended for
@@ -447,7 +446,6 @@ the future UI; no UI-owned ACL or registry is permitted.
 
 MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`
-remains the memory owner/target. Omitting `actor_id` preserves the legacy
-trusted-network contract by treating `user_id` as the principal; an
-authenticated gateway should populate it explicitly before enabling remote
-impersonation.
+remains the memory owner/target. Agents must provide a stable `actor_id`; an
+authenticated gateway should populate it explicitly before accepting remote
+requests.

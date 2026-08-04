@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::rbac::{RbacManager, Role};
-use super::rbac_compat::ONBOARDING_GROUP_ID;
+use super::rbac_compat::{DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID};
 
 /// One active or historical role assignment in the principal registry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,12 +50,7 @@ impl RbacManager {
             .collect())
     }
 
-    /// Users that have ever crossed the onboarding admission boundary.
-    ///
-    /// Historical assignments count deliberately: removing a user from
-    /// `onboarding` is an auditable offboarding event, not evidence that the
-    /// compatibility migration missed that user.
-    pub(crate) async fn onboarding_registered_user_ids(&self) -> Result<BTreeSet<String>> {
+    pub(crate) async fn reserved_registered_user_ids(&self) -> Result<BTreeSet<String>> {
         let assignments: AssignmentsResponse = self
             .db
             .execute_query("getAllRbacAssignments", &serde_json::json!({}))
@@ -65,8 +60,10 @@ impl RbacManager {
             .assignments
             .into_iter()
             .filter(|assignment| {
-                assignment.group_id == ONBOARDING_GROUP_ID
-                    && Role::parse(&assignment.role).is_some()
+                matches!(
+                    assignment.group_id.as_str(),
+                    DEFAULT_GROUP_ID | ONBOARDING_GROUP_ID
+                ) && Role::parse(&assignment.role).is_some()
                     && !assignment.subject_id.is_empty()
             })
             .map(|assignment| assignment.subject_id)
@@ -131,9 +128,12 @@ impl RbacManager {
                         .then(left.role.cmp(&right.role))
                         .then(left.created_at.cmp(&right.created_at))
                 });
-                let registered = history
-                    .iter()
-                    .any(|role| role.group_id.as_deref() == Some(ONBOARDING_GROUP_ID));
+                let registered = history.iter().any(|role| {
+                    matches!(
+                        role.group_id.as_deref(),
+                        Some(DEFAULT_GROUP_ID | ONBOARDING_GROUP_ID)
+                    )
+                });
                 if !registered {
                     return None;
                 }

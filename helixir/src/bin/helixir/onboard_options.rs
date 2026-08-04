@@ -5,6 +5,7 @@ pub(crate) fn gather_onboard_options(
     interactive: bool,
     mode: Option<String>,
     model_args: &OnboardModelArgs,
+    backend_args: &OnboardBackendArgs,
     security_args: &OnboardSecurityArgs,
 ) -> Result<helixir::installer::InstallOptions> {
     use helixir::installer::{BackendChoice, EmbeddingChoice, InstallOptions};
@@ -18,24 +19,54 @@ pub(crate) fn gather_onboard_options(
         None => MemoryMode::Collective,
     };
 
-    let backend =
-        if !matches!(state.backend, helixir::installer::BackendState::Missing) && interactive {
-            let options = [
+    let backend = if let Some(host) = backend_args.backend_host.as_deref() {
+        BackendChoice::JoinRemote {
+            host: host.trim().to_string(),
+            port: backend_args.backend_port,
+        }
+    } else if backend_args.provision_local {
+        BackendChoice::ProvisionLocal
+    } else if backend_args.reuse_detected {
+        BackendChoice::ReuseDetected
+    } else if interactive {
+        let detected = !matches!(state.backend, helixir::installer::BackendState::Missing);
+        let options = if detected {
+            vec![
                 "reuse the detected HelixDB",
                 "provision a Helixir-managed local HelixDB",
-            ];
-            match Select::new()
-                .with_prompt("Backend")
-                .default(0)
-                .items(&options)
-                .interact()?
-            {
-                0 => BackendChoice::ReuseDetected,
-                _ => BackendChoice::ProvisionLocal,
-            }
+                "connect to a remote HelixDB",
+            ]
+        } else {
+            vec![
+                "provision a Helixir-managed local HelixDB",
+                "connect to a remote HelixDB",
+            ]
+        };
+        let selected = Select::new()
+            .with_prompt("Backend")
+            .default(0)
+            .items(&options)
+            .interact()?;
+        let remote_selected = options[selected].starts_with("connect");
+        if remote_selected {
+            let host = Input::<String>::new()
+                .with_prompt("Remote HelixDB host")
+                .interact_text()?;
+            let port = Input::<u16>::new()
+                .with_prompt("Remote HelixDB port")
+                .default(helixir::DEFAULT_HELIX_PORT)
+                .interact_text()?;
+            BackendChoice::JoinRemote { host, port }
+        } else if detected && selected == 0 {
+            BackendChoice::ReuseDetected
         } else {
             BackendChoice::ProvisionLocal
-        };
+        }
+    } else if matches!(state.backend, helixir::installer::BackendState::Missing) {
+        BackendChoice::ProvisionLocal
+    } else {
+        BackendChoice::ReuseDetected
+    };
 
     let mut options = InstallOptions {
         mode: effective_mode,
@@ -115,16 +146,6 @@ pub(crate) fn gather_onboard_options(
         }
     }
 
-    let rbac_enabled = if security_args.legacy_trusted_mode {
-        false
-    } else if interactive {
-        Confirm::new()
-            .with_prompt("Enable RBAC with the shared onboarding group?")
-            .default(true)
-            .interact()?
-    } else {
-        true
-    };
     let operator_default = security_args
         .rbac_operator
         .clone()
@@ -132,7 +153,7 @@ pub(crate) fn gather_onboard_options(
         .or_else(|| std::env::var("USER").ok())
         .or_else(|| std::env::var("USERNAME").ok())
         .unwrap_or_else(|| "helixir-operator".to_string());
-    let operator_id = if interactive && rbac_enabled && security_args.rbac_operator.is_none() {
+    let operator_id = if interactive && security_args.rbac_operator.is_none() {
         Input::<String>::new()
             .with_prompt("Initial RBAC administrator id")
             .default(operator_default)
@@ -141,7 +162,7 @@ pub(crate) fn gather_onboard_options(
         operator_default
     };
     anyhow::ensure!(
-        !rbac_enabled || !operator_id.trim().is_empty(),
+        !operator_id.trim().is_empty(),
         "RBAC operator id cannot be empty"
     );
     let mut principals = security_args
@@ -157,11 +178,8 @@ pub(crate) fn gather_onboard_options(
             .iter()
             .map(|client| client.principal_id().to_string()),
     );
-    if rbac_enabled {
-        principals.insert(operator_id.trim().to_string());
-    }
+    principals.insert(operator_id.trim().to_string());
     options.rbac = helixir::installer::rbac::RbacInstallOptions {
-        enabled: rbac_enabled,
         operator_id: operator_id.trim().to_string(),
         principals,
     };
@@ -315,10 +333,7 @@ pub(crate) fn install_action_label(action: &helixir::installer::InstallAction) -
         InstallAction::DownloadNli => "Download and verify NLI model".to_string(),
         InstallAction::WriteCentralConfig => "Write protected ~/.helixir/helixir.toml".to_string(),
         InstallAction::BootstrapRbac { .. } => {
-            "Bootstrap graph-backed RBAC onboarding profile".to_string()
-        }
-        InstallAction::DisableRbac { .. } => {
-            "Disable RBAC for explicit legacy trusted-network mode".to_string()
+            "Converge permanent default/onboarding RBAC workspaces".to_string()
         }
         InstallAction::RegisterClient(client) => {
             format!("Register helixir-local in {}", client.label())

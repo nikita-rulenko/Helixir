@@ -17,7 +17,7 @@ use crate::toolkit::fast_think::{FastThinkError, ThoughtType};
 #[tool_router(router = think_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start -> think_add steps -> think_recall -> think_conclude -> think_commit (or think_discard). YOU choose the session_id and reuse it on every call. With RBAC enabled, also repeat the same actor_id on every lifecycle call; the session id is not a credential. Returns {session_id, root_thought_idx}."
+        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start -> think_add steps -> think_recall -> think_conclude -> think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Repeat the same actor_id on every lifecycle call; the session id is not a credential. Returns {session_id, root_thought_idx}."
     )]
     async fn think_start(
         &self,
@@ -44,7 +44,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Add a thought node to an active FastThink session (from think_start). With RBAC enabled, actor_id must match the principal that started it. Attach it under parent_idx (a previous thought's index) to build a reasoning tree, or omit to attach to the root. thought_type defaults to 'reasoning'. Returns {thought_idx, thought_count, depth} — keep thought_idx to use as a parent for later thoughts."
+        description = "Add a thought node to an active FastThink session (from think_start). actor_id must match the principal that started it. Attach it under parent_idx (a previous thought's index) to build a reasoning tree, or omit to attach to the root. thought_type defaults to 'reasoning'. Returns {thought_idx, thought_count, depth} — keep thought_idx to use as a parent for later thoughts."
     )]
     async fn think_add(
         &self,
@@ -163,7 +163,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Record the conclusion of the actor's FastThink session — REQUIRED before think_commit. With RBAC enabled, actor_id must match the principal that started it. Pass supporting_idx with the thought indices the conclusion rests on. Returns {conclusion_idx, status:'decided'}."
+        description = "Record the conclusion of the actor's FastThink session — REQUIRED before think_commit. actor_id must match the principal that started it. Pass supporting_idx with the thought indices the conclusion rests on. Returns {conclusion_idx, status:'decided'}."
     )]
     async fn think_conclude(
         &self,
@@ -236,7 +236,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Throw away the actor's FastThink session without persisting anything (clears the scratchpad). With RBAC enabled, actor_id must match the principal that started it. After this the session_id no longer exists. Returns {discarded_thoughts, elapsed_ms}."
+        description = "Throw away the actor's FastThink session without persisting anything (clears the scratchpad). actor_id must match the principal that started it. After this the session_id no longer exists. Returns {discarded_thoughts, elapsed_ms}."
     )]
     async fn think_discard(
         &self,
@@ -258,7 +258,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Inspect the actor's FastThink session without changing it. With RBAC enabled, actor_id must match the principal that started it. Returns {status, thought_count, thoughts_left, depth, has_conclusion, elapsed_ms}; thoughts_left is your headroom before the session's thought cap — and think_conclude STILL works at 0 (the conclusion is the exit, not another thought). Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
+        description = "Inspect the actor's FastThink session without changing it. actor_id must match the principal that started it. Returns {status, thought_count, thoughts_left, depth, has_conclusion, elapsed_ms}; thoughts_left is your headroom before the session's thought cap — and think_conclude STILL works at 0 (the conclusion is the exit, not another thought). Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
     )]
     async fn think_status(
         &self,

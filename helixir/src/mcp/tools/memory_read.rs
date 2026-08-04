@@ -17,7 +17,7 @@ use crate::mcp::server::{HelixirMcpServer, is_empty_user_graph_error};
 #[tool_router(router = memory_read_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Check the status of a buffered add_memory by its pending_id. With RBAC enabled, pass actor_id; only the write owner, creator, or a global admin may inspect it. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — outcomes are also delivered opportunistically as pending_outcomes on your next add_memory, so polling is not required."
+        description = "Check the status of a buffered add_memory by its pending_id. Pass actor_id; only the write owner, creator, or a global admin may inspect it. Returns {status: pending|processing|done|failed|not_found, result?, error?}. Optional — outcomes are also delivered opportunistically as pending_outcomes on your next add_memory, so polling is not required."
     )]
     async fn get_add_status(
         &self,

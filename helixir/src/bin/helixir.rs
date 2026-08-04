@@ -65,6 +65,8 @@ mod onboard_executor;
 pub(crate) use onboard_executor::*;
 #[path = "helixir/embedding_recovery.rs"]
 mod embedding_recovery;
+#[path = "helixir/onboard_backend_executor.rs"]
+mod onboard_backend_executor;
 pub(crate) use embedding_recovery::*;
 #[path = "helixir/onboard_utils.rs"]
 mod onboard_utils;
@@ -78,6 +80,9 @@ pub(crate) use onboard_clients::*;
 #[path = "helixir/doctor.rs"]
 mod doctor;
 pub(crate) use doctor::*;
+#[path = "helixir/doctor_mcp.rs"]
+mod doctor_mcp;
+pub(crate) use doctor_mcp::*;
 #[path = "helixir/wire.rs"]
 mod wire;
 pub(crate) use wire::*;

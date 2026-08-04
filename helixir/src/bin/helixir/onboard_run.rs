@@ -5,11 +5,19 @@ pub(crate) async fn onboard_run(
     dry_run: bool,
     mode: Option<String>,
     model_args: OnboardModelArgs,
+    backend_args: OnboardBackendArgs,
     security_args: OnboardSecurityArgs,
 ) -> Result<()> {
     println!("Helixir onboarding plan\n");
     let state = detect_onboard_state().await;
-    let options = gather_onboard_options(&state, interactive, mode, &model_args, &security_args)?;
+    let options = gather_onboard_options(
+        &state,
+        interactive,
+        mode,
+        &model_args,
+        &backend_args,
+        &security_args,
+    )?;
     let plan = helixir::installer::Planner::build(&state, &options)
         .map_err(|error| anyhow::anyhow!("cannot build a safe install plan: {error}"))?;
 
@@ -41,15 +49,12 @@ pub(crate) async fn onboard_run(
         }
     }
     println!("Local NLI judge: required");
-    if options.rbac.enabled {
-        println!(
-            "RBAC: enabled after safe bootstrap (operator {}, onboarding group {})",
-            options.rbac.operator_id,
-            helixir::core::ONBOARDING_GROUP_ID
-        );
-    } else {
-        println!("RBAC: disabled by explicit legacy trusted-mode selection");
-    }
+    println!(
+        "RBAC: permanent (operator {}, legacy group {}, admission group {})",
+        options.rbac.operator_id,
+        helixir::core::DEFAULT_GROUP_ID,
+        helixir::core::ONBOARDING_GROUP_ID
+    );
     println!("\nOrdered actions:");
     for (index, step) in plan.steps.iter().enumerate() {
         println!(
@@ -64,7 +69,7 @@ pub(crate) async fn onboard_run(
         println!("\nDry run: no system changes were made.");
     } else {
         println!("\nApplying plan...");
-        let executor = OnboardExecutor::new(&options);
+        let executor = OnboardExecutor::new(&options, &state, interactive);
         let report = helixir::installer::apply_plan(&executor, &plan).await;
         for step in &report.steps {
             let marker = if step.succeeded { "✓" } else { "✗" };
@@ -83,13 +88,16 @@ pub(crate) async fn onboard_run(
             report.ready,
             "onboarding failed; inspect the step report above"
         );
-        write_install_manifest(&executor.effective_options())?;
+        write_install_manifest(&executor.effective_options(), executor.backend_manifest()?)?;
         println!("\nOnboarding complete. Run `helixir doctor` to re-check readiness.");
     }
     Ok(())
 }
 
-pub(crate) fn write_install_manifest(options: &helixir::installer::InstallOptions) -> Result<()> {
+pub(crate) fn write_install_manifest(
+    options: &helixir::installer::InstallOptions,
+    backend: helixir::installer::manifest::BackendManifest,
+) -> Result<()> {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     let install_dir = std::env::current_exe()?
         .parent()
@@ -115,17 +123,14 @@ pub(crate) fn write_install_manifest(options: &helixir::installer::InstallOption
     let manifest = helixir::installer::manifest::InstallManifest {
         version: env!("CARGO_PKG_VERSION").to_string(),
         install_dir,
-        backend_volume: "helixdb_data".to_string(),
+        backend_volume: backend.volume.clone(),
+        backend,
         models,
         clients,
         rbac: Some(helixir::installer::rbac::RbacManifest {
-            enabled: options.rbac.enabled,
+            enabled: true,
             operator_id: options.rbac.operator_id.clone(),
-            group_id: if options.rbac.enabled {
-                helixir::core::ONBOARDING_GROUP_ID.to_string()
-            } else {
-                String::new()
-            },
+            group_id: helixir::core::DEFAULT_GROUP_ID.to_string(),
             principals: options.rbac.principals.iter().cloned().collect(),
         }),
         last_backup: None,

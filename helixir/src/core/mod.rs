@@ -15,8 +15,13 @@ pub mod time_window;
 pub use config::HelixirConfig;
 pub use error::{HelixirError, Result};
 pub use helixir_client::HelixirClient;
-pub use rbac::{DedupGroup, Group, RbacManager, RbacMemoryScope, RbacPolicy, Role, UserBinding};
-pub use rbac_compat::{AuthorizedWriteScope, CompatibilityBootstrapReport, ONBOARDING_GROUP_ID};
+pub use rbac::{
+    DedupGroup, Group, RbacManager, RbacMemoryScope, RbacMigrationKind, RbacMigrationState,
+    RbacPolicy, Role, UserBinding,
+};
+pub use rbac_compat::{
+    AuthorizedWriteScope, CompatibilityBootstrapReport, DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID,
+};
 pub use rbac_registry::{PrincipalRecord, RbacRoleRecord};
 pub use retrieval_profile::RetrievalProfile;
 pub use search_modes::{SearchMode, SearchModeDefaults, estimate_token_cost};

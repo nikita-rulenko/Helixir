@@ -47,6 +47,30 @@ fn only_bare_pre_rbac_scope_is_legacy_unscoped() {
 }
 
 #[test]
+fn interrupted_workspace_move_retries_until_onboarding_is_unlinked() {
+    let mut partially_moved = StoredMemoryScope::default();
+    partially_moved.groups.extend([
+        crate::core::DEFAULT_GROUP_ID.to_string(),
+        crate::core::ONBOARDING_GROUP_ID.to_string(),
+    ]);
+    assert!(partially_moved.needs_default_workspace_migration());
+
+    partially_moved
+        .groups
+        .remove(crate::core::ONBOARDING_GROUP_ID);
+    assert!(!partially_moved.needs_default_workspace_migration());
+
+    let mut modern_onboarding = StoredMemoryScope {
+        rbac_scope: format!("group:{}", crate::core::ONBOARDING_GROUP_ID),
+        ..Default::default()
+    };
+    modern_onboarding
+        .groups
+        .insert(crate::core::ONBOARDING_GROUP_ID.to_string());
+    assert!(!modern_onboarding.needs_default_workspace_migration());
+}
+
+#[test]
 fn admin_reads_everyone_and_viewer_only_group() {
     let p = sample();
     assert!(p.readable_users("root").is_none());
@@ -225,9 +249,11 @@ fn only_missing_schema_errors_preserve_legacy_disabled_mode() {
 }
 
 #[test]
-fn onboarding_group_cannot_be_removed_or_federated() {
+fn reserved_groups_cannot_be_removed_or_federated() {
     assert!(reject_reserved_group_mutation("onboarding", "deactivate").is_err());
     assert!(reject_reserved_group_mutation("onboarding", "attach to a dedup federation").is_err());
+    assert!(reject_reserved_group_mutation("default", "deactivate").is_err());
+    assert!(reject_reserved_group_mutation("default", "attach to a dedup federation").is_err());
     assert!(reject_reserved_group_mutation("development", "deactivate").is_ok());
 }
 

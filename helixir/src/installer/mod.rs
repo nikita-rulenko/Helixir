@@ -53,14 +53,27 @@ impl ClientKind {
 pub enum BackendState {
     /// No known local or remote backend is configured.
     Missing,
-    /// A Helixir-managed local backend was detected.
-    Local {
+    /// A Helixir-managed local backend was detected with its exact endpoint
+    /// and Docker ownership metadata.
+    ManagedLocal {
+        host: String,
+        port: u16,
+        container: String,
+        volume: String,
+        image: String,
         /// Whether the service currently answers its health endpoint.
         healthy: bool,
         /// Whether its compiled schema matches this Helixir build.
         schema_compatible: bool,
     },
-    /// A separately managed backend was detected or configured.
+    /// A reachable local database not owned by Helixir.
+    ExistingLocal {
+        host: String,
+        port: u16,
+        healthy: bool,
+        schema_compatible: bool,
+    },
+    /// A separately managed remote backend was detected or configured.
     Remote {
         /// Hostname or address selected by the operator.
         host: String,
@@ -68,6 +81,7 @@ pub enum BackendState {
         port: u16,
         /// Whether the backend currently answers its health endpoint.
         healthy: bool,
+        schema_compatible: bool,
     },
 }
 
@@ -210,13 +224,11 @@ pub enum InstallAction {
     DownloadNli,
     /// Atomically write the protected central `helixir.toml`.
     WriteCentralConfig,
-    /// Bootstrap the onboarding group and attach legacy users and memories.
+    /// Bootstrap the default and onboarding workspaces and attach legacy state.
     BootstrapRbac {
         operator_id: String,
         principals: Vec<String>,
     },
-    /// Deliberately restore legacy trusted-network mode while retaining grants.
-    DisableRbac { operator_id: String },
     /// Register the stable MCP entry in one client.
     RegisterClient(ClientKind),
     /// Install the canonical Helixir skill for all selected clients.
@@ -259,6 +271,15 @@ pub enum PlanError {
     /// `ReuseDetected` was selected but discovery found nothing to reuse.
     #[error("no backend was detected; provision a local backend or join a remote one")]
     MissingDetectedBackend,
+    /// A separately managed backend cannot be mutated by local Docker actions.
+    #[error(
+        "the selected existing backend has an incompatible schema; upgrade it with its owner before onboarding"
+    )]
+    IncompatibleExternalBackend,
+    #[error(
+        "a separately managed local database already occupies the selected endpoint; reuse it or choose another port"
+    )]
+    ExistingLocalConflict,
 }
 
 /// Build a deterministic minimal plan from detected state and user choices.

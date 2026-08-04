@@ -50,22 +50,30 @@ impl RbacManager {
     }
 
     pub async fn snapshot(&self) -> Result<RbacPolicy> {
-        let enabled = match self
+        let config_value = match self
             .db
             .execute_query::<serde_json::Value, _>("getRbacConfig", &serde_json::json!({}))
             .await
         {
-            Ok(value) => {
-                value
-                    .get("config")
-                    .and_then(|config| config.get("enabled"))
-                    .and_then(number_as_i64)
-                    .unwrap_or(0)
-                    != 0
-            }
-            Err(error) if is_missing_rbac_surface(&error.to_string()) => false,
+            Ok(value) => value,
+            Err(error) if is_missing_rbac_surface(&error.to_string()) => serde_json::Value::Null,
             Err(error) => return Err(anyhow::anyhow!(error.to_string())),
         };
+        let config = config_value.get("config");
+        let enabled = config
+            .and_then(|config| config.get("enabled"))
+            .and_then(number_as_i64)
+            .unwrap_or(0)
+            != 0;
+        let migration_state = config
+            .and_then(|config| config.get("migration_state"))
+            .and_then(serde_json::Value::as_str)
+            .map(RbacMigrationState::parse)
+            .unwrap_or_default();
+        let migration_kind = config
+            .and_then(|config| config.get("migration_kind"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(RbacMigrationKind::parse);
 
         let groups_value: serde_json::Value = match self
             .db
@@ -114,6 +122,8 @@ impl RbacManager {
 
         let mut policy = RbacPolicy {
             enabled,
+            migration_state,
+            migration_kind,
             ..Default::default()
         };
         for row in rows(&groups_value, "groups") {
@@ -164,13 +174,37 @@ impl RbacManager {
         Ok(policy)
     }
 
-    pub async fn set_enabled(&self, enabled: bool, actor: &str) -> Result<()> {
+    /// Enable graph-backed authorization. Disabling is intentionally not part
+    /// of the public control plane: the migration is one-way.
+    pub async fn enable(&self, actor: &str) -> Result<()> {
         self.authorize_admin(actor).await?;
         self.db
             .execute_query::<serde_json::Value, _>(
                 "setRbacEnabled",
                 &serde_json::json!({
-                    "enabled": i64::from(enabled),
+                    "enabled": 1,
+                    "updated_at": Utc::now().to_rfc3339(),
+                    "updated_by": actor,
+                }),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(())
+    }
+
+    pub(crate) async fn set_migration_state(
+        &self,
+        state: RbacMigrationState,
+        kind: RbacMigrationKind,
+        actor: &str,
+    ) -> Result<()> {
+        self.authorize_admin(actor).await?;
+        self.db
+            .execute_query::<serde_json::Value, _>(
+                "setRbacMigrationState",
+                &serde_json::json!({
+                    "migration_state": state.label(),
+                    "migration_kind": kind.label(),
                     "updated_at": Utc::now().to_rfc3339(),
                     "updated_by": actor,
                 }),
@@ -375,6 +409,8 @@ impl RbacManager {
             policy.group(group)?;
             if policy.enabled
                 && group != crate::core::rbac_compat::ONBOARDING_GROUP_ID
+                && !(group == crate::core::rbac_compat::DEFAULT_GROUP_ID
+                    && policy.migration_state == RbacMigrationState::Migrating)
                 && policy
                     .users
                     .get(subject_id)

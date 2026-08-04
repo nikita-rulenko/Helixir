@@ -6,6 +6,13 @@
 
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
+/// HelixDB CLI version compatible with this LMDB-era schema.
+pub const HELIX_CLI_VERSION: &str = "2.3.5";
+/// Read-only contract returned by the deployed query inventory.
+pub const SCHEMA_CONTRACT_VERSION: &str = "helixir-rbac-default-onboarding-v1";
+
 /// Managed backend specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendSpec {
@@ -21,6 +28,8 @@ pub struct BackendSpec {
     pub port: u16,
     /// Directory containing schema.hx and queries.hx.
     pub schema_dir: PathBuf,
+    /// Directory containing the distributable `helix.toml` project manifest.
+    pub project_dir: PathBuf,
 }
 
 impl Default for BackendSpec {
@@ -32,6 +41,7 @@ impl Default for BackendSpec {
             volume: "helixdb_data".to_string(),
             port: crate::DEFAULT_HELIX_PORT,
             schema_dir: PathBuf::from("schema"),
+            project_dir: PathBuf::from("."),
         }
     }
 }
@@ -59,6 +69,8 @@ pub fn provision(spec: &BackendSpec) -> DockerCommand {
         "-d",
         "--name",
         &spec.container,
+        "--label",
+        "io.helixir.managed=true",
         "-p",
         &format!("{}:{}", spec.port, spec.port),
         "-v",
@@ -85,6 +97,12 @@ pub fn stop(spec: &BackendSpec) -> DockerCommand {
     DockerCommand::new(["stop", &spec.container])
 }
 
+/// Remove only the known managed container before recreating it on the same volume.
+#[must_use]
+pub fn remove(spec: &BackendSpec) -> DockerCommand {
+    DockerCommand::new(["rm", &spec.container])
+}
+
 /// Create a tar snapshot of the persistent volume.  The caller chooses a
 /// dedicated backup directory; it is never interpolated into a shell string.
 #[must_use]
@@ -106,18 +124,32 @@ pub fn backup(spec: &BackendSpec, backup_dir: &Path, archive_name: &str) -> Dock
     ])
 }
 
-/// Deploy the bundled schema through the installed deploy helper.
+/// Validate the distributable HelixDB project with the pinned CLI.
 #[must_use]
-pub fn deploy_schema(deploy_binary: &Path, spec: &BackendSpec) -> Vec<String> {
+pub fn check_schema() -> Vec<String> {
+    vec!["check".to_string(), "dev".to_string()]
+}
+
+/// Compile schema and queries into the managed local image.
+#[must_use]
+pub fn build_image() -> Vec<String> {
     vec![
-        deploy_binary.display().to_string(),
-        "--host".to_string(),
-        spec.host.clone(),
-        "--port".to_string(),
-        spec.port.to_string(),
-        "--schema-dir".to_string(),
-        spec.schema_dir.display().to_string(),
+        "build".to_string(),
+        "--instance".to_string(),
+        "dev".to_string(),
     ]
+}
+
+/// Content fingerprint persisted in the install manifest for idempotent reuse.
+pub fn schema_fingerprint(schema_dir: &Path) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    for name in ["schema.hx", "queries.hx"] {
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update(std::fs::read(schema_dir.join(name))?);
+        hasher.update([0]);
+    }
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 /// Restore a snapshot into a volume after stopping the backend.

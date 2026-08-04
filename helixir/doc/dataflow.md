@@ -17,18 +17,18 @@ welded together.
 
 When RBAC is enabled, the facade authorizes `(actor_id, owner_id, group_id)`
 and resolves a write domain before extraction. A private group uses
-`rbac:group:<id>`; a federated group uses `rbac:dedup:<id>`; disabled mode keeps
-the legacy global domain. That domain salts `content_key`, filters both personal
+`rbac:group:<id>` and a federated group uses `rbac:dedup:<id>`. The reserved
+`default` workspace alone keeps the legacy unsalted domain. The domain filters both personal
 recall and Phase-2 collective candidates, and is stored as `Memory.rbac_scope`.
 After the decision, group visibility is materialized with
 `MEMORY_IN_RBAC_GROUP`; federation provenance uses
 `MEMORY_IN_RBAC_DEDUP_GROUP`.
 
-For principals enrolled in the reserved `onboarding` compatibility group,
-an omitted `group_id` is resolved server-side to that group from the same policy
-snapshot used for authorization. Its scope keeps the legacy unsalted
-fingerprint but still materializes `MEMORY_IN_RBAC_GROUP`, allowing upgraded
-and new trusted-network memories to deduplicate without losing RBAC visibility.
+An omitted `group_id` is resolved server-side only when the actor can write to
+exactly one reserved workspace in the same policy snapshot used for
+authorization. Ambiguous membership fails closed. `default` keeps the legacy
+fingerprint and materializes `MEMORY_IN_RBAC_GROUP`; `onboarding` is an ordinary
+isolated RBAC scope for new principals.
 
 Federation membership is prospective. Detaching a group leaves historical
 memory-to-group edges intact but excludes it from future writes. An in-place

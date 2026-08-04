@@ -269,30 +269,28 @@ MCP server, and library facade. `RbacGroup` names a team, while
 `RbacAssignment` is an auditable grant (`subject_id`, `role`, `group_id`,
 `active`, grant/revoke timestamps). `RBAC_MEMBER_OF` is the traversable
 principal-to-group edge and `MEMORY_IN_RBAC_GROUP` links authored memories to
-the groups active for their author. `RbacConfig` holds the explicit
-`enabled = 0|1` switch. The schema-level default remains `0` so a partially
-executed deployment cannot lock out existing data. Onboarding creates the
-reserved `onboarding` group, grants existing users `worker`, selected clients
-`groupadmin`, materializes every legacy
-memory edge, verifies coverage, and only then changes the switch to `1`.
-`--legacy-trusted-mode` is the explicit path that leaves it disabled.
+the groups active for their author. `RbacConfig` holds the enforcement switch,
+the one-way phase (`pending`, `migrating`, `active`), and a once-chosen
+`fresh|legacy` branch. The storage-level `enabled = 0` default exists only for
+the pre-bootstrap checkpoint; there is no product-level disabled profile.
+Bootstrap creates reserved `default` and `onboarding`, verifies all grants and
+legacy-memory edges, enables enforcement, and marks the transition active.
+Failure leaves `migrating` in HelixDB so the next run resumes.
 
-The compatibility group intentionally stores an empty `Memory.rbac_scope` and
+The `default` workspace intentionally stores an empty `Memory.rbac_scope` and
 uses the legacy unsalted `content_key`, while `MEMORY_IN_RBAC_GROUP` supplies
-the access boundary. This lets old and new onboarding-group memories deduplicate
-without exposing future custom groups. Those custom groups and dedup
-federations continue to use salted security domains.
+the access boundary. Pre-RBAC principals receive equal group-admin rights there.
+`onboarding`, custom groups, and dedup federations use salted security domains.
 
-An active `RBAC_MEMBER_OF` edge into `onboarding` marks a principal as
-enrolled. Revocation sets the assignment and edge inactive but retains both the
-User node and `RbacAssignment` audit row. The administrative registry is a
-projection of these nodes plus matching Agent presence; it is not separately
-persisted.
+An active `RBAC_MEMBER_OF` edge into `onboarding` marks a new principal as
+enrolled. Active or historical membership in either reserved workspace makes
+the principal visible in the administrative registry. Revocation retains the
+User node and `RbacAssignment` audit row; no second registry is persisted.
 
-The `onboarding` group is reserved: management APIs reject deactivation and
-dedup-federation membership because either operation would break its registry
-or legacy-fingerprint contract. Enabled policy also rejects revocation of its
-last global administrator.
+Both `default` and `onboarding` are reserved: management APIs reject
+deactivation and dedup-federation membership because either operation would
+break the migration, registry, or legacy-fingerprint contract. Enabled policy
+also rejects revocation of its last global administrator.
 
 The existing `Memory.user_id` remains the author/owner and is never replaced by
 a group id. Authorization resolves the actor's active assignments, derives the
@@ -304,5 +302,4 @@ assignment and preserves its audit history.
 
 At the API boundary, `actor_id` is intentionally distinct from `Memory.user_id`:
 the former is the principal being authorized, the latter is the owner whose
-memory is read or written. The optional field defaults to `user_id` for
-backward-compatible trusted-network deployments.
+memory is read or written. Agent integrations must supply a stable actor id.

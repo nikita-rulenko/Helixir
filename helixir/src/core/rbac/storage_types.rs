@@ -50,8 +50,18 @@ pub(super) struct StoredMemoryScope {
 }
 
 impl StoredMemoryScope {
+    #[cfg(test)]
     pub(super) fn is_legacy_unscoped(&self) -> bool {
         self.rbac_scope.is_empty() && self.groups.is_empty() && self.dedup_groups.is_empty()
+    }
+
+    pub(super) fn needs_default_workspace_migration(&self) -> bool {
+        self.rbac_scope.is_empty()
+            && self.dedup_groups.is_empty()
+            && (self.groups.is_empty()
+                || self
+                    .groups
+                    .contains(crate::core::rbac_compat::ONBOARDING_GROUP_ID))
     }
 }
 
@@ -79,8 +89,11 @@ pub(super) fn assignment_id(subject: &str, group: &str, role: Role) -> String {
 }
 
 pub(super) fn reject_reserved_group_mutation(group_id: &str, action: &str) -> Result<()> {
-    if group_id == crate::core::rbac_compat::ONBOARDING_GROUP_ID {
-        bail!("cannot {action} the reserved onboarding group")
+    if matches!(
+        group_id,
+        crate::core::rbac_compat::DEFAULT_GROUP_ID | crate::core::rbac_compat::ONBOARDING_GROUP_ID
+    ) {
+        bail!("cannot {action} the reserved RBAC group '{group_id}'")
     }
     Ok(())
 }

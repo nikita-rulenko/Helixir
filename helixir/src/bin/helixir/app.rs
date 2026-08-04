@@ -149,6 +149,7 @@ pub(crate) async fn run() -> Result<()> {
         dry_run,
         mode,
         models,
+        backend,
         security,
     } = &cli.cmd
     {
@@ -157,6 +158,7 @@ pub(crate) async fn run() -> Result<()> {
             *dry_run,
             mode.clone(),
             models.clone(),
+            backend.clone(),
             security.clone(),
         )
         .await;

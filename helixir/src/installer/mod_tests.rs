@@ -27,8 +27,8 @@ fn fresh_local_plan_orders_backend_models_config_clients_then_doctor() {
         .map(|step| step.action)
         .collect();
 
-    assert_eq!(actions[0], InstallAction::ProvisionBackend);
-    assert_eq!(actions[1], InstallAction::DeploySchema);
+    assert_eq!(actions[0], InstallAction::DeploySchema);
+    assert_eq!(actions[1], InstallAction::ProvisionBackend);
     assert_eq!(actions[2], InstallAction::VerifyBackend);
     assert_eq!(actions[3], InstallAction::InstallOllama);
     assert_eq!(actions[4], InstallAction::StartOllama);
@@ -56,7 +56,12 @@ fn satisfied_install_is_idempotent_except_for_verification() {
     .collect();
     let clients = selected_clients();
     let state = SystemState {
-        backend: BackendState::Local {
+        backend: BackendState::ManagedLocal {
+            host: "localhost".to_string(),
+            port: 6969,
+            container: "helixdb".to_string(),
+            volume: "helixdb_data".to_string(),
+            image: "helix-helixir-dev:latest".to_string(),
             healthy: true,
             schema_compatible: true,
         },
@@ -70,11 +75,13 @@ fn satisfied_install_is_idempotent_except_for_verification() {
         client_registered: clients.iter().copied().map(|c| (c, true)).collect(),
         rbac: rbac::RbacInstallState {
             enabled: true,
-            compatibility_group_exists: true,
+            migration_active: true,
+            default_group_exists: true,
+            onboarding_group_exists: true,
             global_admins: BTreeSet::from(["helixir-operator".to_string()]),
-            compatibility_group_admins: BTreeSet::from(["helixir-operator".to_string()]),
-            all_users_enrolled: true,
-            all_memories_covered: true,
+            registered_principals: BTreeSet::from(["helixir-operator".to_string()]),
+            all_users_registered: true,
+            legacy_memories_covered: true,
         },
     };
     let options = InstallOptions {
@@ -100,36 +107,14 @@ fn satisfied_install_is_idempotent_except_for_verification() {
 }
 
 #[test]
-fn explicit_legacy_mode_disables_existing_enforcement() {
-    let state = SystemState {
-        rbac: rbac::RbacInstallState {
-            enabled: true,
-            ..Default::default()
-        },
-        ..SystemState::default()
-    };
-    let options = InstallOptions {
-        rbac: rbac::RbacInstallOptions {
-            enabled: false,
-            operator_id: "root".to_string(),
-            principals: BTreeSet::new(),
-        },
-        ..InstallOptions::default()
-    };
-
-    let plan = Planner::build(&state, &options).unwrap();
-    assert!(plan.steps.iter().any(|step| {
-        step.action
-            == (InstallAction::DisableRbac {
-                operator_id: "root".to_string(),
-            })
-    }));
-}
-
-#[test]
 fn schema_change_is_backed_up_before_deploy() {
     let state = SystemState {
-        backend: BackendState::Local {
+        backend: BackendState::ManagedLocal {
+            host: "localhost".to_string(),
+            port: 6969,
+            container: "helixdb".to_string(),
+            volume: "helixdb_data".to_string(),
+            image: "helix-helixir-dev:latest".to_string(),
             healthy: true,
             schema_compatible: false,
         },
@@ -222,16 +207,19 @@ fn healthy_remote_backend_and_embeddings_need_only_verification() {
             host: "helix.internal".to_string(),
             port: 6969,
             healthy: true,
+            schema_compatible: true,
         },
         nli_installed: true,
         central_config_matches: true,
         rbac: rbac::RbacInstallState {
             enabled: true,
-            compatibility_group_exists: true,
+            migration_active: true,
+            default_group_exists: true,
+            onboarding_group_exists: true,
             global_admins: BTreeSet::from(["helixir-operator".to_string()]),
-            compatibility_group_admins: BTreeSet::from(["helixir-operator".to_string()]),
-            all_users_enrolled: true,
-            all_memories_covered: true,
+            registered_principals: BTreeSet::from(["helixir-operator".to_string()]),
+            all_users_registered: true,
+            legacy_memories_covered: true,
         },
         ..SystemState::default()
     };
@@ -260,9 +248,36 @@ fn healthy_remote_backend_and_embeddings_need_only_verification() {
 }
 
 #[test]
+fn incompatible_external_backend_is_never_mutated() {
+    let state = SystemState {
+        backend: BackendState::ExistingLocal {
+            host: "127.0.0.1".to_string(),
+            port: 6969,
+            healthy: true,
+            schema_compatible: false,
+        },
+        ..SystemState::default()
+    };
+    let options = InstallOptions {
+        backend: BackendChoice::ReuseDetected,
+        ..InstallOptions::default()
+    };
+
+    assert_eq!(
+        Planner::build(&state, &options),
+        Err(PlanError::IncompatibleExternalBackend)
+    );
+}
+
+#[test]
 fn implicit_latest_tag_does_not_schedule_duplicate_pull() {
     let state = SystemState {
-        backend: BackendState::Local {
+        backend: BackendState::ManagedLocal {
+            host: "localhost".to_string(),
+            port: 6969,
+            container: "helixdb".to_string(),
+            volume: "helixdb_data".to_string(),
+            image: "helix-helixir-dev:latest".to_string(),
             healthy: true,
             schema_compatible: true,
         },

@@ -19,7 +19,7 @@ use super::memory_support::machine_hostname;
 #[tool_router(router = memory_write_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Store raw natural-language text in long-term memory. An LLM splits it into atomic typed facts (max 15 per call — split bigger inputs), embeds them, and wires them into the reasoning graph with typed edges. Use whenever the user states a fact, decision, preference, goal or outcome worth keeping across sessions. With RBAC enabled, provide actor_id and the concrete access group_id; Helixir resolves any dedup federation automatically.\
+        description = "Store raw natural-language text in long-term memory. An LLM splits it into atomic typed facts (max 15 per call — split bigger inputs), embeds them, and wires them into the reasoning graph with typed edges. Use whenever the user states a fact, decision, preference, goal or outcome worth keeping across sessions. Provide actor_id and the concrete access group_id; Helixir resolves any dedup federation automatically.\
         \nRESULT CONTRACT — read carefully:\
         \n- ok:true = SUCCESS. NEVER retry an ok:true result.\
         \n- ok:true + memory_ids = stored now.\

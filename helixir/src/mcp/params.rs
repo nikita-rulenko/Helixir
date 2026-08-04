@@ -133,7 +133,7 @@ pub struct AddMemoryParams {
     )]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the write. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the write. Provide this in permanent RBAC operation; omission is reserved for the internal pre-bootstrap transition."
     )]
     pub actor_id: Option<String>,
     #[schemars(
@@ -153,7 +153,7 @@ pub struct SearchMemoryParams {
     )]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the search. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(description = "Max results. Default depends on mode (~5–20).")]
@@ -197,7 +197,7 @@ pub struct UpdateMemoryParams {
     #[schemars(description = "Owner of the memory.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the update. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the update. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
 }
@@ -207,7 +207,7 @@ pub struct GetMemoryGraphParams {
     #[schemars(description = "Whose graph to read.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal reading the graph. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal reading the graph. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(
@@ -225,7 +225,7 @@ pub struct SearchByConceptParams {
     #[schemars(description = "Owner of the memories to search.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the search. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(
@@ -247,7 +247,7 @@ pub struct SearchReasoningChainParams {
     #[schemars(description = "Owner of the memories.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the search. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the search. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(description = "Which direction to walk the chain. Default 'both'.")]
@@ -339,7 +339,7 @@ pub struct ThinkCommitParams {
     #[schemars(description = "Owner under whom the conclusion is stored in main memory.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the commit. If omitted, user_id is used for trusted-network compatibility."
+        description = "Authenticated principal performing the commit. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(
@@ -383,7 +383,7 @@ pub struct ListMemoriesParams {
     #[schemars(description = "Whose memories to list.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal listing memories. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal listing memories. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(description = "Max results. Default 100.")]
@@ -441,7 +441,7 @@ pub struct ConnectMemoriesParams {
     #[schemars(description = "Owner of the memories to route between.")]
     pub user_id: String,
     #[schemars(
-        description = "Optional authenticated principal performing the path search. If omitted, user_id is the principal (legacy trusted-network mode)."
+        description = "Authenticated principal performing the path search. Provide this in permanent RBAC operation."
     )]
     pub actor_id: Option<String>,
     #[schemars(description = "Maximum total hops between the two anchors. Default 4.")]

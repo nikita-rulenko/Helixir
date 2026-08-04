@@ -29,6 +29,21 @@ impl RbacManager {
         Ok(())
     }
 
+    pub(crate) async fn unlink_memory_from_group(
+        &self,
+        memory_id: &str,
+        group_id: &str,
+    ) -> Result<()> {
+        self.db
+            .execute_query::<serde_json::Value, _>(
+                "unlinkMemoryFromRbacGroup",
+                &serde_json::json!({"memory_id": memory_id, "group_id": group_id}),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(())
+    }
+
     pub async fn resolve_write_scope(&self, group_id: Option<&str>) -> Result<RbacMemoryScope> {
         self.snapshot().await?.resolve_memory_scope(group_id)
     }
@@ -141,9 +156,10 @@ impl RbacManager {
             .collect())
     }
 
-    /// Return memories that predate RBAC materialization and therefore need
-    /// migration into the compatibility group.
-    pub(crate) async fn legacy_unscoped_memory_ids(
+    /// Return pre-two-workspace memories that still need to converge on
+    /// `default`. This includes the earlier one-space rollout where legacy
+    /// rows were attached only to `onboarding`.
+    pub(crate) async fn memories_requiring_default_migration(
         &self,
         memory_ids: &[String],
     ) -> Result<HashSet<String>> {
@@ -151,7 +167,11 @@ impl RbacManager {
             .memory_scope_map(memory_ids)
             .await?
             .into_iter()
-            .filter_map(|(memory_id, scope)| scope.is_legacy_unscoped().then_some(memory_id))
+            .filter_map(|(memory_id, scope)| {
+                scope
+                    .needs_default_workspace_migration()
+                    .then_some(memory_id)
+            })
             .collect())
     }
 

@@ -57,14 +57,16 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
             let report = manager
                 .bootstrap_compatibility(&operator, &principals)
                 .await
-                .context("bootstrap RBAC onboarding profile")?;
+                .context("bootstrap permanent RBAC workspaces")?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "RBAC onboarding profile enabled: operator={}, group={}, principals={}, users={}, memories={}",
+                    "RBAC active: operator={}, legacy_group={}, onboarding_group={}, kind={}, principals={}, users={}, memories={}",
                     report.operator_id,
                     report.group_id,
+                    report.onboarding_group_id,
+                    report.migration_kind.label(),
                     report.principals_enrolled.len(),
                     report.users_registered,
                     report.memories_seen
@@ -84,7 +86,7 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                     if current.enabled {
                         "enabled"
                     } else {
-                        "disabled (full trust)"
+                        "migration pending"
                     }
                 );
                 println!(
@@ -93,13 +95,6 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                     current.users.len()
                 );
             }
-        }
-        RbacCmd::Enable | RbacCmd::Disable => {
-            let enabled = matches!(cmd, RbacCmd::Enable);
-            let actor = rbac_actor();
-            require_rbac_admin(&current, &actor, "RBAC management")?;
-            manager.set_enabled(enabled, &actor).await?;
-            println!("RBAC {}", if enabled { "enabled" } else { "disabled" });
         }
         RbacCmd::Group { cmd } => match cmd {
             RbacGroupCmd::Create {

@@ -267,9 +267,15 @@ QUERY searchConceptsByName(name: String) =>
 QUERY getRbacConfig() =>
   config <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))::FIRST
   RETURN config
+QUERY getHelixirSchemaVersion() =>
+  RETURN "helixir-rbac-default-onboarding-v1"
 QUERY setRbacEnabled(enabled: I64, updated_at: String, updated_by: String) =>
   existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- existing::UpsertN({ config_id: "default", enabled: enabled, updated_at: updated_at, updated_by: updated_by })
+  RETURN config
+QUERY setRbacMigrationState(migration_state: String, migration_kind: String, updated_at: String, updated_by: String) =>
+  existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- existing::UpsertN({ config_id: "default", migration_state: migration_state, migration_kind: migration_kind, updated_at: updated_at, updated_by: updated_by })
   RETURN config
 QUERY createRbacGroup(group_id: String, name: String, description: String, created_at: String, metadata: String) =>
   existing <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))

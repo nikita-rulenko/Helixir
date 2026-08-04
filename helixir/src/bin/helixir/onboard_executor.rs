@@ -1,37 +1,18 @@
 use super::*;
 
 pub(crate) struct OnboardExecutor {
-    options: helixir::installer::InstallOptions,
-    backend: helixir::installer::backend::BackendSpec,
-    backup_dir: PathBuf,
-    backup_name: String,
-    embedding_repaired: std::sync::atomic::AtomicBool,
-    rbac_enabled_before: std::sync::Mutex<Option<bool>>,
+    pub(super) options: helixir::installer::InstallOptions,
+    pub(super) backend: helixir::installer::backend::BackendSpec,
+    pub(super) backup_dir: PathBuf,
+    pub(super) backup_name: String,
+    pub(super) embedding_repaired: std::sync::atomic::AtomicBool,
+    pub(super) managed_backend: bool,
+    pub(super) recreate_managed_backend: bool,
+    pub(super) interactive: bool,
+    pub(super) previous_image: std::sync::Mutex<Option<String>>,
 }
 
 impl OnboardExecutor {
-    pub(crate) fn new(options: &helixir::installer::InstallOptions) -> Self {
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-        Self {
-            options: options.clone(),
-            backend: helixir::installer::backend::BackendSpec {
-                host: match &options.backend {
-                    helixir::installer::BackendChoice::JoinRemote { host, .. } => host.clone(),
-                    _ => "localhost".to_string(),
-                },
-                schema_dir: schema_dir_for_install(),
-                ..Default::default()
-            },
-            backup_dir: home.join(".helixir/backups"),
-            backup_name: format!(
-                "helixdb-{}.tar.gz",
-                chrono::Utc::now().format("%Y%m%d-%H%M%S")
-            ),
-            embedding_repaired: std::sync::atomic::AtomicBool::new(false),
-            rbac_enabled_before: std::sync::Mutex::new(None),
-        }
-    }
-
     pub(crate) fn effective_options(&self) -> helixir::installer::InstallOptions {
         let mut options = self.options.clone();
         if self
@@ -48,32 +29,13 @@ impl OnboardExecutor {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn run(program: &str, args: &[String]) -> Result<()> {
-        let status = Command::new(program)
-            .args(args)
-            .status()
-            .with_context(|| format!("run {program}"))?;
-        anyhow::ensure!(status.success(), "{program} exited with {status}");
-        Ok(())
-    }
-
-    fn run_docker(&self, command: helixir::installer::backend::DockerCommand) -> Result<()> {
-        Self::run("docker", &command.args)
-    }
-
     fn write_central_config(&self) -> Result<()> {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
         let path = home.join(".helixir/helixir.toml");
         let resolved = helixir::core::config::HelixirConfig::from_env();
         let mut patch = helixir::installer::config::ConfigPatch::default()
             .set("mode", format!("{:?}", self.options.mode))
-            .set(
-                "host",
-                match &self.options.backend {
-                    helixir::installer::BackendChoice::JoinRemote { host, .. } => host.clone(),
-                    _ => "localhost".to_string(),
-                },
-            )
+            .set("host", self.backend.host.clone())
             .set("port", self.backend.port.to_string())
             .set("instance", "default");
         patch = match &self.options.embeddings {
@@ -315,24 +277,42 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                 .map_err(|error| error.to_string()),
             InstallAction::BackupBackend => {
                 std::fs::create_dir_all(&self.backup_dir).map_err(|error| error.to_string())?;
-                self.run_docker(helixir::installer::backend::backup(
+                self.run_docker(helixir::installer::backend::stop(&self.backend))
+                    .map_err(|error| error.to_string())?;
+                let backup = self.run_docker(helixir::installer::backend::backup(
                     &self.backend,
                     &self.backup_dir,
                     &self.backup_name,
-                ))
-                .map_err(|error| error.to_string())
+                ));
+                if let Err(error) = backup {
+                    let restart = self
+                        .run_docker(helixir::installer::backend::start(&self.backend))
+                        .map_err(|restart_error| restart_error.to_string());
+                    return Err(match restart {
+                        Ok(()) => error.to_string(),
+                        Err(restart_error) => format!(
+                            "{error}; additionally failed to restart the backend: {restart_error}"
+                        ),
+                    });
+                }
+                Ok(())
             }
-            InstallAction::DeploySchema => {
-                let deploy = current_sibling("helixir-deploy");
-                let argv = helixir::installer::backend::deploy_schema(&deploy, &self.backend);
-                Self::run(&argv[0], &argv[1..]).map_err(|error| error.to_string())
-            }
+            InstallAction::DeploySchema => self
+                .build_managed_backend_image()
+                .map_err(|error| error.to_string()),
             InstallAction::VerifyBackend => {
                 if !backend_reachable(&self.backend.host, self.backend.port) {
                     return Err(format!(
                         "HelixDB is not reachable on port {}",
                         self.backend.port
                     ));
+                }
+                if !probe_backend_schema_contract(&self.backend.host, self.backend.port).await {
+                    return Err("HelixDB query inventory is incompatible".to_string());
+                }
+                if self.managed_backend {
+                    self.verify_managed_backend_contract()
+                        .map_err(|error| error.to_string())?;
                 }
                 Ok(())
             }
@@ -370,42 +350,15 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                 let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
                     .map_err(|error| error.to_string())?;
                 let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
-                let enabled_before = manager
-                    .snapshot()
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .enabled;
-                *self
-                    .rbac_enabled_before
-                    .lock()
-                    .map_err(|_| "RBAC rollback state lock is poisoned".to_string())? =
-                    Some(enabled_before);
                 manager
                     .bootstrap_compatibility(operator_id, principals)
                     .await
                     .map_err(|error| error.to_string())?;
                 Ok(())
             }
-            InstallAction::DisableRbac { operator_id } => {
-                let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
-                    .map_err(|error| error.to_string())?;
-                let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
-                let enabled_before = manager
-                    .snapshot()
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .enabled;
-                *self
-                    .rbac_enabled_before
-                    .lock()
-                    .map_err(|_| "RBAC rollback state lock is poisoned".to_string())? =
-                    Some(enabled_before);
-                manager
-                    .set_enabled(false, operator_id)
-                    .await
-                    .map_err(|error| error.to_string())
+            InstallAction::RegisterClient(client) => {
+                register_onboard_client(*client, self.interactive)
             }
-            InstallAction::RegisterClient(client) => register_onboard_client(*client),
             InstallAction::InstallAgentSkill(clients) => install_agent_skills(clients),
             InstallAction::RunDoctor => {
                 if !doctor_config_ready() {
@@ -431,52 +384,39 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
         completed: &[helixir::installer::InstallAction],
     ) -> std::result::Result<(), String> {
         use helixir::installer::InstallAction;
-        if completed
-            .iter()
-            .any(|action| matches!(action, InstallAction::BootstrapRbac { .. }))
-            && self
-                .rbac_enabled_before
-                .lock()
-                .map_err(|_| "RBAC rollback state lock is poisoned".to_string())?
-                .is_some_and(|enabled| !enabled)
-        {
-            let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
-                .map_err(|error| error.to_string())?;
-            let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
-            manager
-                .set_enabled(false, &self.options.rbac.operator_id)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-        if completed
-            .iter()
-            .any(|action| matches!(action, InstallAction::DisableRbac { .. }))
-            && self
-                .rbac_enabled_before
-                .lock()
-                .map_err(|_| "RBAC rollback state lock is poisoned".to_string())?
-                .is_some_and(|enabled| enabled)
-        {
-            let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
-                .map_err(|error| error.to_string())?;
-            let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
-            manager
-                .set_enabled(true, &self.options.rbac.operator_id)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
+        // RBAC migration is monotonic. A failed plan leaves its graph-backed
+        // checkpoint in `migrating`; the next run resumes it. Backend/schema
+        // rollback below remains mandatory because it protects the data plane.
         if completed
             .iter()
             .any(|action| matches!(action, InstallAction::BackupBackend))
         {
             let _ = self.run_docker(helixir::installer::backend::stop(&self.backend));
+            let _ = self.run_docker(helixir::installer::backend::remove(&self.backend));
+            if let Some(previous_image) = self
+                .previous_image
+                .lock()
+                .map_err(|_| "backend image rollback state lock is poisoned".to_string())?
+                .clone()
+            {
+                Self::run(
+                    "docker",
+                    &[
+                        "tag".to_string(),
+                        previous_image,
+                        self.backend.image.clone(),
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            }
             self.run_docker(helixir::installer::backend::restore(
                 &self.backend,
                 &self.backup_dir,
                 &self.backup_name,
             ))
             .map_err(|error| error.to_string())?;
-            let _ = self.run_docker(helixir::installer::backend::start(&self.backend));
+            self.run_docker(helixir::installer::backend::provision(&self.backend))
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }

@@ -125,12 +125,73 @@ pub struct UserBinding {
     pub groups: BTreeMap<String, BTreeSet<Role>>,
 }
 
+/// Durable phase of the one-way transition into graph-backed authorization.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RbacMigrationState {
+    /// No migration has started yet (including stores created before this field).
+    #[default]
+    Pending,
+    /// The idempotent migration is in progress and may be resumed safely.
+    Migrating,
+    /// Reserved groups, grants, and legacy-memory coverage were verified.
+    Active,
+}
+
+/// Persisted bootstrap branch, chosen once so an interrupted fresh install
+/// cannot be mistaken for a legacy upgrade on retry.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RbacMigrationKind {
+    Fresh,
+    Legacy,
+}
+
+impl RbacMigrationKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fresh" => Some(Self::Fresh),
+            "legacy" => Some(Self::Legacy),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+impl RbacMigrationState {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "migrating" => Self::Migrating,
+            "active" => Self::Active,
+            _ => Self::Pending,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Migrating => "migrating",
+            Self::Active => "active",
+        }
+    }
+}
+
 /// Persisted RBAC document.  Keep this format boring and hand-editable: it is
 /// also the audit/debug surface used by `helixir rbac export`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RbacPolicy {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub migration_state: RbacMigrationState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_kind: Option<RbacMigrationKind>,
     #[serde(default)]
     pub groups: BTreeMap<String, Group>,
     #[serde(default)]

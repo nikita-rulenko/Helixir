@@ -19,7 +19,6 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
     let agent = format!("compat-agent-{suffix}");
     let registry_user = format!("registry-user-{suffix}");
     let project_group = format!("registry-project-{suffix}");
-    let owner = format!("legacy-owner-{suffix}");
     let principals = vec![agent.clone()];
     let first = rbac
         .bootstrap_compatibility(&admin, &principals)
@@ -111,7 +110,7 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
                 entities: vec![],
                 context: None,
             }],
-            &owner,
+            &agent,
             Some("rbac-compat-e2e"),
             None,
             None,
@@ -165,17 +164,9 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
 
     rbac.bootstrap_compatibility(&admin, &principals)
         .await
-        .expect("enabled bootstrap replay after on-behalf write");
-    assert!(
-        rbac.principal_registry(&admin)
-            .await
-            .expect("registry after owner write")
-            .iter()
-            .all(|record| record.user_id != owner),
-        "a provenance-only owner created after bootstrap must not be auto-enrolled as a principal"
-    );
+        .expect("enabled bootstrap replay after admitted write");
 
-    rbac.revoke_as(&agent, Role::GroupAdmin, Some(ONBOARDING_GROUP_ID), &admin)
+    rbac.revoke_as(&agent, Role::Worker, Some(ONBOARDING_GROUP_ID), &admin)
         .await
         .expect("revoke fixture principal");
     rbac.deactivate_group_as(&project_group, &admin)

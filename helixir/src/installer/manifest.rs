@@ -16,6 +16,9 @@ pub struct InstallManifest {
     pub install_dir: PathBuf,
     /// Selected backend volume.
     pub backend_volume: String,
+    /// Exact backend ownership and schema contract selected by onboarding.
+    #[serde(default)]
+    pub backend: BackendManifest,
     /// Selected local models.
     pub models: Vec<String>,
     /// Clients registered by onboarding.
@@ -25,6 +28,20 @@ pub struct InstallManifest {
     pub rbac: Option<super::rbac::RbacManifest>,
     /// Most recent backend snapshot, when one exists.
     pub last_backup: Option<PathBuf>,
+}
+
+/// Durable backend identity used to distinguish managed, existing, and remote
+/// databases on subsequent idempotent onboarding runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackendManifest {
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    pub container: String,
+    pub image: String,
+    pub volume: String,
+    pub helix_cli_version: String,
+    pub schema_fingerprint: String,
 }
 
 /// Errors while reading or atomically writing the manifest.
@@ -81,12 +98,22 @@ mod tests {
             version: "0.13.1".to_string(),
             install_dir: PathBuf::from("/tmp/versions/0.13.1"),
             backend_volume: "helixdb_data".to_string(),
+            backend: BackendManifest {
+                kind: "managed_local".to_string(),
+                host: "localhost".to_string(),
+                port: 6969,
+                container: "helixdb".to_string(),
+                image: "helix-helixir-dev:latest".to_string(),
+                volume: "helixdb_data".to_string(),
+                helix_cli_version: "2.3.5".to_string(),
+                schema_fingerprint: "sha256:test".to_string(),
+            },
             models: vec!["nomic-embed-text".to_string()],
             clients: vec!["codex".to_string()],
             rbac: Some(super::super::rbac::RbacManifest {
                 enabled: true,
                 operator_id: "root".to_string(),
-                group_id: crate::core::ONBOARDING_GROUP_ID.to_string(),
+                group_id: crate::core::DEFAULT_GROUP_ID.to_string(),
                 principals: vec!["codex".to_string()],
             }),
             last_backup: None,

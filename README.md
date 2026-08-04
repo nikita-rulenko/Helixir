@@ -519,18 +519,18 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   *_password, *_secret, and *_credential field.
 ```
 
-RBAC grants, groups, audit rows, and the enabled switch live in HelixDB. The
+RBAC grants, groups, audit rows, and migration state live in HelixDB. The
 CLI is only a management client over the same HQL contract used by MCP and the
-library; there is no authoritative local policy file. New onboarding safely
-enables enforcement by creating `onboarding`, granting one operator global
-admin, enrolling legacy users as workers and detected clients as group admins,
-and attaching all legacy
-memories before flipping the switch. This preserves the old shared data plane
-and legacy dedup while keeping the RBAC control plane restricted. Pass
-`--legacy-trusted-mode` to onboarding only when RBAC-disabled operation is an
-explicit deployment choice.
+library; there is no authoritative local policy file. RBAC is permanent.
+Bootstrap creates reserved `default` for all pre-RBAC memories and trusted
+peers (equal group-admin access preserves the old shared data plane) plus
+reserved `onboarding` for newly discovered principals. One operator remains
+the only initial global admin. The fresh/legacy branch and migration phase are
+checkpointed, so interrupted work resumes instead of disabling enforcement.
 
-The `onboarding` membership is the registry admission event. Administrators
+The `onboarding` membership is the admission event for new principals;
+historical membership in either reserved workspace remains visible in the
+registry. Administrators
 can inspect the graph-derived registry and assign working groups without a
 second policy store:
 
@@ -543,8 +543,8 @@ helixir rbac group remove-user --group development --user alice --json
 ```
 
 Removal deactivates assignments but retains the User node and role history.
-The reserved `onboarding` group cannot be deleted or placed in a dedup
-federation, and enabled policy refuses to revoke its last global administrator.
+The reserved `default` and `onboarding` groups cannot be deleted or placed in a
+dedup federation, and policy refuses to revoke its last global administrator.
 When enforcement is enabled, management commands resolve the authenticated CLI
 principal from `HELIXIR_RBAC_ACTOR`; there is intentionally no `--actor` escape
 hatch. A global `admin` is required for grants, revocations, group changes, and

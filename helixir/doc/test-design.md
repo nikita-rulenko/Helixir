@@ -1,7 +1,6 @@
 # Test design
 
 > _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
-> Last verified: 2026-08-04._
 
 ## 1. Stance
 
@@ -27,7 +26,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`codex/rbac-cli`):** 260 library unit tests plus 10 CLI tests
+**Current (`v0.13.3` working tree):** 263 library unit tests plus 15 CLI tests
 (`cargo test --all-targets`) and **42 HELIX_E2E-gated suites** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -71,8 +70,8 @@ invariant that RBAC remains enabled.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 35 | Fresh and idempotent local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, RBAC onboarding/user coverage and explicit legacy disable, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, local/remote doctor reports and malformed-config refusal. |
-| CLI onboarding | `src/bin/helixir/` | 10 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, and manifest-scoped client readiness. |
+| Installer | `src/installer/` | 36 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
+| CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
 | Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
 ### Integration / E2E
@@ -223,10 +222,11 @@ baselines is feature work, not test work.
 
 The RBAC unit matrix in `core::rbac` and `core::rbac_compat` covers all six
 roles, deny-by-default, worker authorship, viewer write denial, global admin
-bypass, cross-group isolation, implicit onboarding routing, and legacy
-fingerprint preservation. Installer tests require both user and memory coverage
-before the profile is considered ready and verify the explicit legacy-mode
-disable plan. CLI tests cover stable parsing, while the repository-wide module
+bypass, cross-group isolation, single-reserved-workspace routing, ambiguous
+write denial, and `default` legacy-fingerprint preservation. Installer tests
+require both reserved groups, active migration state, registry coverage, and
+legacy-memory coverage before the profile is ready. CLI tests cover stable
+parsing without any disable escape, while the repository-wide module
 budget is enforced independently by `tests/module_budget.rs`.
 
 The live enabled-state suites keep RBAC on throughout. `rbac_e2e.rs` covers
@@ -236,6 +236,6 @@ binding, private outbox reads, and global-admin-only low-level tooling. The CLI
 parser and pure policy matrix separately cover all roles, deny-by-default, and
 stable management syntax. `rbac_compat_e2e.rs` bootstraps twice, verifies full
 legacy-memory coverage, denies pre-onboarding group admission, projects and
-retains registry history, routes omitted write groups, and leaves enforcement
-enabled. `HELIXIR_RBAC_ACTOR` is the only enabled-mode CLI management identity;
+retains registry history, validates fresh/legacy convergence, and leaves
+enforcement enabled. `HELIXIR_RBAC_ACTOR` is the CLI management identity;
 caller-supplied `--actor` impersonation is rejected.

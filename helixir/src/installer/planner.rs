@@ -23,20 +23,13 @@ impl Planner {
             ));
         }
 
-        if !state.rbac.satisfies(&options.rbac) && options.rbac.enabled {
+        if !state.rbac.satisfies(&options.rbac) {
             steps.push(InstallStep::required(
                 InstallAction::BootstrapRbac {
                     operator_id: options.rbac.operator_id.clone(),
                     principals: options.rbac.principals.iter().cloned().collect(),
                 },
-                "register legacy users and memories in onboarding, then enable enforcement",
-            ));
-        } else if !options.rbac.enabled && state.rbac.enabled {
-            steps.push(InstallStep::required(
-                InstallAction::DisableRbac {
-                    operator_id: options.rbac.operator_id.clone(),
-                },
-                "apply the explicit legacy trusted-network selection",
+                "converge default/onboarding workspaces and permanently enable enforcement",
             ));
         }
 
@@ -78,19 +71,20 @@ impl Planner {
             }
             (BackendChoice::ProvisionLocal, BackendState::Missing) => {
                 steps.push(InstallStep::required(
-                    InstallAction::ProvisionBackend,
-                    "create a managed HelixDB service with persistent storage",
+                    InstallAction::DeploySchema,
+                    "compile the bundled schema into a HelixDB v2.3.5 image",
                 ));
                 steps.push(InstallStep::required(
-                    InstallAction::DeploySchema,
-                    "deploy the schema bundled with this Helixir version",
+                    InstallAction::ProvisionBackend,
+                    "create a managed HelixDB service with persistent storage",
                 ));
             }
             (
                 BackendChoice::ProvisionLocal | BackendChoice::ReuseDetected,
-                BackendState::Local {
+                BackendState::ManagedLocal {
                     healthy,
                     schema_compatible,
+                    ..
                 },
             ) => {
                 if !healthy {
@@ -106,20 +100,35 @@ impl Planner {
                     ));
                     steps.push(InstallStep::required(
                         InstallAction::DeploySchema,
-                        "bring the backend schema in sync with this Helixir version",
+                        "rebuild and recreate the managed backend on the preserved volume",
                     ));
                 }
             }
             (BackendChoice::JoinRemote { .. }, _) => {}
-            (BackendChoice::ReuseDetected, BackendState::Remote { .. }) => {}
+            (
+                BackendChoice::ReuseDetected,
+                BackendState::ExistingLocal {
+                    schema_compatible, ..
+                }
+                | BackendState::Remote {
+                    schema_compatible, ..
+                },
+            ) => {
+                if !schema_compatible {
+                    return Err(PlanError::IncompatibleExternalBackend);
+                }
+            }
+            (BackendChoice::ProvisionLocal, BackendState::ExistingLocal { .. }) => {
+                return Err(PlanError::ExistingLocalConflict);
+            }
             (BackendChoice::ProvisionLocal, BackendState::Remote { .. }) => {
+                steps.push(InstallStep::required(
+                    InstallAction::DeploySchema,
+                    "compile the bundled schema into a HelixDB v2.3.5 image",
+                ));
                 steps.push(InstallStep::required(
                     InstallAction::ProvisionBackend,
                     "create the explicitly selected managed local backend",
-                ));
-                steps.push(InstallStep::required(
-                    InstallAction::DeploySchema,
-                    "deploy the schema bundled with this Helixir version",
                 ));
             }
         }

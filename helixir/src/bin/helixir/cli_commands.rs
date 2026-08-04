@@ -2,12 +2,12 @@ use super::*;
 
 #[derive(Subcommand)]
 pub(crate) enum RbacCmd {
-    /// Bootstrap the onboarding enrollment group and migrate legacy state.
+    /// Converge the permanent default/onboarding RBAC workspaces.
     Bootstrap {
         /// Global operator id. Defaults to HELIXIR_RBAC_ACTOR or the OS user.
         #[arg(long)]
         operator: Option<String>,
-        /// Principal to enroll as groupadmin; repeat for multiple MCP clients.
+        /// Principal to admit; repeat for multiple MCP clients.
         #[arg(long = "principal")]
         principals: Vec<String>,
         #[arg(long)]
@@ -18,10 +18,6 @@ pub(crate) enum RbacCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Enable deny-by-default RBAC enforcement in HelixDB.
-    Enable,
-    /// Disable RBAC enforcement while preserving all grants.
-    Disable,
     /// Manage named groups.
     Group {
         #[command(subcommand)]

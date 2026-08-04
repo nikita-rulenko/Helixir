@@ -13,7 +13,8 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
             embeddings: helixir::installer::EmbeddingChoice::LocalOllamaNomic,
             ..helixir::installer::InstallOptions::default()
         };
-        let executor = OnboardExecutor::new(&options);
+        let executor =
+            OnboardExecutor::new(&options, &helixir::installer::SystemState::default(), false);
         repair_embeddings_with_local_fallback(&executor, &error.to_string()).await?;
         true
     } else {
@@ -41,22 +42,37 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
             )
     });
     let nli_ready = Some(onboard_nli_installed());
-    let binaries_ready = std::env::current_exe()
+    let mcp_binary = std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
-        .map(|mcp| mcp.exists())
-        .unwrap_or(false);
+        .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")));
+    let binaries_ready = mcp_binary.as_ref().is_some_and(|mcp| mcp.is_file());
+    let state = detect_onboard_state().await;
+    let backend_options = helixir::installer::InstallOptions {
+        backend: helixir::installer::BackendChoice::ReuseDetected,
+        local_llm_model: None,
+        ..helixir::installer::InstallOptions::default()
+    };
+    let backend_executor = OnboardExecutor::new(&backend_options, &state, false);
+    let backend_ready = helixir::installer::PlanExecutor::apply(
+        &backend_executor,
+        &helixir::installer::InstallAction::VerifyBackend,
+    )
+    .await
+    .is_ok();
+    let mcp_ready = mcp_binary
+        .as_deref()
+        .is_some_and(|binary| doctor_mcp_smoke(binary).is_ok());
     let rbac_ready = doctor_rbac_ready().await;
     let inputs = helixir::installer::doctor::DoctorInputs {
         binaries: Some(binaries_ready),
         config: Some(doctor_config_ready()),
-        backend: Some(detect_local_backend_tcp().is_some()),
+        backend: Some(backend_ready),
         llm: Some(llm_ready),
         embeddings: Some(embeddings_ready),
         nomic: nomic_ready,
         nomic_required,
         nli: nli_ready,
-        mcp: Some(binaries_ready),
+        mcp: Some(mcp_ready),
         clients: Some(doctor_clients_ready()),
         rbac: Some(rbac_ready),
     };
@@ -111,16 +127,17 @@ async fn doctor_rbac_ready() -> bool {
         });
     match manifest.and_then(|manifest| manifest.rbac) {
         Some(expected) => state.satisfies(&helixir::installer::rbac::RbacInstallOptions {
-            enabled: expected.enabled,
             operator_id: expected.operator_id,
             principals: expected.principals.into_iter().collect(),
         }),
         None => {
             state.enabled
-                && state.compatibility_group_exists
+                && state.migration_active
+                && state.default_group_exists
+                && state.onboarding_group_exists
                 && !state.global_admins.is_empty()
-                && state.all_users_enrolled
-                && state.all_memories_covered
+                && state.all_users_registered
+                && state.legacy_memories_covered
         }
     }
 }
@@ -155,7 +172,7 @@ pub(crate) fn doctor_clients_ready() -> bool {
         Ok(manifest) => manifest,
         Err(_) => return false,
     };
-    let selected: Vec<ClientKind> = manifest
+    let mut selected: Vec<ClientKind> = manifest
         .as_ref()
         .map(|manifest| {
             manifest
@@ -166,41 +183,29 @@ pub(crate) fn doctor_clients_ready() -> bool {
         })
         .unwrap_or_default();
 
+    let mcp_binary = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
+        .unwrap_or_else(|| PathBuf::from("helixir-mcp"))
+        .display()
+        .to_string();
     if selected.is_empty() {
-        return native_client_targets()
-            .into_iter()
-            .any(|client| native_registration_exists(client, "helixir-local"));
+        selected = [
+            ClientKind::ClaudeCode,
+            ClientKind::Codex,
+            ClientKind::Cursor,
+        ]
+        .into_iter()
+        .filter(|client| client_available(*client))
+        .collect();
     }
-
-    let server = helixir::installer::clients::StdioServer::new(
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|parent| parent.join("helixir-mcp")))
-            .unwrap_or_else(|| PathBuf::from("helixir-mcp"))
-            .display()
-            .to_string(),
-    );
-    let expected_command = server.json_entry()["command"].clone();
-    selected.into_iter().all(|client| match client {
-        ClientKind::ClaudeCode | ClientKind::Codex => {
-            native_registration_exists(client, "helixir-local")
-        }
-        ClientKind::Cursor => {
-            let Some(path) =
-                helixir::installer::clients::default_json_config_path(ClientKind::Cursor, &home)
-            else {
-                return false;
-            };
-            std::fs::read_to_string(path)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                .and_then(|doc| {
-                    doc.get("mcpServers")
-                        .and_then(|servers| servers.get("helixir-local"))
-                        .cloned()
-                })
-                .is_some_and(|entry| entry.get("command") == Some(&expected_command))
-        }
+    if selected.is_empty() {
+        return false;
+    }
+    selected.into_iter().all(|client| {
+        let server = helixir::installer::clients::StdioServer::new(&mcp_binary)
+            .with_env("HELIXIR_RBAC_ACTOR", client.principal_id());
+        client_registration_matches(client, "helixir-local", &server)
     })
 }
 

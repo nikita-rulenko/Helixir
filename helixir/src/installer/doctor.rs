@@ -161,7 +161,8 @@ fn push_bool(
 ) {
     let (status, suffix) = match value {
         Some(true) => (CheckStatus::Pass, "ready"),
-        Some(false) => (CheckStatus::Fail, "not ready"),
+        Some(false) if required => (CheckStatus::Fail, "not ready"),
+        Some(false) => (CheckStatus::Warn, "degraded"),
         None if required => (CheckStatus::Fail, "not checked"),
         None => (CheckStatus::Skipped, "not selected"),
     };
@@ -251,6 +252,27 @@ mod tests {
         assert!(report.ready);
         assert!(report.checks.iter().any(|check| {
             check.name == "nomic" && check.status == CheckStatus::Skipped && !check.required
+        }));
+    }
+
+    #[test]
+    fn optional_degradation_warns_without_blocking_readiness() {
+        let report = DoctorReport::from_inputs(&DoctorInputs {
+            binaries: Some(true),
+            config: Some(true),
+            backend: Some(true),
+            llm: Some(true),
+            embeddings: Some(true),
+            nomic: Some(false),
+            nomic_required: false,
+            nli: Some(true),
+            mcp: Some(true),
+            clients: Some(true),
+            rbac: Some(true),
+        });
+        assert!(report.ready);
+        assert!(report.checks.iter().any(|check| {
+            check.name == "nomic" && check.status == CheckStatus::Warn && !check.required
         }));
     }
 }

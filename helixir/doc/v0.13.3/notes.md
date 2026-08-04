@@ -7,15 +7,19 @@ and replaces the remaining oversized Rust source files with cohesive modules.
 
 ## RBAC by default, without losing trusted-mode history
 
-Fresh installs and upgrades create the reserved `onboarding` group, grant one
-explicit operator global `admin`, enroll detected clients as group
-administrators, and migrate existing users as workers. An enrolled writer may
-omit `group_id`; other enabled-mode writes must select a concrete group.
+Fresh installs and upgrades create two reserved workspaces: `default` preserves
+the historical trusted-peer data plane, while `onboarding` admits newly
+discovered principals before an administrator assigns their long-term groups.
+One explicit operator receives global `admin`; selected trusted clients receive
+equal `groupadmin` access to `default`; new principals enter `onboarding` as
+workers. A writer with exactly one writable reserved workspace may omit
+`group_id`; ambiguous writes fail closed.
 
-Legacy migration now attaches only genuinely pre-RBAC memories: rows with no
-stored RBAC scope and no group or dedup-federation edges. Re-running bootstrap
-therefore cannot widen already isolated memories. The user registry, active
-roles, role history, groups, access edges, and dedup federations all remain in
+The one-way migration moves genuinely pre-RBAC memories into `default`, records
+`pending → migrating → active` checkpoints in HelixDB, and resumes idempotently
+after interruption. It never disables enforcement or reclassifies memories
+created after activation. The user registry, active roles, role history,
+groups, access edges, dedup federations, and migration state all remain in
 HelixDB as the single source of truth.
 
 ## Administrative CLI and canonical agent contract
@@ -33,17 +37,23 @@ passwords, secrets, and credentials.
 
 ## Installer and model readiness
 
-Guided onboarding discovers supported clients, writes their MCP registration
-with backups, provisions the RBAC profile, installs the canonical skill, and
-finishes with doctor. NLI is mandatory. Embeddings must be either verified
-local Ollama with `nomic-embed-text` or an explicit working OpenAI-compatible
-remote endpoint; doctor visibly falls back to Ollama/Nomic when a remote
-embedding path is invalid. Cerebras generation is pinned to `gpt-oss-120b`;
-Gemma is not selected.
+Guided onboarding discovers supported clients, writes minimal secret-free MCP
+registrations with timestamped backups and exact post-write verification,
+provisions the RBAC profile, installs the canonical skill, and finishes with a
+real MCP/backend/model/client doctor gate. NLI is mandatory. Embeddings must be
+either verified local Ollama with `nomic-embed-text` or an explicit working
+OpenAI-compatible remote endpoint; doctor visibly falls back to Ollama/Nomic
+when a remote embedding path is invalid. Cerebras generation is pinned to
+`gpt-oss-120b`; Gemma is not selected.
 
-Transactional local HelixDB provisioning remains tracked separately in #108;
-until it lands, operators should provision or upgrade the backend with the
-documented backup-first HelixDB v2.3.5 flow before running onboarding.
+The installer now distinguishes a Helixir-managed local HelixDB, an existing
+separately managed local database, and a remote database. Managed schema
+transitions use HelixDB CLI v2.3.5, a recoverable cold volume backup, the same
+persistent volume, read-only schema verification, and restoration on failure.
+The product default remains port 6969; an explicitly detected endpoint such as
+the owner's 6970 is preserved exactly. Source and checksummed release installs
+use immutable version directories and restore the previous `current` pointer
+when onboarding fails.
 
 ## Maintainable module boundaries
 
@@ -55,11 +65,11 @@ the full source tree and rejects future regressions.
 
 ## Verification
 
-- 261 library tests, 10 CLI tests, the repository-wide module-budget test, and
+- 263 library tests, 15 CLI tests, the repository-wide module-budget test, and
   the complete non-ignored test surface pass.
 - Formatting, all-target/all-feature Clippy with warnings denied, rustdoc with
   warnings denied, and all-target compilation pass.
-- HelixDB CLI v2.3.5 validates and compiles all 163 HQL queries.
+- HelixDB CLI v2.3.5 validates and compiles all 165 HQL queries.
 - Live enabled-state E2E passes compatibility bootstrap, user enrollment,
   group isolation, dedup federation history, secondary actor binding, and
   preserves enabled enforcement.
@@ -78,5 +88,6 @@ binaries. Run `helixir doctor --json` and verify `ready: true`; finally restart
 Codex, Claude Code, Cursor, gateways, and any other long-lived MCP clients so
 they load the new binary and tool schemas.
 
-Use `helixir onboard --legacy-trusted-mode` only when disabled RBAC is an
-explicit operational requirement.
+RBAC activation is permanent. There is intentionally no disabled-mode or
+rollback switch after migration; the `default` workspace is the supported
+full-trust compatibility environment.

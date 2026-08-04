@@ -233,32 +233,32 @@ back to local files or silently disable authorization.
 
 RBAC state is a graph in HelixDB and is the single source of truth for the CLI,
 MCP server, and Rust facade. There is no local policy file to edit or cache.
-New onboarding enables RBAC by default through the reserved `onboarding`
-enrollment/compatibility group; `--legacy-trusted-mode` is the explicit disabled escape
-hatch. Enabled authorization is deny-by-default and fail-closed.
+RBAC is permanent. Bootstrap creates reserved `default` for pre-RBAC memories
+and trusted peers plus `onboarding` for newly discovered principals. The
+transition is checkpointed in HelixDB and resumes forward; authorization is
+deny-by-default and fail-closed.
 
 The graph contains `RbacConfig`, `RbacGroup`, `RbacDedupGroup`, and
 `RbacAssignment` nodes plus membership, memory-visibility, and memory dedup
 provenance edges. `Memory.user_id` remains the author/owner. At the API
-boundary, `actor_id` is the authenticated principal
-whose grants are checked and `user_id` is the target owner. MCP calls must
-provide `actor_id` whenever RBAC is enabled; omission is accepted only while
-the disabled legacy trusted-network contract intentionally equates actor and
-owner.
+boundary, `actor_id` is the authenticated principal whose grants are checked
+and `user_id` is the target owner. MCP calls must provide `actor_id`.
 FastThink lifecycle calls (`think_start/add/recall/conclude/status/discard/commit`)
 must repeat that same actor; cross-principal session access is denied. Poll
 `get_add_status` with `actor_id`: only the pending owner, its creator, or a
 global admin may read it. Outbox payloads are owner/admin-only even when a
 moderator or viewer can read the owner's group memories, because a failed
 notice can contain the original raw input.
-Never let a caller change `user_id` to bypass an `actor_id` check. Enrolled
-compatibility-profile writers may omit `group_id`; Helixir routes the write to
-`onboarding` and preserves legacy dedup fingerprints. Writes to any other
-group must pass one concrete `group_id`; do not pass a `dedup_group_id` there.
+Never let a caller change `user_id` to bypass an `actor_id` check. Helixir
+infers an omitted `group_id` only when exactly one reserved workspace is
+writable; ambiguous membership fails closed. Working-group writes must pass one
+concrete `group_id`; do not pass a `dedup_group_id` there. Only `default`
+preserves legacy dedup fingerprints.
 Only the bootstrap operator receives global admin; never grant every detected
 agent control-plane access.
 
-Active or historical `onboarding` membership is the principal registry. An
+Active or historical membership in `default` or `onboarding` contributes to
+the principal registry. An
 administrator enrolls a new principal with `helixir rbac group add-user --group
 onboarding --user <id>`, then may assign other groups. `helixir rbac user list`
 projects users, active roles, assignment history, and Agent presence directly
@@ -282,12 +282,12 @@ Role semantics are fixed:
 - `worker`: read in assigned groups and write only memories authored by self;
 - `viewer`: read-only in explicitly assigned groups.
 
-Use the `helixir rbac` CLI family for management (`bootstrap`, `status`, `group`, `dedup`,
-`grant`, `revoke`, `enable`, `disable`, `check`). Dedup management is
+Use the `helixir rbac` CLI family for management (`bootstrap`, `status`,
+`group`, `dedup`, `grant`, `revoke`, `check`). Dedup management is
 `dedup create|list|attach|detach|delete`; it requires a global admin. Do not infer access from a memory's
 text, metadata, or the presence of a graph edge alone; resolve active
 assignments through `RbacManager`. Global admin is required for management once
 RBAC is enabled. The CLI principal comes from `HELIXIR_RBAC_ACTOR`; do not add
-or rely on a user-supplied actor flag. If the RBAC schema is absent, report deployment readiness and
-preserve the documented disabled mode; do not treat connection or permission
-errors as disabled RBAC.
+or rely on a user-supplied actor flag. If the RBAC schema is absent, report
+deployment readiness and resume bootstrap after the schema is deployed; do not
+treat connection or permission errors as disabled RBAC.

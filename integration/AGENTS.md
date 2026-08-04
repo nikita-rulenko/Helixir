@@ -171,18 +171,21 @@ The deployment gate is: `helix --version` → `helix check` →
 persistent volume → deploy with the configured v2 flow → health/read-only query
 verification. Do not mutate a live volume without a recoverable backup.
 
-RBAC is stored in HelixDB and is the shared source of truth for CLI, MCP, and
-Rust. New onboarding enables it through the reserved `onboarding`
-enrollment/compatibility group; `--legacy-trusted-mode` is the explicit disabled escape
-hatch. Enabled authorization is deny-by-default. `actor_id` is the
+RBAC is permanently enabled, stored in HelixDB, and is the shared source of
+truth for CLI, MCP, and Rust. The one-way resumable bootstrap puts pre-RBAC
+memories and trusted peers in reserved `default` with equal group-admin access,
+while reserved `onboarding` admits new principals. Authorization is
+deny-by-default. `actor_id` is the
 authenticated principal and is required on MCP calls; `user_id` is the memory
-owner/target. Enrolled compatibility writers may omit `group_id`; other
-non-admin `add_memory` and `think_commit` calls must pass one concrete group.
+owner/target. Omitted `group_id` is inferred only when exactly one reserved
+workspace is writable; other non-admin `add_memory` and `think_commit` calls
+must pass one concrete group.
 Never pass a dedup federation id as the write group and
 never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
 `worker`, and `viewer` with the semantics documented in `integration/SKILLS.md`.
-Active or historical `onboarding` membership defines the graph-backed principal
-registry. Use `helixir rbac user` and `helixir rbac group add-user/remove-user`;
+Active or historical membership in either reserved workspace contributes to
+the graph-backed principal registry. Use `helixir rbac user` and
+`helixir rbac group add-user/remove-user`;
 new principals must enter `onboarding` before an administrator assigns other
 groups, and removal preserves the User node and assignment history.
 `helixir rbac dedup` creates and manages optional group federations: current

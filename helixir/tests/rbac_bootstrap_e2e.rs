@@ -1,10 +1,15 @@
-//! Fresh-store and trusted-mode upgrade coverage for the onboarding profile.
+//! Fresh-store, pre-RBAC upgrade, and interrupted-resume bootstrap coverage.
 //!
 //! Each scenario requires its own empty HelixDB volume. Run with
-//! `HELIX_E2E_FRESH=1 HELIX_E2E_SCENARIO=fresh|legacy-upgrade` and point
-//! `HELIX_HOST` / `HELIX_PORT` at that disposable instance.
+//! `HELIX_E2E_FRESH=1 HELIX_E2E_SCENARIO=fresh|legacy-upgrade|interrupted-legacy` and point
+//! `HELIX_HOST` / `HELIX_PORT` at that disposable instance. The
+//! `interrupted-legacy` case seeds a persisted `migrating` checkpoint with
+//! enforcement already enabled, then proves that bootstrap converges forward.
 
-use helixir::core::{HelixirClient, ONBOARDING_GROUP_ID, Role};
+use helixir::core::{
+    DEFAULT_GROUP_ID, HelixirClient, ONBOARDING_GROUP_ID, RbacMigrationKind, RbacMigrationState,
+    Role,
+};
 use helixir::llm::extractor::ExtractedMemory;
 
 fn saved_id(result: &helixir::core::helixir_client::AddMemoryResult) -> Option<String> {
@@ -32,7 +37,10 @@ async fn memory(client: &HelixirClient, actor: &str, memory_id: &str) -> serde_j
 async fn fresh_store_and_legacy_upgrade_bootstrap() {
     assert_eq!(std::env::var("HELIX_E2E_FRESH").unwrap_or_default(), "1");
     let scenario = std::env::var("HELIX_E2E_SCENARIO").expect("HELIX_E2E_SCENARIO");
-    assert!(matches!(scenario.as_str(), "fresh" | "legacy-upgrade"));
+    assert!(matches!(
+        scenario.as_str(),
+        "fresh" | "legacy-upgrade" | "interrupted-legacy"
+    ));
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
@@ -46,7 +54,8 @@ async fn fresh_store_and_legacy_upgrade_bootstrap() {
     let legacy_owner = format!("legacy-owner-{suffix}");
     let legacy_text = format!("legacy compatibility fact {suffix}");
 
-    let legacy_id = if scenario == "legacy-upgrade" {
+    let legacy_upgrade = scenario != "fresh";
+    let legacy_id = if legacy_upgrade {
         let result = client
             .add_prepared_as_in_group(
                 &legacy_owner,
@@ -70,23 +79,82 @@ async fn fresh_store_and_legacy_upgrade_bootstrap() {
         None
     };
 
+    if scenario == "interrupted-legacy" {
+        rbac.create_group_as(
+            DEFAULT_GROUP_ID,
+            "Partial default",
+            "failure fixture",
+            &operator,
+        )
+        .await
+        .expect("create partial default group");
+        rbac.grant(&operator, Role::Admin, None, &operator)
+            .await
+            .expect("grant partial operator");
+        let admin = client
+            .admin_as(&operator)
+            .await
+            .expect("partial admin surface");
+        admin
+            .db()
+            .execute_query::<serde_json::Value, _>(
+                "setRbacMigrationState",
+                &serde_json::json!({
+                    "migration_state": "migrating",
+                    "migration_kind": "legacy",
+                    "updated_at": chrono::Utc::now().to_rfc3339(),
+                    "updated_by": operator,
+                }),
+            )
+            .await
+            .expect("persist interrupted checkpoint");
+        admin
+            .db()
+            .execute_query::<serde_json::Value, _>(
+                "setRbacEnabled",
+                &serde_json::json!({
+                    "enabled": 1,
+                    "updated_at": chrono::Utc::now().to_rfc3339(),
+                    "updated_by": operator,
+                }),
+            )
+            .await
+            .expect("simulate interruption after enforcement enabled");
+    }
+
     let report = rbac
         .bootstrap_compatibility(&operator, std::slice::from_ref(&agent))
         .await
         .expect("bootstrap compatibility profile");
-    assert!(!report.enabled_before && report.enabled_after);
-    assert_eq!(report.group_id, ONBOARDING_GROUP_ID);
+    assert_eq!(report.enabled_before, scenario == "interrupted-legacy");
+    assert!(report.enabled_after);
+    assert_eq!(report.group_id, DEFAULT_GROUP_ID);
+    assert_eq!(report.onboarding_group_id, ONBOARDING_GROUP_ID);
+    assert_eq!(
+        report.migration_kind,
+        if legacy_upgrade {
+            RbacMigrationKind::Legacy
+        } else {
+            RbacMigrationKind::Fresh
+        }
+    );
     assert!(report.principals_enrolled.contains(&operator));
     assert!(report.principals_enrolled.contains(&agent));
 
     let policy = rbac.snapshot().await.expect("enabled policy");
     assert!(policy.enabled && policy.is_admin(&operator));
+    assert_eq!(policy.migration_state, RbacMigrationState::Active);
+    let (expected_group, expected_role) = if legacy_upgrade {
+        (DEFAULT_GROUP_ID, Role::GroupAdmin)
+    } else {
+        (ONBOARDING_GROUP_ID, Role::Worker)
+    };
     assert!(
         policy
             .users
             .get(&agent)
-            .and_then(|binding| binding.groups.get(ONBOARDING_GROUP_ID))
-            .is_some_and(|roles| roles.contains(&Role::GroupAdmin))
+            .and_then(|binding| binding.groups.get(expected_group))
+            .is_some_and(|roles| roles.contains(&expected_role))
     );
     assert!(rbac.compatibility_coverage_complete().await.unwrap());
     assert!(rbac.compatibility_user_coverage_complete().await.unwrap());
@@ -99,7 +167,7 @@ async fn fresh_store_and_legacy_upgrade_bootstrap() {
         assert!(
             groups
                 .get(&legacy_id)
-                .is_some_and(|ids| ids.contains(ONBOARDING_GROUP_ID))
+                .is_some_and(|ids| ids.contains(DEFAULT_GROUP_ID))
         );
         assert!(
             rbac.visible_memory_ids(&agent, std::slice::from_ref(&legacy_id))

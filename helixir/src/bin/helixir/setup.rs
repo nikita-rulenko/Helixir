@@ -159,8 +159,16 @@ pub(crate) fn native_client_executable(client: helixir::installer::ClientKind) -
     };
     helixir::installer::clients::resolve_command(command).or_else(|| {
         (client == helixir::installer::ClientKind::Codex)
-            .then(|| PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"))
-            .filter(|path| path.exists())
+            .then(|| {
+                [
+                    "/Applications/ChatGPT.app/Contents/Resources/codex",
+                    "/Applications/Codex.app/Contents/Resources/codex",
+                ]
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+            })
+            .flatten()
     })
 }
 

@@ -62,7 +62,7 @@ impl RbacPolicy {
         };
         let group = self.group(group_id)?;
         let Some(dedup_group_id) = group.dedup_group_id.as_deref() else {
-            if group_id == crate::core::rbac_compat::ONBOARDING_GROUP_ID {
+            if group_id == crate::core::rbac_compat::DEFAULT_GROUP_ID {
                 return Ok(RbacMemoryScope::CompatibilityGroup {
                     group_id: group_id.to_string(),
                 });
@@ -277,8 +277,8 @@ impl RbacPolicy {
     }
 
     /// Whether `actor` may create a memory owned by `owner` in one explicit
-    /// group. The onboarding profile may infer its reserved enrollment group
-    /// before calling this method.
+    /// group. The default profile may infer one reserved workspace before
+    /// calling this method.
     pub fn can_create_for_group(&self, actor: &str, owner: &str, group: Option<&str>) -> bool {
         if !self.enabled {
             return true;
@@ -301,7 +301,7 @@ impl RbacPolicy {
         if actor == owner {
             return actor_roles.iter().any(|role| role.can_write());
         }
-        if group == crate::core::rbac_compat::ONBOARDING_GROUP_ID
+        if group == crate::core::rbac_compat::DEFAULT_GROUP_ID
             && actor_roles
                 .iter()
                 .any(|role| matches!(role, Role::GroupAdmin | Role::Moderator))
@@ -340,10 +340,10 @@ impl RbacPolicy {
                     .is_some_and(|roles| roles.iter().any(|role| role.can_write()))
             });
         }
-        if memory_groups.contains(crate::core::rbac_compat::ONBOARDING_GROUP_ID)
+        if memory_groups.contains(crate::core::rbac_compat::DEFAULT_GROUP_ID)
             && actor_binding
                 .groups
-                .get(crate::core::rbac_compat::ONBOARDING_GROUP_ID)
+                .get(crate::core::rbac_compat::DEFAULT_GROUP_ID)
                 .is_some_and(|roles| {
                     roles
                         .iter()

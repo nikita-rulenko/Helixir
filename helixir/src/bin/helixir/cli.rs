@@ -35,15 +35,33 @@ pub(crate) struct OnboardModelArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct OnboardSecurityArgs {
-    /// Keep the historical RBAC-disabled trusted-network mode.
-    #[arg(long)]
-    pub(crate) legacy_trusted_mode: bool,
     /// Initial global administrator id.
     #[arg(long, value_name = "ID")]
     pub(crate) rbac_operator: Option<String>,
     /// Additional onboarding group principal; repeat for multiple agents.
     #[arg(long = "rbac-principal", value_name = "ID")]
     pub(crate) rbac_principals: Vec<String>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub(crate) struct OnboardBackendArgs {
+    /// Connect to a separately managed HelixDB host.
+    #[arg(long, value_name = "HOST", conflicts_with_all = ["provision_local", "reuse_detected"])]
+    pub(crate) backend_host: Option<String>,
+    /// Port for `--backend-host` (product default: 6969).
+    #[arg(
+        long,
+        value_name = "PORT",
+        requires = "backend_host",
+        default_value_t = 6969
+    )]
+    pub(crate) backend_port: u16,
+    /// Provision/reuse the Helixir-managed local Docker backend.
+    #[arg(long, conflicts_with = "reuse_detected")]
+    pub(crate) provision_local: bool,
+    /// Reuse the backend found from the central configuration.
+    #[arg(long)]
+    pub(crate) reuse_detected: bool,
 }
 
 #[derive(Subcommand)]
@@ -234,6 +252,9 @@ pub(crate) enum Cmd {
         /// Deterministic local-model choices shared with interactive onboarding.
         #[command(flatten)]
         models: OnboardModelArgs,
+        /// HelixDB ownership and connection choice.
+        #[command(flatten)]
+        backend: OnboardBackendArgs,
         /// RBAC-by-default security profile choices.
         #[command(flatten)]
         security: OnboardSecurityArgs,

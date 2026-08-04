@@ -1,7 +1,7 @@
 //! Role-based access control for Helixir memory operations.
 //!
-//! A missing `RbacConfig` row (or `enabled = 0`) preserves Helixir's historical
-//! full-trust deployment model for explicit legacy installations. When enabled,
+//! A missing `RbacConfig` row (or `enabled = 0`) exists only during the
+//! resumable one-way bootstrap. In the permanent active state,
 //! the policy maps users to global roles and group-scoped roles. Memory rows
 //! remain owned by their existing `user_id`; strict visibility is derived from
 //! explicit `MEMORY_IN_RBAC_GROUP` edges, so authorship is not overloaded and

@@ -218,26 +218,6 @@ mod rbac_cli_tests {
             Cmd::Onboard { models, .. } if models.no_local_llm
         ));
 
-        let legacy = Cli::try_parse_from([
-            "helixir",
-            "onboard",
-            "--non-interactive",
-            "--legacy-trusted-mode",
-            "--rbac-operator",
-            "root",
-            "--rbac-principal",
-            "codex",
-            "--dry-run",
-        ])
-        .expect("valid explicit legacy-security syntax");
-        assert!(matches!(
-            legacy.cmd,
-            Cmd::Onboard { security, .. }
-                if security.legacy_trusted_mode
-                    && security.rbac_operator.as_deref() == Some("root")
-                    && security.rbac_principals == ["codex"]
-        ));
-
         assert!(
             Cli::try_parse_from([
                 "helixir",
@@ -269,6 +249,24 @@ mod rbac_cli_tests {
                 if models.remote_embeddings
                     && models.embedding_provider.as_deref() == Some("openai")
                     && models.embedding_model.as_deref() == Some("text-embedding-3-small")
+        ));
+
+        let remote_backend = Cli::try_parse_from([
+            "helixir",
+            "onboard",
+            "--non-interactive",
+            "--backend-host",
+            "helix.internal",
+            "--backend-port",
+            "7444",
+            "--dry-run",
+        ])
+        .expect("valid explicit remote backend syntax");
+        assert!(matches!(
+            remote_backend.cmd,
+            Cmd::Onboard { backend, .. }
+                if backend.backend_host.as_deref() == Some("helix.internal")
+                    && backend.backend_port == 7444
         ));
 
         assert!(

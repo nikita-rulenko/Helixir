@@ -8,32 +8,65 @@ SCHEMA_DIR := helixir/schema
 SKILLS_DIR := helixir/skills
 VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
 INSTALL_ROOT ?= $(HOME)/.helixir
-INSTALL_VERSION_DIR := $(INSTALL_ROOT)/versions/$(VERSION)
+ifndef INSTALL_ID
+INSTALL_ID := $(VERSION)-source-$(shell date -u +%Y%m%d%H%M%S)
+endif
+INSTALL_VERSION_DIR := $(INSTALL_ROOT)/versions/$(INSTALL_ID)
 HELIX_HOST ?= localhost
 HELIX_PORT ?= 6969
 ONBOARD_ARGS ?=
+NON_INTERACTIVE ?= 0
+ONBOARD_FLAGS := $(ONBOARD_ARGS)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+RUNTIME_RPATH := -C link-arg=-Wl,-rpath,@loader_path
+else ifeq ($(UNAME_S),Linux)
+RUNTIME_RPATH := -C link-arg=-Wl,-rpath,\$$ORIGIN
+endif
+ifeq ($(NON_INTERACTIVE),1)
+ONBOARD_FLAGS += --non-interactive
+endif
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build release binaries
-	cd helixir && $(CARGO) build --release
+	cd helixir && RUSTFLAGS="$(RUSTFLAGS) $(RUNTIME_RPATH)" $(CARGO) build --release
 
 install: build ## Install versioned binaries/assets and run guided onboarding
 	@set -eu; \
-	mkdir -p "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/bin"; \
+	if [ -e "$(INSTALL_ROOT)/current" ] && [ ! -L "$(INSTALL_ROOT)/current" ]; then \
+		echo "refusing to replace non-symlink $(INSTALL_ROOT)/current" >&2; exit 1; \
+	fi; \
+	previous_current=""; \
+	if [ -L "$(INSTALL_ROOT)/current" ]; then previous_current=$$(readlink "$(INSTALL_ROOT)/current"); fi; \
+	mkdir -p "$(INSTALL_VERSION_DIR)/schema" "$(INSTALL_VERSION_DIR)/skills/helixir-memory" "$(INSTALL_ROOT)/bin"; \
 	install -m755 "$(BINARY_DIR)/helixir-mcp" "$(INSTALL_VERSION_DIR)/helixir-mcp"; \
 	install -m755 "$(BINARY_DIR)/helixir" "$(INSTALL_VERSION_DIR)/helixir"; \
 	install -m755 "$(DEPLOY_BIN)" "$(INSTALL_VERSION_DIR)/helixir-deploy"; \
-	rm -rf "$(INSTALL_VERSION_DIR)/schema"; cp -R "$(SCHEMA_DIR)" "$(INSTALL_VERSION_DIR)/schema"; \
-	rm -rf "$(INSTALL_VERSION_DIR)/skills"; cp -R "$(SKILLS_DIR)" "$(INSTALL_VERSION_DIR)/skills"; \
+	for runtime_lib in "$(BINARY_DIR)"/libonnxruntime*.dylib "$(BINARY_DIR)"/libonnxruntime*.so*; do \
+		[ -e "$$runtime_lib" ] || continue; \
+		cp -p "$$runtime_lib" "$(INSTALL_VERSION_DIR)/"; \
+	done; \
+	install -m644 "$(SCHEMA_DIR)/schema.hx" "$(INSTALL_VERSION_DIR)/schema/schema.hx"; \
+	install -m644 "$(SCHEMA_DIR)/queries.hx" "$(INSTALL_VERSION_DIR)/schema/queries.hx"; \
+	install -m644 "helixir/helix.toml" "$(INSTALL_VERSION_DIR)/helix.toml"; \
+	install -m644 "$(SKILLS_DIR)/helixir-memory/SKILL.md" "$(INSTALL_VERSION_DIR)/skills/helixir-memory/SKILL.md"; \
 	ln -sfn "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/current"; \
 	ln -sfn "$(INSTALL_ROOT)/current/helixir" "$(INSTALL_ROOT)/bin/helixir"; \
 	ln -sfn "$(INSTALL_ROOT)/current/helixir-mcp" "$(INSTALL_ROOT)/bin/helixir-mcp"; \
 	ln -sfn "$(INSTALL_ROOT)/current/helixir-deploy" "$(INSTALL_ROOT)/bin/helixir-deploy"; \
-	printf '%s\n' 'installed: $(INSTALL_ROOT)/current (version $(VERSION))'; \
-	"$(INSTALL_ROOT)/current/helixir" onboard $(ONBOARD_ARGS)
+	printf '%s\n' 'installed: $(INSTALL_ROOT)/current (build $(INSTALL_ID))'; \
+	if ! "$(INSTALL_ROOT)/current/helixir" onboard $(ONBOARD_FLAGS); then \
+		if [ -n "$$previous_current" ]; then \
+			ln -sfn "$$previous_current" "$(INSTALL_ROOT)/current"; \
+		else \
+			rm -f "$(INSTALL_ROOT)/current"; \
+		fi; \
+		echo 'onboarding failed; restored the previous current pointer' >&2; \
+		exit 1; \
+	fi
 
 onboard: ## Run the interactive onboarding orchestrator
 	"$(INSTALL_ROOT)/bin/helixir" onboard $(ONBOARD_ARGS)
