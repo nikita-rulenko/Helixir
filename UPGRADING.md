@@ -12,6 +12,21 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.14.0 → v0.14.1 — the compatible judge
+
+v0.14.1 is a binary-only compatibility patch. It keeps the v0.14.0 schema,
+configuration, RBAC graph, and persistent volume unchanged. The Rust ONNX
+binding now explicitly targets API 23, matching the official ONNX Runtime
+1.23.2 universal macOS package shipped by CI and release archives. This fixes
+NLI startup on both Apple Silicon and Intel macOS; Linux and Windows behavior
+is unchanged.
+
+Replace all three Helixir binaries and keep the packaged ONNX Runtime library
+beside them. Run `helixir doctor --json`, confirm `ready: true`, then restart
+every long-lived MCP client. No HelixDB backup or schema deployment is required
+when upgrading from v0.14.0; installations upgrading from v0.13.x must still
+complete the v0.14.0 transition below first.
+
 ## v0.13.2 → v0.14.0 — the governed hive
 
 v0.14.0 is a one-way transition to permanent graph-backed RBAC. There is no
@@ -87,6 +102,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.14.1** | The compatible judge | Binary-only patch: NLI now targets ONNX Runtime API 23, matching the universal macOS runtime in release archives. No schema or data migration; replace binaries, run doctor, and restart MCP clients. |
 | **v0.14.0** | The governed hive | Permanent graph-backed RBAC introduces reserved `default` and `onboarding`, group roles, dedup federations, actor-bound MCP/FastThink, administrative CLI, transactional onboarding, mandatory NLI plus verified embeddings, and bounded HelixDB v2.3.5 memory. **Cold-backup and deploy schema v3 before replacing binaries; then run doctor and restart every MCP client.** |
 | **v0.13.2** | The guarded reload | Hot reload now publishes one coherent runtime generation while one process-owned ingest worker follows the active client; an atomic `claimPendingInput` query prevents duplicate queue work across processes. **Back up the data volume and redeploy the schema** before replacing the binary, then restart MCP clients/gateways. Gateway bearer auth is optional and off by default; enable it with `gateway.auth_token`, `HELIXIR_GATEWAY_TOKEN`, or `helixir config`, and use `helixir gateway --require-auth` when startup must fail closed. |
 | **v0.13.1** | The honest valve | The Hygieia cache valve and `memprobe --reclaim` now ask cgroup reclaim for the FULL current charge instead of a fixed 1024MiB step — under-asking produced false "live heap" verdicts and premature restarts (#89 forensics). Restart a running `helixir watch` to pick it up. |

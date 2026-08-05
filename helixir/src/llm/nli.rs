@@ -345,6 +345,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ort_api_matches_the_packaged_macos_runtime() {
+        // The official universal2 package used by CI and release artifacts is
+        // ONNX Runtime 1.23.x. Raising this requires shipping a matching
+        // universal macOS runtime first; otherwise NLI panics while loading.
+        assert_eq!(ort::MINOR_VERSION, 23);
+    }
+
+    #[test]
     fn variant_is_an_onnx_path() {
         assert!(pick_onnx_variant().ends_with(".onnx"));
         assert!(pick_onnx_variant().starts_with("onnx/"));

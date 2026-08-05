@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
-  <img src="https://img.shields.io/badge/release-v0.14.0-2ea44f" alt="Release v0.14.0"/>
+  <img src="https://img.shields.io/badge/release-v0.14.1-2ea44f" alt="Release v0.14.1"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>

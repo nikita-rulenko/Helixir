@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
+> _Reflects code as of `v0.14.1`. Last verified: 2026-08-05._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.

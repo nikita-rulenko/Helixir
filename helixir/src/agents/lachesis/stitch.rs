@@ -109,7 +109,7 @@ impl<'a> Stitcher<'a> {
             }
         }
         stats.pairs_considered = pairs.len();
-        pairs.sort_by(|x, y| y.2.cmp(&x.2));
+        pairs.sort_by_key(|pair| std::cmp::Reverse(pair.2));
         pairs.truncate(cfg.stitch_max_judged);
 
         // 4) Judge each surviving pair; persist under the per-pass cap.

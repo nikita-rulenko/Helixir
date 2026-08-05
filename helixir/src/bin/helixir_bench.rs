@@ -315,7 +315,7 @@ async fn main() -> Result<()> {
                 chain
                     .nodes
                     .iter()
-                    .map(|n| format!("[{}] {}", n.relation, &n.memory_id))
+                    .map(|n| format!("[{}] {}", n.relation, n.memory_id))
                     .collect::<Vec<_>>()
                     .join(" ; ")
             );

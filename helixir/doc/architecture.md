@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
+> _Reflects code as of `v0.14.1`. Last verified: 2026-08-05._
 
 ## 1. System context
 
