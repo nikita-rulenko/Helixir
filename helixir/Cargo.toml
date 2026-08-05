@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.14.0"
+version = "0.14.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
@@ -96,7 +96,15 @@ moka = { version = "0.12.15", features = ["future"] }
 # Local NLI judge (#55). NLI is a required safety component: every Helixir
 # binary includes ONNX Runtime + the tokenizer, and onboarding installs the
 # host-compatible model before declaring the system ready.
-ort = "2.0.0-rc.12"
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "std",
+    "ndarray",
+    "tracing",
+    "download-binaries",
+    "tls-native",
+    "copy-dylibs",
+    "api-23",
+] }
 tokenizers = { version = "0.23.1", default-features = false, features = ["onig"] }
 arc-swap = "1"
 toml_edit = "0.22"

@@ -24,7 +24,7 @@ pub fn prune_backups(dir: &std::path::Path, keep: usize) -> usize {
         .filter(|e| e.file_name().to_string_lossy().starts_with("helixir-data-"))
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
-    archives.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    archives.sort_by_key(|archive| std::cmp::Reverse(archive.0)); // newest first
     let mut pruned = 0;
     for (_, path) in archives.into_iter().skip(keep) {
         if std::fs::remove_file(&path).is_ok() {

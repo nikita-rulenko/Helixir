@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString, IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, EnumString, IntoStaticStr,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum MemoryOperation {
+    #[default]
     Add,
 
     Update,
@@ -20,12 +23,6 @@ pub enum MemoryOperation {
     LinkExisting,
 
     CrossContradict,
-}
-
-impl Default for MemoryOperation {
-    fn default() -> Self {
-        Self::Add
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

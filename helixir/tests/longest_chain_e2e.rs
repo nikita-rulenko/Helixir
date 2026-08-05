@@ -45,7 +45,7 @@ async fn longest_chain_reconstructs_a_thread() {
             .unwrap_or_default();
         println!(
             "  {i}.{edge} [{}] {}",
-            &step.memory_id,
+            step.memory_id,
             step.content.chars().take(90).collect::<String>()
         );
     }

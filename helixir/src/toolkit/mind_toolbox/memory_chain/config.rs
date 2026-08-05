@@ -1,16 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainDirection {
     Forward,
     Backward,
+    #[default]
     Both,
-}
-
-impl Default for ChainDirection {
-    fn default() -> Self {
-        Self::Both
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
