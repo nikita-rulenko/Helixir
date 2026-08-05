@@ -1,7 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.3.1-fix` plus the in-progress `dev` branch.
-> Last verified: 2026-05-12._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -99,6 +98,7 @@ Releases as evidence of the project's direction. Source:
 | v0.3.1 | 2026-03-27 | Reasoning quality | `get_chain` traversal grew from 3 to 8 edge directions; reasoning-chain hit rate rose from ~40% to ~95%. New `deep` chain mode (BFS to depth 8). Silent `break` on DB error replaced with `warn + continue`. Extraction now retries on invalid JSON / zero memories and falls back to single-memory storage. Coherence guard: `is_coherent_memory` + `split_incoherent_memory` prevents `UPDATE` from merging contradictory clauses about distinct subjects. |
 | v0.3.1-fix | 2026-03-27 | Relation pipeline | Three independent root causes for `relations_created: 0`: Cerebras response_format (`"json"` → `"json_object"`); `enrich_memory_relations` now runs for all decisions except `NOOP/DELETE` (previously only `ADD/SUPERSEDE`); extraction-relation index mapping switched from sequential to `HashMap<usize, String>` so non-ADD operations no longer shift indices. |
 | (in `dev`) | 2026-05-12 | Audit-driven hardening | CI on push/PR (#5). Blanket `#![allow]` removed (#6). Embedding URL single-source (#7). Self-loop guard in reasoning (#16). `(id, content)` pair consistency in chain projection (#17). Edge deduplication in `get_memory_graph` (#18). `list_memories` empty-user graceful path (#19). Real fallback score in `search_by_concept` (#22). |
+| v0.14.0 | 2026-08-05 | Governed shared memory | Permanent graph-backed RBAC with reserved `default` and `onboarding` workspaces; group roles and dedup federations; administrative CLI; transactional guided installer with mandatory NLI and verified embeddings; scan-free hot projections and supervised HelixDB v2.3.5 memory envelope; repository-wide 500-line module budget. |
 
 Three sustained quality vectors are visible across these releases:
 
@@ -183,8 +183,9 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   provenance. Equivalent facts share a `content_key`; collective presentation
   collapses that fingerprint group and derives its holder count.
 - **How.** Phase 2 of `add_memory` searches collective candidates inside the
-  resolved security domain. In trusted mode the domain is global. With RBAC it
-  is either `group:<group_id>` or `dedup:<dedup_group_id>`. The same domain
+  resolved security domain. Pre-RBAC data retains the legacy fingerprint only
+  inside reserved `default`; new data uses either `group:<group_id>` or
+  `dedup:<dedup_group_id>`. The same domain
   salts `content_key`, filters decision candidates, and constrains Atropos
   paraphrase merging. Cross-domain contradiction and reasoning edges are not
   created by the write pipeline.

@@ -324,8 +324,8 @@ restart to apply.
 → think_recall → think_conclude → think_commit`): an in-process thought
 graph (petgraph) that pollutes nothing until an explicit commit persists
 ONE coherent conclusion. `think_discard` throws the session away;
-timed-out sessions auto-save as `[INCOMPLETE]` and are recoverable via
-`search_incomplete_thoughts`.
+historical timed-out sessions may exist as `[INCOMPLETE]` and are recoverable
+via `search_incomplete_thoughts`.
 
 ## Infrastructure
 

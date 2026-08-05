@@ -383,9 +383,9 @@ For a single fact with no weighing, plain add_memory is correct.
    provenance edges from every recalled fact — the next agent (or the
    next session) inherits the WHY, not just the answer. It is fast
    (seconds).
-3. Trusted-mode timeouts auto-save as [INCOMPLETE]. RBAC-mode timeouts fail
-   closed instead, because a partial commit has no explicit owner/group; discard
-   the session and restart it rather than guessing a security scope.
+3. RBAC is permanent, so timeouts fail closed: a partial commit has no explicit
+   owner/group. Discard the timed-out session and restart it rather than guessing
+   a security scope. Historical `[INCOMPLETE]` memories remain searchable.
 
 ### Workflow:
 ```
@@ -422,7 +422,8 @@ think_commit(actor_id="agent", user_id="agent", group_id="team")   # -> one memo
 
 ## INCOMPLETE THOUGHTS RECOVERY
 
-FastThink sessions may timeout. Partial thoughts are automatically saved with `incomplete_thought` tag.
+FastThink sessions may timeout. Permanent RBAC prevents automatic persistence
+because the timeout path has no explicit owner/group security context.
 
 ### At Session Start:
 ```
@@ -436,9 +437,9 @@ search_incomplete_thoughts(limit=3)
 4. **When completed**: The new conclusion supersedes the incomplete one
 
 ### Timeout Behavior:
-- When FastThink times out, all thoughts are automatically saved to main memory
-- Each extracted fact inherits the `incomplete_thought` tag
-- Use `search_incomplete_thoughts()` to find them later
+- The timed-out scratchpad remains isolated from persistent memory
+- Discard it explicitly, then start a new session with the correct owner/group
+- Use `search_incomplete_thoughts()` only for historical incomplete memories
 
 </incomplete_thoughts_recovery>
 

@@ -492,8 +492,8 @@ section is the "before you file" checklist.
 ### 11.1 "Tool X returns memories that belong to other users"
 
 - Looks like a privacy leak / missing `user_id` filter.
-- In trusted mode this may be the shared Hive graph at work: `Memory.user_id`
-  is provenance, not an access tag.
+- In the reserved `default` workspace this may be the shared Hive graph at work:
+  `Memory.user_id` is provenance, not an access tag.
 - With RBAC enabled, it is correct only when the memory has a visible
   `MEMORY_IN_RBAC_GROUP` edge. Dedup candidates must also share the exact
   `Memory.rbac_scope` (`group:<id>` or `dedup:<id>`).

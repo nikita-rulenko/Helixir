@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (160 HQL queries that materialize the
+and `helixir/schema/queries.hx` (170 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -17,7 +17,7 @@ contract). Anything below disagreeing with those files is the bug.
                   │   29 edge types             │
                   │     ├── active in code      │
                   │     └── reserved (see §3)   │
-                  │   160 named HQL queries     │
+                  │   170 named HQL queries     │
                   │   vector dim: 768 (default) │
                   └─────────────────────────────┘
 ```

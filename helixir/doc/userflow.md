@@ -1,12 +1,12 @@
 # Userflow
 
-> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
-There are 20 tools, 2 prompts, 2 resources.
+There are 21 tools, 2 prompts, and 3 resources.
 
 ## 1. Tool catalog
 
@@ -27,6 +27,7 @@ There are 20 tools, 2 prompts, 2 resources.
 | `list_users` | — | `limit` | Orientation in a shared store: which identities exist. Collective-gated (`available:false` in Solo); privacy-safe (ids/names only). |
 | `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
 | `resolve_contradiction` | `from_id`, `to_id`, `resolution` | — | Answering a `contradiction_review` notice: `confirm` / `retract` (supersedes, history kept) / `preference`. Retired disputes stop re-surfacing. |
+| `agent_farewell` | `agent_id` | — | Marking a one-shot agent as done in the swarm roster without changing authorship provenance. |
 
 Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 `needs_clarification` array — write-path conflicts the memory charter
@@ -56,8 +57,9 @@ through the authorized opportunistic outbox on a later `add_memory` call.
 |---|---|---|
 | Prompt | `memory_summary` | Builds a "summarize all my memories about X" message for the agent. |
 | Prompt | `tool_selection_guide` | The full cognitive protocol (`mcp/prompts.rs`) — when the agent should call which tool. |
-| Resource | `config://helixir` | Server config snapshot. Currently misreports `version` and omits two tools (issue #14). |
+| Resource | `config://helixir` | Server version, backend, capability, and complete tool snapshot. |
 | Resource | `status://helixdb` | Live HelixDB host/port. |
+| Resource | `memory://rules` | Human charter plus adopted learned rules. |
 
 ## 2. Tool selection — by intent
 
@@ -153,10 +155,10 @@ agent intent                                tool to call
 ```
 
 Wall-clock & thought-count limits come from `FastThinkConfig` (default
-90 s, 150 thoughts). In trusted mode a `think_add` timeout auto-commits an
-`incomplete_thought`. Enabled RBAC fails closed instead because `think_add`
-does not carry the explicit owner/group needed for a scoped write; the actor
-must discard and restart the timed-out session.
+90 s, 150 thoughts). Permanent RBAC fails closed on timeout because
+`think_add` does not carry the explicit owner/group needed for a scoped write;
+the actor must discard and restart the timed-out session. Historical
+`incomplete_thought` memories remain searchable.
 
 ## 5. Anti-patterns the agent should refuse
 
@@ -173,15 +175,10 @@ them here so they live in the engineering doc too:
   Memory will trigger UPDATE / SUPERSEDE through the decision engine — let
   the engine decide.
 
-## 6. Where MCP usage and code disagree (today)
+## 6. Release contract checks
 
-- `list_memories(memory_type=X, limit=N)` may return fewer than N (or zero)
-  matches because filtering happens client-side after the limit. Tracked in
-  issue #14.
-- `read_resource("config://helixir")` returns `version: "0.3.0"` even on
-  v0.3.1+. Tracked in issue #8.
-- The `read_resource("config://helixir").tools` list does not include
-  `list_memories` or `search_incomplete_thoughts`. Same issue #14.
-
-When AGENTS.md §2 ("Session boot sequence") says "read open P0 issues first",
-this is one of the reasons.
+`config://helixir` derives its version from `CARGO_PKG_VERSION` and enumerates
+all 21 registered tools. `list_resources` exposes the three resources above.
+The release smoke test must compare these advertised counts with MCP
+`tools/list`, `prompts/list`, and `resources/list` after every tool-surface
+change.

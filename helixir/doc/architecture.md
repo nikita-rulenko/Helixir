@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 ## 1. System context
 
@@ -174,6 +174,10 @@ bug to file — not a feature to copy.
   2. `lru::LruCache` inside `SearchEngine` (cache stats exposed via
      `SearchEngine::cache_stats`).
   3. `ReasoningEngine` warm-up cache (`warm_up_cache`, 500 entries).
+  4. `RbacManager` process cache, keyed by the graph-backed `RbacConfig`
+     revision. Every authorization still reads that one config row, so a
+     committed grant/revocation invalidates the cached atomic policy snapshot
+     immediately without a TTL or second ACL source.
 
   Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
   None are configurable from env or `HelixirConfig`.
@@ -186,8 +190,8 @@ bug to file — not a feature to copy.
   The flow that creates this in `add_memory`:
   1. New `add_memory` call hits `tooling_manager::add_pipeline`.
   2. Personal and collective candidate recall is restricted to the resolved
-     security domain: global in trusted mode, a concrete group or explicit
-     dedup federation when RBAC is enabled.
+    permanent security domain: reserved `default` for migrated legacy
+    fingerprints, otherwise a concrete group or explicit dedup federation.
   3. Exact and NLI-confirmed consensus grouping may unify fingerprints only
      inside that same domain.
 

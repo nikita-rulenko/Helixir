@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.13.3`. Last verified: 2026-08-04._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 This document walks the two pipelines that matter most:
 
@@ -211,8 +211,9 @@ user, `user_count` on that Memory is incremented and the new user's
  │                                                                      │
  │    Under HELIXIR_RETRIEVAL_PROFILE=algo_opt (see architecture.md     │
  │    §7.2): (b) is HelixDB-native SearchBM25 fused via RRF k=60, and   │
- │    (c) runs levelwise-batched — one getConnectionsLevelBatch call    │
- │    per BFS level (batch_expansion.rs) instead of one call per node.  │
+ │    (c) carries HelixDB primary keys and uses                         │
+ │    getConnectionsByInternalId per frontier node. This avoids the     │
+ │    v2.3.5 label-scan arena retention of the former batch query.      │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -300,10 +301,9 @@ without changing an active reasoning graph.
 ```
 
 Timeout behavior: each session has a configured wall-clock and thought limit
-(90 s / 150 thoughts by default). Trusted mode auto-runs `commit_partial` on a
-`think_add` timeout. Enabled RBAC returns an error and retains the bound
-scratchpad for explicit discard, because the lifecycle call has no concrete
-owner/group with which to authorize a partial persistent write.
+(90 s / 150 thoughts by default). Permanent RBAC returns an error and retains
+the bound scratchpad for explicit discard, because the lifecycle call has no
+concrete owner/group with which to authorize a partial persistent write.
 
 ---
 

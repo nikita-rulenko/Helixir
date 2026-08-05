@@ -1,11 +1,11 @@
-# v0.13.3 — The Onboarding Graph
+# v0.14.0 — The Governed Hive
 
-This patch turns graph-backed RBAC into Helixir's safe onboarding default while
+This release turns graph-backed RBAC into Helixir's permanent operating model while
 preserving the familiar shared-memory experience. It also extends the guided
 installer, exposes a stable administrative CLI contract for the planned UI,
 and replaces the remaining oversized Rust source files with cohesive modules.
 
-## RBAC by default, without losing trusted-mode history
+## Permanent RBAC without losing legacy shared history
 
 Fresh installs and upgrades create two reserved workspaces: `default` preserves
 the historical trusted-peer data plane, while `onboarding` admits newly
@@ -105,11 +105,20 @@ the older non-revisioned query surface.
 - Live enabled-state E2E passes compatibility bootstrap, user enrollment,
   group isolation, dedup federation history, secondary actor binding, and
   preserves enabled enforcement.
-- Disposable empty HelixDB instances pass both fresh-install and trusted-mode
+- Disposable empty HelixDB instances pass both fresh-install and pre-RBAC
   legacy-upgrade bootstrap scenarios.
 - Manual MCP stdio smoke registers 21 tools, 2 prompts, and 3 resources; manual
   CLI CRUD confirms enrollment, assignment, revocation history, cleanup, and
   enabled-state persistence.
+
+## Known limitations
+
+The Windows x86_64 release artifact includes the full NLI runtime, but Windows
+does not yet have the transactional one-command PowerShell bootstrap available
+on macOS and Linux. This follow-up is tracked in
+[#131](https://github.com/nikita-rulenko/Helixir/issues/131). The native
+installer UI remains a separate post-release project tracked in
+[#105](https://github.com/nikita-rulenko/Helixir/issues/105).
 
 ## Upgrading
 

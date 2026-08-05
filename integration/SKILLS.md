@@ -111,8 +111,9 @@ think_commit(session_id, user_id="claude", actor_id="claude", group_id="<concret
 ```
 Reuse one `session_id` and, with RBAC enabled, the same `actor_id` on every
 lifecycle call. A session id is not a credential. `think_discard` is likewise
-actor-bound. Trusted-mode timeouts auto-save incomplete work; RBAC-mode
-timeouts fail closed because no owner/group was supplied for a partial write.
+actor-bound. Historical pre-RBAC timeouts could auto-save incomplete work;
+permanent RBAC timeouts fail closed because no owner/group was supplied for a
+partial write.
 
 Worked episode: "pick a retry policy" → think_start with the question →
 think_add the observation ("outages last under a minute") → think_recall

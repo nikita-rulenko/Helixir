@@ -17,6 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
+  <img src="https://img.shields.io/badge/release-v0.14.0-2ea44f" alt="Release v0.14.0"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -43,7 +44,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.13)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.14)
 
 ---
 
@@ -66,7 +67,7 @@ Helixir gives AI agents **memory that persists between sessions** — and more t
 
 Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
 
-Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, Claude Code and any MCP-compatible client.
+Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Codex, Cursor, Claude Desktop, Claude Code and any MCP-compatible client. Since v0.14.0, graph-backed RBAC is permanent: HelixDB itself owns principals, groups, roles, memory visibility and dedup federations, while `default` preserves the former full-trust workspace and `onboarding` admits new agents safely.
 
 | Plain RAG memory | Helixir |
 |:-----------------|:--------|
@@ -113,6 +114,12 @@ Ollama's local API before onboarding succeeds. The required NLI safety model is
 always installed and verified. The same plan provisions a persistent
 HelixDB volume with a pre-schema backup, central `helixir.toml`, and automatic
 Claude Code/Codex/Cursor registration.
+
+Onboarding distinguishes three backend contracts instead of guessing: a
+Helixir-managed local HelixDB, an existing separately managed local HelixDB,
+or an explicit remote endpoint. It then creates permanent graph-backed RBAC,
+placing legacy shared knowledge in reserved `default` and new principals in
+reserved `onboarding` before normal group assignment.
 
 Use `--dry-run` to inspect the plan. Automation can select exactly the same
 choices without prompts:
@@ -439,7 +446,7 @@ more than it reserves.
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`. Pass stable `actor_id`, the concrete working `group_id`, and optional `agent_id`; the write auto-heartbeats swarm presence |
 | `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
 | `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
 | `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
@@ -450,8 +457,9 @@ more than it reserves.
 | `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
 | `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
 | `resolve_contradiction` | Answer a `contradiction_review` notice: `confirm` (my memory stands), `retract` (the disputing memory supersedes mine — history preserved) or `preference` (both coexist). Non-destructive in every branch |
+| `agent_farewell` | Mark a one-shot agent as done in the swarm roster without changing authorship provenance |
 | `update_memory` | Modify existing memory content |
-| `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
+| `search_incomplete_thoughts` | Find historical incomplete FastThink memories created before permanent RBAC |
 
 ### FastThink (working memory)
 
@@ -469,7 +477,10 @@ Isolated scratchpad for complex reasoning. Nothing pollutes long-term memory unt
 
 **Flow:** `think_start` &#8594; `think_add` (repeat) &#8594; `think_recall` (optional) &#8594; `think_conclude` &#8594; `think_commit`
 
-If a session times out, partial thoughts are auto-saved with an `[INCOMPLETE]` tag and recoverable via `search_incomplete_thoughts`.
+If a session times out, permanent RBAC keeps the scratchpad isolated and
+fails closed because no owner/group was supplied for an automatic write.
+Discard and restart it explicitly. Historical `[INCOMPLETE]` memories remain
+recoverable via `search_incomplete_thoughts`.
 
 ---
 
@@ -760,8 +771,8 @@ helixir-rs/
         mind_toolbox/           # Search engine, entity, ontology, reasoning
         fast_think/             # Working memory (petgraph-based)
     schema/
-      schema.hx                 # Node/edge definitions (18 nodes + 5 vectors, 37 edges)
-      queries.hx                # HQL queries (153)
+      schema.hx                 # Node/edge definitions (22 nodes + 5 vectors, 29 edges)
+      queries.hx                # HQL queries (170)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)
