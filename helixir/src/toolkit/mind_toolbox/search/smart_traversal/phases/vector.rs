@@ -155,6 +155,7 @@ pub async fn vector_search_phase(
             config.vector_weight,
             config.temporal_weight,
         );
+        result.internal_id = (!memory.id.is_empty()).then(|| memory.id.clone());
         result.created_at = Some(memory.created_at.clone());
         result.valid_from = Some(memory.valid_from.clone());
 
@@ -169,6 +170,12 @@ pub async fn vector_search_phase(
             meta.insert(
                 "memory_type".to_string(),
                 serde_json::Value::String(memory.memory_type.clone()),
+            );
+        }
+        if !memory.content_key.is_empty() {
+            meta.insert(
+                "content_key".to_string(),
+                serde_json::Value::String(memory.content_key.clone()),
             );
         }
         if profile.native_hybrid_bm25() {

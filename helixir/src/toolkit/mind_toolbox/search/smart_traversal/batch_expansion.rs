@@ -1,9 +1,10 @@
 //! Levelwise batched graph expansion (algo_opt, research doc §6 P1.3).
 //!
 //! Replaces the per-node recursive DFS of [`super::phases::graph_expansion_phase`]
-//! with a breadth-first walk that fetches the whole frontier's neighbourhood in
-//! **one** `getConnectionsLevelBatch` HQL call per depth level. Round-trips drop
-//! from O(visited nodes) to O(depth).
+//! with a breadth-first walk that fetches each frontier node by its HelixDB
+//! primary key. This intentionally trades a bounded number of local round-trips
+//! for eliminating the `N<Memory>::WHERE(IS_IN(...))` label scans whose v2.3.5
+//! request arenas grow monotonically (#89).
 //!
 //! Semantics mirror the legacy expansion:
 //! - every unvisited neighbour becomes a `SearchResult` (deduped later by
@@ -16,17 +17,18 @@
 //!   the caller re-scores graph results with real cosine right after this
 //!   phase (P0.2), exactly as it does for the DFS path.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 
 use serde::Deserialize;
-use tracing::{debug, info};
 
 use super::models::{GraphScores, ScoreWeights, SearchConfig, SearchResult};
 use super::phases::TraversalError;
 use super::ppr::PprEdge;
 use super::scoring::{calculate_graph_score, calculate_temporal_freshness};
 use crate::db::HelixClient;
+
+mod walk;
+pub use walk::graph_expansion_phase_batched;
 
 /// Expansion results plus the ego-network edges collected on the way —
 /// the input for PPR re-ranking (elder-brain #9).
@@ -49,6 +51,8 @@ pub(crate) struct BatchNode {
     pub(crate) user_id: String,
     #[serde(default)]
     pub(crate) memory_type: String,
+    #[serde(default)]
+    pub(crate) content_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,7 +79,7 @@ impl BatchEdge {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct LevelBatchResponse {
     #[serde(default)]
     memories: Vec<BatchNode>,
@@ -111,6 +115,86 @@ struct LevelBatchResponse {
     relation_in_e: Vec<BatchEdge>,
     #[serde(default)]
     relation_in_n: Vec<BatchNode>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LevelSingleResponse {
+    #[serde(default)]
+    memory: Option<BatchNode>,
+    #[serde(default)]
+    implies_out_e: Vec<BatchEdge>,
+    #[serde(default)]
+    implies_out_n: Vec<BatchNode>,
+    #[serde(default)]
+    implies_in_e: Vec<BatchEdge>,
+    #[serde(default)]
+    implies_in_n: Vec<BatchNode>,
+    #[serde(default)]
+    because_out_e: Vec<BatchEdge>,
+    #[serde(default)]
+    because_out_n: Vec<BatchNode>,
+    #[serde(default)]
+    because_in_e: Vec<BatchEdge>,
+    #[serde(default)]
+    because_in_n: Vec<BatchNode>,
+    #[serde(default)]
+    contradicts_out_e: Vec<BatchEdge>,
+    #[serde(default)]
+    contradicts_out_n: Vec<BatchNode>,
+    #[serde(default)]
+    contradicts_in_e: Vec<BatchEdge>,
+    #[serde(default)]
+    contradicts_in_n: Vec<BatchNode>,
+    #[serde(default)]
+    relation_out_e: Vec<BatchEdge>,
+    #[serde(default)]
+    relation_out_n: Vec<BatchNode>,
+    #[serde(default)]
+    relation_in_e: Vec<BatchEdge>,
+    #[serde(default)]
+    relation_in_n: Vec<BatchNode>,
+}
+
+impl LevelBatchResponse {
+    fn append_single(&mut self, mut single: LevelSingleResponse) {
+        if let Some(memory) = single.memory.take() {
+            self.memories.push(memory);
+        }
+        self.implies_out_e.append(&mut single.implies_out_e);
+        self.implies_out_n.append(&mut single.implies_out_n);
+        self.implies_in_e.append(&mut single.implies_in_e);
+        self.implies_in_n.append(&mut single.implies_in_n);
+        self.because_out_e.append(&mut single.because_out_e);
+        self.because_out_n.append(&mut single.because_out_n);
+        self.because_in_e.append(&mut single.because_in_e);
+        self.because_in_n.append(&mut single.because_in_n);
+        self.contradicts_out_e.append(&mut single.contradicts_out_e);
+        self.contradicts_out_n.append(&mut single.contradicts_out_n);
+        self.contradicts_in_e.append(&mut single.contradicts_in_e);
+        self.contradicts_in_n.append(&mut single.contradicts_in_n);
+        self.relation_out_e.append(&mut single.relation_out_e);
+        self.relation_out_n.append(&mut single.relation_out_n);
+        self.relation_in_e.append(&mut single.relation_in_e);
+        self.relation_in_n.append(&mut single.relation_in_n);
+    }
+}
+
+async fn fetch_level_by_internal_ids(
+    client: &HelixClient,
+    internal_ids: &[&str],
+) -> Result<LevelBatchResponse, TraversalError> {
+    let mut merged = LevelBatchResponse::default();
+    for internal_id in internal_ids {
+        let response: LevelSingleResponse = client
+            .execute_query(
+                "getConnectionsByInternalId",
+                &serde_json::json!({ "internal_id": internal_id }),
+            )
+            .await
+            .map_err(|error| TraversalError::Database(error.to_string()))?;
+        merged.append_single(response);
+    }
+    Ok(merged)
 }
 
 type EdgeFamily<'a> = (&'a [BatchEdge], &'a [BatchNode], &'static str, f64, bool);
@@ -248,210 +332,5 @@ pub(crate) async fn fetch_level(
     Ok(LevelFetch {
         nodes_by_uuid,
         edges,
-    })
-}
-
-pub async fn graph_expansion_phase_batched(
-    client: Arc<HelixClient>,
-    vector_hits: &[SearchResult],
-    config: &SearchConfig,
-) -> Result<ExpansionOutput, TraversalError> {
-    let max_depth = config.graph_depth;
-    info!(
-        "Starting Phase 2 (batched): levelwise expansion from {} seeds, depth {}",
-        vector_hits.len(),
-        max_depth
-    );
-
-    let mut results: Vec<SearchResult> = Vec::new();
-    // Ego-network edges for PPR. Includes edges to already-visited nodes
-    // (they don't create new results, but mass must flow through them).
-    let mut ego_edges: Vec<PprEdge> = Vec::new();
-    let mut seen_edges: HashSet<(String, String, &'static str)> = HashSet::new();
-    let mut visited: HashSet<String> = vector_hits.iter().map(|h| h.memory_id.clone()).collect();
-    // memory_id -> score the children inherit (combined for seeds, graph for deeper).
-    let mut frontier: HashMap<String, f64> = vector_hits
-        .iter()
-        .map(|h| (h.memory_id.clone(), h.combined_score))
-        .collect();
-
-    for depth in 1..=max_depth {
-        if frontier.is_empty() {
-            break;
-        }
-
-        let ids: Vec<&str> = frontier.keys().map(String::as_str).collect();
-        let params = serde_json::json!({ "memory_ids": ids });
-        let response: LevelBatchResponse = client
-            .execute_query("getConnectionsLevelBatch", &params)
-            .await
-            .map_err(|e| TraversalError::Database(e.to_string()))?;
-
-        // uuid -> node for every node that came back on this level.
-        let mut node_by_uuid: HashMap<&str, &BatchNode> = HashMap::new();
-        // uuid -> inherited score for the anchors of this level.
-        let mut parent_score_by_uuid: HashMap<&str, f64> = HashMap::new();
-        for m in &response.memories {
-            node_by_uuid.insert(m.id.as_str(), m);
-            if let Some(score) = frontier.get(&m.memory_id) {
-                parent_score_by_uuid.insert(m.id.as_str(), *score);
-            }
-        }
-        let fams = families(&response, config.edge_weights, config.edge_damping);
-        for (_, nodes, _, _, _) in &fams {
-            for n in *nodes {
-                node_by_uuid.insert(n.id.as_str(), n);
-            }
-        }
-
-        // parent uuid -> candidate children of this level.
-        let mut children_by_parent: HashMap<&str, Vec<(&BatchNode, f64, &'static str)>> =
-            HashMap::new();
-
-        for (edges, _, edge_type, edge_weight, incoming) in &fams {
-            for edge in *edges {
-                let (parent_uuid, child_uuid) = if *incoming {
-                    (edge.to_node.as_str(), edge.from_node.as_str())
-                } else {
-                    (edge.from_node.as_str(), edge.to_node.as_str())
-                };
-                let Some(parent_score) = parent_score_by_uuid.get(parent_uuid) else {
-                    continue;
-                };
-                let Some(child) = node_by_uuid.get(child_uuid) else {
-                    continue;
-                };
-
-                // Fold the writer's per-edge confidence into the family weight:
-                // a strongly-asserted reasoning edge carries more PPR mass and
-                // lifts its child's rank; a weak one carries less. Legacy edges
-                // (no stored strength) multiply by 1.0 — unchanged.
-                let eff_weight = *edge_weight * edge.strength_norm();
-
-                // Record the edge for PPR regardless of visited status.
-                if let Some(parent_node) = node_by_uuid.get(parent_uuid) {
-                    let key = (
-                        parent_node.memory_id.clone(),
-                        child.memory_id.clone(),
-                        *edge_type,
-                    );
-                    if seen_edges.insert(key) {
-                        ego_edges.push(PprEdge {
-                            from: parent_node.memory_id.clone(),
-                            to: child.memory_id.clone(),
-                            weight: eff_weight,
-                        });
-                    }
-                }
-
-                if visited.contains(&child.memory_id) {
-                    continue;
-                }
-
-                let graph_score = calculate_graph_score(eff_weight, *parent_score);
-                let temporal_score = calculate_temporal_freshness(
-                    super::scoring::event_time(&child.valid_from, &child.created_at),
-                    config.temporal_decay_days,
-                );
-
-                // Same as the legacy DFS: every unvisited neighbour becomes a
-                // result; the 0.5 placeholder is replaced by the P0.2 re-rank.
-                let mut result = SearchResult::from_graph_weighted(
-                    &child.memory_id,
-                    &child.content,
-                    GraphScores {
-                        semantic_sim: 0.5,
-                        graph_score,
-                        temporal_score,
-                    },
-                    depth,
-                    vec![edge_type.to_string()],
-                    ScoreWeights {
-                        semantic: config.graph_semantic_weight,
-                        graph: config.graph_graph_weight,
-                        temporal: config.graph_temporal_weight,
-                    },
-                );
-                result.created_at = Some(child.created_at.clone());
-                result.valid_from = Some(child.valid_from.clone());
-
-                // Provenance (elder-brain #6): make the chain visible to the
-                // agent — which parent pulled this in, via which edge, how far.
-                let parent_memory_id = node_by_uuid
-                    .get(parent_uuid)
-                    .map(|p| p.memory_id.clone())
-                    .unwrap_or_default();
-                let mut meta = HashMap::new();
-                meta.insert(
-                    "origin".to_string(),
-                    serde_json::Value::String("graph".to_string()),
-                );
-                meta.insert(
-                    "edge".to_string(),
-                    serde_json::Value::String(edge_type.to_string()),
-                );
-                meta.insert(
-                    "parent".to_string(),
-                    serde_json::Value::String(parent_memory_id),
-                );
-                meta.insert("depth".to_string(), serde_json::Value::from(depth));
-                if !child.user_id.is_empty() {
-                    meta.insert(
-                        "user_id".to_string(),
-                        serde_json::Value::String(child.user_id.clone()),
-                    );
-                }
-                if !child.memory_type.is_empty() {
-                    meta.insert(
-                        "memory_type".to_string(),
-                        serde_json::Value::String(child.memory_type.clone()),
-                    );
-                }
-                result.metadata = Some(meta);
-                results.push(result);
-
-                children_by_parent.entry(parent_uuid).or_default().push((
-                    child,
-                    graph_score,
-                    edge_type,
-                ));
-            }
-        }
-
-        // #36: the best beam_width children per parent move to the next
-        // frontier (configurable; the historic hardcoded value was 3).
-        let mut next_frontier: HashMap<String, f64> = HashMap::new();
-        for (_, mut children) in children_by_parent {
-            children.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (child, graph_score, _) in children.into_iter().take(config.beam_width.max(1)) {
-                if visited.insert(child.memory_id.clone()) {
-                    let entry = next_frontier
-                        .entry(child.memory_id.clone())
-                        .or_insert(graph_score);
-                    if graph_score > *entry {
-                        *entry = graph_score;
-                    }
-                }
-            }
-        }
-
-        debug!(
-            "Batched expansion level {}: {} anchors, {} results so far, {} next frontier",
-            depth,
-            frontier.len(),
-            results.len(),
-            next_frontier.len()
-        );
-        frontier = next_frontier;
-    }
-
-    info!(
-        "Phase 2 (batched) completed: {} expanded results, {} ego edges",
-        results.len(),
-        ego_edges.len()
-    );
-    Ok(ExpansionOutput {
-        results,
-        edges: ego_edges,
     })
 }

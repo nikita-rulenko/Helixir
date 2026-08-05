@@ -44,6 +44,8 @@ pub struct CompatibilityBootstrapReport {
     pub migration_kind: RbacMigrationKind,
     pub principals_enrolled: Vec<String>,
     pub users_registered: usize,
+    /// Memories audited during this invocation. Zero means an existing active
+    /// migration checkpoint made another full-store audit unnecessary.
     pub memories_seen: usize,
     pub memories_attached: usize,
 }
@@ -120,15 +122,69 @@ impl RbacManager {
             .collect::<BTreeSet<_>>();
         enrolled.insert(operator_id.to_string());
 
-        let existing_users = self.all_user_ids().await?;
-        let memory_ids = self.all_memory_ids().await?;
-        let migration_kind = initial.migration_kind.unwrap_or({
-            if initial.enabled || !existing_users.is_empty() || !memory_ids.is_empty() {
-                RbacMigrationKind::Legacy
-            } else {
-                RbacMigrationKind::Fresh
+        if initial.migration_state == RbacMigrationState::Active {
+            let migration_kind = initial
+                .migration_kind
+                .ok_or_else(|| anyhow::anyhow!("active RBAC migration has no persisted kind"))?;
+            if !initial.enabled
+                || !initial.groups.contains_key(DEFAULT_GROUP_ID)
+                || !initial.groups.contains_key(ONBOARDING_GROUP_ID)
+            {
+                bail!("active RBAC migration checkpoint has an incomplete policy graph");
             }
-        });
+            let mut changed = false;
+            for principal in &enrolled {
+                if !principal_ready(&initial, principal) {
+                    self.grant(
+                        principal,
+                        Role::Worker,
+                        Some(ONBOARDING_GROUP_ID),
+                        operator_id,
+                    )
+                    .await?;
+                    changed = true;
+                }
+            }
+            let policy = if changed {
+                self.snapshot().await?
+            } else {
+                initial.clone()
+            };
+            for principal in &enrolled {
+                if !principal_ready(&policy, principal) {
+                    bail!("RBAC bootstrap verification failed for principal '{principal}'");
+                }
+            }
+            return Ok(CompatibilityBootstrapReport {
+                enabled_before: true,
+                enabled_after: true,
+                operator_id: operator_id.to_string(),
+                group_id: DEFAULT_GROUP_ID.to_string(),
+                onboarding_group_id: ONBOARDING_GROUP_ID.to_string(),
+                migration_kind,
+                principals_enrolled: enrolled.into_iter().collect(),
+                users_registered: policy.users.len(),
+                memories_seen: 0,
+                memories_attached: 0,
+            });
+        }
+
+        let existing_users = self.all_user_ids().await?;
+        let mut discovered_memory_ids = None;
+        let migration_kind = match initial.migration_kind {
+            Some(kind) => kind,
+            None if initial.enabled || !existing_users.is_empty() => RbacMigrationKind::Legacy,
+            None => {
+                let ids = self.all_memory_ids().await?;
+                let kind = if ids.is_empty() {
+                    RbacMigrationKind::Fresh
+                } else {
+                    RbacMigrationKind::Legacy
+                };
+                discovered_memory_ids = Some(ids);
+                kind
+            }
+        };
 
         self.create_group_as(
             DEFAULT_GROUP_ID,
@@ -146,98 +202,92 @@ impl RbacManager {
         .await?;
         self.grant(operator_id, Role::Admin, None, operator_id)
             .await?;
-        let transition_active = initial.migration_state == RbacMigrationState::Active;
-        if !transition_active {
-            self.set_migration_state(RbacMigrationState::Migrating, migration_kind, operator_id)
-                .await?;
-        }
+        self.set_migration_state(RbacMigrationState::Migrating, migration_kind, operator_id)
+            .await?;
 
         let mut legacy_principals = existing_users.iter().cloned().collect::<BTreeSet<_>>();
         legacy_principals.extend(enrolled.iter().cloned());
-        if transition_active {
-            let policy = self.snapshot().await?;
-            for principal in &enrolled {
-                let already_registered = policy.users.get(principal).is_some_and(|binding| {
-                    binding.global_roles.contains(&Role::Admin)
-                        || [DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID]
-                            .into_iter()
-                            .any(|group| {
-                                binding
-                                    .groups
-                                    .get(group)
-                                    .is_some_and(|roles| !roles.is_empty())
-                            })
-                });
-                if !already_registered {
+        match migration_kind {
+            RbacMigrationKind::Legacy => {
+                for principal in &legacy_principals {
                     self.grant(
                         principal,
-                        Role::Worker,
-                        Some(ONBOARDING_GROUP_ID),
+                        Role::GroupAdmin,
+                        Some(DEFAULT_GROUP_ID),
                         operator_id,
                     )
                     .await?;
                 }
+                let policy = self.snapshot().await?;
+                for principal in &legacy_principals {
+                    let roles = policy
+                        .users
+                        .get(principal)
+                        .and_then(|binding| binding.groups.get(ONBOARDING_GROUP_ID))
+                        .cloned()
+                        .unwrap_or_default();
+                    for role in roles {
+                        self.revoke_as(principal, role, Some(ONBOARDING_GROUP_ID), operator_id)
+                            .await?;
+                    }
+                }
             }
-        } else {
-            match migration_kind {
-                RbacMigrationKind::Legacy => {
-                    for principal in &legacy_principals {
+            RbacMigrationKind::Fresh => {
+                let policy = self.snapshot().await?;
+                for principal in &enrolled {
+                    let already_assigned = policy.users.get(principal).is_some_and(|binding| {
+                        binding.groups.values().any(|roles| !roles.is_empty())
+                    });
+                    if !already_assigned {
                         self.grant(
                             principal,
-                            Role::GroupAdmin,
-                            Some(DEFAULT_GROUP_ID),
+                            Role::Worker,
+                            Some(ONBOARDING_GROUP_ID),
                             operator_id,
                         )
                         .await?;
-                    }
-                    let policy = self.snapshot().await?;
-                    for principal in &legacy_principals {
-                        let roles = policy
-                            .users
-                            .get(principal)
-                            .and_then(|binding| binding.groups.get(ONBOARDING_GROUP_ID))
-                            .cloned()
-                            .unwrap_or_default();
-                        for role in roles {
-                            self.revoke_as(principal, role, Some(ONBOARDING_GROUP_ID), operator_id)
-                                .await?;
-                        }
-                    }
-                }
-                RbacMigrationKind::Fresh => {
-                    let policy = self.snapshot().await?;
-                    for principal in &enrolled {
-                        let already_assigned = policy.users.get(principal).is_some_and(|binding| {
-                            binding.groups.values().any(|roles| !roles.is_empty())
-                        });
-                        if !already_assigned {
-                            self.grant(
-                                principal,
-                                Role::Worker,
-                                Some(ONBOARDING_GROUP_ID),
-                                operator_id,
-                            )
-                            .await?;
-                        }
                     }
                 }
             }
         }
 
-        let first_pass = if !transition_active && migration_kind == RbacMigrationKind::Legacy {
-            self.attach_legacy_memories_to_default(operator_id).await?
+        let first_ids = if migration_kind == RbacMigrationKind::Legacy {
+            Some(match discovered_memory_ids {
+                Some(ids) => ids,
+                None => self.all_memory_ids().await?,
+            })
         } else {
-            0
+            None
+        };
+        let first_pass = match first_ids.as_deref() {
+            Some(ids) => {
+                self.attach_legacy_memories_to_default(ids, operator_id)
+                    .await?
+            }
+            None => 0,
         };
         if !initial.enabled {
             self.enable(operator_id).await?;
         }
-        let second_pass = if !transition_active && migration_kind == RbacMigrationKind::Legacy {
-            self.attach_legacy_memories_to_default(operator_id).await?
+        let final_ids = if first_ids.is_some() {
+            Some(self.all_memory_ids().await?)
         } else {
-            0
+            None
         };
-        let (memories_seen, missing) = self.compatibility_memory_coverage().await?;
+        let second_pass = match final_ids.as_deref() {
+            Some(ids) => {
+                self.attach_legacy_memories_to_default(ids, operator_id)
+                    .await?
+            }
+            None => 0,
+        };
+        let (memories_seen, missing) = match final_ids.as_deref() {
+            Some(ids) => {
+                self.compatibility_memory_coverage(ids, migration_kind)
+                    .await?
+            }
+            None => (0, Vec::new()),
+        };
         if !missing.is_empty() {
             bail!(
                 "RBAC bootstrap verification failed: {} legacy memories are outside 'default'",
@@ -267,10 +317,8 @@ impl RbacManager {
                 bail!("RBAC bootstrap verification failed for principal '{principal}'");
             }
         }
-        if !transition_active {
-            self.set_migration_state(RbacMigrationState::Active, migration_kind, operator_id)
-                .await?;
-        }
+        self.set_migration_state(RbacMigrationState::Active, migration_kind, operator_id)
+            .await?;
         Ok(CompatibilityBootstrapReport {
             enabled_before: initial.enabled,
             enabled_after: true,
@@ -285,8 +333,11 @@ impl RbacManager {
         })
     }
 
-    async fn attach_legacy_memories_to_default(&self, actor: &str) -> Result<usize> {
-        let ids = self.all_memory_ids().await?;
+    async fn attach_legacy_memories_to_default(
+        &self,
+        ids: &[String],
+        actor: &str,
+    ) -> Result<usize> {
         let mut attached = 0usize;
         for batch in ids.chunks(VERIFY_BATCH_SIZE) {
             let legacy_ids = self.memories_requiring_default_migration(batch).await?;
@@ -301,9 +352,12 @@ impl RbacManager {
         Ok(attached)
     }
 
-    async fn compatibility_memory_coverage(&self) -> Result<(usize, Vec<String>)> {
-        let ids = self.all_memory_ids().await?;
-        if self.snapshot().await?.migration_kind == Some(RbacMigrationKind::Fresh) {
+    async fn compatibility_memory_coverage(
+        &self,
+        ids: &[String],
+        migration_kind: RbacMigrationKind,
+    ) -> Result<(usize, Vec<String>)> {
+        if migration_kind == RbacMigrationKind::Fresh {
             return Ok((ids.len(), Vec::new()));
         }
         let mut missing = Vec::new();
@@ -315,8 +369,26 @@ impl RbacManager {
 
     /// Check whether every legacy trusted-mode memory has been materialized into
     /// the reserved group without widening already-scoped RBAC memories.
+    ///
+    /// An `active` migration checkpoint is the durable proof that the verified
+    /// transition completed. Re-scanning every Memory node during each doctor or
+    /// onboarding run would repeatedly decode the entire graph in HelixDB.
     pub async fn compatibility_coverage_complete(&self) -> Result<bool> {
-        Ok(self.compatibility_memory_coverage().await?.1.is_empty())
+        let policy = self.snapshot().await?;
+        if policy.migration_state == RbacMigrationState::Active
+            || policy.migration_kind == Some(RbacMigrationKind::Fresh)
+        {
+            return Ok(true);
+        }
+        let ids = self.all_memory_ids().await?;
+        Ok(self
+            .compatibility_memory_coverage(
+                &ids,
+                policy.migration_kind.unwrap_or(RbacMigrationKind::Legacy),
+            )
+            .await?
+            .1
+            .is_empty())
     }
 
     /// Check whether the onboarding registry has been initialized.
@@ -337,111 +409,38 @@ impl RbacManager {
     async fn all_memory_ids(&self) -> Result<Vec<String>> {
         let response: AllMemoriesResponse = self
             .db
-            .execute_query("getAllMemories", &serde_json::json!({}))
+            .execute_query("getAllMemoryIds", &serde_json::json!({}))
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Ok(response
             .memories
             .into_iter()
-            .filter_map(|memory| (!memory.memory_id.is_empty()).then_some(memory.memory_id))
+            .flatten()
+            .filter(|memory_id| !memory_id.is_empty())
             .collect())
     }
+}
+
+fn principal_ready(policy: &RbacPolicy, principal: &str) -> bool {
+    policy.users.get(principal).is_some_and(|binding| {
+        binding.global_roles.contains(&Role::Admin)
+            || [DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID]
+                .into_iter()
+                .any(|group| {
+                    binding
+                        .groups
+                        .get(group)
+                        .is_some_and(|roles| !roles.is_empty())
+                })
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct AllMemoriesResponse {
     #[serde(default)]
-    memories: Vec<MemoryIdNode>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryIdNode {
-    #[serde(default)]
-    memory_id: String,
+    memories: Vec<Option<String>>,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::rbac::{Group, UserBinding};
-
-    fn compatibility_policy() -> RbacPolicy {
-        let mut policy = RbacPolicy {
-            enabled: true,
-            ..Default::default()
-        };
-        policy.groups.insert(
-            DEFAULT_GROUP_ID.to_string(),
-            Group {
-                name: DEFAULT_COMPATIBILITY_GROUP_NAME.to_string(),
-                description: String::new(),
-                dedup_group_id: None,
-            },
-        );
-        policy.users.insert(
-            "agent".to_string(),
-            UserBinding {
-                global_roles: BTreeSet::new(),
-                groups: [
-                    (
-                        ONBOARDING_GROUP_ID.to_string(),
-                        BTreeSet::from([Role::GroupAdmin]),
-                    ),
-                    (
-                        DEFAULT_GROUP_ID.to_string(),
-                        BTreeSet::from([Role::GroupAdmin]),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            },
-        );
-        policy
-    }
-
-    #[test]
-    fn compatibility_group_keeps_legacy_fingerprint_and_adds_visibility() {
-        let policy = compatibility_policy();
-        let scope = policy.resolve_memory_scope(Some(DEFAULT_GROUP_ID)).unwrap();
-        assert_eq!(scope.fingerprint_scope(), None);
-        assert_eq!(
-            scope.group_ids(),
-            BTreeSet::from([DEFAULT_GROUP_ID.to_string()])
-        );
-    }
-
-    #[test]
-    fn omitted_group_is_inferred_only_for_enrolled_writer() {
-        let policy = compatibility_policy();
-        assert_eq!(policy.effective_write_group("agent", None), None);
-        let mut policy = policy;
-        policy
-            .users
-            .get_mut("agent")
-            .unwrap()
-            .groups
-            .remove(ONBOARDING_GROUP_ID);
-        assert_eq!(
-            policy.effective_write_group("agent", None).as_deref(),
-            Some(DEFAULT_GROUP_ID)
-        );
-        assert_eq!(policy.effective_write_group("unknown", None), None);
-        assert_eq!(
-            policy
-                .effective_write_group("agent", Some("explicit"))
-                .as_deref(),
-            Some("explicit")
-        );
-    }
-
-    #[test]
-    fn compatibility_group_admin_can_write_for_legacy_owner() {
-        let policy = compatibility_policy();
-        assert!(policy.can_create_for_group("agent", "legacy-owner", Some(DEFAULT_GROUP_ID)));
-        assert!(policy.can_write_memory(
-            "agent",
-            "legacy-owner",
-            &[DEFAULT_GROUP_ID.to_string()].into_iter().collect()
-        ));
-    }
-}
+#[path = "rbac_compat/tests.rs"]
+mod tests;

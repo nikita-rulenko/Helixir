@@ -29,7 +29,10 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
         .await
         .expect("idempotent bootstrap");
     assert!(first.enabled_after && second.enabled_after);
-    assert_eq!(first.memories_seen, second.memories_seen);
+    assert_eq!(
+        second.memories_seen, 0,
+        "an active migration checkpoint must avoid another full-store audit"
+    );
     assert!(rbac.compatibility_coverage_complete().await.unwrap());
 
     rbac.create_group_as(&project_group, "Registry E2E", "temporary", &admin)

@@ -33,6 +33,37 @@ pub(crate) async fn watch_run(
     }
 }
 
+fn watchdog_actor(home: &std::path::Path) -> Result<String> {
+    watchdog_actor_from(home, std::env::var("HELIXIR_RBAC_ACTOR").ok())
+}
+
+fn watchdog_actor_from(home: &std::path::Path, explicit: Option<String>) -> Result<String> {
+    if let Some(actor) = explicit.filter(|actor| !actor.trim().is_empty()) {
+        return Ok(actor);
+    }
+    let manifest = helixir::installer::manifest::read(&home.join(".helixir/install.json"))
+        .context("read install manifest for watchdog RBAC identity")?;
+    manifest
+        .and_then(|manifest| manifest.rbac)
+        .map(|rbac| rbac.operator_id)
+        .filter(|actor| !actor.trim().is_empty())
+        .context("watchdog RBAC identity is unknown; run onboarding or set HELIXIR_RBAC_ACTOR")
+}
+
+fn service_path() -> String {
+    "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// Detach `watch run` as a background service (pid file + log, like the daemon).
 /// #75: install the watchdog as a login service so it survives reboots.
 /// macOS: a launchd agent at ~/Library/LaunchAgents; Linux: a systemd user
@@ -41,6 +72,9 @@ pub(crate) async fn watch_run(
 pub(crate) fn watch_install() -> Result<()> {
     let exe = std::env::current_exe().context("resolve helixir binary path")?;
     let home = std::env::var("HOME").context("HOME not set")?;
+    let home_path = std::path::PathBuf::from(&home);
+    let actor = watchdog_actor(&home_path)?;
+    let path = service_path();
     // The service pins THIS binary path. A target/ path gets overwritten by
     // rebuilds — and on macOS replacing a running executable in place gets
     // it SIGKILLed (the 2026-07-02 incident). Install from the promoted
@@ -55,7 +89,7 @@ pub(crate) fn watch_install() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let dir = std::path::PathBuf::from(&home).join("Library/LaunchAgents");
+        let dir = home_path.join("Library/LaunchAgents");
         std::fs::create_dir_all(&dir)?;
         let plist = dir.join("com.helixir.watchdog.plist");
         let body = format!(
@@ -70,6 +104,11 @@ pub(crate) fn watch_install() -> Result<()> {
     <string>watch</string>
     <string>run</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HELIXIR_RBAC_ACTOR</key><string>{actor}</string>
+    <key>PATH</key><string>{path}</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>{home}/.helixir/watchdog.out.log</string>
@@ -77,8 +116,10 @@ pub(crate) fn watch_install() -> Result<()> {
 </dict>
 </plist>
 "#,
-            exe = exe.display(),
-            home = home,
+            exe = xml_escape(&exe.display().to_string()),
+            actor = xml_escape(&actor),
+            path = xml_escape(&path),
+            home = xml_escape(&home),
         );
         std::fs::write(&plist, body)?;
         let loaded = std::process::Command::new("launchctl")
@@ -101,12 +142,14 @@ pub(crate) fn watch_install() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let dir = std::path::PathBuf::from(&home).join(".config/systemd/user");
+        let dir = home_path.join(".config/systemd/user");
         std::fs::create_dir_all(&dir)?;
         let unit = dir.join("helixir-watchdog.service");
         let body = format!(
-            "[Unit]\nDescription=Helixir health watchdog\n\n[Service]\nExecStart={} watch run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
-            exe.display()
+            "[Unit]\nDescription=Helixir health watchdog\n\n[Service]\nExecStart={} watch run\nEnvironment=HELIXIR_RBAC_ACTOR={}\nEnvironment=PATH={}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+            exe.display(),
+            actor,
+            path
         );
         std::fs::write(&unit, body)?;
         let ok = std::process::Command::new("systemctl")
@@ -259,4 +302,40 @@ pub(crate) fn daemon_status() -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn watchdog_uses_manifest_operator_without_interactive_environment() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!("helixir-watchdog-{stamp}"));
+        let manifest_path = home.join(".helixir/install.json");
+        let manifest = helixir::installer::manifest::InstallManifest {
+            version: "test".to_string(),
+            install_dir: home.join("current"),
+            backend_volume: String::new(),
+            backend: Default::default(),
+            models: Vec::new(),
+            clients: Vec::new(),
+            rbac: Some(helixir::installer::rbac::RbacManifest {
+                enabled: true,
+                operator_id: "codex".to_string(),
+                group_id: helixir::core::DEFAULT_GROUP_ID.to_string(),
+                principals: vec!["codex".to_string()],
+            }),
+            last_backup: None,
+        };
+        helixir::installer::manifest::write(&manifest_path, &manifest).unwrap();
+
+        assert_eq!(watchdog_actor_from(&home, None).unwrap(), "codex");
+
+        std::fs::remove_dir_all(home).unwrap();
+    }
 }

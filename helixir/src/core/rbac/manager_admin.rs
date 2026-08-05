@@ -8,11 +8,13 @@ use super::*;
 #[derive(Clone)]
 pub struct RbacManager {
     pub(crate) db: Arc<HelixClient>,
+    pub(super) cache: Arc<PolicyCache>,
 }
 
 impl RbacManager {
     pub fn new(db: Arc<HelixClient>) -> Self {
-        Self { db }
+        let cache = policy_cache_for(&db);
+        Self { db, cache }
     }
 
     async fn authorize_admin(&self, actor: &str) -> Result<()> {
@@ -47,131 +49,6 @@ impl RbacManager {
             bail!("RBAC denied outbox read for '{actor}' as owner '{owner}'")
         }
         Ok(())
-    }
-
-    pub async fn snapshot(&self) -> Result<RbacPolicy> {
-        let config_value = match self
-            .db
-            .execute_query::<serde_json::Value, _>("getRbacConfig", &serde_json::json!({}))
-            .await
-        {
-            Ok(value) => value,
-            Err(error) if is_missing_rbac_surface(&error.to_string()) => serde_json::Value::Null,
-            Err(error) => return Err(anyhow::anyhow!(error.to_string())),
-        };
-        let config = config_value.get("config");
-        let enabled = config
-            .and_then(|config| config.get("enabled"))
-            .and_then(number_as_i64)
-            .unwrap_or(0)
-            != 0;
-        let migration_state = config
-            .and_then(|config| config.get("migration_state"))
-            .and_then(serde_json::Value::as_str)
-            .map(RbacMigrationState::parse)
-            .unwrap_or_default();
-        let migration_kind = config
-            .and_then(|config| config.get("migration_kind"))
-            .and_then(serde_json::Value::as_str)
-            .and_then(RbacMigrationKind::parse);
-
-        let groups_value: serde_json::Value = match self
-            .db
-            .execute_query("getRbacGroups", &serde_json::json!({}))
-            .await
-        {
-            Ok(value) => value,
-            Err(error) if !enabled && is_missing_rbac_surface(&error.to_string()) => {
-                return Ok(RbacPolicy::default());
-            }
-            Err(error) => return Err(anyhow::anyhow!(error.to_string())),
-        };
-        let assignments_value: serde_json::Value = match self
-            .db
-            .execute_query("getRbacAssignments", &serde_json::json!({}))
-            .await
-        {
-            Ok(value) => value,
-            Err(error) if !enabled && is_missing_rbac_surface(&error.to_string()) => {
-                return Ok(RbacPolicy::default());
-            }
-            Err(error) => return Err(anyhow::anyhow!(error.to_string())),
-        };
-        let dedup_groups_value: serde_json::Value = match self
-            .db
-            .execute_query("getRbacDedupGroups", &serde_json::json!({}))
-            .await
-        {
-            Ok(value) => value,
-            Err(error) if !enabled && is_missing_rbac_surface(&error.to_string()) => {
-                serde_json::json!({"dedup_groups": []})
-            }
-            Err(error) => return Err(anyhow::anyhow!(error.to_string())),
-        };
-        let dedup_memberships_value: serde_json::Value = match self
-            .db
-            .execute_query("getRbacDedupMemberships", &serde_json::json!({}))
-            .await
-        {
-            Ok(value) => value,
-            Err(error) if !enabled && is_missing_rbac_surface(&error.to_string()) => {
-                serde_json::json!({"groups": [], "links": [], "dedup_groups": []})
-            }
-            Err(error) => return Err(anyhow::anyhow!(error.to_string())),
-        };
-
-        let mut policy = RbacPolicy {
-            enabled,
-            migration_state,
-            migration_kind,
-            ..Default::default()
-        };
-        for row in rows(&groups_value, "groups") {
-            let Some(group_id) = string_field(row, "group_id") else {
-                continue;
-            };
-            policy.groups.insert(
-                group_id.clone(),
-                Group {
-                    name: string_field(row, "name").unwrap_or_else(|| group_id.clone()),
-                    description: string_field(row, "description").unwrap_or_default(),
-                    dedup_group_id: None,
-                },
-            );
-        }
-        for row in rows(&dedup_groups_value, "dedup_groups") {
-            let Some(dedup_group_id) = string_field(row, "dedup_group_id") else {
-                continue;
-            };
-            policy.dedup_groups.insert(
-                dedup_group_id.clone(),
-                DedupGroup {
-                    name: string_field(row, "name").unwrap_or_else(|| dedup_group_id.clone()),
-                    description: string_field(row, "description").unwrap_or_default(),
-                },
-            );
-        }
-        apply_dedup_memberships(&mut policy, &dedup_memberships_value);
-        for row in rows(&assignments_value, "assignments") {
-            let (Some(subject), Some(role_name)) =
-                (string_field(row, "subject_id"), string_field(row, "role"))
-            else {
-                continue;
-            };
-            let Some(role) = Role::parse(&role_name) else {
-                continue;
-            };
-            let group = string_field(row, "group_id").unwrap_or_default();
-            if group.is_empty() {
-                policy.assign_global(&subject, role);
-            } else if policy.groups.contains_key(&group) {
-                // The DB has already validated the group at grant time.  A
-                // deleted group is ignored defensively rather than widening access.
-                let _ = policy.assign_group(&subject, &group, role);
-            }
-        }
-        policy.validate()?;
-        Ok(policy)
     }
 
     /// Enable graph-backed authorization. Disabling is intentionally not part
@@ -235,6 +112,7 @@ impl RbacManager {
                     "description": description,
                     "created_at": Utc::now().to_rfc3339(),
                     "metadata": "{}",
+                    "updated_by": actor,
                 }),
             )
             .await
@@ -252,7 +130,11 @@ impl RbacManager {
         self.db
             .execute_query::<serde_json::Value, _>(
                 "deactivateRbacGroup",
-                &serde_json::json!({"group_id": group_id}),
+                &serde_json::json!({
+                    "group_id": group_id,
+                    "updated_at": Utc::now().to_rfc3339(),
+                    "updated_by": actor,
+                }),
             )
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -276,6 +158,7 @@ impl RbacManager {
                     "description": description,
                     "created_at": Utc::now().to_rfc3339(),
                     "metadata": "{}",
+                    "updated_by": actor,
                 }),
             )
             .await
@@ -296,7 +179,11 @@ impl RbacManager {
         self.db
             .execute_query::<serde_json::Value, _>(
                 "deactivateRbacDedupGroup",
-                &serde_json::json!({"dedup_group_id": dedup_group_id}),
+                &serde_json::json!({
+                    "dedup_group_id": dedup_group_id,
+                    "updated_at": Utc::now().to_rfc3339(),
+                    "updated_by": actor,
+                }),
             )
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -331,6 +218,7 @@ impl RbacManager {
                     &serde_json::json!({
                         "group_id": group_id,
                         "removed_at": Utc::now().to_rfc3339(),
+                        "updated_by": actor,
                     }),
                 )
                 .await
@@ -385,6 +273,7 @@ impl RbacManager {
                 &serde_json::json!({
                     "group_id": group_id,
                     "removed_at": Utc::now().to_rfc3339(),
+                    "updated_by": actor,
                 }),
             )
             .await

@@ -29,6 +29,8 @@ struct VectorSearchResponse {
 #[derive(Debug, Deserialize, Clone)]
 struct VectorMemory {
     #[serde(default, deserialize_with = "nullable_string")]
+    id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
     memory_id: String,
     #[serde(default, deserialize_with = "nullable_string")]
     content: String,
@@ -38,6 +40,8 @@ struct VectorMemory {
     valid_from: String,
     #[serde(default, deserialize_with = "nullable_string")]
     memory_type: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    content_key: String,
     #[serde(default, deserialize_with = "nullable_string")]
     user_id: String,
 }

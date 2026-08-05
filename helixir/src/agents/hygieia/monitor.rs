@@ -21,6 +21,27 @@ impl<'a> Hygieia<'a> {
         &self.tooling.config.watchdog
     }
 
+    async fn database_ready(&self) -> bool {
+        self.tooling
+            .db
+            .execute_query_no_retry::<serde_json::Value, _>(
+                "getHelixirSchemaVersion",
+                &serde_json::json!({}),
+            )
+            .await
+            .is_ok()
+    }
+
+    async fn wait_for_database(&self) -> bool {
+        for _ in 0..30 {
+            if self.database_ready().await {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        false
+    }
+
     /// The alert ladder, step 2: journal + ops_alert notice to every
     /// configured user + a recallable ops-alert memory under `helixir`.
     /// Cooldown-deduped per kind. Best-effort end to end.
@@ -111,22 +132,14 @@ impl<'a> Hygieia<'a> {
     /// Liveness probe: the cheapest read that exercises the full stack. On
     /// failure, optionally self-heal by restarting the configured container.
     pub async fn check_db(&mut self) -> bool {
-        let alive = self
-            .tooling
-            .db
-            .execute_query::<serde_json::Value, _>(
-                "getAllCategories",
-                &serde_json::json!({"limit": 1}),
-            )
-            .await
-            .is_ok();
+        let alive = self.database_ready().await;
         if alive {
             return true;
         }
         let name = self.cfg().container_name.clone();
         if self.cfg().allow_container_restart && !name.is_empty() {
             info!("hygieia: DB down — attempting container restart ({name})");
-            let healed = restart_container(&name).await;
+            let healed = restart_container(&name).await && self.wait_for_database().await;
             journal(&HealthEvent {
                 at: chrono::Utc::now().to_rfc3339(),
                 severity: "heal".into(),
@@ -146,15 +159,7 @@ impl<'a> Hygieia<'a> {
                     serde_json::Value::Null,
                 )
                 .await;
-                return self
-                    .tooling
-                    .db
-                    .execute_query::<serde_json::Value, _>(
-                        "getAllCategories",
-                        &serde_json::json!({"limit": 1}),
-                    )
-                    .await
-                    .is_ok();
+                return true;
             }
         }
         self.alert(
@@ -237,7 +242,7 @@ impl<'a> Hygieia<'a> {
                 "hygieia: live heap at {:.0}% (>= {restart_pct:.0}%) — supervised restart of {name}",
                 live.pct()
             );
-            let healed = restart_container(&name).await;
+            let healed = restart_container(&name).await && self.wait_for_database().await;
             journal(&HealthEvent {
                 at: chrono::Utc::now().to_rfc3339(),
                 severity: "heal".into(),

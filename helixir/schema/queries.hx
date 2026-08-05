@@ -267,8 +267,15 @@ QUERY searchConceptsByName(name: String) =>
 QUERY getRbacConfig() =>
   config <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))::FIRST
   RETURN config
+QUERY getRbacPolicySnapshot() =>
+  config <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))::FIRST
+  groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
+  assignments <- N<RbacAssignment>::WHERE(_::{active}::EQ(1))
+  dedup_groups <- N<RbacDedupGroup>::WHERE(_::{active}::EQ(1))
+  dedup_links <- groups::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::{active}::EQ(1))
+  RETURN config, groups, assignments, dedup_groups, dedup_links
 QUERY getHelixirSchemaVersion() =>
-  RETURN "helixir-rbac-default-onboarding-v1"
+  RETURN "helixir-rbac-default-onboarding-v3"
 QUERY setRbacEnabled(enabled: I64, updated_at: String, updated_by: String) =>
   existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- existing::UpsertN({ config_id: "default", enabled: enabled, updated_at: updated_at, updated_by: updated_by })
@@ -277,28 +284,36 @@ QUERY setRbacMigrationState(migration_state: String, migration_kind: String, upd
   existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- existing::UpsertN({ config_id: "default", migration_state: migration_state, migration_kind: migration_kind, updated_at: updated_at, updated_by: updated_by })
   RETURN config
-QUERY createRbacGroup(group_id: String, name: String, description: String, created_at: String, metadata: String) =>
+QUERY createRbacGroup(group_id: String, name: String, description: String, created_at: String, metadata: String, updated_by: String) =>
   existing <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))
   group <- existing::UpsertN({ group_id: group_id, name: name, description: description, created_at: created_at, active: 1, metadata: metadata })
-  RETURN group
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: created_at, updated_by: updated_by })
+  RETURN group, config
 QUERY getRbacGroups() =>
   groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
   RETURN groups
-QUERY deactivateRbacGroup(group_id: String) =>
+QUERY deactivateRbacGroup(group_id: String, updated_at: String, updated_by: String) =>
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
   updated <- group::UPDATE({ active: 0 })
-  RETURN updated
-QUERY createRbacDedupGroup(dedup_group_id: String, name: String, description: String, created_at: String, metadata: String) =>
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: updated_at, updated_by: updated_by })
+  RETURN updated, config
+QUERY createRbacDedupGroup(dedup_group_id: String, name: String, description: String, created_at: String, metadata: String, updated_by: String) =>
   existing <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))
   dedup_group <- existing::UpsertN({ dedup_group_id: dedup_group_id, name: name, description: description, created_at: created_at, active: 1, metadata: metadata })
-  RETURN dedup_group
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: created_at, updated_by: updated_by })
+  RETURN dedup_group, config
 QUERY getRbacDedupGroups() =>
   dedup_groups <- N<RbacDedupGroup>::WHERE(_::{active}::EQ(1))
   RETURN dedup_groups
-QUERY deactivateRbacDedupGroup(dedup_group_id: String) =>
+QUERY deactivateRbacDedupGroup(dedup_group_id: String, updated_at: String, updated_by: String) =>
   dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
   updated <- dedup_group::UPDATE({ active: 0 })
-  RETURN updated
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: updated_at, updated_by: updated_by })
+  RETURN updated, config
 QUERY getRbacDedupMemberships() =>
   groups <- N<RbacGroup>::WHERE(_::{active}::EQ(1))
   dedup_groups <- N<RbacDedupGroup>::WHERE(_::{active}::EQ(1))
@@ -309,12 +324,16 @@ QUERY setRbacGroupDedupMembership(group_id: String, dedup_group_id: String, assi
   dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
   existing <- group::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::ToN::{dedup_group_id}::EQ(dedup_group_id))
   membership <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at, removed_at: "", active: 1 })::From(group)::To(dedup_group)
-  RETURN membership
-QUERY clearRbacGroupDedupMembership(group_id: String, removed_at: String) =>
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: assigned_at, updated_by: assigned_by })
+  RETURN membership, config
+QUERY clearRbacGroupDedupMembership(group_id: String, removed_at: String, updated_by: String) =>
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
   current <- group::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::{active}::EQ(1))
   updated <- current::UPDATE({ active: 0, removed_at: removed_at })
-  RETURN updated
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: removed_at, updated_by: updated_by })
+  RETURN updated, config
 QUERY getRbacAssignments() =>
   assignments <- N<RbacAssignment>::WHERE(_::{active}::EQ(1))
   RETURN assignments
@@ -328,22 +347,30 @@ QUERY grantRbacRole(assignment_id: String, subject_id: String, role: String, gro
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
   existing_membership <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))
   membership <- existing_membership::UpsertE({ assignment_id: assignment_id, role: role, granted_by: granted_by, granted_at: created_at, active: 1 })::From(user)::To(group)
-  RETURN assignment, membership
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: created_at, updated_by: granted_by })
+  RETURN assignment, membership, config
 QUERY grantRbacGlobalRole(assignment_id: String, subject_id: String, role: String, granted_by: String, created_at: String, metadata: String) =>
   existing <- N<RbacAssignment>::WHERE(_::{assignment_id}::EQ(assignment_id))
   assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: "", granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
-  RETURN assignment
-QUERY revokeRbacRole(subject_id: String, role: String, group_id: String, revoked_at: String) =>
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: created_at, updated_by: granted_by })
+  RETURN assignment, config
+QUERY revokeRbacRole(subject_id: String, role: String, group_id: String, revoked_at: String, updated_by: String) =>
   assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
   updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
-  RETURN updated
-QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, assignment_id: String, revoked_at: String) =>
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: revoked_at, updated_by: updated_by })
+  RETURN updated, config
+QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, assignment_id: String, revoked_at: String, updated_by: String) =>
   assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
   updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
   user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
   memberships <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))::WHERE(_::{active}::EQ(1))
   membership_updated <- memberships::UPDATE({ active: 0 })
-  RETURN updated, membership_updated
+  config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
+  config <- config_rows::UpsertN({ config_id: "default", updated_at: revoked_at, updated_by: updated_by })
+  RETURN updated, membership_updated, config
 QUERY linkMemoryToRbacGroup(memory_id: String, group_id: String, assigned_by: String, assigned_at: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
@@ -675,6 +702,10 @@ QUERY getAllMemories() =>
   memories <- N<Memory>
   RETURN memories
 
+QUERY getAllMemoryIds() =>
+  memories <- N<Memory>
+  RETURN memories::{memory_id}
+
 QUERY getAllUsers() =>
   users <- N<User>
   RETURN users
@@ -893,6 +924,40 @@ QUERY getConnectionsLevelBatch(memory_ids: [String]) =>
   relation_in_e <- memories::InE<MEMORY_RELATION>
   relation_in_n <- memories::In<MEMORY_RELATION>
   RETURN memories, implies_out_e, implies_out_n, implies_in_e, implies_in_n, because_out_e, because_out_n, because_in_e, because_in_n, contradicts_out_e, contradicts_out_n, contradicts_in_e, contradicts_in_n, relation_out_e, relation_out_n, relation_in_e, relation_in_n
+
+QUERY getConnectionsByInternalId(internal_id: ID) =>
+  memory <- N<Memory>(internal_id)
+  implies_out_e <- memory::OutE<IMPLIES>
+  implies_out_n <- memory::Out<IMPLIES>
+  implies_in_e <- memory::InE<IMPLIES>
+  implies_in_n <- memory::In<IMPLIES>
+  because_out_e <- memory::OutE<BECAUSE>
+  because_out_n <- memory::Out<BECAUSE>
+  because_in_e <- memory::InE<BECAUSE>
+  because_in_n <- memory::In<BECAUSE>
+  contradicts_out_e <- memory::OutE<CONTRADICTS>
+  contradicts_out_n <- memory::Out<CONTRADICTS>
+  contradicts_in_e <- memory::InE<CONTRADICTS>
+  contradicts_in_n <- memory::In<CONTRADICTS>
+  relation_out_e <- memory::OutE<MEMORY_RELATION>
+  relation_out_n <- memory::Out<MEMORY_RELATION>
+  relation_in_e <- memory::InE<MEMORY_RELATION>
+  relation_in_n <- memory::In<MEMORY_RELATION>
+  RETURN memory, implies_out_e, implies_out_n, implies_in_e, implies_in_n, because_out_e, because_out_n, because_in_e, because_in_n, contradicts_out_e, contradicts_out_n, contradicts_in_e, contradicts_in_n, relation_out_e, relation_out_n, relation_in_e, relation_in_n
+
+QUERY getSupersededByInternalId(internal_id: ID) =>
+  memory <- N<Memory>(internal_id)
+  superseded_edges <- memory::InE<SUPERSEDES>
+  successors <- memory::In<SUPERSEDES>
+  RETURN memory, superseded_edges, successors
+
+QUERY getMemoryRbacScopeByInternalId(internal_id: ID) =>
+  memory <- N<Memory>(internal_id)
+  group_links <- memory::OutE<MEMORY_IN_RBAC_GROUP>
+  groups <- memory::Out<MEMORY_IN_RBAC_GROUP>
+  dedup_links <- memory::OutE<MEMORY_IN_RBAC_DEDUP_GROUP>
+  dedup_groups <- memory::Out<MEMORY_IN_RBAC_DEDUP_GROUP>
+  RETURN memory, group_links, groups, dedup_links, dedup_groups
 QUERY linkUserToMemoryWithStance(user_id: String, memory_id: String, context: String, stance: String, certainty: I64, linked_at: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST

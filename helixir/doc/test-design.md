@@ -26,8 +26,8 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.13.3` working tree):** 263 library unit tests plus 15 CLI tests
-(`cargo test --all-targets`) and **42 HELIX_E2E-gated suites** in
+**Current (`v0.13.3` working tree):** 266 library unit tests plus 17 CLI tests
+(`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
@@ -38,6 +38,17 @@ The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+The issue #89 resource regression is additionally guarded by live, disposable
+HelixDB soaks over a cold backup. Primary-key graph/RBAC projections must avoid
+the multi-MiB-per-call scan amplification; the remaining upstream v2.3.5
+`SearchV` high-water retention must stay inside the managed 3 GiB envelope and
+Hygieia must restart the disposable container before OOM without losing the
+volume. The one-way RBAC migration may perform only two projected memory-ID
+passes. `tools/memprobe.py --dump-to` captures private checksummed arena dumps
+and `--analyze-dump` reports structural repetition without emitting recovered
+data. The live RBAC cache suite performs 1,000 revision checks and then proves
+that a committed grant and revocation invalidate the process cache immediately.
 
 NLI is part of every build. Unit coverage verifies host-variant digest
 availability and the contradiction/paraphrase readiness contract; installer

@@ -242,13 +242,54 @@ impl OnboardExecutor {
             self.backend.volume
         );
 
-        let data_dir = container["Config"]["Env"].as_array().is_some_and(|env| {
-            env.iter()
-                .any(|value| value.as_str() == Some("HELIX_DATA_DIR=/data"))
-        });
+        let environment = container["Config"]["Env"]
+            .as_array()
+            .context("managed HelixDB inspection has no environment")?;
+        let has_env = |expected: &str| {
+            environment
+                .iter()
+                .any(|value| value.as_str() == Some(expected))
+        };
+        let data_dir = has_env("HELIX_DATA_DIR=/data");
         anyhow::ensure!(
             data_dir,
             "managed HelixDB does not persist data under /data"
+        );
+        for expected in [
+            format!(
+                "HELIX_CORES_OVERRIDE={}",
+                helixir::installer::backend::MANAGED_HELIX_CORES
+            ),
+            format!(
+                "MIMALLOC_PURGE_DELAY={}",
+                helixir::installer::backend::MIMALLOC_PURGE_DELAY
+            ),
+            format!(
+                "MIMALLOC_PURGE_DECOMMITS={}",
+                helixir::installer::backend::MIMALLOC_PURGE_DECOMMITS
+            ),
+            format!(
+                "MIMALLOC_ARENA_PURGE_MULT={}",
+                helixir::installer::backend::MIMALLOC_ARENA_PURGE_MULT
+            ),
+        ] {
+            anyhow::ensure!(
+                has_env(&expected),
+                "managed HelixDB resource policy is missing {expected}"
+            );
+        }
+
+        anyhow::ensure!(
+            container["HostConfig"]["Memory"].as_i64()
+                == Some(helixir::installer::backend::MANAGED_MEMORY_LIMIT_BYTES),
+            "managed HelixDB memory limit must be {}",
+            helixir::installer::backend::MANAGED_MEMORY_LIMIT
+        );
+        anyhow::ensure!(
+            container["HostConfig"]["MemorySwap"].as_i64()
+                == Some(helixir::installer::backend::MANAGED_MEMORY_LIMIT_BYTES),
+            "managed HelixDB memory+swap limit must be {}",
+            helixir::installer::backend::MANAGED_MEMORY_LIMIT
         );
 
         let port_key = format!("{}/tcp", self.backend.port);

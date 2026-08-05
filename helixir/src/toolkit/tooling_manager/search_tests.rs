@@ -9,6 +9,7 @@ fn res(memory_id: &str, content: &str, mtype: &str, score: f64) -> SearchMemoryR
     }
     SearchMemoryResult {
         memory_id: memory_id.to_string(),
+        internal_id: None,
         content: content.to_string(),
         score,
         method: "test".to_string(),

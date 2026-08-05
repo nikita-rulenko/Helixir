@@ -47,10 +47,22 @@ impl ToolingManager {
             .iter()
             .map(|result| result.memory_id.clone())
             .collect::<Vec<_>>();
-        let allowed = RbacManager::new(self.db.clone())
-            .memory_ids_in_scope(scope, &candidate_ids)
-            .await
-            .map_err(|error| ToolingError::Database(error.to_string()))?;
+        let candidate_refs = global_results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .internal_id
+                    .as_ref()
+                    .map(|internal_id| (result.memory_id.clone(), internal_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let rbac = RbacManager::new(self.db.clone());
+        let allowed = if candidate_refs.len() == global_results.len() {
+            rbac.memory_refs_in_scope(scope, &candidate_refs).await
+        } else {
+            rbac.memory_ids_in_scope(scope, &candidate_ids).await
+        }
+        .map_err(|error| ToolingError::Database(error.to_string()))?;
         if let Some(allowed) = allowed {
             global_results.retain(|result| allowed.contains(&result.memory_id));
         }

@@ -137,11 +137,23 @@ impl HelixirClient {
             .iter()
             .map(|result| result.memory_id.clone())
             .collect::<Vec<_>>();
-        let visible = self
-            .rbac()
-            .visible_memory_ids(actor_id, &memory_ids)
-            .await
-            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
+        let memory_refs = results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .internal_id
+                    .as_ref()
+                    .map(|internal_id| (result.memory_id.clone(), internal_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let visible = if memory_refs.len() == results.len() {
+            self.rbac()
+                .visible_memory_refs(actor_id, &memory_refs)
+                .await
+        } else {
+            self.rbac().visible_memory_ids(actor_id, &memory_ids).await
+        }
+        .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         let results = results
             .into_iter()
             .filter(|result| {

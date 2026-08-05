@@ -132,6 +132,10 @@ docker-up: ## Start HelixDB container
 			-v helixdb_data:/data \
 			-e HELIX_PORT=$(HELIX_PORT) \
 			-e HELIX_DATA_DIR=/data \
+			-e HELIX_CORES_OVERRIDE=1 \
+			-e MIMALLOC_PURGE_DELAY=0 \
+			-e MIMALLOC_PURGE_DECOMMITS=1 \
+			-e MIMALLOC_ARENA_PURGE_MULT=1 \
 			--restart unless-stopped \
 			-m 3g --memory-swap 3g \
 			helix-helixir-dev:latest 2>/dev/null || \

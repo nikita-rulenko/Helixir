@@ -63,13 +63,45 @@ orchestration, Hygieia, Lachesis, decision, and extraction monoliths are real
 Rust submodules rather than textual includes. `tests/module_budget.rs` scans
 the full source tree and rejects future regressions.
 
+## Bounded HelixDB memory under onboarding load
+
+Issue #89 was traced with a live anonymous-memory dump rather than RSS alone.
+The hot arenas contained repeated decoded `Memory` records from full HQL scans;
+HelixDB v2.3.5 retains arena-backed scan material across requests. Primary-key
+projections remove the severe label-scan multiplier, but the upstream `SearchV`
+primitive still retains a smaller request high-water mark. Managed containers
+therefore run one visible HelixDB core with immediate `mimalloc` purging, a
+3 GiB hard limit, and Hygieia's supervised pre-OOM restart as the operational
+envelope. The restart preserves the LMDB volume and now waits for the compiled
+schema endpoint before reporting recovery or writing an alert. Login-service
+installation carries the manifest's RBAC operator and a deterministic Docker
+search path into launchd/systemd, so fail-closed authorization cannot turn the
+watchdog into a restart loop after login.
+
+The RBAC transition now projects only memory IDs, performs at most two complete
+label scans during the one-way legacy cutover, and records `active`
+only after the second pass verifies coverage. Normal `doctor`, repeat onboarding,
+and idempotent bootstrap trust that durable checkpoint instead of decoding the
+entire memory graph again. `tools/memprobe.py` can also capture private,
+checksummed zstd heap dumps and report structural repetition without printing
+recovered application content.
+
+Normal RBAC authorization no longer reloads five graph-wide policy scans per
+tool call. A single-transaction HQL snapshot is cached by the `RbacConfig`
+revision; every policy mutation advances that revision in the same write
+transaction. Each authorization still reads the one config row, so grants and
+revocations are visible on the next check without a TTL or a second source of
+truth. The scan-free memory projections extend this to schema contract
+`helixir-rbac-default-onboarding-v3`, so managed upgrades cannot silently reuse
+the older non-revisioned query surface.
+
 ## Verification
 
-- 263 library tests, 15 CLI tests, the repository-wide module-budget test, and
+- 266 library tests, 17 CLI tests, the repository-wide module-budget test, and
   the complete non-ignored test surface pass.
 - Formatting, all-target/all-feature Clippy with warnings denied, rustdoc with
   warnings denied, and all-target compilation pass.
-- HelixDB CLI v2.3.5 validates and compiles all 165 HQL queries.
+- HelixDB CLI v2.3.5 validates and compiles all 170 HQL queries.
 - Live enabled-state E2E passes compatibility bootstrap, user enrollment,
   group isolation, dedup federation history, secondary actor binding, and
   preserves enabled enforcement.

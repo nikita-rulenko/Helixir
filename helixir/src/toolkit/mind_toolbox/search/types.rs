@@ -83,6 +83,8 @@ pub struct ControversyInfo {
 #[derive(Debug, Clone)]
 pub struct UnifiedSearchResult {
     pub memory_id: String,
+    /// HelixDB primary key used only for scan-free internal projections.
+    pub internal_id: Option<String>,
     pub content: String,
     pub score: f32,
     pub method: String,

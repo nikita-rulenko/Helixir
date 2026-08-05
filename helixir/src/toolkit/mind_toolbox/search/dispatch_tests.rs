@@ -7,6 +7,7 @@ fn row(id: &str, score: f32, flashback: bool) -> UnifiedSearchResult {
     }
     UnifiedSearchResult {
         memory_id: id.to_string(),
+        internal_id: None,
         content: format!("content {id}"),
         score,
         method: "test".to_string(),

@@ -114,6 +114,39 @@ impl RbacManager {
         ))
     }
 
+    /// Scan-free counterpart for hot search/write paths that already carry
+    /// each memory's HelixDB primary key.
+    pub async fn memory_refs_in_scope(
+        &self,
+        scope: &RbacMemoryScope,
+        memory_refs: &[(String, String)],
+    ) -> Result<Option<HashSet<String>>> {
+        if matches!(scope, RbacMemoryScope::Legacy) {
+            return Ok(None);
+        }
+        if memory_refs.is_empty() {
+            return Ok(Some(HashSet::new()));
+        }
+        let scope_map = self.memory_scope_map_by_refs(memory_refs).await?;
+        let expected_scope = scope.fingerprint_scope().unwrap_or_default();
+        Ok(Some(
+            memory_refs
+                .iter()
+                .filter(|(memory_id, _)| {
+                    let stored = scope_map.get(memory_id).cloned().unwrap_or_default();
+                    stored.rbac_scope == expected_scope
+                        && match scope {
+                            RbacMemoryScope::CompatibilityGroup { group_id } => {
+                                stored.groups.contains(group_id)
+                            }
+                            _ => true,
+                        }
+                })
+                .map(|(memory_id, _)| memory_id.clone())
+                .collect(),
+        ))
+    }
+
     /// Return the subset of `memory_ids` visible to `actor`. `None` means the
     /// actor is unrestricted (RBAC disabled or global admin). Enabled
     /// non-admin reads fail closed for unscoped memories.
@@ -139,6 +172,34 @@ impl RbacManager {
                         .is_some_and(|groups| !groups.is_disjoint(&readable_groups))
                 })
                 .cloned()
+                .collect(),
+        ))
+    }
+
+    /// Scan-free visibility filtering for search results carrying HelixDB
+    /// primary keys. Global admins still return `None` without projections.
+    pub async fn visible_memory_refs(
+        &self,
+        actor: &str,
+        memory_refs: &[(String, String)],
+    ) -> Result<Option<HashSet<String>>> {
+        let policy = self.snapshot().await?;
+        let Some(readable_groups) = policy.readable_groups(actor) else {
+            return Ok(None);
+        };
+        if readable_groups.is_empty() || memory_refs.is_empty() {
+            return Ok(Some(HashSet::new()));
+        }
+        let group_map = self.memory_scope_map_by_refs(memory_refs).await?;
+        Ok(Some(
+            memory_refs
+                .iter()
+                .filter(|(memory_id, _)| {
+                    group_map
+                        .get(memory_id)
+                        .is_some_and(|scope| !scope.groups.is_disjoint(&readable_groups))
+                })
+                .map(|(memory_id, _)| memory_id.clone())
                 .collect(),
         ))
     }
@@ -175,7 +236,7 @@ impl RbacManager {
             .collect())
     }
 
-    async fn memory_scope_map(
+    pub(super) async fn memory_scope_map(
         &self,
         memory_ids: &[String],
     ) -> Result<HashMap<String, StoredMemoryScope>> {
@@ -191,256 +252,89 @@ impl RbacManager {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
-        let memories = response
-            .memories
-            .into_iter()
-            .map(|memory| {
-                (
-                    memory.id,
-                    (memory.memory_id, memory.rbac_scope.unwrap_or_default()),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let groups = response
-            .groups
-            .into_iter()
-            .map(|group| (group.id, group.group_id))
-            .collect::<HashMap<_, _>>();
-        let dedup_groups = response
-            .dedup_groups
-            .into_iter()
-            .map(|group| (group.id, group.dedup_group_id))
-            .collect::<HashMap<_, _>>();
-        let mut result = memories
-            .values()
-            .cloned()
-            .map(|(memory_id, rbac_scope)| {
-                (
-                    memory_id,
-                    StoredMemoryScope {
-                        rbac_scope,
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        for link in response.group_links {
-            let (Some(memory_id), Some(group_id)) =
-                (memories.get(&link.from_node), groups.get(&link.to_node))
-            else {
-                continue;
-            };
-            result
-                .entry(memory_id.0.clone())
-                .or_default()
-                .groups
-                .insert(group_id.clone());
-        }
-        for link in response.dedup_links {
-            let (Some(memory_id), Some(dedup_group_id)) = (
-                memories.get(&link.from_node),
-                dedup_groups.get(&link.to_node),
-            ) else {
-                continue;
-            };
-            result
-                .entry(memory_id.0.clone())
-                .or_default()
-                .dedup_groups
-                .insert(dedup_group_id.clone());
-        }
-        Ok(result)
+        Ok(parse_memory_scope_response(response))
     }
 
-    /// Stable labels for background jobs that must never merge memories across
-    /// RBAC dedup domains.
-    pub async fn memory_security_domains(
+    async fn memory_scope_map_by_refs(
         &self,
-        memory_ids: &[String],
-    ) -> Result<HashMap<String, String>> {
-        Ok(self
-            .memory_scope_map(memory_ids)
-            .await?
-            .into_iter()
-            .map(|(memory_id, stored)| {
-                let domain = if !stored.rbac_scope.is_empty() {
-                    stored.rbac_scope.clone()
-                } else if stored.dedup_groups.len() == 1 {
-                    stored
-                        .dedup_groups
-                        .iter()
-                        .next()
-                        .map(|id| format!("dedup:{id}"))
-                        .unwrap_or_else(|| "invalid:missing-dedup-group".to_string())
-                } else if stored.dedup_groups.len() > 1 {
-                    "invalid:multiple-dedup-groups".to_string()
-                } else if stored.groups.len() == 1 {
-                    stored
-                        .groups
-                        .iter()
-                        .next()
-                        .map(|id| format!("group:{id}"))
-                        .unwrap_or_else(|| "invalid:missing-group".to_string())
-                } else if stored.groups.is_empty() {
-                    "unscoped".to_string()
-                } else {
-                    let mut groups = stored.groups.into_iter().collect::<Vec<_>>();
-                    groups.sort();
-                    format!("invalid:groups:{}", groups.join(","))
-                };
-                (memory_id, domain)
-            })
-            .collect())
+        memory_refs: &[(String, String)],
+    ) -> Result<HashMap<String, StoredMemoryScope>> {
+        let mut merged = MemoryRbacScopesResponse::default();
+        for (_, internal_id) in memory_refs {
+            let response: MemoryRbacScopeResponse = self
+                .db
+                .execute_query(
+                    "getMemoryRbacScopeByInternalId",
+                    &serde_json::json!({ "internal_id": internal_id }),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            merged.append_single(response);
+        }
+        Ok(parse_memory_scope_response(merged))
     }
+}
 
-    /// Whether an in-place update would leak a post-membership-change value to
-    /// groups that only retain historical access. Such writes must create a
-    /// new version in the current scope instead.
-    pub async fn memory_requires_fork_for_scope(
-        &self,
-        memory_id: &str,
-        scope: &RbacMemoryScope,
-    ) -> Result<bool> {
-        let RbacMemoryScope::DedupGroup {
-            dedup_group_id,
-            group_ids,
-        } = scope
+fn parse_memory_scope_response(
+    response: MemoryRbacScopesResponse,
+) -> HashMap<String, StoredMemoryScope> {
+    let memories = response
+        .memories
+        .into_iter()
+        .map(|memory| {
+            (
+                memory.id,
+                (memory.memory_id, memory.rbac_scope.unwrap_or_default()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let groups = response
+        .groups
+        .into_iter()
+        .map(|group| (group.id, group.group_id))
+        .collect::<HashMap<_, _>>();
+    let dedup_groups = response
+        .dedup_groups
+        .into_iter()
+        .map(|group| (group.id, group.dedup_group_id))
+        .collect::<HashMap<_, _>>();
+    let mut result = memories
+        .values()
+        .cloned()
+        .map(|(memory_id, rbac_scope)| {
+            (
+                memory_id,
+                StoredMemoryScope {
+                    rbac_scope,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    for link in response.group_links {
+        let (Some(memory_id), Some(group_id)) =
+            (memories.get(&link.from_node), groups.get(&link.to_node))
         else {
-            return Ok(false);
+            continue;
         };
-        let stored = self
-            .memory_scope_map(&[memory_id.to_string()])
-            .await?
-            .remove(memory_id)
-            .unwrap_or_default();
-        Ok(stored.dedup_groups.contains(dedup_group_id)
-            && stored.groups.iter().cloned().collect::<BTreeSet<_>>() != *group_ids)
-    }
-
-    async fn is_historical_federation_memory(&self, memory_id: &str) -> Result<bool> {
-        let stored = self
-            .memory_scope_map(&[memory_id.to_string()])
-            .await?
-            .remove(memory_id)
-            .unwrap_or_default();
-        let Some(dedup_group_id) = stored.dedup_groups.iter().next() else {
-            return Ok(false);
-        };
-        if stored.dedup_groups.len() != 1 {
-            return Ok(true);
-        }
-        let current = self
-            .snapshot()
-            .await?
+        result
+            .entry(memory_id.0.clone())
+            .or_default()
             .groups
-            .into_iter()
-            .filter(|(_, group)| group.dedup_group_id.as_deref() == Some(dedup_group_id))
-            .map(|(group_id, _)| group_id)
-            .collect::<HashSet<_>>();
-        Ok(stored.groups != current)
+            .insert(group_id.clone());
     }
-
-    pub async fn revoke(&self, subject_id: &str, role: Role, group_id: Option<&str>) -> Result<()> {
-        self.revoke_as(subject_id, role, group_id, "").await
-    }
-
-    pub async fn revoke_as(
-        &self,
-        subject_id: &str,
-        role: Role,
-        group_id: Option<&str>,
-        revoked_by: &str,
-    ) -> Result<()> {
-        let policy = self.snapshot().await?;
-        if policy.enabled && !policy.is_admin(revoked_by) {
-            bail!("RBAC management requires a global admin");
-        }
-        let group = group_id.unwrap_or("");
-        ensure_admin_revoke_is_recoverable(&policy, subject_id, role, group)?;
-        let query = if group.is_empty() {
-            "revokeRbacRole"
-        } else {
-            "revokeRbacGroupRole"
+    for link in response.dedup_links {
+        let (Some(memory_id), Some(dedup_group_id)) = (
+            memories.get(&link.from_node),
+            dedup_groups.get(&link.to_node),
+        ) else {
+            continue;
         };
-        self.db
-            .execute_query::<serde_json::Value, _>(
-                query,
-                &serde_json::json!({
-                    "subject_id": subject_id,
-                    "role": role.label(),
-                    "group_id": group,
-                    "assignment_id": assignment_id(subject_id, group, role),
-                    "revoked_at": Utc::now().to_rfc3339(),
-                }),
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(())
+        result
+            .entry(memory_id.0.clone())
+            .or_default()
+            .dedup_groups
+            .insert(dedup_group_id.clone());
     }
-
-    pub async fn authorize_write(&self, actor: &str) -> Result<()> {
-        let policy = self.snapshot().await?;
-        if !policy.can_write(actor) {
-            bail!("RBAC denied write for '{actor}'")
-        }
-        Ok(())
-    }
-
-    pub async fn authorize_write_for(&self, actor: &str, owner: &str) -> Result<()> {
-        self.authorize_write_for_group(actor, owner, None).await
-    }
-
-    pub async fn authorize_write_for_group(
-        &self,
-        actor: &str,
-        owner: &str,
-        group_id: Option<&str>,
-    ) -> Result<()> {
-        let policy = self.snapshot().await?;
-        if !policy.can_create_for_group(actor, owner, group_id) {
-            bail!(
-                "RBAC denied write for '{actor}' as owner '{owner}' in group '{}'",
-                group_id.unwrap_or("<unscoped>")
-            )
-        }
-        Ok(())
-    }
-
-    pub async fn authorize_owner_write(&self, actor: &str, owner: &str) -> Result<()> {
-        let policy = self.snapshot().await?;
-        if !policy.can_write_owner(actor, owner) {
-            bail!("RBAC denied write for '{actor}' on memory owned by '{owner}'")
-        }
-        Ok(())
-    }
-
-    pub async fn authorize_memory_write(
-        &self,
-        actor: &str,
-        owner: &str,
-        memory_id: &str,
-    ) -> Result<()> {
-        let policy = self.snapshot().await?;
-        if !policy.enabled {
-            return Ok(());
-        }
-        if self.is_historical_federation_memory(memory_id).await? {
-            bail!(
-                "RBAC denied in-place update for historical federation memory '{memory_id}'; create a new version instead"
-            )
-        }
-        if policy.is_admin(actor) {
-            return Ok(());
-        }
-        let ids = vec![memory_id.to_string()];
-        let groups = self
-            .memory_group_map(&ids)
-            .await?
-            .remove(memory_id)
-            .unwrap_or_default();
-        if !policy.can_write_memory(actor, owner, &groups) {
-            bail!("RBAC denied write for '{actor}' on memory '{memory_id}'")
-        }
-        Ok(())
-    }
+    result
 }

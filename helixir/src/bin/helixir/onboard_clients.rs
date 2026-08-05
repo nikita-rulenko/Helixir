@@ -17,8 +17,9 @@ pub(crate) fn register_onboard_client(
         let registration =
             helixir::installer::clients::register_json_client(&path, "helixir-local", &server)
                 .map_err(|error| error.to_string())?;
-        if existing_json_registration(&path, "helixir-local")?.as_ref()
-            == Some(&server.json_entry())
+        if existing_json_registration(&path, "helixir-local")?
+            .as_ref()
+            .is_some_and(|entry| registrations_match(entry, &server.json_entry()))
         {
             return Ok(());
         }
@@ -35,7 +36,10 @@ pub(crate) fn register_onboard_client(
     let executable = native_client_executable(client)
         .ok_or_else(|| "native client executable not found".to_string())?;
     let existing = existing_native_registration(client, "helixir-local")?;
-    if existing.as_ref() == Some(&server.json_entry()) {
+    if existing
+        .as_ref()
+        .is_some_and(|entry| registrations_match(entry, &server.json_entry()))
+    {
         return Ok(());
     }
     approve_registration_change(client, existing.as_ref(), &server, interactive)?;
@@ -62,8 +66,9 @@ pub(crate) fn register_onboard_client(
                 client.label()
             ));
         }
-        if existing_native_registration(client, "helixir-local")?.as_ref()
-            != Some(&server.json_entry())
+        if !existing_native_registration(client, "helixir-local")?
+            .as_ref()
+            .is_some_and(|entry| registrations_match(entry, &server.json_entry()))
         {
             return Err(format!(
                 "{} registration did not match the requested entry",
@@ -98,7 +103,38 @@ pub(crate) fn client_registration_matches(
     } else {
         existing_native_registration(client, server_name)
     };
-    existing.is_ok_and(|entry| entry.as_ref() == Some(&server.json_entry()))
+    existing.is_ok_and(|entry| {
+        entry
+            .as_ref()
+            .is_some_and(|entry| registrations_match(entry, &server.json_entry()))
+    })
+}
+
+fn registrations_match(existing: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    if existing == expected {
+        return true;
+    }
+    let (Some(existing_command), Some(expected_command)) = (
+        existing.get("command").and_then(serde_json::Value::as_str),
+        expected.get("command").and_then(serde_json::Value::as_str),
+    ) else {
+        return false;
+    };
+    let (Ok(existing_command), Ok(expected_command)) = (
+        std::fs::canonicalize(existing_command),
+        std::fs::canonicalize(expected_command),
+    ) else {
+        return false;
+    };
+    if existing_command != expected_command {
+        return false;
+    }
+
+    let mut existing = existing.clone();
+    let mut expected = expected.clone();
+    existing["command"] = serde_json::Value::Null;
+    expected["command"] = serde_json::Value::Null;
+    existing == expected
 }
 
 fn existing_native_registration(
@@ -185,7 +221,7 @@ fn approve_registration_change(
     let Some(existing) = existing else {
         return Ok(());
     };
-    if existing == &server.json_entry() {
+    if registrations_match(existing, &server.json_entry()) {
         return Ok(());
     }
     if !interactive {
@@ -302,5 +338,31 @@ mod tests {
         )
         .expect_err("conflict must require approval");
         assert!(error.contains("rerun interactively"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registration_comparison_accepts_equivalent_symlink_commands() {
+        use std::os::unix::fs::symlink;
+
+        let temp = std::env::temp_dir().join(format!(
+            "helixir-registration-match-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp).expect("temporary directory");
+        let binary = temp.join("helixir-mcp-v3");
+        let stable = temp.join("helixir-mcp");
+        std::fs::write(&binary, b"test binary").expect("binary fixture");
+        symlink(&binary, &stable).expect("stable symlink");
+        let existing = serde_json::json!({
+            "command": stable,
+            "env": {"HELIXIR_RBAC_ACTOR": "codex"}
+        });
+        let expected = serde_json::json!({
+            "command": binary,
+            "env": {"HELIXIR_RBAC_ACTOR": "codex"}
+        });
+        assert!(registrations_match(&existing, &expected));
+        std::fs::remove_dir_all(&temp).expect("remove temporary directory");
     }
 }

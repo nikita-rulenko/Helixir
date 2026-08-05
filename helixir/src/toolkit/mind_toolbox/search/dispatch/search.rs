@@ -100,6 +100,7 @@ impl SearchEngine {
                         .into_iter()
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,
+                            internal_id: r.internal_id,
                             content: r.content,
                             score: r.combined_score as f32,
                             method: format!("smart_v2_{}", mode),
@@ -139,6 +140,7 @@ impl SearchEngine {
                         .into_iter()
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,
+                            internal_id: r.internal_id,
                             content: r.content,
                             score: r.combined_score as f32,
                             method: "smart_v2_deep".to_string(),
@@ -183,6 +185,7 @@ impl SearchEngine {
                         .into_iter()
                         .map(|r| UnifiedSearchResult {
                             memory_id: r.memory_id,
+                            internal_id: r.internal_id,
                             content: r.content,
                             score: r.combined_score as f32,
                             method: "smart_v2_full".to_string(),

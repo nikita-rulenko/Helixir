@@ -17,12 +17,15 @@ use serde::{Deserialize, Serialize};
 use crate::db::HelixClient;
 
 mod manager_admin;
+mod manager_authorization;
+mod manager_cache;
 mod manager_memory;
 mod policy;
 mod storage_types;
 mod types;
 
 pub use manager_admin::RbacManager;
+use manager_cache::*;
 use storage_types::*;
 pub use types::*;
 

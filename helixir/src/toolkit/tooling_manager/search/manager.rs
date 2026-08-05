@@ -81,6 +81,7 @@ impl ToolingManager {
             .map(|r| {
                 let mut result = SearchMemoryResult {
                     memory_id: r.memory_id,
+                    internal_id: r.internal_id,
                     content: r.content,
                     score: r.score as f64,
                     method: r.method,
@@ -104,46 +105,6 @@ impl ToolingManager {
             .collect();
 
         if scope == "collective" || scope == "all" {
-            #[derive(serde::Deserialize)]
-            struct KeyedMemory {
-                #[serde(default)]
-                memory_id: String,
-                #[serde(default)]
-                content_key: String,
-            }
-            #[derive(serde::Deserialize)]
-            struct KeyedMemories {
-                #[serde(default)]
-                memories: Vec<KeyedMemory>,
-            }
-            let ids = search_results
-                .iter()
-                .map(|result| result.memory_id.clone())
-                .collect::<Vec<_>>();
-            if !ids.is_empty()
-                && let Ok(response) = self
-                    .db
-                    .execute_query::<KeyedMemories, _>(
-                        "getMemoryContentKeysBatch",
-                        &serde_json::json!({"memory_ids": ids}),
-                    )
-                    .await
-            {
-                let keys = response
-                    .memories
-                    .into_iter()
-                    .filter(|memory| !memory.content_key.is_empty())
-                    .map(|memory| (memory.memory_id, memory.content_key))
-                    .collect::<HashMap<_, _>>();
-                for result in &mut search_results {
-                    if let Some(key) = keys.get(&result.memory_id) {
-                        result.metadata.insert(
-                            "content_key".to_string(),
-                            serde_json::Value::String(key.clone()),
-                        );
-                    }
-                }
-            }
             // #3a: fold same-fact-across-users into one row BEFORE ranking, so
             // the boost-sort operates on distinct knowledge, not duplicates.
             let before = search_results.len();
@@ -226,6 +187,7 @@ impl ToolingManager {
             .into_iter()
             .map(|m| SearchMemoryResult {
                 memory_id: m.memory_id,
+                internal_id: None,
                 content: m.content,
                 score: 1.0,
                 method: "tag_search".to_string(),
@@ -348,6 +310,7 @@ impl ToolingManager {
                     if matches_type && matches_tags {
                         results.push(SearchMemoryResult {
                             memory_id: candidate.memory_id.clone(),
+                            internal_id: candidate.internal_id.clone(),
                             content: candidate.content.clone(),
                             score: candidate.score as f64,
                             method: format!("concept_search_{}", mode),
@@ -427,6 +390,7 @@ impl ToolingManager {
 
                             results.push(SearchMemoryResult {
                                 memory_id: mem.memory_id,
+                                internal_id: None,
                                 content: mem.content,
                                 score,
                                 method: "concept_search_db_fallback".to_string(),

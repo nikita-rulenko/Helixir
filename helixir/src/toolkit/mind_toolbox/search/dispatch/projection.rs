@@ -14,10 +14,14 @@ impl SearchEngine {
     /// or the duplicate gate loses the very atom it must compare against.
     /// The presentation layer (ToolingManager::search) calls this instead.
     pub async fn collapse_raw_families(&self, results: &mut Vec<UnifiedSearchResult>) {
-        let raw_ids: Vec<String> = results
+        let raw_ids: Vec<(String, String)> = results
             .iter()
             .filter(|r| r.memory_id.starts_with("raw_"))
-            .map(|r| r.memory_id.clone())
+            .filter_map(|r| {
+                r.internal_id
+                    .as_ref()
+                    .map(|internal_id| (r.memory_id.clone(), internal_id.clone()))
+            })
             .collect();
         if raw_ids.is_empty() {
             return;
@@ -26,23 +30,26 @@ impl SearchEngine {
         let mut drop_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut annotations: Vec<(String, Vec<String>)> = Vec::new();
 
-        for raw_id in raw_ids {
-            // Two lookups joined on the internal node id: the EDGE projection
-            // carries relation_type but only internal from_node UUIDs, while
-            // the NODE projection carries memory_id + internal id. Both are
-            // existing queries — no schema change.
-            let edges: serde_json::Value = match self
+        for (raw_id, internal_id) in raw_ids {
+            // One primary-key projection returns both the typed incoming
+            // relation edges and their source nodes. The former implementation
+            // performed two whole-label lookups by `memory_id` for every raw
+            // row, leaking request arenas on every cache hit (#89).
+            let projection: serde_json::Value = match self
                 .client
-                .execute_query("getMemoryIncomingRelations", &json!({"memory_id": &raw_id}))
+                .execute_query(
+                    "getConnectionsByInternalId",
+                    &json!({"internal_id": internal_id}),
+                )
                 .await
             {
                 Ok(v) => v,
                 Err(e) => {
-                    debug!("family edge lookup failed for {}: {}", raw_id, e);
+                    debug!("family projection failed for {}: {}", raw_id, e);
                     continue;
                 }
             };
-            let part_of_nodes: std::collections::HashSet<String> = edges["relations_in"]
+            let part_of_nodes: std::collections::HashSet<String> = projection["relation_in_e"]
                 .as_array()
                 .map(|arr| {
                     arr.iter()
@@ -54,21 +61,7 @@ impl SearchEngine {
             if part_of_nodes.is_empty() {
                 continue;
             }
-            let nodes: serde_json::Value = match self
-                .client
-                .execute_query(
-                    "getMemoryLogicalConnections",
-                    &json!({"memory_id": &raw_id}),
-                )
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    debug!("family node lookup failed for {}: {}", raw_id, e);
-                    continue;
-                }
-            };
-            let family: std::collections::HashSet<String> = nodes["relation_in"]
+            let family: std::collections::HashSet<String> = projection["relation_in_n"]
                 .as_array()
                 .map(|arr| {
                     arr.iter()
@@ -141,11 +134,6 @@ impl SearchEngine {
             return;
         }
         let window = superseded_window(limit, results.len());
-        let ids: Vec<&str> = results[..window]
-            .iter()
-            .map(|r| r.memory_id.as_str())
-            .collect();
-
         #[derive(serde::Deserialize)]
         struct Node {
             #[serde(default, deserialize_with = "crate::utils::nullable_string")]
@@ -163,61 +151,67 @@ impl SearchEngine {
         #[derive(serde::Deserialize, Default)]
         struct Resp {
             #[serde(default)]
-            memories: Vec<Node>,
+            memory: Option<Node>,
             #[serde(default)]
             superseded_edges: Vec<Edge>,
             #[serde(default)]
             successors: Vec<Node>,
         }
 
-        let resp: Resp = match self
-            .client
-            .execute_query("getSupersededBatch", &json!({ "memory_ids": ids }))
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                debug!("superseded check skipped ({e})");
-                return;
-            }
-        };
-        if resp.superseded_edges.is_empty() {
-            return;
-        }
-
-        let mut uuid_to_mid: std::collections::HashMap<&str, &str> =
-            std::collections::HashMap::new();
-        for n in resp.memories.iter().chain(resp.successors.iter()) {
-            if !n.id.is_empty() && !n.memory_id.is_empty() {
-                uuid_to_mid.insert(n.id.as_str(), n.memory_id.as_str());
-            }
-        }
-
         let mut demoted = 0usize;
-        for edge in &resp.superseded_edges {
-            let Some(stale_mid) = uuid_to_mid.get(edge.to_node.as_str()) else {
-                continue;
-            };
-            let successor_mid = uuid_to_mid.get(edge.from_node.as_str()).copied();
-            if let Some(row) = results[..window]
-                .iter_mut()
-                .find(|r| r.memory_id == *stale_mid)
+        let targets = results[..window]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                row.internal_id
+                    .as_ref()
+                    .map(|internal_id| (index, internal_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (index, internal_id) in targets {
+            let resp: Resp = match self
+                .client
+                .execute_query(
+                    "getSupersededByInternalId",
+                    &json!({ "internal_id": internal_id }),
+                )
+                .await
             {
-                // Idempotent under multiple SUPERSEDES edges: penalize once.
-                if row.metadata.contains_key("superseded") {
+                Ok(response) => response,
+                Err(error) => {
+                    debug!("superseded check skipped ({error})");
                     continue;
                 }
-                row.score *= penalty as f32;
-                row.metadata
-                    .insert("superseded".to_string(), serde_json::Value::Bool(true));
-                if let Some(succ) = successor_mid {
-                    row.metadata.insert(
-                        "superseded_by".to_string(),
-                        serde_json::Value::String(succ.to_string()),
-                    );
-                }
-                demoted += 1;
+            };
+            let Some(memory) = resp.memory else {
+                continue;
+            };
+            let Some(edge) = resp
+                .superseded_edges
+                .iter()
+                .find(|edge| edge.to_node == memory.id)
+            else {
+                continue;
+            };
+            let successor = resp
+                .successors
+                .iter()
+                .find(|successor| successor.id == edge.from_node)
+                .map(|successor| successor.memory_id.clone());
+            let row = &mut results[index];
+            if row.metadata.contains_key("superseded") {
+                continue;
             }
+            row.score *= penalty as f32;
+            row.metadata
+                .insert("superseded".to_string(), serde_json::Value::Bool(true));
+            if let Some(successor) = successor {
+                row.metadata.insert(
+                    "superseded_by".to_string(),
+                    serde_json::Value::String(successor),
+                );
+            }
+            demoted += 1;
         }
         if demoted > 0 {
             info!("Superseded demotion (#92): {demoted} stale row(s) penalized x{penalty}");
@@ -260,6 +254,7 @@ impl SearchEngine {
                 .take(limit)
                 .map(|r| UnifiedSearchResult {
                     memory_id: r.memory_id,
+                    internal_id: r.internal_id,
                     content: r.content,
                     score: r.combined_score as f32,
                     method: "dedup_collective".to_string(),

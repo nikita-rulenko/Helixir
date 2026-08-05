@@ -11,7 +11,22 @@ use sha2::{Digest, Sha256};
 /// HelixDB CLI version compatible with this LMDB-era schema.
 pub const HELIX_CLI_VERSION: &str = "2.3.5";
 /// Read-only contract returned by the deployed query inventory.
-pub const SCHEMA_CONTRACT_VERSION: &str = "helixir-rbac-default-onboarding-v1";
+pub const SCHEMA_CONTRACT_VERSION: &str = "helixir-rbac-default-onboarding-v3";
+/// Local HelixDB is intentionally bounded: the upstream gateway creates eight
+/// workers per visible core and each worker can retain a request high-water
+/// mark in its mimalloc heap.
+pub const MANAGED_HELIX_CORES: &str = "1";
+/// Immediate decommit reduces allocator-retained free pages after requests;
+/// graph scans can still retain live arena-backed material upstream.
+pub const MIMALLOC_PURGE_DELAY: &str = "0";
+/// Purges must use `MADV_DONTNEED`, not lazy `MADV_FREE`, so RSS falls now.
+pub const MIMALLOC_PURGE_DECOMMITS: &str = "1";
+/// Do not multiply the immediate purge delay for mimalloc arenas.
+pub const MIMALLOC_ARENA_PURGE_MULT: &str = "1";
+/// Hard backstop for the managed local backend.
+pub const MANAGED_MEMORY_LIMIT: &str = "3g";
+/// Docker's byte representation of [`MANAGED_MEMORY_LIMIT`].
+pub const MANAGED_MEMORY_LIMIT_BYTES: i64 = 3 * 1024 * 1024 * 1024;
 
 /// Managed backend specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +86,10 @@ pub fn provision(spec: &BackendSpec) -> DockerCommand {
         &spec.container,
         "--label",
         "io.helixir.managed=true",
+        "--memory",
+        MANAGED_MEMORY_LIMIT,
+        "--memory-swap",
+        MANAGED_MEMORY_LIMIT,
         "-p",
         &format!("{}:{}", spec.port, spec.port),
         "-v",
@@ -79,6 +98,14 @@ pub fn provision(spec: &BackendSpec) -> DockerCommand {
         &format!("HELIX_PORT={}", spec.port),
         "-e",
         "HELIX_DATA_DIR=/data",
+        "-e",
+        &format!("HELIX_CORES_OVERRIDE={MANAGED_HELIX_CORES}"),
+        "-e",
+        &format!("MIMALLOC_PURGE_DELAY={MIMALLOC_PURGE_DELAY}"),
+        "-e",
+        &format!("MIMALLOC_PURGE_DECOMMITS={MIMALLOC_PURGE_DECOMMITS}"),
+        "-e",
+        &format!("MIMALLOC_ARENA_PURGE_MULT={MIMALLOC_ARENA_PURGE_MULT}"),
         "--restart",
         "unless-stopped",
         &spec.image,
@@ -194,5 +221,21 @@ mod tests {
                 .any(|w| w == ["--restart", "unless-stopped"])
         );
         assert!(args.iter().any(|arg| arg == "helixdb_data:/data"));
+        for expected in [
+            "HELIX_CORES_OVERRIDE=1",
+            "MIMALLOC_PURGE_DELAY=0",
+            "MIMALLOC_PURGE_DECOMMITS=1",
+            "MIMALLOC_ARENA_PURGE_MULT=1",
+        ] {
+            assert!(args.iter().any(|arg| arg == expected));
+        }
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--memory", MANAGED_MEMORY_LIMIT])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--memory-swap", MANAGED_MEMORY_LIMIT])
+        );
     }
 }

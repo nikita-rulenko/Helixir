@@ -42,6 +42,32 @@ pub(super) struct MemoryRbacScopesResponse {
     pub(super) dedup_groups: Vec<DedupGroupRbacNode>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct MemoryRbacScopeResponse {
+    #[serde(default)]
+    pub(super) memory: Option<MemoryRbacNode>,
+    #[serde(default)]
+    pub(super) group_links: Vec<MemoryRbacLink>,
+    #[serde(default)]
+    pub(super) groups: Vec<GroupRbacNode>,
+    #[serde(default)]
+    pub(super) dedup_links: Vec<MemoryRbacLink>,
+    #[serde(default)]
+    pub(super) dedup_groups: Vec<DedupGroupRbacNode>,
+}
+
+impl MemoryRbacScopesResponse {
+    pub(super) fn append_single(&mut self, mut single: MemoryRbacScopeResponse) {
+        if let Some(memory) = single.memory.take() {
+            self.memories.push(memory);
+        }
+        self.group_links.append(&mut single.group_links);
+        self.groups.append(&mut single.groups);
+        self.dedup_links.append(&mut single.dedup_links);
+        self.dedup_groups.append(&mut single.dedup_groups);
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct StoredMemoryScope {
     pub(super) rbac_scope: String,
@@ -142,7 +168,12 @@ pub(super) fn apply_dedup_memberships(policy: &mut RbacPolicy, value: &serde_jso
             ))
         })
         .collect::<HashMap<_, _>>();
-    for link in rows(value, "links") {
+    let links = if value.get("dedup_links").is_some() {
+        rows(value, "dedup_links")
+    } else {
+        rows(value, "links")
+    };
+    for link in links {
         let (Some(from), Some(to)) = (
             string_field(link, "from_node"),
             string_field(link, "to_node"),
