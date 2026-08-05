@@ -12,6 +12,7 @@
 <p align="center">
   <b><a href="#quick-start">⚡ Quick Start</a></b> &middot;
   <a href="#what-is-helixir">What is Helixir?</a> &middot;
+  <a href="#access-control-rbac">RBAC</a> &middot;
   <a href="#contents">Contents</a>
 </p>
 
@@ -29,6 +30,7 @@
 
 - [What is Helixir?](#what-is-helixir)
 - [Philosophy](#philosophy)
+- [Access control (RBAC)](#access-control-rbac)
 - [**Quick Start**](#quick-start)
   - [One-command install](#one-command-install)
   - [Prerequisites](#prerequisites)
@@ -91,6 +93,95 @@ Three principles drive every design decision; the long version lives in [`helixi
 **The memory does not gaslight its owner.** Writes that conflict with what is already known — a reversed preference, a contradiction, anything destructive — are not resolved silently. They come back in `add_memory.needs_clarification` as ready-to-ask questions, governed by a human-editable [memory charter](helixir/memory-charter.md): a constitution of rules the engine may never override.
 
 **And the charter learns.** Every `resolve_contradiction` verdict becomes a precedent; after several identical verdicts the memory *proposes a standing rule* back to the agent (`rule_proposal`), ready to adopt with one `add_memory` call. Adopted rules render in the `memory://rules` resource beside the constitution — which itself never self-learns — and silence future questions of that shape. Corrections also win: a superseded fact ranks below its successor and returns flagged `superseded: true` with `superseded_by` naming the current version — history, honestly labelled, never hidden.
+
+---
+
+## Access control (RBAC)
+
+Since v0.14.0, RBAC is **permanently enabled** and stored in HelixDB alongside
+the memories it protects. Principals, groups, role assignments, assignment
+history, per-memory visibility edges, dedup federations, and bootstrap state all
+come from the graph. The CLI and MCP server enforce that same graph-backed
+policy; there is no second ACL file to drift out of sync.
+
+Every memory visible to a non-admin belongs to a concrete visibility group.
+Reads are allowed through materialized `MEMORY_IN_RBAC_GROUP` edges, not by
+trusting `Memory.user_id` as an ACL. `actor_id` is the principal performing an
+operation; `user_id` remains the memory owner and provenance. Authorization is
+deny-by-default and fails closed when the actor, group, or deployed RBAC schema
+cannot be resolved.
+
+### Roles
+
+| Role | Scope | Read | Write | Manage RBAC |
+|:-----|:------|:-----|:------|:------------|
+| `admin` | Global | Every memory and group | For any owner, in any existing group; unscoped writes stay admin-only | Yes |
+| `teamlead` | Assigned groups | All memories in those groups | No | No |
+| `groupadmin` | Assigned groups | All memories in those groups | Own memories and memories owned by group members | No |
+| `moderator` | Assigned groups | All memories in those groups | Own memories and memories owned by group members | No |
+| `worker` | Assigned groups | All memories in those groups | Only memories authored under their own `user_id` | No |
+| `viewer` | Assigned groups | All memories in those groups | No | No |
+
+Only a global `admin` can manage groups, roles, the user registry, and dedup
+federations. The last global administrator cannot be revoked. Group assignments
+are deactivated rather than erased, so the registry and audit history survive
+removal.
+
+### Reserved workspaces and onboarding
+
+The one-way, resumable bootstrap creates two protected groups:
+
+- `default` receives pre-RBAC memories and previously trusted principals.
+  Those principals become equal `groupadmin` peers there, preserving the old
+  full-trust collaboration model without granting global administrative power.
+- `onboarding` admits newly discovered users and agents as `worker`s. Their
+  membership makes them visible in the graph-backed registry so an administrator
+  can inspect them and assign normal working groups.
+
+A normal admission flow is:
+
+```bash
+export HELIXIR_RBAC_ACTOR=root
+
+helixir rbac user list --json
+helixir rbac group create --id development --name "Development"
+helixir rbac group add-user --group development --user alice --role worker
+helixir rbac group remove-user --group onboarding --user alice
+helixir rbac user show --user alice --json
+```
+
+Agents must pass their stable `actor_id` and the concrete access `group_id` on
+`add_memory` and `think_commit`. Omitting `group_id` is accepted only when
+Helixir can infer exactly one writable reserved workspace; normal working-group
+writes should always name the group explicitly.
+
+### Group-isolated and federated deduplication
+
+Groups deduplicate independently by default, preventing one team's knowledge
+from revealing or mutating another team's memories. An administrator can
+deliberately place several groups in a dedup federation when they should share
+both deduplication and visibility:
+
+```bash
+helixir rbac dedup create --id engineering --name "Engineering federation"
+helixir rbac dedup attach --group development --dedup-group engineering
+helixir rbac dedup attach --group platform --dedup-group engineering
+```
+
+Joining a federation grants the group access to its existing memory history.
+Detaching is prospective: historical visibility remains, while future writes
+return to the detached group's own dedup domain. The protected `default` and
+`onboarding` workspaces cannot join a federation.
+
+> **Trust boundary.** RBAC separates cooperative principals inside Helixir; it
+> is not identity authentication by itself. Stdio clients run locally. The
+> network gateway assumes a trusted network unless bearer authentication is
+> configured, and any client allowed to submit arbitrary requests can claim an
+> `actor_id`. Do not expose an unauthenticated gateway to an untrusted network.
+
+See [`helixir rbac --help`](#cli) for the management surface and
+[`helixir/doc/data-model.md`](helixir/doc/data-model.md) for the persisted graph
+model.
 
 ---
 
@@ -499,7 +590,6 @@ helixir rbac group create --id alpha --name "Alpha team"
 helixir rbac group add-user --group onboarding --user alice --role worker
 helixir rbac group add-user --group alpha --user alice --role worker
 helixir rbac grant --user root --role admin
-helixir rbac enable                     # enable an already prepared custom policy
 helixir rbac check --user alice --action read --owner bob
 helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
 helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
@@ -530,14 +620,10 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   *_password, *_secret, and *_credential field.
 ```
 
-RBAC grants, groups, audit rows, and migration state live in HelixDB. The
-CLI is only a management client over the same HQL contract used by MCP and the
-library; there is no authoritative local policy file. RBAC is permanent.
-Bootstrap creates reserved `default` for all pre-RBAC memories and trusted
-peers (equal group-admin access preserves the old shared data plane) plus
-reserved `onboarding` for newly discovered principals. One operator remains
-the only initial global admin. The fresh/legacy branch and migration phase are
-checkpointed, so interrupted work resumes instead of disabling enforcement.
+RBAC grants, groups, audit rows, and migration state live in HelixDB. The CLI
+is only a management client over the same HQL contract used by MCP and the
+library. See [Access control (RBAC)](#access-control-rbac) for the role matrix,
+reserved workspaces, dedup federations, and trust boundary.
 
 The `onboarding` membership is the admission event for new principals;
 historical membership in either reserved workspace remains visible in the
