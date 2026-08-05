@@ -7,13 +7,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityType {
     Person,
     Organization,
     Location,
     Technology,
+    #[default]
     Concept,
     Event,
     Product,
@@ -23,12 +24,6 @@ pub enum EntityType {
     Process,
 
     Custom(String),
-}
-
-impl Default for EntityType {
-    fn default() -> Self {
-        Self::Concept
-    }
 }
 
 impl std::fmt::Display for EntityType {

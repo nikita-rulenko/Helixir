@@ -18,19 +18,14 @@ pub enum RetrievalError {
     Reconstruction(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RetrievalDepth {
     Shallow,
 
+    #[default]
     Medium,
 
     Deep,
-}
-
-impl Default for RetrievalDepth {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 impl From<&str> for RetrievalDepth {

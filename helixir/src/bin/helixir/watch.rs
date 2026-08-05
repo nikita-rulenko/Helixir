@@ -166,7 +166,7 @@ pub(crate) fn watch_install() -> Result<()> {
                 "FAILED — run manually: systemctl --user enable --now helixir-watchdog"
             }
         );
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -209,7 +209,7 @@ pub(crate) fn watch_uninstall() -> Result<()> {
             .status();
         std::fs::remove_file(&unit)?;
         println!("Removed {}.", unit.display());
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -291,8 +291,7 @@ pub(crate) fn daemon_status() -> Result<()> {
     if let Ok(body) = std::fs::read_to_string(journal_path())
         && let Some(last) = body
             .lines()
-            .filter(|l| l.contains("\"agent\":\"daemon\""))
-            .next_back()
+            .rfind(|line| line.contains("\"agent\":\"daemon\""))
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(last)
     {
         println!(

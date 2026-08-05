@@ -77,7 +77,7 @@ impl<'a> Daemon<'a> {
         // Per-stage cadence: a stage runs on the passes where
         // (pass-1) % every == 0, so everything due fires on pass 1;
         // every = 0 disables the stage entirely.
-        let due = |every: u64, pass: u64| every != 0 && (pass - 1) % every == 0;
+        let due = |every: u64, pass: u64| every != 0 && (pass - 1).is_multiple_of(every);
         info!(
             "daemon cadence: clotho every {} pass(es), insight stage every {}, merge every {}, reconcile every {}",
             cfg.clotho_every, cfg.insight_every, cfg.merge_every, cfg.reconcile_every

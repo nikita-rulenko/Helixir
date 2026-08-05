@@ -208,7 +208,7 @@ pub(crate) async fn categories(client: &HelixirClient, limit: i64) -> Result<()>
         let n = admin.tooling().category_member_ids(&id).await?.len();
         rows.push((n, name, id));
     }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
     println!("{} categories (by member count):", rows.len());
     for (n, name, id) in &rows {
         println!("  {n:>6}  {name}   [{id}]");
