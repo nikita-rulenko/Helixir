@@ -81,12 +81,18 @@ async fn ingest_buffer_roundtrip() {
     );
 
     // 2. Drain the queue serially (what the background worker does).
-    let processed = client.tooling().drain_pending_once().await;
+    let processed = client
+        .admin_as("codex")
+        .await
+        .expect("RBAC admin")
+        .tooling()
+        .drain_pending_once()
+        .await;
     assert!(processed >= 1, "drain must process the queued item");
 
     // 3. Status is now done, with a result payload.
     let status = client
-        .add_status(&enq.pending_id)
+        .add_status_as("codex", &enq.pending_id)
         .await
         .expect("add_status");
     assert_eq!(status.status, "done", "status after drain: {status:?}");
@@ -117,7 +123,7 @@ async fn ingest_buffer_roundtrip() {
 
     // 5. Outbox carries the outcome; draining it delivers and prunes.
     let notices = client
-        .drain_notices(&user, 20)
+        .drain_notices_as("codex", &user, 20)
         .await
         .expect("drain_notices");
     assert!(
@@ -130,7 +136,7 @@ async fn ingest_buffer_roundtrip() {
     // Idempotent drain: the delivered notice does not come back, and the
     // tombstone PendingInput was pruned (status now not_found).
     let second = client
-        .drain_notices(&user, 20)
+        .drain_notices_as("codex", &user, 20)
         .await
         .expect("drain_notices 2");
     assert!(
@@ -138,7 +144,7 @@ async fn ingest_buffer_roundtrip() {
         "delivered notices must not be redelivered"
     );
     let gone = client
-        .add_status(&enq.pending_id)
+        .add_status_as("codex", &enq.pending_id)
         .await
         .expect("add_status gone");
     assert_eq!(

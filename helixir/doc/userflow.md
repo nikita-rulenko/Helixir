@@ -1,12 +1,12 @@
 # Userflow
 
-> _Reflects code as of `v0.6.0-dev`. Last verified: 2026-07-02._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
 "Userflow" therefore means **how the agent decides which tool to call when**.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
-There are 20 tools, 2 prompts, 2 resources.
+There are 21 tools, 2 prompts, and 3 resources.
 
 ## 1. Tool catalog
 
@@ -14,8 +14,8 @@ There are 20 tools, 2 prompts, 2 resources.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `add_memory` | `user_id`, `message` | `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Ack is confirm-or-promise (#63): `ok:true` + `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` when the ingest buffer needs more time. Passing `agent_id` also heartbeats swarm presence (#39). |
-| `get_add_status` | `pending_id` | — | Polling a promised (buffered) `add_memory` to completion. |
+| `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` plus `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` when buffered. |
+| `get_add_status` | `pending_id` | `actor_id` | Polling a promised buffered write. Enabled RBAC permits only its owner, creator, or a global admin. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
 | `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |
 | `update_memory` | `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
@@ -27,6 +27,7 @@ There are 20 tools, 2 prompts, 2 resources.
 | `list_users` | — | `limit` | Orientation in a shared store: which identities exist. Collective-gated (`available:false` in Solo); privacy-safe (ids/names only). |
 | `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
 | `resolve_contradiction` | `from_id`, `to_id`, `resolution` | — | Answering a `contradiction_review` notice: `confirm` / `retract` (supersedes, history kept) / `preference`. Retired disputes stop re-surfacing. |
+| `agent_farewell` | `agent_id` | — | Marking a one-shot agent as done in the swarm roster without changing authorship provenance. |
 
 Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 `needs_clarification` array — write-path conflicts the memory charter
@@ -38,13 +39,17 @@ question; the agent decides whether to ask the human.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `think_start` | `session_id`, `initial_thought` | — | Beginning a complex reasoning task. |
-| `think_add` | `session_id`, `content` | `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step. |
-| `think_recall` | `session_id`, `query`, `parent_idx` | `user_id` | Pulling persistent memories into the live session. |
-| `think_conclude` | `session_id`, `conclusion` | `supporting_idx[]` | Marking a final answer in the session. |
-| `think_commit` | `session_id`, `user_id` | — | Persisting the conclusion (runs full `add_memory` pipeline). |
-| `think_discard` | `session_id` | — | Throwing away the session. Hot-path errors. |
-| `think_status` | `session_id` | — | Checking remaining time / thought count. |
+| `think_start` | `session_id`, `initial_thought` | `actor_id` | Beginning a complex reasoning task; enabled RBAC binds the session to this actor. |
+| `think_add` | `session_id`, `content` | `actor_id`, `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step; enabled RBAC requires the bound actor. |
+| `think_recall` | `session_id`, `query`, `parent_idx` | `actor_id`, `user_id` | Pulling authorized persistent memories into the live session. |
+| `think_conclude` | `session_id`, `conclusion` | `actor_id`, `supporting_idx[]` | Marking a final answer in the actor-bound session. |
+| `think_commit` | `session_id`, `user_id` | `actor_id`, `group_id` | Persisting the conclusion through the same RBAC-scoped write pipeline. |
+| `think_discard` | `session_id` | `actor_id` | Throwing away the actor's own session. |
+| `think_status` | `session_id` | `actor_id` | Checking the actor's own session status. |
+
+When RBAC is enabled, ingest completion logging notifications are disabled:
+they carry no request actor. Poll with `get_add_status`, or receive the result
+through the authorized opportunistic outbox on a later `add_memory` call.
 
 ### Prompts and resources
 
@@ -52,8 +57,9 @@ question; the agent decides whether to ask the human.
 |---|---|---|
 | Prompt | `memory_summary` | Builds a "summarize all my memories about X" message for the agent. |
 | Prompt | `tool_selection_guide` | The full cognitive protocol (`mcp/prompts.rs`) — when the agent should call which tool. |
-| Resource | `config://helixir` | Server config snapshot. Currently misreports `version` and omits two tools (issue #14). |
+| Resource | `config://helixir` | Server version, backend, capability, and complete tool snapshot. |
 | Resource | `status://helixdb` | Live HelixDB host/port. |
+| Resource | `memory://rules` | Human charter plus adopted learned rules. |
 
 ## 2. Tool selection — by intent
 
@@ -148,9 +154,11 @@ agent intent                                tool to call
                               └──────────────────────┘
 ```
 
-Wall-clock & thought-count limits live at `FastThinkLimits::mcp` (default
-90 s, 150 thoughts). On `Timeout` during `think_add`, the manager
-auto-commits the partial session — see `mcp/server.rs:322-340`.
+Wall-clock & thought-count limits come from `FastThinkConfig` (default
+90 s, 150 thoughts). Permanent RBAC fails closed on timeout because
+`think_add` does not carry the explicit owner/group needed for a scoped write;
+the actor must discard and restart the timed-out session. Historical
+`incomplete_thought` memories remain searchable.
 
 ## 5. Anti-patterns the agent should refuse
 
@@ -167,15 +175,10 @@ them here so they live in the engineering doc too:
   Memory will trigger UPDATE / SUPERSEDE through the decision engine — let
   the engine decide.
 
-## 6. Where MCP usage and code disagree (today)
+## 6. Release contract checks
 
-- `list_memories(memory_type=X, limit=N)` may return fewer than N (or zero)
-  matches because filtering happens client-side after the limit. Tracked in
-  issue #14.
-- `read_resource("config://helixir")` returns `version: "0.3.0"` even on
-  v0.3.1+. Tracked in issue #8.
-- The `read_resource("config://helixir").tools` list does not include
-  `list_memories` or `search_incomplete_thoughts`. Same issue #14.
-
-When AGENTS.md §2 ("Session boot sequence") says "read open P0 issues first",
-this is one of the reasons.
+`config://helixir` derives its version from `CARGO_PKG_VERSION` and enumerates
+all 21 registered tools. `list_resources` exposes the three resources above.
+The release smoke test must compare these advertised counts with MCP
+`tools/list`, `prompts/list`, and `resources/list` after every tool-surface
+change.

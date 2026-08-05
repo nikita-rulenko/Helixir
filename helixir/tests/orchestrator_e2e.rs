@@ -31,6 +31,7 @@ async fn full_pass_runs_the_whole_choreography() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("orch_{run}");
@@ -46,7 +47,7 @@ async fn full_pass_runs_the_whole_choreography() {
         max_hops: 4,
         ..PassConfig::default()
     };
-    let result = client
+    let result = admin
         .orchestrator()
         .full_pass(&user, &cfg)
         .await

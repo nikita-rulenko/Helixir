@@ -5,9 +5,9 @@
 //! cosine, opposite meaning), so a real 3-way NLI head makes the merge decision.
 //!
 //! Fully local, CPU, no Python and no API: ONNX Runtime via `ort` + a Rust
-//! `tokenizers` SentencePiece tokenizer. Model is ~90 MB (arm64 int8 ONNX),
-//! downloaded only for the collective/insights tiers. Label order is fixed by
-//! the model config: 0=contradiction, 1=entailment, 2=neutral.
+//! `tokenizers` SentencePiece tokenizer. Model is ~90 MB (arm64 int8 ONNX) and
+//! is a required onboarding component. Label order is fixed by the model
+//! config: 0=contradiction, 1=entailment, 2=neutral.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,6 +15,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ort::session::Session;
 use ort::value::Tensor;
+use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,53 +154,6 @@ fn dirs_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn variant_is_an_onnx_path() {
-        assert!(pick_onnx_variant().ends_with(".onnx"));
-        assert!(pick_onnx_variant().starts_with("onnx/"));
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn aarch64_picks_arm64_variant() {
-        assert_eq!(pick_onnx_variant(), "onnx/model_qint8_arm64.onnx");
-    }
-
-    // Safety-critical: the paraphrase backstop must NEVER merge opposite
-    // preferences ("prefer dark" vs "prefer light"). This used to be `#[ignore]`
-    // and so never ran; now it runs whenever the model is present (CI installs
-    // it, or a dev ran `helixir model download`) and skips cleanly otherwise —
-    // a catastrophic-case guard that no longer silently sits dormant.
-    #[test]
-    fn nli_is_contradiction_safe() {
-        if !status().installed {
-            eprintln!("SKIP nli_is_contradiction_safe: NLI model not downloaded");
-            return;
-        }
-        let mut j = NliJudge::load(&NliJudge::default_dir()).expect("load NLI model");
-        let dark = "I prefer the dark theme in every editor.";
-        let light = "I prefer the light theme in every editor.";
-        assert_eq!(
-            j.classify(dark, light).unwrap().0,
-            NliLabel::Contradiction,
-            "opposite preferences must be a contradiction"
-        );
-        assert!(
-            !j.is_same_fact(dark, light).unwrap(),
-            "opposites must never merge"
-        );
-        assert!(
-            j.is_same_fact("I love pizza.", "Pizza is my favourite food.")
-                .unwrap(),
-            "paraphrases must be the same fact"
-        );
-    }
-}
-
 // ----------------------------------------------------------------------------
 // Model acquisition. The repo ships the DOWNLOADER, never the weights: it picks
 // the ONNX quantization variant matching the host arch/CPU and fetches it from
@@ -209,7 +163,31 @@ mod tests {
 // ----------------------------------------------------------------------------
 
 const NLI_REPO: &str = "cross-encoder/nli-deberta-v3-xsmall";
+/// Immutable HuggingFace commit used by the downloader.  Model bytes are
+/// fetched from this revision rather than the mutable `main` branch.
+pub const NLI_REVISION: &str = "a150876415327c80daeff35ca6f68f5ed8cf5c24";
 const HF_BASE: &str = "https://huggingface.co";
+
+fn expected_sha256(remote: &str) -> Option<&'static str> {
+    match remote {
+        "config.json" => Some("8d9f07bf7ba54a6fc3b1962483056f94c39dcf188db4cf61843e1c88f94b2342"),
+        "tokenizer.json" => {
+            Some("5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964")
+        }
+        "onnx/model.onnx" => {
+            Some("7105da41f625c42eca24e9465ec99150d02a80e644659d7a1daa93a6357155d4")
+        }
+        "onnx/model_qint8_arm64.onnx"
+        | "onnx/model_qint8_avx512.onnx"
+        | "onnx/model_qint8_avx512_vnni.onnx" => {
+            Some("ef41fe8474f6070373f97fbe8362461d55108f387723280fcdb64f8015133db2")
+        }
+        "onnx/model_quint8_avx2.onnx" => {
+            Some("21b14751a95520953bfcc607ceeb617de7cbeaeb6d60f4c8966716c743985337")
+        }
+        _ => None,
+    }
+}
 
 /// The remote ONNX path best matching this machine's arch / CPU features.
 #[must_use]
@@ -269,6 +247,27 @@ pub fn status() -> ModelStatus {
     }
 }
 
+/// Load the installed judge and prove the three safety-critical semantics used
+/// by onboarding and `helixir doctor`.
+pub fn verify_readiness() -> Result<()> {
+    let mut judge = NliJudge::load(&NliJudge::default_dir())?;
+    let dark = "I prefer the dark theme in every editor.";
+    let light = "I prefer the light theme in every editor.";
+    anyhow::ensure!(
+        judge.classify(dark, light)?.0 == NliLabel::Contradiction,
+        "opposite preferences were not classified as contradiction"
+    );
+    anyhow::ensure!(
+        !judge.is_same_fact(dark, light)?,
+        "opposite preferences were incorrectly mergeable"
+    );
+    anyhow::ensure!(
+        judge.is_same_fact("I love pizza.", "Pizza is my favourite food.")?,
+        "known paraphrase was not recognized"
+    );
+    Ok(())
+}
+
 /// Download the host-appropriate ONNX variant + tokenizer + config into the
 /// model dir. Skips files already present unless `force`. Returns bytes fetched.
 /// The platform-specific ONNX is always saved locally as `model.onnx` so the
@@ -283,6 +282,11 @@ pub async fn download(force: bool) -> Result<u64> {
         ("tokenizer.json", "tokenizer.json"),
         ("config.json", "config.json"),
     ];
+    let staging = dir.join(format!(".download.{}", std::process::id()));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging).context("remove stale NLI staging directory")?;
+    }
+    std::fs::create_dir_all(&staging).context("create NLI staging directory")?;
     // Async client — the CLI runs inside a tokio runtime, so reqwest::blocking
     // would panic ("cannot drop a runtime in an async context").
     let client = reqwest::Client::builder()
@@ -295,7 +299,7 @@ pub async fn download(force: bool) -> Result<u64> {
         if dest.exists() && !force {
             continue;
         }
-        let url = format!("{HF_BASE}/{NLI_REPO}/resolve/main/{remote}");
+        let url = format!("{HF_BASE}/{NLI_REPO}/resolve/{NLI_REVISION}/{remote}");
         let bytes = client
             .get(&url)
             .send()
@@ -306,8 +310,81 @@ pub async fn download(force: bool) -> Result<u64> {
             .bytes()
             .await
             .context("read body")?;
-        std::fs::write(&dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+        let expected = expected_sha256(remote)
+            .with_context(|| format!("no pinned digest for NLI asset {remote}"))?;
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        anyhow::ensure!(
+            actual == expected,
+            "NLI asset digest mismatch for {remote}: expected {expected}, got {actual}"
+        );
+        // Never replace a known-good file with a truncated response.  Every
+        // selected file is staged first; the live directory is touched only
+        // after all HTTP responses completed successfully.
+        let temporary = staging.join(local);
+        if let Some(parent) = temporary.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&temporary, &bytes)
+            .with_context(|| format!("write {}", temporary.display()))?;
         total += bytes.len() as u64;
     }
+    for (_, local) in files {
+        let staged = staging.join(local);
+        if staged.exists() {
+            let dest = dir.join(local);
+            std::fs::rename(&staged, &dest)
+                .with_context(|| format!("install {}", dest.display()))?;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&staging);
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variant_is_an_onnx_path() {
+        assert!(pick_onnx_variant().ends_with(".onnx"));
+        assert!(pick_onnx_variant().starts_with("onnx/"));
+        assert!(expected_sha256(pick_onnx_variant()).is_some());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn aarch64_picks_arm64_variant() {
+        assert_eq!(pick_onnx_variant(), "onnx/model_qint8_arm64.onnx");
+    }
+
+    // Safety-critical: the paraphrase backstop must NEVER merge opposite
+    // preferences ("prefer dark" vs "prefer light"). This used to be `#[ignore]`
+    // and so never ran; now it runs whenever the model is present (CI installs
+    // it, or a dev ran `helixir model download`) and skips cleanly otherwise —
+    // a catastrophic-case guard that no longer silently sits dormant.
+    #[test]
+    fn nli_is_contradiction_safe() {
+        if !status().installed {
+            eprintln!("SKIP nli_is_contradiction_safe: NLI model not downloaded");
+            return;
+        }
+        let mut j = NliJudge::load(&NliJudge::default_dir()).expect("load NLI model");
+        let dark = "I prefer the dark theme in every editor.";
+        let light = "I prefer the light theme in every editor.";
+        assert_eq!(
+            j.classify(dark, light).unwrap().0,
+            NliLabel::Contradiction,
+            "opposite preferences must be a contradiction"
+        );
+        assert!(
+            !j.is_same_fact(dark, light).unwrap(),
+            "opposites must never merge"
+        );
+        assert!(
+            j.is_same_fact("I love pizza.", "Pizza is my favourite food.")
+                .unwrap(),
+            "paraphrases must be the same fact"
+        );
+        verify_readiness().expect("readiness contract");
+    }
 }

@@ -62,6 +62,7 @@ add_memory(message="<one plain natural-language sentence>", user_id="claude")
   overwrite silently.
 - **`ok:true`** → success, never retry. **`deduped` set with `memories_added=0`**
   (`saved>0`) → already known (success).
+- Non-empty **`updated`** lists existing memory ids changed by the decision matrix.
 - **`{ok:true, status:"accepted", pending_id}`** → buffered write finishing;
   success, searchable in seconds. Only **`ok:false`** is a real failure.
 - **Don't store** ephemeral chatter, secrets, or facts derivable from code/git.
@@ -83,7 +84,7 @@ get cut off; a capture postponed to "the end" is a capture lost.
 | Everything for a user (audit/count) | `list_memories` | no relevance ranking |
 | The graph around a memory | `get_memory_graph` | nodes + typed edges |
 | Unfinished reasoning to resume | `search_incomplete_thoughts` | check when re-entering a topic |
-| Outcome of a buffered write | `get_add_status` | pass the `pending_id` |
+| Outcome of a buffered write | `get_add_status` | pass `pending_id` + your `actor_id` when RBAC is enabled |
 
 To correct or annotate a stored fact, use `update_memory(memory_id, ...)` —
 it amends without deleting; history is preserved.
@@ -102,13 +103,17 @@ synthesized conclusion with SUPPORTS provenance edges from that evidence
 fact needs no session — `add_memory` it.
 
 ```
-think_start(session_id="<you choose>", initial_thought="<the question>")
-think_add(session_id, content="<a step>", parent_idx=<prev idx>)   # repeat
-think_recall(session_id, query="<known facts>", parent_idx=<idx>)  # evidence in
-think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...])  # REQUIRED before commit
-think_commit(session_id, user_id="claude")   # persists once, in seconds
+think_start(session_id="<you choose>", initial_thought="<the question>", actor_id="claude")
+think_add(session_id, content="<a step>", parent_idx=<prev idx>, actor_id="claude")
+think_recall(session_id, query="<known facts>", parent_idx=<idx>, actor_id="claude")
+think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...], actor_id="claude")
+think_commit(session_id, user_id="claude", actor_id="claude", group_id="<concrete group>")
 ```
-Reuse one `session_id`. `think_discard(session_id)` throws it away unsaved.
+Reuse one `session_id` and, with RBAC enabled, the same `actor_id` on every
+lifecycle call. A session id is not a credential. `think_discard` is likewise
+actor-bound. Historical pre-RBAC timeouts could auto-save incomplete work;
+permanent RBAC timeouts fail closed because no owner/group was supplied for a
+partial write.
 
 Worked episode: "pick a retry policy" → think_start with the question →
 think_add the observation ("outages last under a minute") → think_recall
@@ -183,3 +188,107 @@ search_memory(query="deploys", user_id="claude",
                 event_date: "2026-05-12T...", edge: "BECAUSE"}}
 ```
 RIGHT: "Related, from May 12: …" — WRONG: presenting the May row as June.
+
+## HelixDB v2.3.5 schema/query discipline
+
+Helixir is pinned to **Helix CLI v2.3.5** (the LMDB-era v2 engine). Do not run
+`helix update`, use a v3/hyperscale binary, or mix v3 deployment instructions
+into this repository: v3 has a different runtime and will not register this
+schema. The project contract is `helix.toml` at the repository root with
+`queries = "helixir/schema"`, `helixir/schema/schema.hx`, and
+`helixir/schema/queries.hx`.
+
+Before touching a schema or query:
+
+1. Read the relevant `helixir/doc/data-model.md` and `helixir/doc/architecture.md`.
+2. Make additive changes where possible. Existing populated nodes must not
+   receive a new non-nullable field without a migration plan; HelixDB does not
+   migrate existing data for us.
+3. Keep schema types exact and explicit. `id` is reserved; use domain keys such
+   as `group_id` or `assignment_id`. Node and edge types must match every
+   `N<>`, `Out<>`, `In<>`, `AddN<>`, and `AddE<>` use in HQL.
+4. Keep queries strongly typed and start each traversal from a source step.
+   Query names are API names and must match the Rust caller exactly. Use
+   `AddE<Kind>::From(source)::To(target)` with both endpoints; use `UPDATE` only
+   on nodes/edges, never vectors. `UpsertN` is available in the pinned v2.3.5
+   toolchain and is used only with a stable domain key.
+
+The safe deployment sequence is mandatory:
+
+```text
+helix --version                         # must report 2.3.5
+helix check                             # compile/type-check schema + queries
+helix backup <instance> -o <backup-dir> # snapshot before a schema transition
+# stop the instance, rebuild/recreate against the SAME persistent volume
+# deploy with the repository's configured v2 flow (`helix push <instance>`)
+# or the packaged `helixir-deploy` adapter when operating the self-hosted port
+# verify health and call a read-only query before enabling new features
+```
+
+Never deploy a changed schema directly to a live persistent volume without a
+backup. A query returning `NOT_FOUND` for a newly added RBAC query means the
+backend has the old schema; it is a deployment state, not permission to fall
+back to local files or silently disable authorization.
+
+## RBAC operating contract
+
+RBAC state is a graph in HelixDB and is the single source of truth for the CLI,
+MCP server, and Rust facade. There is no local policy file to edit or cache.
+RBAC is permanent. Bootstrap creates reserved `default` for pre-RBAC memories
+and trusted peers plus `onboarding` for newly discovered principals. The
+transition is checkpointed in HelixDB and resumes forward; authorization is
+deny-by-default and fail-closed.
+
+The graph contains `RbacConfig`, `RbacGroup`, `RbacDedupGroup`, and
+`RbacAssignment` nodes plus membership, memory-visibility, and memory dedup
+provenance edges. `Memory.user_id` remains the author/owner. At the API
+boundary, `actor_id` is the authenticated principal whose grants are checked
+and `user_id` is the target owner. MCP calls must provide `actor_id`.
+FastThink lifecycle calls (`think_start/add/recall/conclude/status/discard/commit`)
+must repeat that same actor; cross-principal session access is denied. Poll
+`get_add_status` with `actor_id`: only the pending owner, its creator, or a
+global admin may read it. Outbox payloads are owner/admin-only even when a
+moderator or viewer can read the owner's group memories, because a failed
+notice can contain the original raw input.
+Never let a caller change `user_id` to bypass an `actor_id` check. Helixir
+infers an omitted `group_id` only when exactly one reserved workspace is
+writable; ambiguous membership fails closed. Working-group writes must pass one
+concrete `group_id`; do not pass a `dedup_group_id` there. Only `default`
+preserves legacy dedup fingerprints.
+Only the bootstrap operator receives global admin; never grant every detected
+agent control-plane access.
+
+Active or historical membership in `default` or `onboarding` contributes to
+the principal registry. An
+administrator enrolls a new principal with `helixir rbac group add-user --group
+onboarding --user <id>`, then may assign other groups. `helixir rbac user list`
+projects users, active roles, assignment history, and Agent presence directly
+from HelixDB. Removing a group membership deactivates the grants but retains the
+User node and audit history; never maintain a second registry in local files.
+
+An optional dedup federation deliberately gives several groups one fingerprint
+domain and common visibility. Agents always address their concrete group;
+`RbacManager` resolves its current federation. Joining grants the federation's
+existing history. Leaving retains already-materialized memory-to-group edges,
+but future federation memories omit the departed group and its own future
+writes use a private group fingerprint. Never delete historical visibility
+edges or merge fingerprints across federation boundaries.
+
+Role semantics are fixed:
+
+- `admin`: global unrestricted read/write;
+- `teamlead`: read-only in assigned groups;
+- `groupadmin`: unrestricted read/write in assigned groups;
+- `moderator`: read/write in assigned groups;
+- `worker`: read in assigned groups and write only memories authored by self;
+- `viewer`: read-only in explicitly assigned groups.
+
+Use the `helixir rbac` CLI family for management (`bootstrap`, `status`,
+`group`, `dedup`, `grant`, `revoke`, `check`). Dedup management is
+`dedup create|list|attach|detach|delete`; it requires a global admin. Do not infer access from a memory's
+text, metadata, or the presence of a graph edge alone; resolve active
+assignments through `RbacManager`. Global admin is required for management once
+RBAC is enabled. The CLI principal comes from `HELIXIR_RBAC_ACTOR`; do not add
+or rely on a user-supplied actor flag. If the RBAC schema is absent, report
+deployment readiness and resume bootstrap after the schema is deployed; do not
+treat connection or permission errors as disabled RBAC.

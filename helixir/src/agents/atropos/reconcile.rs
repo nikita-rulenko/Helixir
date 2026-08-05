@@ -149,12 +149,10 @@ impl Atropos<'_> {
             }
 
             let all_resolve = decided.iter().all(|(_, v)| v.is_resolve());
-            if all_resolve {
-                if let Some((_, DrainVerdict::Resolve(label))) = decided.first() {
-                    self.tooling
-                        .resolve_memory_contradictions(&from_id, label)
-                        .await?;
-                }
+            if all_resolve && let Some((_, DrainVerdict::Resolve(label))) = decided.first() {
+                self.tooling
+                    .resolve_memory_contradictions(&from_id, label)
+                    .await?;
             }
             for (d, v) in &decided {
                 // If the group is mixed, nothing was retired — record as kept.

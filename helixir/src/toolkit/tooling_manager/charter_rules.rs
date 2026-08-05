@@ -158,7 +158,7 @@ impl ToolingManager {
                 context: None,
             };
             let (episode_id, _) = self
-                .store_new_memory(&memory, "helixir", &vector, &episode_tag)
+                .store_new_memory(&memory, "helixir", &vector, &episode_tag, None)
                 .await?;
             // Provenance: the episode SUPPORTS-links both disputed memories,
             // so a future "why does this rule exist" walks to the evidence.

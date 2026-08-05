@@ -98,10 +98,10 @@ Return a JSON object with:
                             llm_insights.get("intents").and_then(|v| v.as_array())
                         {
                             for intent in intents {
-                                if let Some(intent_str) = intent.as_str() {
-                                    if !result.detected_intents.contains(&intent_str.to_string()) {
-                                        result.detected_intents.push(intent_str.to_string());
-                                    }
+                                if let Some(intent_str) = intent.as_str()
+                                    && !result.detected_intents.contains(&intent_str.to_string())
+                                {
+                                    result.detected_intents.push(intent_str.to_string());
                                 }
                             }
                         }
@@ -110,10 +110,10 @@ Return a JSON object with:
                             llm_insights.get("concepts").and_then(|v| v.as_array())
                         {
                             for concept in concepts {
-                                if let Some(concept_str) = concept.as_str() {
-                                    if !result.concept_hints.contains(&concept_str.to_string()) {
-                                        result.concept_hints.push(concept_str.to_string());
-                                    }
+                                if let Some(concept_str) = concept.as_str()
+                                    && !result.concept_hints.contains(&concept_str.to_string())
+                                {
+                                    result.concept_hints.push(concept_str.to_string());
                                 }
                             }
                         }
@@ -122,10 +122,10 @@ Return a JSON object with:
                             llm_insights.get("expansions").and_then(|v| v.as_array())
                         {
                             for expansion in expansions {
-                                if let Some(expansion_str) = expansion.as_str() {
-                                    if !result.expanded_terms.contains(&expansion_str.to_string()) {
-                                        result.expanded_terms.push(expansion_str.to_string());
-                                    }
+                                if let Some(expansion_str) = expansion.as_str()
+                                    && !result.expanded_terms.contains(&expansion_str.to_string())
+                                {
+                                    result.expanded_terms.push(expansion_str.to_string());
                                 }
                             }
                         }

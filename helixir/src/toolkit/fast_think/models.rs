@@ -226,6 +226,7 @@ pub enum FastThinkError {
     CommitFailed(String),
     ThoughtNotFound,
     EntityNotFound,
+    Unauthorized,
 }
 
 impl std::fmt::Display for FastThinkError {
@@ -251,6 +252,7 @@ impl std::fmt::Display for FastThinkError {
             FastThinkError::CommitFailed(s) => write!(f, "Commit failed: {}", s),
             FastThinkError::ThoughtNotFound => write!(f, "Thought not found"),
             FastThinkError::EntityNotFound => write!(f, "Entity not found"),
+            FastThinkError::Unauthorized => write!(f, "FastThink session belongs to another actor"),
         }
     }
 }

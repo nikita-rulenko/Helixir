@@ -57,6 +57,10 @@ pub struct Clarification {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchMemoryResult {
     pub memory_id: String,
+    /// HelixDB primary key. Internal authorization/projection handle; never
+    /// exposed through the MCP response.
+    #[serde(skip)]
+    pub internal_id: Option<String>,
     pub content: String,
     pub score: f64,
     pub method: String,

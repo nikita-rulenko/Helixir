@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod core;
 pub mod db;
+pub mod installer;
 pub mod llm;
 pub mod mcp;
 pub mod toolkit;

@@ -64,6 +64,9 @@ async fn superseded_hub_ranks_below_its_correction() {
     let fresh_id = r.memory_ids[1].clone();
 
     client
+        .admin_as("codex")
+        .await
+        .expect("RBAC admin")
         .tooling()
         .record_supersession(&fresh_id, &stale_id, "e2e-92: endpoint moved")
         .await

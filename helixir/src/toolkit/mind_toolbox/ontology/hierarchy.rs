@@ -28,10 +28,10 @@ impl HierarchyTraverser {
         let mut subtypes = Vec::new();
 
         for concept in cache.values() {
-            if let Some(parent_id) = &concept.parent_concept {
-                if parent_id == concept_id {
-                    subtypes.push(concept.clone());
-                }
+            if let Some(parent_id) = &concept.parent_concept
+                && parent_id == concept_id
+            {
+                subtypes.push(concept.clone());
             }
         }
 

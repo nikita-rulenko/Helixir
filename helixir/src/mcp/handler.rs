@@ -13,6 +13,10 @@ use super::params::*;
 use super::prompts;
 use super::server::HelixirMcpServer;
 
+fn actorless_ingest_notifications_allowed(policy: Option<&crate::core::rbac::RbacPolicy>) -> bool {
+    policy.is_some_and(|policy| !policy.enabled)
+}
+
 impl HelixirMcpServer {
     /// Wrapper exposing the macro-generated `prompt_router()` across modules.
     /// Mirrors [`HelixirMcpServer::build_tool_router`] — `#[prompt_router]` emits
@@ -107,6 +111,13 @@ impl ServerHandler for HelixirMcpServer {
         if !crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
             return;
         }
+        // Logging notifications carry no request actor. Enabled RBAC must
+        // deliver completed writes only through actor-authorized status and
+        // outbox reads. Failure to load the policy also fails closed.
+        let policy = self.client().rbac().snapshot().await.ok();
+        if !actorless_ingest_notifications_allowed(policy.as_ref()) {
+            return;
+        }
         let peer = context.peer.clone();
         let mut rx = crate::toolkit::tooling_manager::ingest_buffer::subscribe_notify();
         tokio::spawn(async move {
@@ -196,6 +207,10 @@ impl ServerHandler for HelixirMcpServer {
                         "get_memory_graph",
                         "update_memory",
                         "list_memories",
+                        "list_users",
+                        "swarm_status",
+                        "resolve_contradiction",
+                        "agent_farewell",
                         "think_start",
                         "think_add",
                         "think_recall",
@@ -263,5 +278,24 @@ impl ServerHandler for HelixirMcpServer {
                 Some(json!({ "uri": uri })),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::actorless_ingest_notifications_allowed;
+    use crate::core::rbac::RbacPolicy;
+
+    #[test]
+    fn actorless_ingest_notifications_are_trusted_mode_only_and_fail_closed() {
+        let trusted = RbacPolicy::default();
+        assert!(actorless_ingest_notifications_allowed(Some(&trusted)));
+
+        let enabled = RbacPolicy {
+            enabled: true,
+            ..RbacPolicy::default()
+        };
+        assert!(!actorless_ingest_notifications_allowed(Some(&enabled)));
+        assert!(!actorless_ingest_notifications_allowed(None));
     }
 }

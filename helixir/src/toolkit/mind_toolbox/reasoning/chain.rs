@@ -296,7 +296,7 @@ impl ReasoningEngine {
             }
         }
 
-        let max_depth_reached = relations.iter().count();
+        let max_depth_reached = relations.len();
         let reasoning_trail = self.build_reasoning_trail(&relations);
 
         debug!(

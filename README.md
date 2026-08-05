@@ -16,7 +16,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-1.85+-orange?logo=rust" alt="Rust 1.85+"/>
+  <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
+  <img src="https://img.shields.io/badge/release-v0.14.0-2ea44f" alt="Release v0.14.0"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -43,7 +44,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.13)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.14)
 
 ---
 
@@ -66,7 +67,7 @@ Helixir gives AI agents **memory that persists between sessions** — and more t
 
 Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
 
-Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Cursor, Claude Desktop, Claude Code and any MCP-compatible client.
+Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Codex, Cursor, Claude Desktop, Claude Code and any MCP-compatible client. Since v0.14.0, graph-backed RBAC is permanent: HelixDB itself owns principals, groups, roles, memory visibility and dedup federations, while `default` preserves the former full-trust workspace and `onboarding` admits new agents safely.
 
 | Plain RAG memory | Helixir |
 |:-----------------|:--------|
@@ -101,12 +102,51 @@ Three principles drive every design decision; the long version lives in [`helixi
 curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install.sh | bash
 ```
 
-The script will:
-1. Check prerequisites (Rust, Docker)
-2. Clone the repo and build from source
-3. Start HelixDB via Docker
-4. Deploy the graph schema
-5. Generate MCP config for your IDE
+The script detects the host and downloads the matching release asset into a
+versioned `~/.helixir/versions/<version>` directory, switches the atomic
+`~/.helixir/current` pointer, then launches the guided `helixir onboard` flow.
+The recommended flow installs and starts Ollama on macOS or Linux and provisions
+`nomic-embed-text`. A user may instead explicitly configure an OpenAI-compatible
+remote embedding provider, model, endpoint, and key. The flow also recommends an
+optional local fallback LLM from detected RAM (compact `llama3.2:3b`, balanced
+`qwen2.5:7b`, or `gpt-oss:20b`). Model pulls retry safely and are verified through
+Ollama's local API before onboarding succeeds. The required NLI safety model is
+always installed and verified. The same plan provisions a persistent
+HelixDB volume with a pre-schema backup, central `helixir.toml`, and automatic
+Claude Code/Codex/Cursor registration.
+
+Onboarding distinguishes three backend contracts instead of guessing: a
+Helixir-managed local HelixDB, an existing separately managed local HelixDB,
+or an explicit remote endpoint. It then creates permanent graph-backed RBAC,
+placing legacy shared knowledge in reserved `default` and new principals in
+reserved `onboarding` before normal group assignment.
+
+Use `--dry-run` to inspect the plan. Automation can select exactly the same
+choices without prompts:
+
+```bash
+# Fully local defaults chosen for this machine
+helixir onboard --non-interactive
+
+# Explicit local fallback LLM
+helixir onboard --non-interactive --local-llm-model qwen2.5:7b
+
+# Keep the configured remote primary LLM; use local Nomic embeddings
+helixir onboard --non-interactive --no-local-llm
+
+# Explicit remote embeddings; provide the key through the protected config or env
+HELIX_EMBEDDING_API_KEY=... helixir onboard --non-interactive \
+  --remote-embeddings --embedding-provider openai \
+  --embedding-model text-embedding-3-small \
+  --embedding-url https://api.openai.com/v1
+```
+
+NLI and a verified embedding path are mandatory. Ollama plus
+`nomic-embed-text` is the default; remote embeddings must be selected and fully
+specified explicitly. `helixir doctor` sends a real embedding probe. If the
+remote path is missing or broken, it reports the failure, installs/starts Ollama,
+pulls Nomic, atomically switches the central config, and verifies the repair.
+`--no-local-llm` skips only the optional fallback LLM.
 
 Or install manually:
 
@@ -114,14 +154,16 @@ Or install manually:
 git clone https://github.com/nikita-rulenko/Helixir.git
 cd helixir
 
-make build          # Build release binary
-make setup          # Start HelixDB + deploy schema
-make config         # Print MCP config to paste into your IDE
+make build          # Build release binaries for this host
+make install        # Versioned install + guided onboarding
+make onboard        # Re-run onboarding
+make doctor         # Readiness report + automatic embedding recovery
 ```
 
 ### Prerequisites
 
-- **Rust 1.85+** — [rustup.rs](https://rustup.rs) (the default build includes the local NLI judge, which needs **1.88+**; `cargo build --no-default-features` gives a lean core that builds on 1.85)
+- **Rust 1.88+** — [rustup.rs](https://rustup.rs) (the local NLI judge is a
+  required component of every build)
 - **Docker** — for HelixDB ([install](https://docs.docker.com/get-docker/))
 - **HelixDB CLI v2.3.5 — the version matters.** Helixir targets the v2
   (LMDB) generation of HelixDB. CLI **v3.x is NOT compatible**: it runs a
@@ -404,7 +446,7 @@ more than it reserves.
 
 | Tool | What it does |
 |:-----|:-------------|
-| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` inline, or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`; already-known input is surfaced in `deduped`. Pass `agent_id` and the write auto-heartbeats your presence in the swarm |
+| `add_memory` | Extract atomic facts, deduplicate, store with entities and relations. Confirm-or-promise ack: `ok:true` with `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` under the ingest buffer. Charter conflicts come back in `needs_clarification`. Pass stable `actor_id`, the concrete working `group_id`, and optional `agent_id`; the write auto-heartbeats swarm presence |
 | `get_add_status` | Poll a buffered `add_memory` by its `pending_id` (`pending`/`processing`/`done`/`failed`) |
 | `search_memory` | Hybrid search (vector + BM25 + graph, PPR-ranked) with temporal `mode` (`recent`/`contextual`/`deep`/`full`) and `scope` (`personal`/`collective`/`all`). Every result carries provenance (`origin`, `edge`, `parent`, `ppr`) |
 | `connect_memories` | **"How is A related to B?"** — bidirectional path discovery between two concepts; each anchor is a free-text query **or** an exact `memory_id` |
@@ -415,8 +457,9 @@ more than it reserves.
 | `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
 | `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
 | `resolve_contradiction` | Answer a `contradiction_review` notice: `confirm` (my memory stands), `retract` (the disputing memory supersedes mine — history preserved) or `preference` (both coexist). Non-destructive in every branch |
+| `agent_farewell` | Mark a one-shot agent as done in the swarm roster without changing authorship provenance |
 | `update_memory` | Modify existing memory content |
-| `search_incomplete_thoughts` | Find auto-saved incomplete FastThink sessions |
+| `search_incomplete_thoughts` | Find historical incomplete FastThink memories created before permanent RBAC |
 
 ### FastThink (working memory)
 
@@ -434,7 +477,10 @@ Isolated scratchpad for complex reasoning. Nothing pollutes long-term memory unt
 
 **Flow:** `think_start` &#8594; `think_add` (repeat) &#8594; `think_recall` (optional) &#8594; `think_conclude` &#8594; `think_commit`
 
-If a session times out, partial thoughts are auto-saved with an `[INCOMPLETE]` tag and recoverable via `search_incomplete_thoughts`.
+If a session times out, permanent RBAC keeps the scratchpad isolated and
+fails closed because no owner/group was supplied for an automatic write.
+Discard and restart it explicitly. Historical `[INCOMPLETE]` memories remain
+recoverable via `search_incomplete_thoughts`.
 
 ---
 
@@ -446,6 +492,15 @@ Beyond the MCP server, the `helixir` binary drives and monitors the generative a
 helixir setup                          # interactive: configure + wire the MCP server into
                                        #   Claude Code / Claude Desktop / Cursor / Gemini CLI
 helixir mode                           # show the privilege tier (solo | collective | insights)
+helixir onboard                        # backend, models, RBAC, MCP, skills, doctor
+helixir rbac bootstrap --operator root --principal codex --principal claude
+helixir rbac status --json              # inspect the HelixDB-backed RBAC graph
+helixir rbac group create --id alpha --name "Alpha team"
+helixir rbac group add-user --group onboarding --user alice --role worker
+helixir rbac group add-user --group alpha --user alice --role worker
+helixir rbac grant --user root --role admin
+helixir rbac enable                     # enable an already prepared custom policy
+helixir rbac check --user alice --action read --owner bob
 helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
 helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
 helixir categories                     # the category dictionary + member counts (coverage)
@@ -471,16 +526,53 @@ helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-
 #   hot-reloads running MCP/gateway processes via SIGHUP — the client is rebuilt
 #   from the re-read file and swapped atomically, no Claude Desktop reboot.
 #   daemon/watch hold deeper snapshots and are listed as restart-to-apply.
+#   get/get --raw and set confirmations redact every *_key, *_token,
+#   *_password, *_secret, and *_credential field.
 ```
+
+RBAC grants, groups, audit rows, and migration state live in HelixDB. The
+CLI is only a management client over the same HQL contract used by MCP and the
+library; there is no authoritative local policy file. RBAC is permanent.
+Bootstrap creates reserved `default` for all pre-RBAC memories and trusted
+peers (equal group-admin access preserves the old shared data plane) plus
+reserved `onboarding` for newly discovered principals. One operator remains
+the only initial global admin. The fresh/legacy branch and migration phase are
+checkpointed, so interrupted work resumes instead of disabling enforcement.
+
+The `onboarding` membership is the admission event for new principals;
+historical membership in either reserved workspace remains visible in the
+registry. Administrators
+can inspect the graph-derived registry and assign working groups without a
+second policy store:
+
+```bash
+helixir rbac user list --json
+helixir rbac user show --user alice --json
+helixir rbac group add-user --group onboarding --user alice --role worker --json
+helixir rbac group add-user --group development --user alice --role worker --json
+helixir rbac group remove-user --group development --user alice --json
+```
+
+Removal deactivates assignments but retains the User node and role history.
+The reserved `default` and `onboarding` groups cannot be deleted or placed in a
+dedup federation, and policy refuses to revoke its last global administrator.
+When enforcement is enabled, management commands resolve the authenticated CLI
+principal from `HELIXIR_RBAC_ACTOR`; there is intentionally no `--actor` escape
+hatch. A global `admin` is required for grants, revocations, group changes, and
+role/roster inspection.
 
 The gateway deliberately assumes a trusted network by default: it listens on
 `gateway.default_bind` (`0.0.0.0:8765`) without authentication. To enable
 bearer authentication, set `gateway.auth_token` with `helixir config set` or
-provide `HELIXIR_GATEWAY_TOKEN`, then run `helixir config apply`. The token is
-redacted from `helixir config get` output. `helixir gateway start --require-auth`
+provide `HELIXIR_GATEWAY_TOKEN`, then run `helixir config apply`. Tokens and
+provider credentials are redacted from both resolved and raw config output.
+`helixir gateway start --require-auth`
 is the fail-closed variant: it serves `503` until a token is configured.
 
-`helixir setup` is the fastest way to connect Helixir to your agents — it writes the `helixir-local` MCP entry into each client's config non-destructively (with a `.bak` backup), so you can skip the manual JSON below.
+`helixir onboard` is the complete path: it provisions dependencies, bootstraps
+RBAC, writes a stable per-client `HELIXIR_RBAC_ACTOR`, installs the canonical
+Helixir Agent Skill, registers MCP non-destructively, and finishes with doctor.
+`helixir setup` remains the lightweight MCP-only path.
 
 ## Integration
 
@@ -561,7 +653,7 @@ All settings are passed as environment variables.
 |:---------|:--------|:------------|
 | `HELIXIR_MODE` | `solo` | Privilege tier: `solo` (private, no cross-user), `collective` (shared consensus), `insights` (+ generative Moirai) |
 | `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
-| `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name |
+| `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name; Cerebras is pinned to `gpt-oss-120b` |
 | `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
@@ -665,6 +757,8 @@ helixir-rs/
   helixir/
     src/
       bin/
+        helixir.rs              # Thin CLI bootstrap/dispatch root
+        helixir/                # Domain CLI modules (each <= 500 lines)
         helixir_mcp.rs          # MCP server entry point
         helixir_deploy.rs       # Schema deployment CLI
         helixir_bench.rs        # Latency bench + live probes (--chain/--add/--connect-probe)
@@ -677,8 +771,8 @@ helixir-rs/
         mind_toolbox/           # Search engine, entity, ontology, reasoning
         fast_think/             # Working memory (petgraph-based)
     schema/
-      schema.hx                 # Node/edge definitions (18 nodes + 5 vectors, 37 edges)
-      queries.hx                # HQL queries (153)
+      schema.hx                 # Node/edge definitions (22 nodes + 5 vectors, 29 edges)
+      queries.hx                # HQL queries (170)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)

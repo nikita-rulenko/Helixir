@@ -1,7 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.3.1-fix` plus the in-progress `dev` branch.
-> Last verified: 2026-05-12._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -33,10 +32,10 @@ Helixir is a graph-based persistent memory layer for LLM agents. Specifically:
   / CROSS_CONTRADICT / NOOP / DELETE`. The engine decides whether the new
   fact is a duplicate, a refinement, a replacement, a contradiction, or a
   cross-user echo.
-- **A shared knowledge graph across users**, not a per-user silo. A fact
-  known by two users is stored once and linked to both via `HasMemory`
-  edges; `user_count` tracks the count. Both users can search collectively,
-  detect controversies, and benefit from each other's dedup.
+- **A shared knowledge graph across users**, not a chat-history silo. Each
+  author keeps a provenance-preserving `Memory` node; equivalent nodes share a
+  scoped `content_key` consensus group. Disabled mode shares globally. Enabled
+  RBAC shares only inside a concrete group or an explicit dedup federation.
 - **A two-tier memory system**: long-term graph in HelixDB, plus an
   in-process FastThink scratchpad (`petgraph`) for ephemeral reasoning that
   never reaches HelixDB unless the agent calls `think_commit`.
@@ -99,6 +98,7 @@ Releases as evidence of the project's direction. Source:
 | v0.3.1 | 2026-03-27 | Reasoning quality | `get_chain` traversal grew from 3 to 8 edge directions; reasoning-chain hit rate rose from ~40% to ~95%. New `deep` chain mode (BFS to depth 8). Silent `break` on DB error replaced with `warn + continue`. Extraction now retries on invalid JSON / zero memories and falls back to single-memory storage. Coherence guard: `is_coherent_memory` + `split_incoherent_memory` prevents `UPDATE` from merging contradictory clauses about distinct subjects. |
 | v0.3.1-fix | 2026-03-27 | Relation pipeline | Three independent root causes for `relations_created: 0`: Cerebras response_format (`"json"` → `"json_object"`); `enrich_memory_relations` now runs for all decisions except `NOOP/DELETE` (previously only `ADD/SUPERSEDE`); extraction-relation index mapping switched from sequential to `HashMap<usize, String>` so non-ADD operations no longer shift indices. |
 | (in `dev`) | 2026-05-12 | Audit-driven hardening | CI on push/PR (#5). Blanket `#![allow]` removed (#6). Embedding URL single-source (#7). Self-loop guard in reasoning (#16). `(id, content)` pair consistency in chain projection (#17). Edge deduplication in `get_memory_graph` (#18). `list_memories` empty-user graceful path (#19). Real fallback score in `search_by_concept` (#22). |
+| v0.14.0 | 2026-08-05 | Governed shared memory | Permanent graph-backed RBAC with reserved `default` and `onboarding` workspaces; group roles and dedup federations; administrative CLI; transactional guided installer with mandatory NLI and verified embeddings; scan-free hot projections and supervised HelixDB v2.3.5 memory envelope; repository-wide 500-line module budget. |
 
 Three sustained quality vectors are visible across these releases:
 
@@ -179,24 +179,29 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
 
 ### 3.4 Shared memory across users (Hive Memory)
 
-- **What.** A fact is stored once as a `Memory` node. Every user who
-  knows it is linked to that single node by a `User -[HasMemory]-> Memory`
-  edge; `user_count` tracks the count.
-- **How.** Phase 2 of `add_memory` searches `scope=collective`. If a
-  matching fact already exists for another user, the decision engine emits
-  `LINK_EXISTING` and the background fan-out (`link_user_to_memory_bg`)
-  adds the new `HasMemory` edge and bumps `user_count`. Cross-user
-  contradictions are wired through `CROSS_CONTRADICT`.
+- **What.** Each author retains a personal `Memory` node and `HAS_MEMORY`
+  provenance. Equivalent facts share a `content_key`; collective presentation
+  collapses that fingerprint group and derives its holder count.
+- **How.** Phase 2 of `add_memory` searches collective candidates inside the
+  resolved security domain. Pre-RBAC data retains the legacy fingerprint only
+  inside reserved `default`; new data uses either `group:<group_id>` or
+  `dedup:<dedup_group_id>`. The same domain
+  salts `content_key`, filters decision candidates, and constrains Atropos
+  paraphrase merging. Cross-domain contradiction and reasoning edges are not
+  created by the write pipeline.
 - **Why.** Memory layers built per-user silo can only ever recall what a
   given user said. A shared knowledge graph can answer "what does anyone
   here know about X?" and "who disagrees about Y?" with the same primitives
   it already uses for the single-user case. Privacy semantics live at the
   `scope` parameter and at what the agent chooses to ingest, not at the
   data layer.
-- **Alternative rejected.** Per-user isolation. Considered and rejected
-  for v0.2.0 — see `architecture.md §4 "Shared memory across users"` for
-  the invariant statement, and issue #21 (closed `not planned`) for the
-  case where this design was mistaken for a privacy leak by an auditor.
+- **Authorization boundary.** `MEMORY_IN_RBAC_GROUP` edges materialize who may
+  read each node. An optional `RbacDedupGroup` deliberately federates multiple
+  groups. Removing a group preserves old edges but prevents future federation
+  memories from receiving that group's edge.
+- **Alternative rejected.** Accidental global dedup under enabled RBAC. It can
+  reveal that another isolated group holds the same fact and lets one group's
+  curation mutate another group's knowledge.
 
 ### 3.5 Reified justifications: `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS`
 

@@ -37,6 +37,8 @@ async fn atropos_surfaces_the_one_real_thread() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     let user = format!("cap_{run}");
@@ -64,15 +66,11 @@ async fn atropos_surfaces_the_one_real_thread() {
     // Run-unique categories — their member sets are exactly this test's tags, so
     // the polluted global graph can't contaminate the routing.
     let cat = |n: &str| format!("{n}-{run}");
-    let ens = |name: String| {
-        let client = &client;
-        async move {
-            client
-                .tooling()
-                .ensure_category(&name, "domain", "")
-                .await
-                .expect("cat")
-        }
+    let ens = |name: String| async move {
+        tooling
+            .ensure_category(&name, "domain", "")
+            .await
+            .expect("cat")
     };
     let weather = ens(cat("weather")).await;
     let crop = ens(cat("crop")).await;
@@ -82,11 +80,9 @@ async fn atropos_surfaces_the_one_real_thread() {
 
     // Tag so consecutive domains overlap on the spanning memory — the bridges.
     let tag = |mid: &str, cid: &str| {
-        let client = &client;
         let (mid, cid) = (mid.to_string(), cid.to_string());
         async move {
-            client
-                .tooling()
+            tooling
                 .tag_memory(&mid, &cid, 90, "test")
                 .await
                 .expect("tag")
@@ -111,7 +107,7 @@ async fn atropos_surfaces_the_one_real_thread() {
         (price.clone(), "price".to_string()),
     ];
 
-    let insights = client
+    let insights = admin
         .atropos()
         .curate(&candidates, &candidates, universe, 5)
         .await

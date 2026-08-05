@@ -177,9 +177,7 @@ impl<'a> Daemon<'a> {
 
             // Paraphrase backstop (#43/#55) — merge same-meaning facts into one
             // fingerprint group, NLI-gated (never merges a contradiction). Runs
-            // on its own cadence when the local NLI model is installed
-            // (collective/insights). Compiled out without the `nli` feature.
-            #[cfg(feature = "nli")]
+            // on its own cadence when the required local NLI model is installed.
             if due(cfg.merge_every, pass) && crate::llm::nli::status().installed {
                 let mlim = self.tooling.config.moira.daemon.merge_limit;
                 let mcos = self.tooling.config.moira.daemon.merge_cosine_threshold;

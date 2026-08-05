@@ -91,6 +91,15 @@ impl Atropos<'_> {
                 if n.memory_id.starts_with("raw_") {
                     continue;
                 }
+                let neighbour_domain = crate::core::RbacManager::new(self.tooling.db.clone())
+                    .memory_security_domains(std::slice::from_ref(&n.memory_id))
+                    .await
+                    .ok()
+                    .and_then(|domains| domains.get(&n.memory_id).cloned())
+                    .unwrap_or_else(|| "unknown".to_string());
+                if brief.security_domain != neighbour_domain {
+                    continue;
+                }
                 let pair = order_pair(&brief.memory_id, &n.memory_id);
                 if !seen.insert(pair) {
                     continue;

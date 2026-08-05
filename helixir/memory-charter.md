@@ -13,6 +13,16 @@ This charter governs what Helixir may decide on its own when writing
 memories, what it must escalate to the agent (and through the agent — to the
 human), and what it must never do. Three layers, strongest first.
 
+## 0. RBAC boundary
+
+The charter governs memory curation, not authorization. RBAC is stored in the
+HelixDB graph and is the single source of truth for CLI, MCP, and Rust. The
+decision engine must never grant, revoke, or infer access: `LINK_EXISTING` and
+`CROSS_CONTRADICT` preserve cross-user provenance but do not grant visibility.
+`actor_id` is the authenticated principal; `user_id` is the memory owner or
+target. Authorization is resolved by `RbacManager` before the curation pipeline
+is called, and enabled RBAC fails closed on database errors.
+
 ## 1. Constitution (immutable — changed only by explicit human edit)
 
 These rules are not available to charter self-learning and override

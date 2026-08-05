@@ -32,28 +32,33 @@ jobs:
             rustflags: -C link-arg=-Wl,-rpath,$ORIGIN
 
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             artifact: helixir-linux-arm64
-            cross: true
-            # Lean core: ort (NLI) prebuilts are unreliable for this target and
-            # the cross container has no target OpenSSL — vendored-tls compiles
-            # OpenSSL from source so the artifact is self-contained.
-            flags: --no-default-features --features vendored-tls
+            # Native ARM runner + Microsoft's pinned ARM64 runtime: every
+            # release artifact includes the mandatory NLI capability.
+            flags: --features vendored-tls
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-linux-aarch64-1.24.2.tgz
+            ort_sha: 6715b3d19965a2a6981e78ed4ba24f17a8c30d2d26420dbed10aac7ceca0085e
+            ort_dir: onnxruntime-linux-aarch64-1.24.2
+            rustflags: -C link-arg=-Wl,-rpath,$ORIGIN
 
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: helixir-macos-x86_64
-            # Lean core: ort ships no prebuilt ONNX Runtime for Intel macOS
-            # (same posture as CI's macos job). NLI stays a compile-time opt-in.
-            flags: --no-default-features
+            flags: ''
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-universal2-1.23.2.tgz
+            ort_sha: 49ae8e3a66ccb18d98ad3fe7f5906b6d7887df8a5edd40f49eb2b14e20885809
+            ort_dir: onnxruntime-osx-universal2-1.23.2
+            rustflags: -C link-arg=-Wl,-rpath,@loader_path
 
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: helixir-macos-arm64
-            # Lean core: ort's download-binaries step links flakily on the
-            # macOS arm64 runner (clang_rt.osx path varies by image) — the
-            # same reason CI's macos job builds --no-default-features.
-            flags: --no-default-features
+            flags: ''
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-universal2-1.23.2.tgz
+            ort_sha: 49ae8e3a66ccb18d98ad3fe7f5906b6d7887df8a5edd40f49eb2b14e20885809
+            ort_dir: onnxruntime-osx-universal2-1.23.2
+            rustflags: -C link-arg=-Wl,-rpath,@loader_path
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -89,7 +94,11 @@ jobs:
         shell: bash
         run: |
           curl -fsSL --retry 5 --retry-delay 5 -o ort-archive "${{ matrix.ort_url }}"
-          echo "${{ matrix.ort_sha }}  ort-archive" | sha256sum -c -
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            echo "${{ matrix.ort_sha }}  ort-archive" | shasum -a 256 -c -
+          else
+            echo "${{ matrix.ort_sha }}  ort-archive" | sha256sum -c -
+          fi
           case "${{ matrix.ort_url }}" in
             *.tgz) tar xzf ort-archive ;;
             *.zip) python -m zipfile -e ort-archive . ;;
@@ -135,11 +144,14 @@ jobs:
           cp target/${{ matrix.target }}/release/helixir-mcp${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-deploy${{ matrix.ext || '' }} dist/
           cp -r schema dist/
+          cp helix.toml dist/
+          cp -r skills dist/
           # #80: full-feature artifacts carry the ONNX Runtime next to the
           # binaries (linux links with rpath $ORIGIN; windows finds the DLL
           # in the exe directory). Keep them together when relocating.
           if [ -n "${ORT_LIB_LOCATION:-}" ]; then
             cp -a "$ORT_LIB_LOCATION"/libonnxruntime*.so* dist/ 2>/dev/null || true
+            cp -a "$ORT_LIB_LOCATION"/libonnxruntime*.dylib dist/ 2>/dev/null || true
             cp "$ORT_LIB_LOCATION"/onnxruntime.dll dist/ 2>/dev/null || true
           fi
           cd dist
@@ -196,8 +208,18 @@ jobs:
         with:
           path: artifacts
 
+      - name: Create release checksums
+        shell: bash
+        run: |
+          : > artifacts/SHA256SUMS
+          while IFS= read -r -d '' file; do
+            sha256sum "$file" | sed "s#  .*#  $(basename "$file")#" >> artifacts/SHA256SUMS
+          done < <(find artifacts -type f -name '*.tar.gz' -print0)
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/SHA256SUMS
           generate_release_notes: true

@@ -1,7 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.13.1` plus `codex/refactor-architecture-audit`.
-> Last verified: 2026-07-18._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 ## 1. Stance
 
@@ -27,9 +26,9 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (v0.13.1 + refactor audit):** 196 unit tests with default features
-(193 without the opt-in `nli` feature; `cargo test --lib`, run in CI) + **38
-HELIX_E2E-gated e2e suites** in `helixir/tests/*_e2e.rs` (mcp_*, read_path,
+**Current (`v0.14.0` working tree):** 266 library unit tests plus 17 CLI tests
+(`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
+`helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
 E2E are run by hand (not in CI yet); the manual recipe lives in the suites'
@@ -39,6 +38,28 @@ The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+The issue #89 resource regression is additionally guarded by live, disposable
+HelixDB soaks over a cold backup. Primary-key graph/RBAC projections must avoid
+the multi-MiB-per-call scan amplification; the remaining upstream v2.3.5
+`SearchV` high-water retention must stay inside the managed 3 GiB envelope and
+Hygieia must restart the disposable container before OOM without losing the
+volume. The one-way RBAC migration may perform only two projected memory-ID
+passes. `tools/memprobe.py --dump-to` captures private checksummed arena dumps
+and `--analyze-dump` reports structural repetition without emitting recovered
+data. The live RBAC cache suite performs 1,000 revision checks and then proves
+that a committed grant and revocation invalidate the process cache immediately.
+
+NLI is part of every build. Unit coverage verifies host-variant digest
+availability and the contradiction/paraphrase readiness contract; installer
+coverage requires NLI download before doctor, and doctor fails closed when the
+model is missing. CI runs the same full NLI-enabled surface on Ubuntu and macOS.
+
+`tests/rbac_e2e.rs` is an ignored, enabled-state live contract. It never turns
+RBAC off. It covers federated fingerprint equality, isolated-group inequality,
+materialized common visibility, viewer denial, detach-with-history, future
+isolation, historical in-place update denial, join backfill, cleanup, and the
+invariant that RBAC remains enabled.
 
 ### Unit-test distribution
 
@@ -52,7 +73,7 @@ worker while swapping its `ToolingManager`.
 | DB client | `src/db/client.rs` | 2 | Constructor works; `from_env` constructor works. |
 | LLM decision | `src/llm/decision/engine.rs` | 6 | Builder constructors, cross-user prompt branches. |
 | LLM extractor | `src/llm/extractor.rs` | 1 | `ExtractionResult` serializes round-trip. |
-| LLM factory | `src/llm/factory.rs` | 4 | Constructs cerebras/ollama; unknown provider panics. |
+| LLM factory | `src/llm/factory.rs` | 10 | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
 | Helixir client | `src/core/helixir_client.rs` | 3 | Constructor, env constructor, config access. |
 | Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | 3 | `should_chunk`, Cyrillic split, semantic split. |
 | Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | 4 | Map preference, map skill, no-match, case-insensitive. |
@@ -60,6 +81,9 @@ worker while swapping its `ToolingManager`.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
+| Installer | `src/installer/` | 36 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
+| CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
+| Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
 ### Integration / E2E
 
@@ -147,13 +171,11 @@ before relying on it):
 
 ```
 cargo fmt --all -- --check
-cargo clippy --all-targets               # non-strict; warnings allowed for now
+cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps --document-private-items  # with RUSTDOCFLAGS=-D warnings
 cargo test --lib
-cargo build --locked                     # MSRV job pinned in CI
+cargo check --all-targets                 # MSRV 1.88 job pinned in CI
 ```
-
-If `clippy` is later promoted to `-D warnings`, the tier-2 tests above stop
-being regression bait.
 
 ### Tier 4 — refuse
 
@@ -206,3 +228,25 @@ key** — passing proves the read path makes zero LLM calls:
 Run via the commands in the root README §Development. Quality bars are
 regression guards set slightly below measured baselines; raising the
 baselines is feature work, not test work.
+
+## RBAC coverage
+
+The RBAC unit matrix in `core::rbac` and `core::rbac_compat` covers all six
+roles, deny-by-default, worker authorship, viewer write denial, global admin
+bypass, cross-group isolation, single-reserved-workspace routing, ambiguous
+write denial, and `default` legacy-fingerprint preservation. Installer tests
+require both reserved groups, active migration state, registry coverage, and
+legacy-memory coverage before the profile is ready. CLI tests cover stable
+parsing without any disable escape, while the repository-wide module
+budget is enforced independently by `tests/module_budget.rs`.
+
+The live enabled-state suites keep RBAC on throughout. `rbac_e2e.rs` covers
+multi-group isolation and dedup-federation history. `rbac_secondary_e2e.rs`
+covers cross-principal FastThink lifecycle denial, pending owner/creator
+binding, private outbox reads, and global-admin-only low-level tooling. The CLI
+parser and pure policy matrix separately cover all roles, deny-by-default, and
+stable management syntax. `rbac_compat_e2e.rs` bootstraps twice, verifies full
+legacy-memory coverage, denies pre-onboarding group admission, projects and
+retains registry history, validates fresh/legacy convergence, and leaves
+enforcement enabled. `HELIXIR_RBAC_ACTOR` is the CLI management identity;
+caller-supplied `--actor` impersonation is rejected.

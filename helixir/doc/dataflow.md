@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 This document walks the two pipelines that matter most:
 
@@ -14,6 +14,33 @@ welded together.
 ---
 
 ## 1. `add_memory` pipeline
+
+When RBAC is enabled, the facade authorizes `(actor_id, owner_id, group_id)`
+and resolves a write domain before extraction. A private group uses
+`rbac:group:<id>` and a federated group uses `rbac:dedup:<id>`. The reserved
+`default` workspace alone keeps the legacy unsalted domain. The domain filters both personal
+recall and Phase-2 collective candidates, and is stored as `Memory.rbac_scope`.
+After the decision, group visibility is materialized with
+`MEMORY_IN_RBAC_GROUP`; federation provenance uses
+`MEMORY_IN_RBAC_DEDUP_GROUP`.
+
+An omitted `group_id` is resolved server-side only when the actor can write to
+exactly one reserved workspace in the same policy snapshot used for
+authorization. Ambiguous membership fails closed. `default` keeps the legacy
+fingerprint and materializes `MEMORY_IN_RBAC_GROUP`; `onboarding` is an ordinary
+isolated RBAC scope for new principals.
+
+Federation membership is prospective. Detaching a group leaves historical
+memory-to-group edges intact but excludes it from future writes. An in-place
+update whose historical visibility differs from the current federation is
+forked into a new superseding version; direct mutation of that historical node
+is denied.
+
+Buffered completion payloads follow a stricter owner boundary than memory
+reads: `get_add_status` is limited to the write owner, creator, or a global
+admin, while outbox notices are limited to the owner or a global admin. The
+actor-less MCP logging broadcast is disabled under RBAC because no principal
+is available to authorize a connection-level notification.
 
 ### High-level shape
 
@@ -99,8 +126,9 @@ welded together.
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
- AddMemoryResult { memories_added, memory_ids, chunks_created,
-                   entities_extracted, relations_created, stats }
+ AddMemoryResult { memories_added, memory_ids, updated, deduped,
+                   chunks_created, entities_extracted, relations_created,
+                   stats, needs_clarification }
 ```
 
 ### Decision matrix
@@ -183,8 +211,9 @@ user, `user_count` on that Memory is incremented and the new user's
  │                                                                      │
  │    Under HELIXIR_RETRIEVAL_PROFILE=algo_opt (see architecture.md     │
  │    §7.2): (b) is HelixDB-native SearchBM25 fused via RRF k=60, and   │
- │    (c) runs levelwise-batched — one getConnectionsLevelBatch call    │
- │    per BFS level (batch_expansion.rs) instead of one call per node.  │
+ │    (c) carries HelixDB primary keys and uses                         │
+ │    getConnectionsByInternalId per frontier node. This avoids the     │
+ │    v2.3.5 label-scan arena retention of the former batch query.      │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -242,8 +271,10 @@ FastThink keeps a `petgraph::stable_graph::StableDiGraph<Thought, Relation>`
 in-process. Only `think_commit` mutates HelixDB.
 
 Each session pins the client and limits from the runtime generation in which
-it started. A SIGHUP publishes a new generation for future sessions without
-changing the meaning or persistence target of an active reasoning graph.
+it started. With RBAC enabled it also pins the authenticated `actor_id`, and
+every lifecycle operation validates that binding before exposing or mutating
+the scratchpad. A SIGHUP publishes a new generation for future sessions
+without changing an active reasoning graph.
 
 ```
  think_start ─► creates session in memory only
@@ -269,11 +300,10 @@ changing the meaning or persistence target of an active reasoning graph.
  think_discard ─► drops the in-memory graph; nothing touches HelixDB.
 ```
 
-Timeout behavior: each session has a wall-clock limit (`FastThinkLimits::mcp`
-defaults to 90 s, 150 thoughts). On timeout during `think_add`, the manager
-auto-runs `commit_partial`, tagging the resulting Memory with
-`context_tags: incomplete_thought`. The MCP tool `search_incomplete_thoughts`
-recovers them.
+Timeout behavior: each session has a configured wall-clock and thought limit
+(90 s / 150 thoughts by default). Permanent RBAC returns an error and retains
+the bound scratchpad for explicit discard, because the lifecycle call has no
+concrete owner/group with which to authorize a partial persistent write.
 
 ---
 

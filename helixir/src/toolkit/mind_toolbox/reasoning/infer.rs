@@ -11,6 +11,9 @@ use tracing::{debug, info, warn};
 use super::engine::ReasoningEngine;
 use super::types::{ReasoningError, ReasoningRelation, ReasoningType};
 
+type RelationCandidate = (String, String);
+type RelationBatchItem = (String, String, Vec<RelationCandidate>);
+
 impl ReasoningEngine {
     pub async fn infer_relations(
         &self,
@@ -131,12 +134,12 @@ Rules:
     /// giant prompt. Same edges as the per-atom path; O(1) calls instead of O(N).
     pub async fn infer_relations_batch(
         &self,
-        items: &[(String, String, Vec<(String, String)>)],
+        items: &[RelationBatchItem],
     ) -> Result<Vec<ReasoningRelation>, ReasoningError> {
         let Some(ref llm) = self.llm_provider else {
             return Ok(Vec::new());
         };
-        let active: Vec<&(String, String, Vec<(String, String)>)> =
+        let active: Vec<&RelationBatchItem> =
             items.iter().filter(|(_, _, c)| !c.is_empty()).collect();
         if active.is_empty() {
             return Ok(Vec::new());
@@ -238,7 +241,7 @@ fn extract_json_array(response: &str) -> Option<Vec<serde_json::Value>> {
 /// OWN candidate list. Backs [`ReasoningEngine::infer_relations_batch`].
 async fn infer_relations_chunk(
     llm: &dyn crate::llm::providers::base::LlmProvider,
-    chunk: &[&(String, String, Vec<(String, String)>)],
+    chunk: &[&RelationBatchItem],
 ) -> Vec<ReasoningRelation> {
     let system_prompt = r#"You connect NEW memories to their candidate existing memories with typed logical edges.
 

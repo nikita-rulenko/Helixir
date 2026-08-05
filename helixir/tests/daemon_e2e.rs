@@ -31,6 +31,7 @@ async fn daemon_on_call_runs_exactly_one_pass() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
 
     let run = token();
     let user = format!("daem_{run}");
@@ -62,7 +63,7 @@ async fn daemon_on_call_runs_exactly_one_pass() {
 
     let mut passes = 0u64;
     let mut last_pass_no = 0u64;
-    client
+    admin
         .daemon()
         .run(cfg, |pass, _run| {
             passes += 1;

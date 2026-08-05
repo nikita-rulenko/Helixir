@@ -124,6 +124,7 @@ impl SearchEngine {
             .into_iter()
             .map(|r| UnifiedSearchResult {
                 memory_id: r.memory_id,
+                internal_id: None,
                 content: r.content,
                 score: r.score as f32,
                 method: "vector".to_string(),

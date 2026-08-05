@@ -12,6 +12,72 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.13.2 → v0.14.0 — the governed hive
+
+v0.14.0 is a one-way transition to permanent graph-backed RBAC. There is no
+disabled profile or rollback switch. HelixDB is the single source of truth for
+principals, roles, groups, memory visibility, dedup federations, audit history,
+and migration checkpoints.
+
+Bootstrap creates two reserved workspaces. `default` receives pre-RBAC memories
+and trusted peers as equal `groupadmin` members, preserving the old shared data
+plane without granting everyone control-plane admin. `onboarding` admits new
+principals before an administrator assigns working groups. Only the explicit
+operator receives global `admin`. The migration records
+`pending → migrating → active`, is idempotent and resumable, and never returns
+to disabled enforcement.
+
+Every MCP client must send its stable `actor_id`; `user_id` remains the memory
+owner. Working-group writes name a concrete `group_id`. Omission is accepted
+only when exactly one reserved workspace is writable; ambiguity fails closed.
+FastThink sessions, pending writes, admin handles, roster inspection, and Moirai
+surfaces enforce the same actor boundary. A timed-out FastThink session is not
+auto-persisted because the timeout path has no explicit owner/group context.
+
+Administrators use `helixir rbac user`, `helixir rbac group`, and
+`helixir rbac dedup`. A new principal first joins `onboarding`; removal
+deactivates grants while retaining the User node and role history. Federating
+groups shares deduplication and visibility for current members. Detaching is
+prospective: old group edges remain readable, while new writes return to the
+group-private scope. Historical federation memories fork through supersession
+instead of being mutated across a changed visibility set.
+
+### Safe schema and runtime transition
+
+This release requires schema contract `helixir-rbac-default-onboarding-v3`
+(170 HQL queries). Before replacing binaries:
+
+1. Stop writers and HelixDB.
+2. Create and verify a recoverable cold backup of the persistent volume.
+3. Confirm `helix --version` is exactly `2.3.5`, then run `helix check`.
+4. Rebuild/recreate the v2.3.5 container against the same volume.
+5. Verify `getHelixirSchemaVersion`, RBAC `enabled + active`, and read-only
+   memory/user counts before restarting writers.
+6. Install the new binaries, run `helixir doctor --json`, and restart every
+   long-lived MCP client so it reloads tool schemas and prompts.
+
+The installer distinguishes a Helixir-managed local database, an existing
+separately managed local database, and a remote database. Managed local
+transitions are backup-first and transactional. The product default remains
+port 6969; explicitly detected endpoints such as 6970 are preserved.
+
+### Required models and bounded HelixDB v2 memory
+
+NLI is mandatory in every build and installation. Embeddings must be either
+verified Ollama with `nomic-embed-text` or an explicit working
+OpenAI-compatible remote endpoint. If remote embedding recovery fails,
+`helixir doctor` visibly installs/starts Ollama, pulls Nomic, switches the
+central config atomically, and verifies the repair. Cerebras generation is
+pinned to `gpt-oss-120b`; Gemma is never selected by Helixir.
+
+Helixir v0.14.0 removes repeated label scans from hot graph/RBAC paths and
+caches an atomic policy snapshot by the graph-backed policy revision. HelixDB
+v2.3.5 `SearchV` still retains a smaller request high-water upstream, so managed
+containers use one visible core, eager mimalloc decommit, a 3 GiB hard cap, and
+Hygieia's volume-preserving pre-OOM restart. `helixir watch install` carries
+the manifest operator identity and deterministic Docker path into launchd or
+systemd.
+
 ## v0.4.x → v0.13.2 — schema note for v0.13.2
 
 Every release from v0.5.0 through v0.13.1 upgrades in place. v0.13.2 adds
@@ -21,6 +87,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.14.0** | The governed hive | Permanent graph-backed RBAC introduces reserved `default` and `onboarding`, group roles, dedup federations, actor-bound MCP/FastThink, administrative CLI, transactional onboarding, mandatory NLI plus verified embeddings, and bounded HelixDB v2.3.5 memory. **Cold-backup and deploy schema v3 before replacing binaries; then run doctor and restart every MCP client.** |
 | **v0.13.2** | The guarded reload | Hot reload now publishes one coherent runtime generation while one process-owned ingest worker follows the active client; an atomic `claimPendingInput` query prevents duplicate queue work across processes. **Back up the data volume and redeploy the schema** before replacing the binary, then restart MCP clients/gateways. Gateway bearer auth is optional and off by default; enable it with `gateway.auth_token`, `HELIXIR_GATEWAY_TOKEN`, or `helixir config`, and use `helixir gateway --require-auth` when startup must fail closed. |
 | **v0.13.1** | The honest valve | The Hygieia cache valve and `memprobe --reclaim` now ask cgroup reclaim for the FULL current charge instead of a fixed 1024MiB step — under-asking produced false "live heap" verdicts and premature restarts (#89 forensics). Restart a running `helixir watch` to pick it up. |
 | **v0.13.0** | The self-steering release | `helixir config get/set/edit/apply` hot-reloads running MCP/gateway processes via SIGHUP (client rebuilt from the re-read `helixir.toml`, swapped atomically) — **restart MCP clients once on this binary before your first `apply`** (older binaries exit on SIGHUP). Hygieia self-restarts the database container on genuine live-heap pressure (`watchdog.mem_restart_pct`, 92; needs `allow_container_restart`). linux-x86_64 + windows artifacts are full-featured again (NLI; the ONNX runtime ships in the tarball — keep it next to the binaries). `chunking.enable_embeddings` removed (the machinery was dead, #86). |

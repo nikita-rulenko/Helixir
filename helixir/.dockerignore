@@ -17,6 +17,7 @@ tests/
 
 # Documentation
 *.md
+!memory-charter.md
 docs/
 
 # Docker
@@ -32,4 +33,3 @@ docker-compose*.yml
 .env
 .env.*
 config.local.yaml
-

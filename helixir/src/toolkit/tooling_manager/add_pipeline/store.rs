@@ -21,12 +21,24 @@ use super::super::{ToolingError, ToolingManager};
 /// Normalization is byte-level (lowercase + whitespace-collapse): it groups exact
 /// restatements; semantic paraphrase stays the search/Atropos layer's job.
 pub(crate) fn content_key(text: &str, memory_type: &str) -> String {
+    content_key_scoped(text, memory_type, None)
+}
+
+pub(crate) fn content_key_scoped(
+    text: &str,
+    memory_type: &str,
+    fingerprint_scope: Option<&str>,
+) -> String {
     let normalized = text
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
     let mut hasher = Sha256::new();
+    if let Some(scope) = fingerprint_scope {
+        hasher.update(scope.as_bytes());
+        hasher.update([0u8]);
+    }
     hasher.update(memory_type.to_lowercase().as_bytes());
     hasher.update([0u8]);
     hasher.update(normalized.as_bytes());
@@ -40,6 +52,7 @@ impl ToolingManager {
         user_id: &str,
         vector: &[f32],
         context_tags: &str,
+        fingerprint_scope: Option<&str>,
     ) -> Result<(String, usize), ToolingError> {
         // Memory.user_id must always match the owning user: personal search (e.g. SmartTraversalV2)
         // filters on this field; empty values break isolation until backfilled.
@@ -64,6 +77,7 @@ impl ToolingManager {
         struct AddMemoryInput {
             memory_id: String,
             content_key: String,
+            rbac_scope: String,
             user_id: String,
             content: String,
             memory_type: String,
@@ -79,7 +93,8 @@ impl ToolingManager {
 
         let input = AddMemoryInput {
             memory_id: memory_id.clone(),
-            content_key: content_key(&memory.text, &memory.memory_type),
+            content_key: content_key_scoped(&memory.text, &memory.memory_type, fingerprint_scope),
+            rbac_scope: fingerprint_scope.unwrap_or("").to_string(),
             // Same string as linkUserToMemory — required for vector-hit user filtering.
             user_id: user_id.to_string(),
             content: memory.text.clone(),
@@ -105,7 +120,7 @@ impl ToolingManager {
 
         let response: AddMemoryResponse = self
             .db
-            .execute_query("addMemoryKeyed", &input)
+            .execute_query("addMemoryKeyedScoped", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
@@ -202,16 +217,15 @@ impl ToolingManager {
             }
         }
 
-        if let Some(ref context_tag) = memory.context {
-            if let Err(e) = self
+        if let Some(ref context_tag) = memory.context
+            && let Err(e) = self
                 .link_memory_to_extracted_context(&memory_id, context_tag)
                 .await
-            {
-                warn!(
-                    "Failed to link memory {} to context '{}': {}",
-                    memory_id, context_tag, e
-                );
-            }
+        {
+            warn!(
+                "Failed to link memory {} to context '{}': {}",
+                memory_id, context_tag, e
+            );
         }
 
         debug!("Stored new memory: {}", memory_id);
@@ -285,6 +299,7 @@ impl ToolingManager {
         user_id: &str,
         vector: &[f32],
         context_tags: &str,
+        fingerprint_scope: Option<&str>,
     ) -> Result<String, ToolingError> {
         let memory_id = format!(
             "raw_{}",
@@ -301,6 +316,7 @@ impl ToolingManager {
         struct Input {
             memory_id: String,
             content_key: String,
+            rbac_scope: String,
             user_id: String,
             content: String,
             memory_type: String,
@@ -316,7 +332,8 @@ impl ToolingManager {
 
         let input = Input {
             memory_id: memory_id.clone(),
-            content_key: content_key(&memory.text, "raw_input"),
+            content_key: content_key_scoped(&memory.text, "raw_input", fingerprint_scope),
+            rbac_scope: fingerprint_scope.unwrap_or("").to_string(),
             user_id: user_id.to_string(),
             content: memory.text.clone(),
             memory_type: memory.memory_type.clone(),
@@ -341,7 +358,7 @@ impl ToolingManager {
 
         let resp: Resp = self
             .db
-            .execute_query("addMemoryKeyed", &input)
+            .execute_query("addMemoryKeyedScoped", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
@@ -388,7 +405,7 @@ impl ToolingManager {
 
 #[cfg(test)]
 mod tests {
-    use super::content_key;
+    use super::{content_key, content_key_scoped};
 
     #[test]
     fn content_key_is_deterministic() {
@@ -431,5 +448,20 @@ mod tests {
         // Without the NUL separator, type="ab"+text="c" and type="a"+text="bc"
         // would hash the same concatenation. They must not collide.
         assert_ne!(content_key("c", "ab"), content_key("bc", "a"));
+    }
+
+    #[test]
+    fn content_key_is_isolated_by_rbac_dedup_scope() {
+        let text = "the deployment window starts at 20:00";
+        let development = content_key_scoped(text, "fact", Some("rbac:dedup:development"));
+        assert_eq!(
+            development,
+            content_key_scoped(text, "fact", Some("rbac:dedup:development"))
+        );
+        assert_ne!(
+            development,
+            content_key_scoped(text, "fact", Some("rbac:group:finance"))
+        );
+        assert_ne!(development, content_key(text, "fact"));
     }
 }

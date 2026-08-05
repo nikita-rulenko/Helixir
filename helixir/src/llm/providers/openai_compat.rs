@@ -263,6 +263,7 @@ mod tests {
         // `response_format` is omitted when not requested.
         let req = cerebras().build_request("sys", "usr", None);
         let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["model"], crate::DEFAULT_LLM_MODEL);
         assert!(
             v.get("thinking").is_none(),
             "cerebras must not send thinking"

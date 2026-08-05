@@ -7,10 +7,8 @@
 //!
 //! ```text
 //! HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
-//!   cargo test -p helixir --features nli --test nli_antimerge_e2e -- --ignored --nocapture
+//!   cargo test -p helixir --test nli_antimerge_e2e -- --ignored --nocapture
 //! ```
-#![cfg(feature = "nli")]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
@@ -40,6 +38,7 @@ async fn paraphrase_merge_never_unifies_contradiction() {
     }
 
     let client = HelixirClient::from_env().expect("from_env");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
     let run = token();
     let user_x = format!("antimerge_{run}_x");
     let user_y = format!("antimerge_{run}_y");
@@ -67,8 +66,8 @@ async fn paraphrase_merge_never_unifies_contradiction() {
         .next()
         .expect("a light memory id");
 
-    let ck_dark_before = client.tooling().content_key_of(&dark_id).await;
-    let ck_light_before = client.tooling().content_key_of(&light_id).await;
+    let ck_dark_before = admin.tooling().content_key_of(&dark_id).await;
+    let ck_light_before = admin.tooling().content_key_of(&light_id).await;
     assert_ne!(
         ck_dark_before, ck_light_before,
         "precondition: the two opposite prefs start in different fingerprint groups"
@@ -78,14 +77,14 @@ async fn paraphrase_merge_never_unifies_contradiction() {
     // genuinely evaluated by the NLI (not skipped as too-dissimilar).
     // Scan a bounded recent window — the just-added pair is the most recent, so
     // it is always in scope, and the test stays fast.
-    let summary = client
+    let summary = admin
         .atropos()
         .merge_paraphrases(50, 0.6)
         .await
         .expect("merge_paraphrases");
 
-    let ck_dark_after = client.tooling().content_key_of(&dark_id).await;
-    let ck_light_after = client.tooling().content_key_of(&light_id).await;
+    let ck_dark_after = admin.tooling().content_key_of(&dark_id).await;
+    let ck_light_after = admin.tooling().content_key_of(&light_id).await;
 
     // THE guarantee: opposite preferences must remain in separate groups.
     assert_ne!(

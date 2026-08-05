@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.3.1-fix`. Last verified: 2026-05-12._
+> _Reflects code as of `v0.14.0`. Last verified: 2026-08-05._
 
 ## 1. System context
 
@@ -29,9 +29,32 @@
    └──────────────────────┘                └────────────────────────────┘
 ```
 
-There is also a second binary `helixir-deploy` (used by `install.sh`, `make
-setup`, and Ansible) which pushes `schema.hx` and `queries.hx` to HelixDB over
-HTTP. It does not participate at runtime.
+There is also a second binary `helixir-deploy` (used by `install.sh` and `make
+setup`) which pushes `schema.hx` and `queries.hx` to HelixDB over HTTP. It does
+not participate at runtime.
+
+Installation is a control plane outside the runtime dependency stack:
+`src/installer/` detects machine state, builds a typed installation plan, and
+coordinates platform adapters through apply/rollback boundaries. Its client
+adapters use native Claude Code/Codex commands and strict Cursor JSON merges;
+provider secrets stay outside MCP entries. Embeddings are a closed choice:
+recommended local Ollama/Nomic, or an explicitly configured OpenAI-compatible
+remote provider. Model adapters install/start Ollama through platform-owned argv
+boundaries, wait for its official local API, and retry pulls before verifying
+Nomic plus any selected fallback LLM through `/api/tags`. They also pin the
+mandatory NLI download to an immutable model revision. Doctor probes the selected
+embedding endpoint and visibly repairs a broken remote path by installing
+Ollama/Nomic and atomically switching the central config. The provider
+factory pins Cerebras requests to `gpt-oss-120b`, while DeepSeek and Ollama
+retain independently configured model names. The
+backend adapter snapshots the persistent Docker volume before schema changes,
+and the manifest records the selected version/models/clients atomically. The
+CLI and a future native UI are frontends over this module; they must not own
+Docker, model-download, or MCP-client mutation policy themselves. The CLI root is
+thin; domain modules live under `src/bin/helixir/`. The same 500-line budget
+applies to every maintained Rust source file under `src/`, with
+`tests/module_budget.rs` preventing regressions. Large responsibilities are
+split into private submodules while their public facades remain stable.
 
 ## 2. Layers
 
@@ -102,10 +125,10 @@ bug to file — not a feature to copy.
 
 | Component | File / module | Owns |
 |---|---|---|
-| MCP server | `src/mcp/server.rs` | Tool dispatch, parameter typing, JSON responses |
+| MCP server | `src/mcp/server.rs`, `src/mcp/tools/` | Tool dispatch, parameter typing, JSON responses; memory tools are split by write, read, swarm, and graph responsibility |
 | MCP process runtime | `src/mcp/server.rs` | One ingest worker, hot-reload generations, optional gateway bearer authentication |
 | `HelixirClient` | `src/core/helixir_client.rs` | Public facade; nothing else may be a public entry point |
-| `HelixirConfig` | `src/core/config.rs` | Configuration shape + env parsing (currently partial, see #10) |
+| `HelixirConfig` | `src/core/config.rs`, `src/core/config/` | Configuration shape + env parsing (currently partial, see #10) |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
 | `ToolingManager` | `src/toolkit/tooling_manager/` | Pipeline orchestration; the only struct allowed to wire all sub-managers together |
 | `ChunkingManager` | `src/toolkit/mind_toolbox/chunking/` | Long-memory chunking (storage/reconstruction only — per-chunk vectors rejected in #86) |
@@ -113,11 +136,13 @@ bug to file — not a feature to copy.
 | `OntologyManager` | `src/toolkit/mind_toolbox/ontology/` | Concept hierarchy, classification, mapping |
 | `ReasoningEngine` | `src/toolkit/mind_toolbox/reasoning/engine.rs` | IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS edges and traversal |
 | `SearchEngine` | `src/toolkit/mind_toolbox/search/mod.rs` | All read paths: vector, BM25, hybrid, smart traversal, onto-search |
-| `FastThinkManager` | `src/toolkit/fast_think/` | Ephemeral reasoning sessions on `petgraph` |
+| `FastThinkManager` | `src/toolkit/fast_think/` | Ephemeral reasoning sessions on `petgraph`; lifecycle and persistence operations are separate private modules |
 | `LlmExtractor` | `src/llm/extractor.rs` | Prompted atomization + structured JSON parsing |
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
+| Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports, explicit embedding strategies; frontends and platform adapters meet here |
+| RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |
 
 ## 4. Cross-cutting concerns
 
@@ -149,33 +174,29 @@ bug to file — not a feature to copy.
   2. `lru::LruCache` inside `SearchEngine` (cache stats exposed via
      `SearchEngine::cache_stats`).
   3. `ReasoningEngine` warm-up cache (`warm_up_cache`, 500 entries).
+  4. `RbacManager` process cache, keyed by the graph-backed `RbacConfig`
+     revision. Every authorization still reads that one config row, so a
+     committed grant/revocation invalidates the cached atomic policy snapshot
+     immediately without a TTL or second ACL source.
 
   Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
   None are configurable from env or `HelixirConfig`.
 
-- **Shared memory across users (deduplicated knowledge graph).** A fact is
-  stored exactly once as a `Memory` node, regardless of how many users know it.
-  This is a load-bearing invariant for anyone reading API responses.
-
-  Each user that knows the fact is connected to the same node by a
-  `User -[HasMemory]-> Memory` edge. The node's `user_count` field tracks how
-  many users are linked.
+- **Shared memory across users (scoped deduplicated knowledge graph).** Each
+  author retains a provenance-preserving `Memory` node. Equivalent records
+  share a `content_key`; collective results collapse that fingerprint group
+  and derive its holder count.
 
   The flow that creates this in `add_memory`:
   1. New `add_memory` call hits `tooling_manager::add_pipeline`.
-  2. If the (content + embedding) closely matches an existing `Memory`, the
-     pipeline emits `emit_memory_deduplicated(target_id, user_id)` instead of
-     creating a new node (see `add_pipeline.rs:405`).
-  3. In a background task, `link_user_to_memory_bg(db, user_id, memory_id)`:
-     - `getUser` / `addUser` to make sure the User node exists,
-     - `linkUserToMemory` to add the `HasMemory` edge,
-     - `getMemoryUsers` to recount, then `updateMemoryUserCount` to persist
-       the new `user_count`.
+  2. Personal and collective candidate recall is restricted to the resolved
+    permanent security domain: reserved `default` for migrated legacy
+    fingerprints, otherwise a concrete group or explicit dedup federation.
+  3. Exact and NLI-confirmed consensus grouping may unify fingerprints only
+     inside that same domain.
 
   Consequences for API consumers:
-  - `list_memories(user_id=B)` legitimately returns memories whose serialised
-    `user_id` field is `A`, with `user_count >= 2`. Those records are linked
-    to `B` via `HasMemory`; the `user_id` field is just the original author.
+  - `Memory.user_id` is provenance, not authorization metadata.
   - `search_memory` honours a `scope` parameter:
     - `personal` — anchor the traversal on the caller's `HasMemory` edges.
     - `collective` / `all` — fan out across all `HasMemory` edges with
@@ -184,8 +205,9 @@ bug to file — not a feature to copy.
     `search_by_concept`) implicitly behave like `personal`: they return what
     the user knows, which includes shared knowledge.
 
-  This is not a privacy leak — see the closed-as-`not planned` discussion on
-  issue #21.
+  With RBAC enabled, reads are additionally intersected with materialized
+  `MEMORY_IN_RBAC_GROUP` edges. Cross-domain rows or dedup candidates are a
+  correctness and confidentiality defect.
 
 ## 5. Layer boundaries
 
@@ -313,16 +335,15 @@ separate stdio/gateway processes cannot process the same `PendingInput`.
 
 Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
 
-- One `Memory` node per fact, regardless of how many users know it.
-- Each knower is linked to that node by a `User -[HasMemory]-> Memory`
-  edge. The node's `user_count` field tracks the linkage count.
+- One provenance-preserving `Memory` node per author/fact record; equivalent
+  records share a security-scoped `content_key` consensus group.
+- `HAS_MEMORY` records authorship/stance. Enabled RBAC visibility is independent
+  and materialized with `MEMORY_IN_RBAC_GROUP`.
 - `add_memory` runs a two-phase pipeline:
   - Phase 1 — personal dedup; embedding-similarity match within the
     caller's memories.
-  - Phase 2 — collective check (background as of v0.2.2); if the same
-    fact already exists for another user, the decision engine emits
-    `LINK_EXISTING` and the new user's `HAS_MEMORY` edge points at the
-    shared Memory rather than producing a duplicate node.
+  - Phase 2 — collective check inside the same `rbac_scope`; identical
+    author nodes share the scoped fingerprint group.
 - Cross-user contradictions are wired through `CROSS_CONTRADICT`, which
   stores the new opinion alongside the existing one and links them with a
   `CONTRADICTS` edge.
@@ -391,3 +412,44 @@ category-bridge axis, **longest-chain reconstruction** (`HelixirClient::
 longest_chain`), and **per-edge reasoning weights** now flowing through PPR
 ranking + path confidence. In perspective the Moirai run as **N parallel
 instances** (memory only grows), supervised inside the daemon (§6 open items).
+
+### 7.8 RBAC as a graph-backed policy service
+
+The RBAC layer is a HelixirDB-backed service (`core::rbac::RbacManager`),
+not a host-local ACL file. `RbacGroup`, `RbacDedupGroup`, `RbacAssignment`, and
+`RbacConfig` provide stable state and audit history; membership, visibility,
+and dedup-provenance edges define the security graph. A dedup federation gives
+its current groups one fingerprint domain and materializes new memories to
+every current member. Detach preserves historical group edges and excludes the
+group from future writes. The CLI's `helixir rbac` family is a thin management client
+over the same named HQL queries used by MCP and `HelixirClient` authorization.
+
+Bootstrap creates two reserved workspaces. `default` receives pre-RBAC memories
+and principals as equal group admins, recreating the historical shared data
+plane with unsalted legacy fingerprints. `onboarding` admits newly discovered
+principals as workers before an administrator assigns working groups. The
+chosen fresh/legacy branch and `pending → migrating → active` phase are stored
+in `RbacConfig`, so interruption is resumed idempotently and never rolled back
+to disabled enforcement. The service fails closed for unassigned
+principals and enforces the role matrix before writes/updates and after reads;
+the coarse `HELIXIR_MODE` capability gate remains independent.
+
+Low-level generative and maintenance APIs are exposed through
+`HelixirClient::admin_as(actor_id)` only. The raw ToolingManager/client agent
+accessors and constructor are crate-private, preventing external Rust callers
+and CLI commands such as `categories` from bypassing the same global-admin
+decision. FastThink sessions bind their lifecycle to the starting actor;
+pending write results and outbox notices retain stricter owner/creator privacy.
+
+Active or historical membership in either reserved workspace contributes to
+the administrative principal registry. `RbacManager::principal_registry` projects User nodes,
+active and historical assignments, and matching Agent presence directly from
+HelixDB. Removing a membership deactivates assignments without deleting the
+User or audit history. The CLI's JSON projection is the contract intended for
+the future UI; no UI-owned ACL or registry is permitted.
+
+MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
+the authenticated principal whose grants are evaluated, while `user_id`
+remains the memory owner/target. Agents must provide a stable `actor_id`; an
+authenticated gateway should populate it explicitly before accepting remote
+requests.

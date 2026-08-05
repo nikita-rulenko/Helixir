@@ -2,7 +2,7 @@ use super::providers::base::LlmProvider;
 use super::providers::fallback::LlmProviderWithFallback;
 use super::providers::ollama::OllamaProvider;
 use super::providers::openai_compat::OpenAiCompatProvider;
-use crate::{DEFAULT_CEREBRAS_URL, DEFAULT_DEEPSEEK_URL, DEFAULT_OLLAMA_URL};
+use crate::{DEFAULT_CEREBRAS_URL, DEFAULT_DEEPSEEK_URL, DEFAULT_LLM_MODEL, DEFAULT_OLLAMA_URL};
 use tracing::{info, warn};
 
 pub struct LlmProviderFactory;
@@ -20,15 +20,24 @@ impl LlmProviderFactory {
         match provider {
             // Cerebras and DeepSeek are both OpenAI-compatible; they differ
             // only in endpoint, auth, and whether thinking mode is disabled.
-            "cerebras" => Box::new(OpenAiCompatProvider::new(
-                "cerebras",
-                base_url.unwrap_or(DEFAULT_CEREBRAS_URL),
-                api_key.unwrap_or_default(),
-                model,
-                temperature,
-                request_timeout_secs,
-                false,
-            )),
+            "cerebras" => {
+                if model != DEFAULT_LLM_MODEL {
+                    warn!(
+                        configured_model = model,
+                        enforced_model = DEFAULT_LLM_MODEL,
+                        "Cerebras model override ignored; Helixir pins its write path to gpt-oss"
+                    );
+                }
+                Box::new(OpenAiCompatProvider::new(
+                    "cerebras",
+                    base_url.unwrap_or(DEFAULT_CEREBRAS_URL),
+                    api_key.unwrap_or_default(),
+                    DEFAULT_LLM_MODEL,
+                    temperature,
+                    request_timeout_secs,
+                    false,
+                ))
+            }
             "deepseek" => Box::new(OpenAiCompatProvider::new(
                 "deepseek",
                 base_url.unwrap_or(DEFAULT_DEEPSEEK_URL),
@@ -160,14 +169,14 @@ mod tests {
     fn test_ollama_custom_base_url() {
         let provider = LlmProviderFactory::create(
             "ollama",
-            "gemma2:9b",
+            "llama3.2:3b",
             None,
             Some("http://192.168.1.100:11434"),
             0.5,
             600,
         );
         assert_eq!(provider.provider_name(), "ollama");
-        assert_eq!(provider.model_name(), "gemma2:9b");
+        assert_eq!(provider.model_name(), "llama3.2:3b");
     }
 
     #[test]
@@ -181,6 +190,7 @@ mod tests {
             600,
         );
         assert_eq!(provider.provider_name(), "cerebras");
+        assert_eq!(provider.model_name(), crate::DEFAULT_LLM_MODEL);
     }
 
     #[test]
@@ -220,8 +230,10 @@ mod tests {
 
     #[test]
     fn chain_with_deepseek_key_yields_both_tiers_in_order() {
-        let mut config = HelixirConfig::default();
-        config.deepseek_api_key = Some("test-key".to_string());
+        let config = HelixirConfig {
+            deepseek_api_key: Some("test-key".to_string()),
+            ..HelixirConfig::default()
+        };
         let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
         let names: Vec<&str> = tiers.iter().map(|t| t.provider_name()).collect();
         assert_eq!(names, vec!["deepseek", "ollama"]);
@@ -230,28 +242,34 @@ mod tests {
 
     #[test]
     fn chain_skips_tier_equal_to_primary_and_unknown_names() {
-        let mut config = HelixirConfig::default();
-        config.llm_provider = "ollama".to_string();
-        config.llm_fallback_chain = vec!["ollama".to_string(), "gpt5".to_string()];
+        let config = HelixirConfig {
+            llm_provider: "ollama".to_string(),
+            llm_fallback_chain: vec!["ollama".to_string(), "gpt5".to_string()],
+            ..HelixirConfig::default()
+        };
         let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
         assert!(tiers.is_empty(), "primary-dup and unknown must both skip");
     }
 
     #[test]
     fn chain_disabled_resolves_empty() {
-        let mut config = HelixirConfig::default();
-        config.deepseek_api_key = Some("test-key".to_string());
-        config.llm_fallback_enabled = false;
+        let config = HelixirConfig {
+            deepseek_api_key: Some("test-key".to_string()),
+            llm_fallback_enabled: false,
+            ..HelixirConfig::default()
+        };
         assert!(LlmProviderFactory::resolve_fallback_tiers(&config).is_empty());
     }
 
     #[test]
     fn cerebras_tier_reuses_primary_key_when_primary_is_keyless() {
         // ollama-primary users can chain up to a remote: ollama → cerebras.
-        let mut config = HelixirConfig::default();
-        config.llm_provider = "ollama".to_string();
-        config.llm_api_key = Some("cb-key".to_string());
-        config.llm_fallback_chain = vec!["cerebras".to_string()];
+        let config = HelixirConfig {
+            llm_provider: "ollama".to_string(),
+            llm_api_key: Some("cb-key".to_string()),
+            llm_fallback_chain: vec!["cerebras".to_string()],
+            ..HelixirConfig::default()
+        };
         let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].provider_name(), "cerebras");

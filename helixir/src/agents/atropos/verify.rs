@@ -285,7 +285,7 @@ impl<'a> Verifier<'a> {
             };
             match self
                 .tooling
-                .store_new_memory(&memory, "helixir", &vector, "insight-retired")
+                .store_new_memory(&memory, "helixir", &vector, "insight-retired", None)
                 .await
             {
                 Ok((id, _)) => id,

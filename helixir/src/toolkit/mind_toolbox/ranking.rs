@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn desc_orders_higher_first() {
         let mut v = vec![0.2_f64, 0.9, 0.5];
-        v.sort_by(|a, b| desc(a, b));
+        v.sort_by(desc);
         assert_eq!(v, vec![0.9, 0.5, 0.2]);
     }
 
@@ -65,7 +65,7 @@ mod tests {
         // `partial_cmp().unwrap()` panicked here; `desc` must not — and it
         // must not reorder the finite scores either.
         let mut v = vec![0.9_f64, f64::NAN, 0.3, f64::NAN, 0.6];
-        v.sort_by(|a, b| desc(a, b));
+        v.sort_by(desc);
         let finite: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
         assert_eq!(finite, vec![0.9, 0.6, 0.3], "finite scores stay descending");
         assert!(

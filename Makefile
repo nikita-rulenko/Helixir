@@ -1,31 +1,78 @@
-.PHONY: build test test-e2e-hive check run deploy-schema setup config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build test test-e2e-hive check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
 MCP_BIN    := $(BINARY_DIR)/helixir-mcp
 DEPLOY_BIN := $(BINARY_DIR)/helixir-deploy
 SCHEMA_DIR := helixir/schema
+SKILLS_DIR := helixir/skills
+VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
+INSTALL_ROOT ?= $(HOME)/.helixir
+ifndef INSTALL_ID
+INSTALL_ID := $(VERSION)-source-$(shell date -u +%Y%m%d%H%M%S)
+endif
+INSTALL_VERSION_DIR := $(INSTALL_ROOT)/versions/$(INSTALL_ID)
 HELIX_HOST ?= localhost
 HELIX_PORT ?= 6969
+ONBOARD_ARGS ?=
+NON_INTERACTIVE ?= 0
+ONBOARD_FLAGS := $(ONBOARD_ARGS)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+RUNTIME_RPATH := -C link-arg=-Wl,-rpath,@loader_path
+else ifeq ($(UNAME_S),Linux)
+RUNTIME_RPATH := -C link-arg=-Wl,-rpath,\$$ORIGIN
+endif
+ifeq ($(NON_INTERACTIVE),1)
+ONBOARD_FLAGS += --non-interactive
+endif
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build release binaries
-	cd helixir && $(CARGO) build --release
+	cd helixir && RUSTFLAGS="$(RUSTFLAGS) $(RUNTIME_RPATH)" $(CARGO) build --release
 
-install: build ## Install binaries to ~/.helixir/bin (what agent configs should point at)
-	@# Agents must NOT execute target/release/ directly: cargo replaces those
-	@# files on every rebuild, and macOS can SIGKILL a RUNNING process whose
-	@# backing executable changed (observed live: a zeroclaw session's MCP died
-	@# mid-conversation minutes after a rebuild). `install` copies to a stable
-	@# path; rebuilds never touch what agents are running until you re-install.
-	mkdir -p $(HOME)/.helixir/bin
-	install -m755 helixir/target/release/helixir-mcp $(HOME)/.helixir/bin/helixir-mcp
-	install -m755 helixir/target/release/helixir $(HOME)/.helixir/bin/helixir
-	mkdir -p $(HOME)/.local/bin && ln -sf $(HOME)/.helixir/bin/helixir $(HOME)/.local/bin/helixir
-	@echo "installed: ~/.helixir/bin/{helixir,helixir-mcp}; point MCP configs at ~/.helixir/bin/helixir-mcp"
+install: build ## Install versioned binaries/assets and run guided onboarding
+	@set -eu; \
+	if [ -e "$(INSTALL_ROOT)/current" ] && [ ! -L "$(INSTALL_ROOT)/current" ]; then \
+		echo "refusing to replace non-symlink $(INSTALL_ROOT)/current" >&2; exit 1; \
+	fi; \
+	previous_current=""; \
+	if [ -L "$(INSTALL_ROOT)/current" ]; then previous_current=$$(readlink "$(INSTALL_ROOT)/current"); fi; \
+	mkdir -p "$(INSTALL_VERSION_DIR)/schema" "$(INSTALL_VERSION_DIR)/skills/helixir-memory" "$(INSTALL_ROOT)/bin"; \
+	install -m755 "$(BINARY_DIR)/helixir-mcp" "$(INSTALL_VERSION_DIR)/helixir-mcp"; \
+	install -m755 "$(BINARY_DIR)/helixir" "$(INSTALL_VERSION_DIR)/helixir"; \
+	install -m755 "$(DEPLOY_BIN)" "$(INSTALL_VERSION_DIR)/helixir-deploy"; \
+	for runtime_lib in "$(BINARY_DIR)"/libonnxruntime*.dylib "$(BINARY_DIR)"/libonnxruntime*.so*; do \
+		[ -e "$$runtime_lib" ] || continue; \
+		cp -p "$$runtime_lib" "$(INSTALL_VERSION_DIR)/"; \
+	done; \
+	install -m644 "$(SCHEMA_DIR)/schema.hx" "$(INSTALL_VERSION_DIR)/schema/schema.hx"; \
+	install -m644 "$(SCHEMA_DIR)/queries.hx" "$(INSTALL_VERSION_DIR)/schema/queries.hx"; \
+	install -m644 "helixir/helix.toml" "$(INSTALL_VERSION_DIR)/helix.toml"; \
+	install -m644 "$(SKILLS_DIR)/helixir-memory/SKILL.md" "$(INSTALL_VERSION_DIR)/skills/helixir-memory/SKILL.md"; \
+	ln -sfn "$(INSTALL_VERSION_DIR)" "$(INSTALL_ROOT)/current"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir" "$(INSTALL_ROOT)/bin/helixir"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir-mcp" "$(INSTALL_ROOT)/bin/helixir-mcp"; \
+	ln -sfn "$(INSTALL_ROOT)/current/helixir-deploy" "$(INSTALL_ROOT)/bin/helixir-deploy"; \
+	printf '%s\n' 'installed: $(INSTALL_ROOT)/current (build $(INSTALL_ID))'; \
+	if ! "$(INSTALL_ROOT)/current/helixir" onboard $(ONBOARD_FLAGS); then \
+		if [ -n "$$previous_current" ]; then \
+			ln -sfn "$$previous_current" "$(INSTALL_ROOT)/current"; \
+		else \
+			rm -f "$(INSTALL_ROOT)/current"; \
+		fi; \
+		echo 'onboarding failed; restored the previous current pointer' >&2; \
+		exit 1; \
+	fi
+
+onboard: ## Run the interactive onboarding orchestrator
+	"$(INSTALL_ROOT)/bin/helixir" onboard $(ONBOARD_ARGS)
+
+doctor: ## Run the read-only installation doctor
+	"$(INSTALL_ROOT)/bin/helixir" doctor
 
 test: ## Run all tests
 	cd helixir && $(CARGO) test
@@ -85,6 +132,10 @@ docker-up: ## Start HelixDB container
 			-v helixdb_data:/data \
 			-e HELIX_PORT=$(HELIX_PORT) \
 			-e HELIX_DATA_DIR=/data \
+			-e HELIX_CORES_OVERRIDE=1 \
+			-e MIMALLOC_PURGE_DELAY=0 \
+			-e MIMALLOC_PURGE_DECOMMITS=1 \
+			-e MIMALLOC_ARENA_PURGE_MULT=1 \
 			--restart unless-stopped \
 			-m 3g --memory-swap 3g \
 			helix-helixir-dev:latest 2>/dev/null || \

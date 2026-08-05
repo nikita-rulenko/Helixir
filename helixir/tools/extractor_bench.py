@@ -60,7 +60,7 @@ INPUTS = [
     "TestIntegrationProductSearch is flaky: LIKE search with '%молок%' depends on "
     "SQLite Unicode behaviour. Each test uses an isolated :memory: database via setupTestDB.",
     # short single fact
-    "The crate MSRV is Rust 1.85.",
+    "The crate MSRV is Rust 1.88 because NLI is mandatory.",
 ]
 
 

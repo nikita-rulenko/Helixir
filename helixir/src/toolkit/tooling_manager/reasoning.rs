@@ -166,6 +166,7 @@ impl ToolingManager {
                         all_chains.push(ToolingReasoningChain {
                             seed: SearchMemoryResult {
                                 memory_id: seed.memory_id.clone(),
+                                internal_id: seed.internal_id.clone(),
                                 content: seed.content.clone(),
                                 score: seed.score as f64,
                                 method: seed.method.clone(),

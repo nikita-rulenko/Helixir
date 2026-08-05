@@ -1,7 +1,7 @@
 //! FastThink MCP tools — ephemeral working-memory sessions.
 //!
 //! These tools never touch HelixDB directly. They drive the in-process
-//! `petgraph` scratchpad in [`FastThinkManager`]. Only `think_commit` (and
+//! `petgraph` scratchpad in [`crate::toolkit::fast_think::FastThinkManager`]. Only `think_commit` (and
 //! the automatic timeout commit inside `think_add`) persist anything.
 
 use rmcp::{
@@ -17,17 +17,22 @@ use crate::toolkit::fast_think::{FastThinkError, ThoughtType};
 #[tool_router(router = think_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start -> think_add steps -> think_recall -> think_conclude -> think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Returns {session_id, root_thought_idx}."
+        description = "Begin a FastThink session — a reasoning scratchpad wired into long-term memory. OPEN ONE WHEN: you are weighing options, diagnosing a cause, or making a decision that rests on facts you would have to recall — i.e. whenever your next move would be search_memory followed by a judgement. Why not just think silently: think_recall lands stored facts INSIDE your reasoning tree, and think_commit persists ONE conclusion with SUPPORTS provenance edges from that evidence (fast — a few seconds), so the next agent inherits the WHY, not just the answer. For storing a plain fact, add_memory is enough. Flow: think_start -> think_add steps -> think_recall -> think_conclude -> think_commit (or think_discard). YOU choose the session_id and reuse it on every call. Repeat the same actor_id on every lifecycle call; the session id is not a credential. Returns {session_id, root_thought_idx}."
     )]
     async fn think_start(
         &self,
         Parameters(params): Parameters<StartThinkingParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Starting thinking session: {}", params.session_id);
+        let actor_id = self.session_actor(params.actor_id.as_deref()).await?;
 
         let result = self
             .fast_think
-            .start_thinking(&params.session_id, &params.initial_thought)
+            .start_thinking(
+                &params.session_id,
+                &params.initial_thought,
+                actor_id.as_deref(),
+            )
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = Self::result_to_json(json!({
@@ -39,12 +44,13 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Add a thought node to an active FastThink session (from think_start). Attach it under parent_idx (a previous thought's index) to build a reasoning tree, or omit to attach to the root. thought_type defaults to 'reasoning'. Returns {thought_idx, thought_count, depth} — keep thought_idx to use as a parent for later thoughts."
+        description = "Add a thought node to an active FastThink session (from think_start). actor_id must match the principal that started it. Attach it under parent_idx (a previous thought's index) to build a reasoning tree, or omit to attach to the root. thought_type defaults to 'reasoning'. Returns {thought_idx, thought_count, depth} — keep thought_idx to use as a parent for later thoughts."
     )]
     async fn think_add(
         &self,
         Parameters(params): Parameters<AddThoughtParams>,
     ) -> Result<CallToolResult, McpError> {
+        let actor_id = self.session_actor(params.actor_id.as_deref()).await?;
         let thought_type = match params.thought_type {
             Some(ThoughtTypeArg::Hypothesis) => ThoughtType::Hypothesis,
             Some(ThoughtTypeArg::Observation) => ThoughtType::Observation,
@@ -58,6 +64,7 @@ impl HelixirMcpServer {
 
         let result = self.fast_think.add_thought(
             &params.session_id,
+            actor_id.as_deref(),
             &params.content,
             thought_type,
             parent,
@@ -68,7 +75,7 @@ impl HelixirMcpServer {
             Ok(node) => {
                 let status = self
                     .fast_think
-                    .get_session_status(&params.session_id)
+                    .get_session_status(&params.session_id, actor_id.as_deref())
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
                 let json = Self::result_to_json(json!({
@@ -79,7 +86,13 @@ impl HelixirMcpServer {
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(FastThinkError::Timeout) => {
-                warn!("FastThink timeout - committing partial results");
+                if actor_id.is_some() {
+                    return Err(McpError::invalid_request(
+                        "FastThink session timed out; discard it explicitly. RBAC mode cannot auto-commit without an explicit owner/group context.",
+                        None,
+                    ));
+                }
+                warn!("FastThink timeout - committing partial results in trusted mode");
                 let commit_result = self
                     .fast_think
                     .commit_partial(&params.session_id, "claude", "timeout")
@@ -116,10 +129,25 @@ impl HelixirMcpServer {
 
         let parent = petgraph::stable_graph::NodeIndex::new(params.parent_idx as usize);
         let user_id = params.user_id.as_deref().unwrap_or("default");
+        let actor_id = self.actor_id(params.actor_id.as_deref(), user_id).await?;
+        let bound_actor = self.session_actor(params.actor_id.as_deref()).await?;
+        if bound_actor.as_deref() != Some(actor_id.as_str()) && bound_actor.is_some() {
+            return Err(McpError::invalid_request(
+                "FastThink actor context does not match the authenticated principal",
+                None,
+            ));
+        }
 
         let results = self
             .fast_think
-            .recall(&params.session_id, &params.query, parent, user_id)
+            .recall_as(
+                &params.session_id,
+                &params.query,
+                parent,
+                bound_actor.as_deref(),
+                &actor_id,
+                user_id,
+            )
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -135,13 +163,14 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Record the conclusion of a FastThink session — REQUIRED before think_commit. Pass supporting_idx with the thought indices the conclusion rests on. Returns {conclusion_idx, status:'decided'}."
+        description = "Record the conclusion of the actor's FastThink session — REQUIRED before think_commit. actor_id must match the principal that started it. Pass supporting_idx with the thought indices the conclusion rests on. Returns {conclusion_idx, status:'decided'}."
     )]
     async fn think_conclude(
         &self,
         Parameters(params): Parameters<ThinkConcludeParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Concluding thinking session: {}", params.session_id);
+        let actor_id = self.session_actor(params.actor_id.as_deref()).await?;
 
         let supporting: Vec<petgraph::stable_graph::NodeIndex> = params
             .supporting_idx
@@ -152,7 +181,12 @@ impl HelixirMcpServer {
 
         let result = self
             .fast_think
-            .conclude(&params.session_id, &params.conclusion, &supporting)
+            .conclude(
+                &params.session_id,
+                actor_id.as_deref(),
+                &params.conclusion,
+                &supporting,
+            )
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = Self::result_to_json(json!({
@@ -170,10 +204,19 @@ impl HelixirMcpServer {
         Parameters(params): Parameters<ThinkCommitParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Committing thinking session: {}", params.session_id);
+        let session_actor = self.session_actor(params.actor_id.as_deref()).await?;
 
         let result = self
             .fast_think
-            .commit(&params.session_id, &params.user_id)
+            .commit_as_in_group(
+                &params.session_id,
+                session_actor.as_deref(),
+                &self
+                    .actor_id(params.actor_id.as_deref(), &params.user_id)
+                    .await?,
+                &params.user_id,
+                params.group_id.as_deref(),
+            )
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -193,17 +236,18 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Throw away a FastThink session without persisting anything (clears the scratchpad). Use when the reasoning led nowhere or shouldn't be remembered. After this the session_id no longer exists. Returns {discarded_thoughts, elapsed_ms}."
+        description = "Throw away the actor's FastThink session without persisting anything (clears the scratchpad). actor_id must match the principal that started it. After this the session_id no longer exists. Returns {discarded_thoughts, elapsed_ms}."
     )]
     async fn think_discard(
         &self,
         Parameters(params): Parameters<ThinkDiscardParams>,
     ) -> Result<CallToolResult, McpError> {
         info!("Discarding thinking session: {}", params.session_id);
+        let actor_id = self.session_actor(params.actor_id.as_deref()).await?;
 
         let result = self
             .fast_think
-            .discard(&params.session_id)
+            .discard(&params.session_id, actor_id.as_deref())
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = Self::result_to_json(json!({
@@ -214,19 +258,20 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Inspect a FastThink session without changing it — useful to check progress or whether a conclusion exists yet. Returns {status, thought_count, thoughts_left, depth, has_conclusion, elapsed_ms}; thoughts_left is your headroom before the session's thought cap — and think_conclude STILL works at 0 (the conclusion is the exit, not another thought). Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
+        description = "Inspect the actor's FastThink session without changing it. actor_id must match the principal that started it. Returns {status, thought_count, thoughts_left, depth, has_conclusion, elapsed_ms}; thoughts_left is your headroom before the session's thought cap — and think_conclude STILL works at 0 (the conclusion is the exit, not another thought). Errors if the session_id does not exist (e.g. after think_discard or think_commit)."
     )]
     async fn think_status(
         &self,
         Parameters(params): Parameters<ThinkStatusParams>,
     ) -> Result<CallToolResult, McpError> {
+        let actor_id = self.session_actor(params.actor_id.as_deref()).await?;
         let status = self
             .fast_think
-            .get_session_status(&params.session_id)
+            .get_session_status(&params.session_id, actor_id.as_deref())
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let max_thoughts = self
             .fast_think
-            .session_max_thoughts(&params.session_id)
+            .session_max_thoughts(&params.session_id, actor_id.as_deref())
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let json = Self::result_to_json(json!({

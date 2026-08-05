@@ -21,6 +21,12 @@ pub struct ScoreWeights {
 pub struct SearchResult {
     pub memory_id: String,
 
+    /// HelixDB's primary-key UUID. Kept internal so hot graph projections can
+    /// address the node directly instead of rescanning the whole `Memory`
+    /// label by the public string id (#89).
+    #[serde(skip)]
+    pub internal_id: Option<String>,
+
     pub content: String,
 
     pub vector_score: f64,
@@ -77,6 +83,7 @@ impl SearchResult {
         );
         Self {
             memory_id: memory_id.into(),
+            internal_id: None,
             content: content.into(),
             vector_score,
             graph_score: 0.0,
@@ -135,6 +142,7 @@ impl SearchResult {
         );
         Self {
             memory_id: memory_id.into(),
+            internal_id: None,
             content: content.into(),
             vector_score: semantic_sim,
             graph_score,

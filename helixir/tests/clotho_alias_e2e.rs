@@ -33,7 +33,8 @@ async fn alias_pass_wires_synonyms_and_converges() {
 
     let client = HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
-    let tooling = client.tooling();
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let tooling = admin.tooling();
 
     let run = token();
     // Same meaning, different surface — exactly what weak models mint.
