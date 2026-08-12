@@ -8,7 +8,8 @@ use super::*;
 pub enum Role {
     /// Global administrator: unrestricted read/write access.
     Admin,
-    /// Team lead: read access to explicitly assigned groups.
+    /// Legacy read-only team-lead assignment. New grants are rejected; migrate
+    /// existing assignments explicitly to `GroupAdmin`.
     TeamLead,
     /// Group administrator: unrestricted access inside assigned groups.
     GroupAdmin,
@@ -50,6 +51,10 @@ impl Role {
 
     pub(super) fn can_read(self) -> bool {
         true
+    }
+
+    pub const fn is_legacy(self) -> bool {
+        matches!(self, Self::TeamLead)
     }
 }
 
@@ -123,6 +128,19 @@ pub struct UserBinding {
     pub global_roles: BTreeSet<Role>,
     #[serde(default)]
     pub groups: BTreeMap<String, BTreeSet<Role>>,
+}
+
+/// Observable result of an explicit legacy-role migration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TeamLeadMigrationReport {
+    pub migrated: usize,
+    pub assignments: Vec<TeamLeadMigrationAssignment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TeamLeadMigrationAssignment {
+    pub subject_id: String,
+    pub group_id: String,
 }
 
 /// Durable phase of the one-way transition into graph-backed authorization.

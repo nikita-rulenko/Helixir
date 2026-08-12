@@ -120,13 +120,14 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 ## RBAC AUTHORIZATION PROTOCOL
 
 - RBAC is graph-backed HelixDB state and the single source of truth; never invent or cache local ACLs.
-- RBAC is permanent. Bootstrap creates `default` for pre-RBAC memories and trusted peers (equal `groupadmin` access) and `onboarding` for newly discovered principals. Only the operator receives global admin. The transition resumes from HelixDB checkpoints and is never rolled back to disabled mode. Authorization is deny-by-default and fail-closed.
+- RBAC is permanent. Bootstrap creates `default` for pre-RBAC memories and trusted peers (equal `groupadmin` access), `onboarding` for newly discovered principals, and membership-free `moirai` for generated hypotheses visible only to global admins. Only the operator receives global admin. The transition resumes from HelixDB checkpoints and is never rolled back to disabled mode. Authorization is deny-by-default and fail-closed.
 - Active or historical membership in `default` or `onboarding` defines the graph-backed principal registry. New principals enter `onboarding` before assignment to working groups; removal preserves the User node and role history. Never create a second local registry.
 - `actor_id` is the authenticated principal; `user_id` is the memory owner or target. MCP calls must provide `actor_id`; never bypass checks by changing `user_id`.
 - FastThink session ids and pending ids are not credentials. Pass the same `actor_id` on every `think_*` lifecycle call and on `get_add_status`; cross-principal use is denied. Pending results are visible only to their owner, creator, or a global admin, and outbox payloads only to their owner or a global admin.
-- Roles are `admin` (global read/write), `teamlead` (read assigned groups), `groupadmin` (read/write assigned groups), `moderator` (read/write assigned groups), `worker` (read group and write own authored memories), and `viewer` (read-only assigned groups).
+- Roles are `admin` (global read/write and policy), `groupadmin` (read/write plus membership/role management in one or more assigned non-reserved groups), `moderator` (read/write assigned groups), `worker` (read group and write own authored memories), and `viewer` (read-only assigned groups). `teamlead` is a retired legacy grant; never request it.
 - An omitted `group_id` is inferred only when exactly one reserved workspace is writable; ambiguous membership fails closed. Every working-group write must name its concrete `group_id`. Never pass a dedup federation id as `group_id`.
 - `default` preserves legacy-global fingerprints for migrated memories. `onboarding` and working groups use isolated RBAC scopes. Do not grant every agent global admin: only the bootstrap operator owns the RBAC control plane.
+- The Moirai analyze every group only through the global-admin surface. Their hypotheses live in reserved `moirai` and their `MOIRAI_DERIVED_FROM` provenance is intentionally absent from ordinary graph traversal. Non-admin agents must not treat the generative layer as recallable team memory.
 - An administrator may federate groups with `helixir rbac dedup`. The federation controls dedup and common visibility; agents still write to their concrete group. Leaving preserves historical visibility but isolates future writes. Never infer, cache, or override federation membership client-side.
 - Use `helixir rbac` for management. A missing RBAC query means the deployment is incomplete; it is not permission to silently fall back to a local ACL. Connection and permission errors must surface as errors.
 - Schema/query work targets Helix CLI v2.3.5; HQL supports `//` line comments only. Validate with `helix check` and use backup-first deployment for live changes.
@@ -239,10 +240,10 @@ A store that is 85% `fact` (observed live) is a store where "what are my
 preferences?" and "what have I learned from experience?" return nothing.
 
 ### Reading chains and results — what the annotations mean:
-- A BECAUSE edge whose provenance is `lachesis-stitch` was built RETROACTIVELY
-  by a background pass (entity overlap + an LLM judge). It is a HYPOTHESIS with
-  provenance, not asserted truth — trust it like a colleague's "I think these
-  are connected", and say so when you present it to the user.
+- A Lachesis retroactive causal proposal is stored as an admin-only Moirai
+  hypothesis with `MOIRAI_DERIVED_FROM` provenance to both witnesses. It is not
+  a base-graph `BECAUSE` fact. Only a global admin may inspect or present it,
+  and must label it as a generated hypothesis.
 - Generated insights carry their lifecycle in the text: `HYPOTHESIS
   (generated, requires verification)` = an unverified lead; `VERIFIED
   (generated, confirmed by review)` = it survived an adversarial check

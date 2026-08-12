@@ -177,16 +177,14 @@ impl RbacManager {
         if role == Role::Admin {
             anyhow::bail!("global admin cannot be group-scoped; use `rbac grant`");
         }
+        if group_id == crate::core::rbac_compat::MOIRAI_GROUP_ID {
+            anyhow::bail!("the reserved Moirai workspace accepts no role assignments");
+        }
         if group_id != ONBOARDING_GROUP_ID {
-            let policy = self.snapshot().await?;
-            let enrolled = policy
-                .users
-                .get(user_id)
-                .and_then(|binding| binding.groups.get(ONBOARDING_GROUP_ID))
-                .is_some_and(|roles| !roles.is_empty());
-            if !enrolled {
+            let registered = self.reserved_registered_user_ids().await?;
+            if !registered.contains(user_id) {
                 anyhow::bail!(
-                    "user '{user_id}' must be enrolled in '{ONBOARDING_GROUP_ID}' before joining '{group_id}'"
+                    "user '{user_id}' must be registered through '{ONBOARDING_GROUP_ID}' before joining '{group_id}'"
                 );
             }
         }
@@ -202,15 +200,18 @@ impl RbacManager {
         actor: &str,
     ) -> Result<Vec<String>> {
         let policy = self.snapshot().await?;
-        if policy.enabled && !policy.is_admin(actor) {
-            anyhow::bail!("RBAC group membership management requires a global admin");
-        }
-        let roles = policy
+        self.authorize_group_management(actor, group_id).await?;
+        let mut roles = policy
             .users
             .get(user_id)
             .and_then(|binding| binding.groups.get(group_id))
             .cloned()
-            .unwrap_or_else(BTreeSet::new);
+            .unwrap_or_else(BTreeSet::new)
+            .into_iter()
+            .collect::<Vec<_>>();
+        // A groupadmin removing itself must retain control until every other
+        // role in this operation has been deactivated.
+        roles.sort_by_key(|role| *role == Role::GroupAdmin);
         let mut revoked = Vec::new();
         for role in roles {
             self.revoke_as(user_id, role, Some(group_id), actor).await?;

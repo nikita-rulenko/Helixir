@@ -5,8 +5,10 @@ pub mod error;
 pub mod events;
 pub mod helixir_client;
 pub mod levels;
+pub(crate) mod memory_fingerprint;
 pub mod rbac;
 pub mod rbac_compat;
+mod rbac_moirai;
 pub mod rbac_registry;
 pub mod retrieval_profile;
 pub mod search_modes;
@@ -17,10 +19,11 @@ pub use error::{HelixirError, Result};
 pub use helixir_client::HelixirClient;
 pub use rbac::{
     DedupGroup, Group, RbacManager, RbacMemoryScope, RbacMigrationKind, RbacMigrationState,
-    RbacPolicy, Role, UserBinding,
+    RbacPolicy, Role, TeamLeadMigrationAssignment, TeamLeadMigrationReport, UserBinding,
 };
 pub use rbac_compat::{
-    AuthorizedWriteScope, CompatibilityBootstrapReport, DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID,
+    AuthorizedWriteScope, CompatibilityBootstrapReport, DEFAULT_GROUP_ID, MOIRAI_GROUP_ID,
+    ONBOARDING_GROUP_ID,
 };
 pub use rbac_registry::{PrincipalRecord, RbacRoleRecord};
 pub use retrieval_profile::RetrievalProfile;

@@ -349,7 +349,14 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
             } => {
                 let db = helixir::db::HelixClient::new(&self.backend.host, self.backend.port)
                     .map_err(|error| error.to_string())?;
-                let manager = helixir::core::RbacManager::new(std::sync::Arc::new(db));
+                let config = helixir::core::config::HelixirConfig::from_env();
+                let embedder = std::sync::Arc::new(helixir::EmbeddingGenerator::new(
+                    config.embedding_config(),
+                ));
+                let manager = helixir::core::RbacManager::new_with_embedder(
+                    std::sync::Arc::new(db),
+                    embedder,
+                );
                 manager
                     .bootstrap_compatibility(operator_id, principals)
                     .await

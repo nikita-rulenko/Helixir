@@ -117,7 +117,9 @@ pub(super) fn assignment_id(subject: &str, group: &str, role: Role) -> String {
 pub(super) fn reject_reserved_group_mutation(group_id: &str, action: &str) -> Result<()> {
     if matches!(
         group_id,
-        crate::core::rbac_compat::DEFAULT_GROUP_ID | crate::core::rbac_compat::ONBOARDING_GROUP_ID
+        crate::core::rbac_compat::DEFAULT_GROUP_ID
+            | crate::core::rbac_compat::ONBOARDING_GROUP_ID
+            | crate::core::rbac_compat::MOIRAI_GROUP_ID
     ) {
         bail!("cannot {action} the reserved RBAC group '{group_id}'")
     }

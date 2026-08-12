@@ -67,8 +67,9 @@ Pass `agent_id` on writes for swarm presence. One-shot agents call
 
 Results are curated. `metadata.collapsed` lists folded same-story ids.
 `superseded:true` is historical; follow `superseded_by`. A
-`lachesis-stitch` BECAUSE edge is a suspected retroactive link, not settled
-fact. For time windows, present `flashback:true` rows with their original
+Lachesis-generated causal proposals belong to the global-admin-only `moirai`
+workspace and are not ordinary `BECAUSE` facts. For time windows, present
+`flashback:true` rows with their original
 `event_date`, not as events inside the requested period.
 
 ## Use FastThink for multi-step judgement
@@ -89,13 +90,15 @@ credential. Commit one coherent conclusion; discard dead ends.
 ## RBAC operating contract
 
 RBAC is permanently enabled, graph-backed in HelixDB, and the single source of
-truth for the Rust facade, MCP, and CLI. Bootstrap creates two reserved groups:
+truth for the Rust facade, MCP, and CLI. Bootstrap creates three reserved groups:
 
 - one operator receives global `admin`;
 - `default` receives all pre-RBAC memories and principals as equal
   `groupadmin` peers, preserving legacy full-trust visibility and fingerprints;
 - `onboarding` admits newly discovered principals as `worker` before an admin
   assigns normal working groups;
+- membership-free `moirai` stores generated hypotheses and provenance for
+  global administrators only;
 - omitted `group_id` is inferred only when exactly one reserved workspace is
   writable; ambiguous membership fails closed;
 - the transition is one-way, checkpointed, idempotent, and resumable. Never
@@ -119,11 +122,17 @@ Authorization is deny-by-default and fail-closed.
 Roles:
 
 - `admin`: global read/write and RBAC management;
-- `teamlead`: read assigned groups;
-- `groupadmin`: read/write assigned groups without owner restriction;
+- `groupadmin`: read/write and membership/role management in one or more
+  assigned non-reserved groups;
 - `moderator`: read/write assigned groups;
 - `worker`: read group memories and write only their own authorship;
 - `viewer`: read-only assigned groups.
+
+`teamlead` is a retired legacy grant. Never assign it; a global administrator
+may explicitly convert old assignments with `helixir rbac migrate-teamleads --yes`.
+The Moirai may analyze every working group, but only a global `admin` can invoke
+them or read their `moirai` workspace. `MOIRAI_DERIVED_FROM` provenance is not
+part of ordinary reasoning traversal.
 
 Pending results are visible only to their owner, creator, or global admin.
 Outbox payloads are owner/admin-only. Never change `user_id` to bypass an

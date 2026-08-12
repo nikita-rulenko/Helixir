@@ -156,6 +156,23 @@ impl HelixirConfig {
         format!("http://{}:{}", self.host, self.port)
     }
 
+    /// Build the embedding client configuration shared by runtime writes and
+    /// one-way graph migrations that create first-class Memory nodes.
+    pub fn embedding_config(&self) -> crate::llm::EmbeddingConfig {
+        crate::llm::EmbeddingConfig {
+            provider: self.embedding_provider.clone(),
+            base_url: self.embedding_url.clone(),
+            model: self.embedding_model.clone(),
+            api_key: self.embedding_api_key.clone(),
+            timeout_secs: self.timeout,
+            cache_size: self.llm_runtime.embedding_cache_size,
+            cache_ttl: self.llm_runtime.embedding_cache_ttl_secs,
+            fallback_enabled: self.embedding_fallback_enabled,
+            fallback_url: self.embedding_fallback_url.clone(),
+            fallback_model: self.embedding_fallback_model.clone(),
+        }
+    }
+
     /// The public entry point. Layered: built-in defaults → `helixir.toml`
     /// (if present) → `HELIX_*`/`HELIXIR_*` env (env wins). All existing callers
     /// (MCP server, gateway, CLI, client) reach the layered config through this.

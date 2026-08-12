@@ -1,5 +1,7 @@
 //! Graph-backed RBAC administration and snapshot loading.
 
+use anyhow::Context;
+
 use super::*;
 
 /// HelixDB-backed RBAC service.  The service is intentionally small: all
@@ -9,15 +11,34 @@ use super::*;
 pub struct RbacManager {
     pub(crate) db: Arc<HelixClient>,
     pub(super) cache: Arc<PolicyCache>,
+    pub(crate) embedder: Option<Arc<crate::llm::EmbeddingGenerator>>,
 }
 
 impl RbacManager {
     pub fn new(db: Arc<HelixClient>) -> Self {
         let cache = policy_cache_for(&db);
-        Self { db, cache }
+        Self {
+            db,
+            cache,
+            embedder: None,
+        }
     }
 
-    async fn authorize_admin(&self, actor: &str) -> Result<()> {
+    /// Construct the policy service with the runtime embedder required by
+    /// one-way migrations that reify generated hypotheses as Memory nodes.
+    pub fn new_with_embedder(
+        db: Arc<HelixClient>,
+        embedder: Arc<crate::llm::EmbeddingGenerator>,
+    ) -> Self {
+        let cache = policy_cache_for(&db);
+        Self {
+            db,
+            cache,
+            embedder: Some(embedder),
+        }
+    }
+
+    pub(super) async fn authorize_admin(&self, actor: &str) -> Result<()> {
         let policy = self.snapshot().await?;
         if policy.enabled && !policy.is_admin(actor) {
             bail!("RBAC management requires a global admin");
@@ -25,9 +46,34 @@ impl RbacManager {
         Ok(())
     }
 
+    pub(crate) async fn authorize_group_management(
+        &self,
+        actor: &str,
+        group_id: &str,
+    ) -> Result<()> {
+        let policy = self.snapshot().await?;
+        if !policy.can_manage_group(actor, group_id) {
+            bail!(
+                "RBAC group management for '{group_id}' requires its groupadmin or a global admin"
+            );
+        }
+        Ok(())
+    }
+
     /// Authorize an explicitly privileged low-level maintenance surface.
     pub async fn authorize_admin_surface(&self, actor: &str) -> Result<()> {
-        self.authorize_admin(actor).await
+        self.authorize_admin(actor).await?;
+        let policy = self.snapshot().await?;
+        if policy.enabled
+            && !policy
+                .groups
+                .contains_key(crate::core::rbac_compat::MOIRAI_GROUP_ID)
+        {
+            bail!(
+                "RBAC Moirai workspace is missing; run `helixir rbac bootstrap` as a global admin"
+            );
+        }
+        Ok(())
     }
 
     pub async fn authorize_pending_read(
@@ -288,38 +334,51 @@ impl RbacManager {
         group_id: Option<&str>,
         granted_by: &str,
     ) -> Result<()> {
-        self.authorize_admin(granted_by).await?;
+        if role.is_legacy() {
+            bail!(
+                "role 'teamlead' is retired; grant 'groupadmin' instead or run `helixir rbac migrate-teamleads --yes` for legacy assignments"
+            );
+        }
         let group = group_id.unwrap_or("");
         if !group.is_empty() {
+            if group == crate::core::rbac_compat::MOIRAI_GROUP_ID {
+                bail!("the reserved Moirai workspace accepts no role assignments");
+            }
+            self.authorize_group_management(granted_by, group).await?;
             if matches!(role, Role::Admin) {
                 bail!("global admin cannot be group-scoped; use groupadmin");
             }
             let policy = self.snapshot().await?;
             policy.group(group)?;
+            let registered = !policy.enabled
+                || self
+                    .reserved_registered_user_ids()
+                    .await?
+                    .contains(subject_id);
             if policy.enabled
                 && group != crate::core::rbac_compat::ONBOARDING_GROUP_ID
                 && !(group == crate::core::rbac_compat::DEFAULT_GROUP_ID
                     && policy.migration_state == RbacMigrationState::Migrating)
+                && !registered
                 && policy
                     .users
                     .get(subject_id)
-                    .and_then(|binding| {
-                        binding
-                            .groups
-                            .get(crate::core::rbac_compat::ONBOARDING_GROUP_ID)
-                    })
+                    .and_then(|binding| binding.groups.get(group))
                     .is_none_or(|roles| roles.is_empty())
             {
                 bail!(
-                    "user '{subject_id}' must be enrolled in '{}' before receiving a role in '{group}'",
+                    "user '{subject_id}' must be registered through '{}' before receiving a role in '{group}'",
                     crate::core::rbac_compat::ONBOARDING_GROUP_ID
                 );
             }
-        } else if !matches!(role, Role::Admin) {
-            bail!(
-                "role '{}' requires --group; only admin is global",
-                role.label()
-            );
+        } else {
+            self.authorize_admin(granted_by).await?;
+            if !matches!(role, Role::Admin) {
+                bail!(
+                    "role '{}' requires --group; only admin is global",
+                    role.label()
+                );
+            }
         }
         let user_exists = self
             .db
@@ -362,5 +421,58 @@ impl RbacManager {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Ok(())
+    }
+
+    /// Explicitly replace every active legacy teamlead assignment with
+    /// groupadmin. No silent privilege widening occurs during snapshot loads.
+    pub async fn migrate_teamleads(&self, actor: &str) -> Result<TeamLeadMigrationReport> {
+        self.authorize_admin(actor).await?;
+        let policy = self.snapshot().await?;
+        let assignments = policy
+            .users
+            .iter()
+            .flat_map(|(subject_id, binding)| {
+                binding.groups.iter().filter_map(move |(group_id, roles)| {
+                    roles
+                        .contains(&Role::TeamLead)
+                        .then_some(TeamLeadMigrationAssignment {
+                            subject_id: subject_id.clone(),
+                            group_id: group_id.clone(),
+                        })
+                })
+            })
+            .collect::<Vec<_>>();
+        for assignment in &assignments {
+            self.grant(
+                &assignment.subject_id,
+                Role::GroupAdmin,
+                Some(&assignment.group_id),
+                actor,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "grant replacement groupadmin to '{}' in '{}'",
+                    assignment.subject_id, assignment.group_id
+                )
+            })?;
+            self.revoke_as(
+                &assignment.subject_id,
+                Role::TeamLead,
+                Some(&assignment.group_id),
+                actor,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "revoke legacy teamlead from '{}' in '{}'",
+                    assignment.subject_id, assignment.group_id
+                )
+            })?;
+        }
+        Ok(TeamLeadMigrationReport {
+            migrated: assignments.len(),
+            assignments,
+        })
     }
 }

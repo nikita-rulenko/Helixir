@@ -29,7 +29,7 @@ impl Planner {
                     operator_id: options.rbac.operator_id.clone(),
                     principals: options.rbac.principals.iter().cloned().collect(),
                 },
-                "converge default/onboarding workspaces and permanently enable enforcement",
+                "converge default/onboarding/Moirai workspaces and permanently enable enforcement",
             ));
         }
 
