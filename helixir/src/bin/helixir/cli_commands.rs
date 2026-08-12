@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Subcommand)]
 pub(crate) enum RbacCmd {
-    /// Converge the permanent default/onboarding RBAC workspaces.
+    /// Converge the permanent default/onboarding/Moirai RBAC workspaces.
     Bootstrap {
         /// Global operator id. Defaults to HELIXIR_RBAC_ACTOR or the OS user.
         #[arg(long)]
@@ -15,6 +15,14 @@ pub(crate) enum RbacCmd {
     },
     /// Show the persisted RBAC state.
     Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explicitly replace legacy teamlead assignments with groupadmin.
+    MigrateTeamleads {
+        /// Confirm the privilege-changing migration.
+        #[arg(long)]
+        yes: bool,
         #[arg(long)]
         json: bool,
     },

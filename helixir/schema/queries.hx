@@ -64,6 +64,50 @@ QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   updated <- memory::UPDATE({ content_key: content_key })
   RETURN updated
+// One-way repair for system-generated memories that predate the explicit
+// Moirai security domain. Both fields move together so dedup and visibility
+// continue to describe the same domain.
+QUERY setMemorySecurityDomain(memory_id: String, content_key: String, rbac_scope: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ content_key: content_key, rbac_scope: rbac_scope })
+  RETURN updated
+QUERY addMoiraiProvenance(insight_id: String, witness_id: String, source: String, created_at: String) =>
+  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  witness <- N<Memory>::WHERE(_::{memory_id}::EQ(witness_id))::FIRST
+  existing <- insight::OutE<MOIRAI_DERIVED_FROM>::WHERE(_::ToN::{memory_id}::EQ(witness_id))
+  link <- existing::UpsertE({ source: source, created_at: created_at })::From(insight)::To(witness)
+  RETURN link
+QUERY getMoiraiWitnesses(insight_id: String) =>
+  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  witnesses <- insight::Out<MOIRAI_DERIVED_FROM>
+  RETURN witnesses
+// Pre-v0.14.2 Atropos used generic incoming SUPPORTS edges. The repair path
+// copies their endpoints to MOIRAI_DERIVED_FROM, then removes the traversable
+// bridge so non-admin graph walks cannot consume the generated layer.
+QUERY getLegacyMoiraiWitnesses(insight_id: String) =>
+  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  witnesses <- insight::InE<MEMORY_RELATION>::WHERE(_::{relation_type}::EQ("SUPPORTS"))::FromN
+  RETURN witnesses
+QUERY dropLegacyMoiraiSupports(insight_id: String) =>
+  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  DROP insight::InE<MEMORY_RELATION>::WHERE(_::{relation_type}::EQ("SUPPORTS"))
+  RETURN "removed"
+// Pre-v0.14.2 Lachesis persisted generated causality directly as BECAUSE.
+// Enumerate each effect and its generated causes so Rust can reify the pair as
+// an admin-only Moirai Memory before removing the traversable legacy edge.
+QUERY getLegacyLachesisEffects() =>
+  edges <- E<BECAUSE>::WHERE(_::{reasoning_id}::EQ("lachesis-stitch"))
+  effects <- edges::FromN
+  RETURN effects
+QUERY getLegacyLachesisCauses(effect_id: String) =>
+  effect <- N<Memory>::WHERE(_::{memory_id}::EQ(effect_id))::FIRST
+  edges <- effect::OutE<BECAUSE>::WHERE(_::{reasoning_id}::EQ("lachesis-stitch"))
+  causes <- edges::ToN
+  RETURN causes
+QUERY dropLegacyLachesisStitches(effect_id: String) =>
+  effect <- N<Memory>::WHERE(_::{memory_id}::EQ(effect_id))::FIRST
+  DROP effect::OutE<BECAUSE>::WHERE(_::{reasoning_id}::EQ("lachesis-stitch"))
+  RETURN "removed"
 QUERY getMemory(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   RETURN memory
@@ -345,7 +389,7 @@ QUERY grantRbacRole(assignment_id: String, subject_id: String, role: String, gro
   assignment <- existing::UpsertN({ assignment_id: assignment_id, subject_id: subject_id, role: role, group_id: group_id, granted_by: granted_by, created_at: created_at, revoked_at: "", active: 1, metadata: metadata })
   user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
-  existing_membership <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))
+  existing_membership <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::ToN::{group_id}::EQ(group_id))
   membership <- existing_membership::UpsertE({ assignment_id: assignment_id, role: role, granted_by: granted_by, granted_at: created_at, active: 1 })::From(user)::To(group)
   config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- config_rows::UpsertN({ config_id: "default", updated_at: created_at, updated_by: granted_by })
@@ -362,12 +406,13 @@ QUERY revokeRbacRole(subject_id: String, role: String, group_id: String, revoked
   config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- config_rows::UpsertN({ config_id: "default", updated_at: revoked_at, updated_by: updated_by })
   RETURN updated, config
-QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, assignment_id: String, revoked_at: String, updated_by: String) =>
+QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, membership_assignment_id: String, membership_role: String, membership_granted_by: String, membership_granted_at: String, membership_active: I64, revoked_at: String, updated_by: String) =>
   assignments <- N<RbacAssignment>::WHERE(_::{subject_id}::EQ(subject_id))::WHERE(_::{role}::EQ(role))::WHERE(_::{group_id}::EQ(group_id))::WHERE(_::{active}::EQ(1))
   updated <- assignments::UPDATE({ active: 0, revoked_at: revoked_at })
   user <- N<User>::WHERE(_::{user_id}::EQ(subject_id))::FIRST
-  memberships <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::{assignment_id}::EQ(assignment_id))::WHERE(_::{active}::EQ(1))
-  membership_updated <- memberships::UPDATE({ active: 0 })
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  memberships <- user::OutE<RBAC_MEMBER_OF>::WHERE(_::ToN::{group_id}::EQ(group_id))
+  membership_updated <- memberships::UpsertE({ assignment_id: membership_assignment_id, role: membership_role, granted_by: membership_granted_by, granted_at: membership_granted_at, active: membership_active })::From(user)::To(group)
   config_rows <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- config_rows::UpsertN({ config_id: "default", updated_at: revoked_at, updated_by: updated_by })
   RETURN updated, membership_updated, config

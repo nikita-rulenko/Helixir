@@ -103,25 +103,108 @@ impl RbacManager {
         revoked_by: &str,
     ) -> Result<()> {
         let policy = self.snapshot().await?;
-        if policy.enabled && !policy.is_admin(revoked_by) {
-            bail!("RBAC management requires a global admin");
-        }
         let group = group_id.unwrap_or("");
+        if group.is_empty() {
+            if policy.enabled && !policy.is_admin(revoked_by) {
+                bail!("RBAC management requires a global admin");
+            }
+        } else if !policy.can_manage_group(revoked_by, group) {
+            bail!("RBAC group management for '{group}' requires its groupadmin or a global admin");
+        }
         ensure_admin_revoke_is_recoverable(&policy, subject_id, role, group)?;
-        let query = if group.is_empty() {
-            "revokeRbacRole"
-        } else {
-            "revokeRbacGroupRole"
+        let revoked_at = Utc::now().to_rfc3339();
+        if group.is_empty() {
+            self.db
+                .execute_query::<serde_json::Value, _>(
+                    "revokeRbacRole",
+                    &serde_json::json!({
+                        "subject_id": subject_id,
+                        "role": role.label(),
+                        "group_id": group,
+                        "revoked_at": revoked_at,
+                        "updated_by": revoked_by,
+                    }),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            return Ok(());
+        }
+
+        let stored: serde_json::Value = self
+            .db
+            .execute_query("getAllRbacAssignments", &serde_json::json!({}))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let assignments = rows(&stored, "assignments")
+            .into_iter()
+            .filter(|assignment| {
+                assignment.get("active").and_then(serde_json::Value::as_i64) == Some(1)
+            })
+            .filter(|assignment| {
+                string_field(assignment, "subject_id").as_deref() == Some(subject_id)
+            })
+            .filter(|assignment| string_field(assignment, "group_id").as_deref() == Some(group))
+            .collect::<Vec<_>>();
+        if !assignments
+            .iter()
+            .any(|assignment| string_field(assignment, "role").as_deref() == Some(role.label()))
+        {
+            return Ok(());
+        }
+        let role_priority = |candidate: Role| match candidate {
+            Role::GroupAdmin => 5,
+            Role::Moderator => 4,
+            Role::Worker => 3,
+            Role::Viewer => 2,
+            Role::TeamLead => 1,
+            Role::Admin => 0,
         };
+        let replacement = assignments
+            .into_iter()
+            .filter_map(|assignment| {
+                let candidate = Role::parse(&string_field(assignment, "role")?)?;
+                (candidate != role).then_some((assignment, candidate))
+            })
+            .max_by_key(|(_, candidate)| role_priority(*candidate));
+        let (
+            membership_assignment_id,
+            membership_role,
+            membership_granted_by,
+            membership_granted_at,
+            membership_active,
+        ) = replacement.map_or_else(
+            || {
+                (
+                    String::new(),
+                    String::new(),
+                    revoked_by.to_string(),
+                    revoked_at.clone(),
+                    0i64,
+                )
+            },
+            |(assignment, candidate)| {
+                (
+                    string_field(assignment, "assignment_id").unwrap_or_default(),
+                    candidate.label().to_string(),
+                    string_field(assignment, "granted_by").unwrap_or_default(),
+                    string_field(assignment, "created_at").unwrap_or_default(),
+                    1i64,
+                )
+            },
+        );
         self.db
             .execute_query::<serde_json::Value, _>(
-                query,
+                "revokeRbacGroupRole",
                 &serde_json::json!({
                     "subject_id": subject_id,
                     "role": role.label(),
                     "group_id": group,
-                    "assignment_id": assignment_id(subject_id, group, role),
-                    "revoked_at": Utc::now().to_rfc3339(),
+                    "membership_assignment_id": membership_assignment_id,
+                    "membership_role": membership_role,
+                    "membership_granted_by": membership_granted_by,
+                    "membership_granted_at": membership_granted_at,
+                    "membership_active": membership_active,
+                    "revoked_at": revoked_at,
                     "updated_by": revoked_by,
                 }),
             )

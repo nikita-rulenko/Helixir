@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.14.1`. Last verified: 2026-08-05._
+> _Reflects code as of `v0.14.2`. Last verified: 2026-08-05._
 
 ## 1. System context
 
@@ -24,8 +24,8 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   ~117 HQL queries   │                │   - Ollama (local)         │
-   │   15 nodes / 33 edges│                │                            │
+   │   178 HQL queries    │                │   - Ollama (local)         │
+   │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```
 
@@ -412,6 +412,8 @@ category-bridge axis, **longest-chain reconstruction** (`HelixirClient::
 longest_chain`), and **per-edge reasoning weights** now flowing through PPR
 ranking + path confidence. In perspective the Moirai run as **N parallel
 instances** (memory only grows), supervised inside the daemon (§6 open items).
+The category bridge is enabled only for the global-admin surface; ordinary RBAC
+callers route over the base reasoning graph.
 
 ### 7.8 RBAC as a graph-backed policy service
 
@@ -424,10 +426,11 @@ every current member. Detach preserves historical group edges and excludes the
 group from future writes. The CLI's `helixir rbac` family is a thin management client
 over the same named HQL queries used by MCP and `HelixirClient` authorization.
 
-Bootstrap creates two reserved workspaces. `default` receives pre-RBAC memories
+Bootstrap creates three reserved workspaces. `default` receives pre-RBAC memories
 and principals as equal group admins, recreating the historical shared data
 plane with unsalted legacy fingerprints. `onboarding` admits newly discovered
-principals as workers before an administrator assigns working groups. The
+principals as workers before an administrator assigns working groups. `moirai`
+has no members and stores generated hypotheses in a salted admin-only domain. The
 chosen fresh/legacy branch and `pending → migrating → active` phase are stored
 in `RbacConfig`, so interruption is resumed idempotently and never rolled back
 to disabled enforcement. The service fails closed for unassigned
@@ -440,6 +443,10 @@ accessors and constructor are crate-private, preventing external Rust callers
 and CLI commands such as `categories` from bypassing the same global-admin
 decision. FastThink sessions bind their lifecycle to the starting actor;
 pending write results and outbox notices retain stricter owner/creator privacy.
+Moirai may analyze source memories across all groups under that authority, but
+Atropos and Lachesis persist their output only into reserved `moirai`.
+`MOIRAI_DERIVED_FROM` preserves witnesses without joining the ordinary reasoning
+edge families, so generated hypotheses cannot bridge a non-admin graph walk.
 
 Active or historical membership in either reserved workspace contributes to
 the administrative principal registry. `RbacManager::principal_registry` projects User nodes,

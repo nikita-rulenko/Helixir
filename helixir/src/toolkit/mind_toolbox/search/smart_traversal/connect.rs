@@ -96,6 +96,7 @@ pub async fn connect(
     seeds_b: &[(String, String)],
     max_depth: usize,
     graph: &GraphConfig,
+    allow_category_bridge: bool,
 ) -> Result<Option<ConnectionPath>, TraversalError> {
     let ew = graph.edge_weights;
     let ed = graph.edge_damping;
@@ -187,7 +188,7 @@ pub async fn connect(
         // graph. The Category node is the shared projection; we route THROUGH it
         // (Memory -TAGGED_AS-> Category -In TAGGED_AS-> Memory), materialising no
         // pairwise edge. Skipped once the waves already met this level.
-        if meeting.is_none() {
+        if meeting.is_none() && allow_category_bridge {
             for parent_mid in wave.frontier.clone() {
                 let neighbours =
                     fetch_category_neighbours(client, &parent_mid, graph.connect_bridge_cap as i64)

@@ -437,3 +437,13 @@ E::TAGGED_AS {
     source: String
   }
 }
+// Admin-only provenance for the Moirai memory layer. Standard reasoning and
+// smart-traversal queries intentionally do not walk this edge family.
+E::MOIRAI_DERIVED_FROM {
+  From: Memory,
+  To: Memory,
+  Properties: {
+    source: String,
+    created_at: String
+  }
+}

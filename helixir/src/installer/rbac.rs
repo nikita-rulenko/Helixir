@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::ClientKind;
-use crate::core::{DEFAULT_GROUP_ID, ONBOARDING_GROUP_ID, RbacManager, RbacMigrationState, Role};
+use crate::core::{
+    DEFAULT_GROUP_ID, MOIRAI_GROUP_ID, ONBOARDING_GROUP_ID, RbacManager, RbacMigrationState, Role,
+};
 
 /// Security profile selected by onboarding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +26,7 @@ pub struct RbacInstallState {
     pub migration_active: bool,
     pub default_group_exists: bool,
     pub onboarding_group_exists: bool,
+    pub moirai_group_exists: bool,
     pub global_admins: BTreeSet<String>,
     pub registered_principals: BTreeSet<String>,
     pub all_users_registered: bool,
@@ -38,6 +41,7 @@ impl RbacInstallState {
             && self.migration_active
             && self.default_group_exists
             && self.onboarding_group_exists
+            && self.moirai_group_exists
             && self.global_admins.contains(&options.operator_id)
             && options
                 .principals
@@ -57,6 +61,7 @@ pub async fn inspect(manager: &RbacManager) -> anyhow::Result<RbacInstallState> 
         migration_active: policy.migration_state == RbacMigrationState::Active,
         default_group_exists: policy.groups.contains_key(DEFAULT_GROUP_ID),
         onboarding_group_exists: policy.groups.contains_key(ONBOARDING_GROUP_ID),
+        moirai_group_exists: policy.groups.contains_key(MOIRAI_GROUP_ID),
         global_admins: policy
             .users
             .iter()
@@ -126,6 +131,7 @@ mod tests {
             migration_active: true,
             default_group_exists: true,
             onboarding_group_exists: true,
+            moirai_group_exists: true,
             global_admins: BTreeSet::from(["root".to_string()]),
             registered_principals: BTreeSet::from(["root".to_string(), "codex".to_string()]),
             all_users_registered: true,
@@ -148,5 +154,9 @@ mod tests {
         let mut missing_memory = ready_state();
         missing_memory.legacy_memories_covered = false;
         assert!(!missing_memory.satisfies(&options));
+
+        let mut missing_moirai = ready_state();
+        missing_moirai.moirai_group_exists = false;
+        assert!(!missing_moirai.satisfies(&options));
     }
 }

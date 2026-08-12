@@ -9,6 +9,8 @@ fn sample() -> RbacPolicy {
     p.upsert_group("beta", "Beta team");
     p.assign_global("root", Role::Admin);
     p.assign_group("lead", "alpha", Role::TeamLead).unwrap();
+    p.assign_group("group-admin", "alpha", Role::GroupAdmin)
+        .unwrap();
     p.assign_group("mod", "alpha", Role::Moderator).unwrap();
     p.assign_group("worker", "alpha", Role::Worker).unwrap();
     p.assign_group("viewer", "alpha", Role::Viewer).unwrap();
@@ -16,10 +18,24 @@ fn sample() -> RbacPolicy {
 }
 
 #[test]
-fn role_parser_accepts_cli_aliases() {
+fn role_parser_retains_legacy_teamlead_for_safe_migration() {
     assert_eq!(Role::parse("team-lead"), Some(Role::TeamLead));
     assert_eq!(Role::parse("read-only"), Some(Role::Viewer));
     assert_eq!(Role::parse("nope"), None);
+}
+
+#[test]
+fn groupadmin_manages_only_assigned_non_reserved_groups() {
+    let mut p = sample();
+    p.upsert_group(crate::core::DEFAULT_GROUP_ID, "Default");
+    p.upsert_group(crate::core::ONBOARDING_GROUP_ID, "Onboarding");
+    p.upsert_group(crate::core::MOIRAI_GROUP_ID, "Moirai");
+    assert!(p.can_manage_group("root", "beta"));
+    assert!(p.can_manage_group("group-admin", "alpha"));
+    assert!(!p.can_manage_group("group-admin", "beta"));
+    assert!(!p.can_manage_group("group-admin", crate::core::DEFAULT_GROUP_ID));
+    assert!(!p.can_manage_group("group-admin", crate::core::ONBOARDING_GROUP_ID));
+    assert!(!p.can_manage_group("group-admin", crate::core::MOIRAI_GROUP_ID));
 }
 
 #[test]

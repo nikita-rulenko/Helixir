@@ -3,7 +3,7 @@ use super::*;
 pub(crate) fn parse_rbac_role(raw: &str) -> Result<Role> {
     Role::parse(raw).ok_or_else(|| {
         anyhow::anyhow!(
-            "unknown RBAC role '{raw}'; use admin, teamlead, groupadmin, moderator, worker, viewer"
+            "unknown RBAC role '{raw}'; use admin, groupadmin, moderator, worker, viewer"
         )
     })
 }
@@ -62,14 +62,16 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "RBAC active: operator={}, legacy_group={}, onboarding_group={}, kind={}, principals={}, users={}, memories={}",
+                    "RBAC active: operator={}, legacy_group={}, onboarding_group={}, moirai_group={}, kind={}, principals={}, users={}, memories={}, moirai_repaired={}",
                     report.operator_id,
                     report.group_id,
                     report.onboarding_group_id,
+                    report.moirai_group_id,
                     report.migration_kind.label(),
                     report.principals_enrolled.len(),
                     report.users_registered,
-                    report.memories_seen
+                    report.memories_seen,
+                    report.moirai_memories_repaired,
                 );
             }
         }
@@ -96,6 +98,20 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                 );
             }
         }
+        RbacCmd::MigrateTeamleads { yes, json } => {
+            anyhow::ensure!(yes, "migrating teamlead assignments requires --yes");
+            let actor = rbac_actor();
+            require_rbac_admin(&current, &actor, "teamlead migration")?;
+            let report = manager.migrate_teamleads(&actor).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "migrated {} legacy teamlead assignment(s) to groupadmin",
+                    report.migrated
+                );
+            }
+        }
         RbacCmd::Group { cmd } => match cmd {
             RbacGroupCmd::Create {
                 id,
@@ -111,10 +127,24 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
             }
             RbacGroupCmd::List { json } => {
                 let actor = rbac_actor();
-                require_rbac_admin(&current, &actor, "group listing")?;
+                let groups = current
+                    .groups
+                    .iter()
+                    .filter(|(group_id, _)| {
+                        current.is_admin(&actor)
+                            || current
+                                .users
+                                .get(&actor)
+                                .and_then(|binding| binding.groups.get(group_id.as_str()))
+                                .is_some_and(|roles| roles.contains(&Role::GroupAdmin))
+                    })
+                    .collect::<Vec<_>>();
+                anyhow::ensure!(
+                    !current.enabled || current.is_admin(&actor) || !groups.is_empty(),
+                    "group listing requires a groupadmin assignment or global admin"
+                );
                 if json {
-                    let groups = current
-                        .groups
+                    let groups = groups
                         .iter()
                         .map(|(group_id, group)| {
                             serde_json::json!({
@@ -130,7 +160,7 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                         serde_json::to_string_pretty(&serde_json::json!({"groups": groups}))?
                     );
                 } else {
-                    for (id, group) in current.groups {
+                    for (id, group) in groups {
                         println!("{id}\t{}\t{}", group.name, group.description);
                     }
                 }
@@ -142,7 +172,6 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                 json,
             } => {
                 let actor = rbac_actor();
-                require_rbac_admin(&current, &actor, "group membership management")?;
                 let role = parse_rbac_role(&role)?;
                 manager
                     .add_user_to_group(&user, &group, role, &actor)
@@ -163,7 +192,6 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
             }
             RbacGroupCmd::RemoveUser { group, user, json } => {
                 let actor = rbac_actor();
-                require_rbac_admin(&current, &actor, "group membership management")?;
                 let revoked = manager
                     .remove_user_from_group(&user, &group, &actor)
                     .await?;
@@ -309,7 +337,6 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
         RbacCmd::Grant { user, role, group } => {
             let role = parse_rbac_role(&role)?;
             let actor = rbac_actor();
-            require_rbac_admin(&current, &actor, "grant")?;
             manager.grant(&user, role, group.as_deref(), &actor).await?;
             println!(
                 "granted {} to {}{}",
@@ -321,7 +348,6 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
         RbacCmd::Revoke { user, role, group } => {
             let role = parse_rbac_role(&role)?;
             let actor = rbac_actor();
-            require_rbac_admin(&current, &actor, "revoke")?;
             manager
                 .revoke_as(&user, role, group.as_deref(), &actor)
                 .await?;

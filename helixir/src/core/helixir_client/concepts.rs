@@ -234,9 +234,20 @@ impl HelixirClient {
     ) -> Result<ConnectMemoriesResult, HelixirClientError> {
         self.ensure_initialized().await?;
 
+        let policy = self
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|e| HelixirClientError::Operation(e.to_string()))?;
         let path = self
             .tooling_manager
-            .connect_memories(query_a, query_b, owner_id, max_depth.unwrap_or(4))
+            .connect_memories_with_generative(
+                query_a,
+                query_b,
+                owner_id,
+                max_depth.unwrap_or(4),
+                !policy.enabled || policy.is_admin(actor_id),
+            )
             .await
             .map_err(|e| HelixirClientError::Tooling(e.to_string()))?;
 

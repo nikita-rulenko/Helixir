@@ -73,7 +73,7 @@ with `file:line` citations. Layout:
 helixir/doc/
 ├── README.md             index + conventions
 ├── architecture.md       sysdesign — layers, components, ownership
-├── data-model.md         datadesign — 15 nodes / 33 edges / ontology / invariants
+├── data-model.md         datadesign — 22 nodes / 30 edges / ontology / invariants
 ├── dataflow.md           add_memory + search_memory + FastThink commit pipelines
 ├── userflow.md           MCP tools + typical agent sessions
 ├── test-design.md        test strategy + current coverage map
@@ -585,4 +585,4 @@ this repo. They cost ~10 minutes per issue.
 - HQL in this repository supports `//` line comments; `/* ... */` block comments are rejected.
 - Before schema/query changes, read `helixir/doc/data-model.md` and `helixir/doc/architecture.md`, keep migrations additive, avoid non-nullable fields on populated nodes, and run `helix check`.
 - Before a live schema transition, create a recoverable backup of the persistent volume, stop/rebuild/recreate against that same volume, deploy, and perform read-only health/query verification. Never deploy an unbacked live volume.
-- RBAC is permanently enabled and graph-backed in HelixDB, the single source of truth for Rust, MCP, and CLI. The one-way resumable bootstrap puts pre-RBAC memories and trusted peers in reserved `default` with equal group-admin access, while reserved `onboarding` admits new principals before normal group assignment; only the operator receives global admin. Authorization is deny-by-default and fail-closed. Omitted `group_id` is inferred only when exactly one reserved workspace is writable; working-group writes require a concrete group. `actor_id` is the authenticated principal and `user_id` is the memory owner/target. Use `helixir rbac`; do not introduce local ACLs, a second registry, or a disabled-mode rollback.
+- RBAC is permanently enabled and graph-backed in HelixDB, the single source of truth for Rust, MCP, and CLI. The one-way resumable bootstrap puts pre-RBAC memories and trusted peers in reserved `default` with equal group-admin access, reserved `onboarding` admits new principals before normal group assignment, and membership-free reserved `moirai` stores global-admin-only generated hypotheses; only the operator receives global admin. `groupadmin` is the multi-group team-lead role and manages memberships/roles only in assigned non-reserved groups; `teamlead` is retired legacy state. The Moirai may analyze all groups, but only global admins invoke them or read their system layer. Authorization is deny-by-default and fail-closed. Omitted `group_id` is inferred only when exactly one reserved workspace is writable; working-group writes require a concrete group. `actor_id` is the authenticated principal and `user_id` is the memory owner/target. Use `helixir rbac`; do not introduce local ACLs, a second registry, or a disabled-mode rollback.

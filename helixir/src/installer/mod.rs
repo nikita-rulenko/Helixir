@@ -224,7 +224,7 @@ pub enum InstallAction {
     DownloadNli,
     /// Atomically write the protected central `helixir.toml`.
     WriteCentralConfig,
-    /// Bootstrap the default and onboarding workspaces and attach legacy state.
+    /// Bootstrap the default, onboarding, and Moirai workspaces and attach legacy state.
     BootstrapRbac {
         operator_id: String,
         principals: Vec<String>,

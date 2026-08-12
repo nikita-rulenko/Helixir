@@ -125,7 +125,7 @@ impl<'a> Orchestrator<'a> {
 
         // 3) #83: retroactive causal stitching — connect OLD memories whose
         // causal relation only became visible after both existed. Bounded and
-        // hypothesis-grade (edges tagged lachesis-stitch).
+        // persisted as an admin-only Moirai hypothesis.
         let stitch = if cfg.run_stitch {
             crate::agents::lachesis::stitch::Stitcher::new(self.tooling)
                 .stitch_pass(user)
@@ -149,8 +149,8 @@ impl<'a> Orchestrator<'a> {
             Default::default()
         };
 
-        // Close the hive loop: curated hypotheses become first-class memories
-        // (user `helixir`, SUPPORTS provenance) so any agent can recall them.
+        // Close the governed loop: curated hypotheses become first-class
+        // admin-only memories (user `helixir`, Moirai provenance).
         let persisted = if insights.is_empty() {
             0
         } else {
