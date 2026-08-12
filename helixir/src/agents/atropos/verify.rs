@@ -218,25 +218,24 @@ impl<'a> Verifier<'a> {
         stats
     }
 
-    /// The witnesses: memories with a SUPPORTS edge INTO the hypothesis (the
-    /// provenance persist_insights wrote).
+    /// The witnesses attached through the admin-only Moirai provenance edge.
     async fn witness_contents(&self, memory_id: &str) -> Vec<String> {
         #[derive(Deserialize, Default)]
         struct Incoming {
             #[serde(default)]
-            supports_in: Vec<MemRow>,
+            witnesses: Vec<MemRow>,
         }
         match self
             .tooling
             .db
             .execute_query::<Incoming, _>(
-                "getMemoryIncomingRelations",
-                &serde_json::json!({"memory_id": memory_id}),
+                "getMoiraiWitnesses",
+                &serde_json::json!({"insight_id": memory_id}),
             )
             .await
         {
             Ok(r) => r
-                .supports_in
+                .witnesses
                 .into_iter()
                 .filter(|m| !m.content.is_empty())
                 .take(6)
@@ -285,7 +284,7 @@ impl<'a> Verifier<'a> {
             };
             match self
                 .tooling
-                .store_new_memory(&memory, "helixir", &vector, "insight-retired", None)
+                .store_moirai_memory(&memory, &vector, "insight-retired")
                 .await
             {
                 Ok((id, _)) => id,

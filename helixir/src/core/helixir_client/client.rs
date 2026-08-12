@@ -83,18 +83,7 @@ impl HelixirClient {
                 .with_retry(config.retry.clone()),
         );
 
-        let embedder = Arc::new(EmbeddingGenerator::new(crate::llm::EmbeddingConfig {
-            provider: config.embedding_provider.clone(),
-            base_url: config.embedding_url.clone(),
-            model: config.embedding_model.clone(),
-            api_key: config.embedding_api_key.clone(),
-            timeout_secs: config.timeout,
-            cache_size: config.llm_runtime.embedding_cache_size,
-            cache_ttl: config.llm_runtime.embedding_cache_ttl_secs,
-            fallback_enabled: config.embedding_fallback_enabled,
-            fallback_url: config.embedding_fallback_url.clone(),
-            fallback_model: config.embedding_fallback_model.clone(),
-        }));
+        let embedder = Arc::new(EmbeddingGenerator::new(config.embedding_config()));
 
         let primary_llm: Arc<dyn LlmProvider> = LlmProviderFactory::create(
             &config.llm_provider,
@@ -184,7 +173,10 @@ impl HelixirClient {
 
     /// Access the HelixDB-backed RBAC manager used by CLI and MCP paths.
     pub fn rbac(&self) -> crate::core::rbac::RbacManager {
-        crate::core::rbac::RbacManager::new(Arc::clone(&self.db))
+        crate::core::rbac::RbacManager::new_with_embedder(
+            Arc::clone(&self.db),
+            Arc::clone(&self.embedder),
+        )
     }
 
     pub fn embedder(&self) -> &EmbeddingGenerator {

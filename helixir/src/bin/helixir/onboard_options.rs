@@ -333,7 +333,7 @@ pub(crate) fn install_action_label(action: &helixir::installer::InstallAction) -
         InstallAction::DownloadNli => "Download and verify NLI model".to_string(),
         InstallAction::WriteCentralConfig => "Write protected ~/.helixir/helixir.toml".to_string(),
         InstallAction::BootstrapRbac { .. } => {
-            "Converge permanent default/onboarding RBAC workspaces".to_string()
+            "Converge permanent default/onboarding/Moirai RBAC workspaces".to_string()
         }
         InstallAction::RegisterClient(client) => {
             format!("Register helixir-local in {}", client.label())

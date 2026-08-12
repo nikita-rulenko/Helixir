@@ -150,6 +150,26 @@ impl RbacPolicy {
             .is_some_and(|binding| binding.global_roles.contains(&Role::Admin))
     }
 
+    /// Whether an actor owns the control plane for one concrete group.
+    /// Reserved workspaces remain global-admin-only.
+    pub fn can_manage_group(&self, actor: &str, group: &str) -> bool {
+        if !self.enabled || self.is_admin(actor) {
+            return true;
+        }
+        if matches!(
+            group,
+            crate::core::rbac_compat::DEFAULT_GROUP_ID
+                | crate::core::rbac_compat::ONBOARDING_GROUP_ID
+                | crate::core::rbac_compat::MOIRAI_GROUP_ID
+        ) {
+            return false;
+        }
+        self.users
+            .get(actor)
+            .and_then(|binding| binding.groups.get(group))
+            .is_some_and(|roles| roles.contains(&Role::GroupAdmin))
+    }
+
     /// Buffered write results are private operational data. The owner, the
     /// principal that created the write, and global admins may inspect them;
     /// ordinary group visibility is intentionally insufficient.

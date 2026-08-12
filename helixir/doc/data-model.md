@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.14.1`. Last verified: 2026-08-05._
+> _Reflects code as of `v0.14.2`. Last verified: 2026-08-05._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (170 HQL queries that materialize the
+and `helixir/schema/queries.hx` (178 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -14,10 +14,10 @@ contract). Anything below disagreeing with those files is the bug.
                   │                             │
                   │   22 node types             │
                   │    + 5 vector-index types   │
-                  │   29 edge types             │
+                  │   30 edge types             │
                   │     ├── active in code      │
                   │     └── reserved (see §3)   │
-                  │   170 named HQL queries     │
+                  │   178 named HQL queries     │
                   │   vector dim: 768 (default) │
                   └─────────────────────────────┘
 ```
@@ -90,7 +90,7 @@ membership lets it bridge to distant memories that share it.
 | `CATEGORY_HAS_EMBEDDING` edge | Category → CategoryEmbedding | *Reserved* (see CategoryEmbedding). |
 
 Routing reads: `getMemoryCategories`, `getMemoriesByCategory` (membership +
-cross-domain bridge in `connect_memories`); `category_member_ids` feeds
+global-admin-only cross-domain bridge in `connect_memories`); `category_member_ids` feeds
 Lachesis PMI subset-overlap (`ln(\|A∩B\|·N / (\|A\|·\|B\|))`). The planned
 `Category —CO_OCCURS{count, pmi}→ Category` edge + `Insight` journal nodes are
 the next schema step (persists what PMI v0 computes on the fly).
@@ -161,6 +161,7 @@ with HQL ready, but no Rust producer uses them — the arsenal rides
 | `ENTITY_HAS_EMBEDDING` | Entity → EntityEmbedding | `embedding_model` | entity manager |
 | `HAS_SUBTYPE` | Concept → Concept | — | ontology loader (seed; self-healing against duplicate trees, #67) |
 | `TAGGED_AS` | Memory → Category | `confidence`, `source` | `Clotho::auto_tag` (§2.1) |
+| `MOIRAI_DERIVED_FROM` | Memory → Memory | `source`, `created_at` | Admin-only generated hypothesis → source-memory provenance; not traversed by ordinary reasoning/search |
 
 ### Reserved edges
 
@@ -273,21 +274,24 @@ the groups active for their author. `RbacConfig` holds the enforcement switch,
 the one-way phase (`pending`, `migrating`, `active`), and a once-chosen
 `fresh|legacy` branch. The storage-level `enabled = 0` default exists only for
 the pre-bootstrap checkpoint; there is no product-level disabled profile.
-Bootstrap creates reserved `default` and `onboarding`, verifies all grants and
+Bootstrap creates reserved `default`, `onboarding`, and `moirai`, verifies all grants and
 legacy-memory edges, enables enforcement, and marks the transition active.
 Failure leaves `migrating` in HelixDB so the next run resumes.
 
 The `default` workspace intentionally stores an empty `Memory.rbac_scope` and
 uses the legacy unsalted `content_key`, while `MEMORY_IN_RBAC_GROUP` supplies
 the access boundary. Pre-RBAC principals receive equal group-admin rights there.
-`onboarding`, custom groups, and dedup federations use salted security domains.
+`onboarding`, `moirai`, custom groups, and dedup federations use salted security domains.
+The membership-free `moirai` workspace holds first-class hypotheses generated
+across groups. `MOIRAI_DERIVED_FROM` points from those hypotheses to source
+memories but is omitted from ordinary reasoning traversal.
 
 An active `RBAC_MEMBER_OF` edge into `onboarding` marks a new principal as
 enrolled. Active or historical membership in either reserved workspace makes
 the principal visible in the administrative registry. Revocation retains the
 User node and `RbacAssignment` audit row; no second registry is persisted.
 
-Both `default` and `onboarding` are reserved: management APIs reject
+All three system workspaces are reserved: management APIs reject
 deactivation and dedup-federation membership because either operation would
 break the migration, registry, or legacy-fingerprint contract. Enabled policy
 also rejects revocation of its last global administrator.
@@ -295,8 +299,8 @@ also rejects revocation of its last global administrator.
 The existing `Memory.user_id` remains the author/owner and is never replaced by
 a group id. Authorization resolves the actor's active assignments, derives the
 groups and owners reachable through the graph, and then applies the role matrix:
-global admin is unrestricted; team lead is read-only in assigned groups;
-group admin and moderator can read/write their groups; worker can write only
+global admin is unrestricted; group admin can read/write and manage roles in
+one or more assigned non-reserved groups; moderator can read/write its groups; worker can write only
 their own authored memories; viewer is read-only. Revocation deactivates the
 assignment and preserves its audit history.
 

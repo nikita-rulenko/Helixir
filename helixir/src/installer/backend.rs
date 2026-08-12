@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 /// HelixDB CLI version compatible with this LMDB-era schema.
 pub const HELIX_CLI_VERSION: &str = "2.3.5";
 /// Read-only contract returned by the deployed query inventory.
-pub const SCHEMA_CONTRACT_VERSION: &str = "helixir-rbac-default-onboarding-v3";
+pub const SCHEMA_CONTRACT_VERSION: &str = "helixir-rbac-moirai-v4";
 /// Local HelixDB is intentionally bounded: the upstream gateway creates eight
 /// workers per visible core and each worker can retain a request high-water
 /// mark in its mimalloc heap.

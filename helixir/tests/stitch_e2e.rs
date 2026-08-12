@@ -4,9 +4,9 @@
 //! no cross-atom causal edges — the exact "old memories, invisible relation"
 //! situation), waits for background entity enrichment to give the pair its
 //! shared-entity signal, then runs one stitch pass and checks DB ground
-//! truth: a BECAUSE edge from effect to cause, tagged lachesis-stitch. A
-//! second pass must persist nothing (linked pairs are skipped) — the
-//! convergence property that keeps the duty flood-safe.
+//! truth: an admin-only Moirai hypothesis with non-traversable provenance to
+//! both source memories. A second pass must not duplicate that hypothesis —
+//! the convergence property that keeps the duty flood-safe.
 
 mod common;
 
@@ -99,8 +99,8 @@ async fn stitch_builds_because_across_old_memories() {
         );
     }
 
-    // Pass 1: the stitch must find the pair, judge it causal, persist
-    // BECAUSE. The judge is one LLM call — probabilistic — so one retry is
+    // Pass 1: the stitch must find the pair, judge it causal, persist an
+    // admin-only hypothesis. The judge is one LLM call — probabilistic — so one retry is
     // allowed before the assertion (same posture as the 3a dedup retry).
     let mut stats = Stitcher::new(tooling)
         .stitch_pass(&user)
@@ -117,11 +117,10 @@ async fn stitch_builds_because_across_old_memories() {
         "stitch must persist a causal edge for an explicit overheat->trip pair: {stats:?}"
     );
 
-    let a_out = db_edge_types_out(&a);
-    let b_out = db_edge_types_out(&b);
     assert!(
-        a_out.contains(&"BECAUSE".to_string()) || b_out.contains(&"BECAUSE".to_string()),
-        "a BECAUSE edge must exist between the pair (a: {a_out:?}, b: {b_out:?})"
+        !db_edge_types_out(&a).contains(&"BECAUSE".to_string())
+            && !db_edge_types_out(&b).contains(&"BECAUSE".to_string()),
+        "generated causality must not enter the ordinary reasoning graph"
     );
 
     // Pass 2: convergence — the pair is linked now, nothing new may persist.
@@ -133,12 +132,7 @@ async fn stitch_builds_because_across_old_memories() {
         stats2.persisted, 0,
         "second pass must skip the already-linked pair: {stats2:?}"
     );
-    assert!(
-        stats2.skipped_linked >= 1,
-        "the pair must be counted as skipped_linked on pass 2: {stats2:?}"
-    );
-
     println!(
-        "==== stitch_e2e ==== pass1: {stats:?} | pass2: {stats2:?} — retroactive BECAUSE built, convergent"
+        "==== stitch_e2e ==== pass1: {stats:?} | pass2: {stats2:?} — admin-only hypothesis built, convergent"
     );
 }

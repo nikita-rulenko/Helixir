@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.14.1`. Last verified: 2026-08-05._
+> _Reflects code as of `v0.14.2`. Last verified: 2026-08-05._
 
 ## 1. Stance
 
@@ -26,7 +26,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.14.1` working tree):** 267 library unit tests plus 17 CLI tests
+**Current (`v0.14.2` working tree):** 268 library unit tests plus 17 CLI tests
 (`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -61,6 +61,12 @@ materialized common visibility, viewer denial, detach-with-history, future
 isolation, historical in-place update denial, join backfill, cleanup, and the
 invariant that RBAC remains enabled.
 
+`tests/rbac_bootstrap_e2e.rs` additionally seeds the pre-v0.14.2 generated
+forms (`MEMORY_RELATION/SUPPORTS` and `BECAUSE reasoning_id=lachesis-stitch`),
+then verifies that upgrade reifies them under `moirai`, removes ordinary-graph
+bridges, preserves unrelated generic relations, restores embedding parity, and
+denies the compatibility `default` groupadmin.
+
 ### Unit-test distribution
 
 | Area | File | Tests | What they actually check |
@@ -81,7 +87,7 @@ invariant that RBAC remains enabled.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 36 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
+| Installer | `src/installer/` | 36 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
 | CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
 | Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
@@ -235,7 +241,7 @@ The RBAC unit matrix in `core::rbac` and `core::rbac_compat` covers all six
 roles, deny-by-default, worker authorship, viewer write denial, global admin
 bypass, cross-group isolation, single-reserved-workspace routing, ambiguous
 write denial, and `default` legacy-fingerprint preservation. Installer tests
-require both reserved groups, active migration state, registry coverage, and
+require all three reserved groups, active migration state, registry coverage, and
 legacy-memory coverage before the profile is ready. CLI tests cover stable
 parsing without any disable escape, while the repository-wide module
 budget is enforced independently by `tests/module_budget.rs`.

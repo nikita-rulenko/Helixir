@@ -5,10 +5,9 @@
 //! neither can do is connect two OLD memories whose causal relation only
 //! becomes visible after both exist. This pass walks a bounded window of a
 //! user's memories, proposes candidate pairs by ENTITY OVERLAP, asks the LLM
-//! whether an explicit causal relation holds, and persists the survivors as
-//! BECAUSE edges tagged `lachesis-stitch` (hypothesis-grade provenance — the
-//! apophenia guardrail: generated connections are hypotheses, never asserted
-//! truth).
+//! whether an explicit causal relation holds, and persists each survivor as an
+//! admin-only Moirai hypothesis with non-traversable provenance to both source
+//! memories. Generated causality never becomes a base-graph fact.
 //!
 //! Discipline inherited from the OOM incident: everything is capped —
 //! window, judged pairs per pass, persisted edges per pass — and pairs that
@@ -152,33 +151,74 @@ impl<'a> Stitcher<'a> {
             {
                 continue;
             }
-            // Direction follows the decision-path semantics: the EFFECT
-            // carries the outgoing BECAUSE edge to its CAUSE ("A because B").
-            let (effect, cause) = match verdict.cause.as_str() {
-                "a" => (b_id, a_id),
-                "b" => (a_id, b_id),
+            let (effect_id, effect_text, cause_id, cause_text) = match verdict.cause.as_str() {
+                "a" => (b_id, b_text, a_id, a_text),
+                "b" => (a_id, a_text, b_id, b_text),
                 _ => continue,
+            };
+            let text = format!(
+                "HYPOTHESIS (generated, requires verification): '{}' may occur because '{}'. Proposed by Lachesis retroactive causal stitching; this is not an asserted fact.",
+                crate::safe_truncate(effect_text, 320),
+                crate::safe_truncate(cause_text, 320),
+            );
+            let scope = format!("rbac:group:{}", crate::core::rbac_compat::MOIRAI_GROUP_ID);
+            let key =
+                crate::core::memory_fingerprint::content_key_scoped(&text, "opinion", Some(&scope));
+            let existing = self.tooling.memories_in_group(&key).await;
+            if !existing.is_empty() {
+                for insight_id in existing {
+                    let _ = self.tooling.link_moirai_memory(&insight_id).await;
+                    let _ = self
+                        .tooling
+                        .link_moirai_provenance(&insight_id, effect_id, "lachesis-stitch")
+                        .await;
+                    let _ = self
+                        .tooling
+                        .link_moirai_provenance(&insight_id, cause_id, "lachesis-stitch")
+                        .await;
+                }
+                continue;
+            }
+            let vector = match self.tooling.embedder.generate(&text, true).await {
+                Ok(vector) => vector,
+                Err(error) => {
+                    warn!("stitch: hypothesis embedding failed: {error}");
+                    continue;
+                }
+            };
+            let memory = crate::llm::extractor::ExtractedMemory {
+                text,
+                memory_type: "opinion".to_string(),
+                certainty: verdict.confidence.clamp(0, 90) as i32,
+                importance: 65,
+                entities: vec![],
+                context: None,
             };
             match self
                 .tooling
-                .reasoning_engine
-                .add_relation(
-                    effect,
-                    cause,
-                    crate::toolkit::mind_toolbox::reasoning::ReasoningType::Because,
-                    (verdict.confidence.clamp(0, 90)) as i32,
-                    Some("lachesis-stitch"),
-                )
+                .store_moirai_memory(&memory, &vector, "moira-stitch")
                 .await
             {
-                Ok(_) => {
-                    stats.persisted += 1;
-                    info!(
-                        "stitch: BECAUSE {} -> {} (confidence {})",
-                        effect, cause, verdict.confidence
-                    );
+                Ok((insight_id, _)) => {
+                    let effect_link = self
+                        .tooling
+                        .link_moirai_provenance(&insight_id, effect_id, "lachesis-stitch")
+                        .await;
+                    let cause_link = self
+                        .tooling
+                        .link_moirai_provenance(&insight_id, cause_id, "lachesis-stitch")
+                        .await;
+                    if effect_link.is_ok() && cause_link.is_ok() {
+                        stats.persisted += 1;
+                        info!(
+                            "stitch: Moirai hypothesis {} for {} because {} (confidence {})",
+                            insight_id, effect_id, cause_id, verdict.confidence
+                        );
+                    } else {
+                        warn!("stitch: provenance persistence failed for {insight_id}");
+                    }
                 }
-                Err(e) => debug!("stitch: persist {effect}->{cause} skipped: {e}"),
+                Err(e) => debug!("stitch: persist {effect_id}->{cause_id} skipped: {e}"),
             }
         }
 

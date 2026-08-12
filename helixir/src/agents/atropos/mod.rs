@@ -152,10 +152,11 @@ fn build_insight(h: &SubsetHypothesis) -> Insight {
 }
 
 impl Atropos<'_> {
-    /// Persist curated insights into the shared graph as FIRST-CLASS memories
+    /// Persist curated insights into the admin-only Moirai workspace as first-class memories
     /// under the `helixir` user — hypothesis-framed (never asserted truth),
-    /// provenance-linked to their witness memories with SUPPORTS edges, and
-    /// recallable by ANY agent via collective search. The file journal remains
+    /// provenance-linked to their witness memories with the non-traversable
+    /// `MOIRAI_DERIVED_FROM` edge, and
+    /// recallable only by global administrators. The file journal remains
     /// the operator-facing log; this is what closes the hive loop: generated
     /// knowledge flows back into the memory it came from.
     ///
@@ -164,8 +165,7 @@ impl Atropos<'_> {
     /// hits the same content_key group and is skipped.
     pub async fn persist_insights(&self, insights: &[Insight]) -> usize {
         use crate::llm::extractor::ExtractedMemory;
-        use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
-        use crate::toolkit::tooling_manager::content_key::compute_content_key;
+        use crate::toolkit::tooling_manager::content_key::compute_content_key_scoped;
         use std::collections::HashSet;
 
         // Flood guard. A daemon re-routing a slowly drifting corpus finds
@@ -221,8 +221,17 @@ impl Atropos<'_> {
             );
 
             // Idempotency: an identical hypothesis already lives in the graph.
-            let key = compute_content_key(&text, "opinion");
-            if !self.tooling.memories_in_group(&key).await.is_empty() {
+            let scope = format!("rbac:group:{}", crate::core::rbac_compat::MOIRAI_GROUP_ID);
+            let key = compute_content_key_scoped(&text, "opinion", Some(&scope));
+            let existing = self.tooling.memories_in_group(&key).await;
+            if !existing.is_empty() {
+                for memory_id in existing {
+                    if let Err(error) = self.tooling.link_moirai_memory(&memory_id).await {
+                        warn!(
+                            "insight persist: failed to repair Moirai scope for {memory_id}: {error}"
+                        );
+                    }
+                }
                 continue;
             }
 
@@ -245,7 +254,7 @@ impl Atropos<'_> {
             };
             let insight_id = match self
                 .tooling
-                .store_new_memory(&memory, "helixir", &vector, "moira-insight", None)
+                .store_moirai_memory(&memory, &vector, "moira-insight")
                 .await
             {
                 Ok((id, _)) => id,
@@ -255,15 +264,15 @@ impl Atropos<'_> {
                 }
             };
 
-            // Provenance: every witness memory SUPPORTS the hypothesis.
+            // Provenance lives on a Moirai-only edge family that ordinary
+            // reasoning and smart-traversal queries never walk.
             for w in &ins.witnesses {
                 if w.memory_id.is_empty() || w.memory_id == insight_id {
                     continue;
                 }
                 if let Err(e) = self
                     .tooling
-                    .reasoning_engine
-                    .add_relation(&w.memory_id, &insight_id, ReasoningType::Supports, 60, None)
+                    .link_moirai_provenance(&insight_id, &w.memory_id, "atropos")
                     .await
                 {
                     warn!(

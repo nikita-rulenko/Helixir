@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
-  <img src="https://img.shields.io/badge/release-v0.14.1-2ea44f" alt="Release v0.14.1"/>
+  <img src="https://img.shields.io/badge/release-v0.14.2-2ea44f" alt="Release v0.14.2"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -102,7 +102,8 @@ Since v0.14.0, RBAC is **permanently enabled** and stored in HelixDB alongside
 the memories it protects. Principals, groups, role assignments, assignment
 history, per-memory visibility edges, dedup federations, and bootstrap state all
 come from the graph. The CLI and MCP server enforce that same graph-backed
-policy; there is no second ACL file to drift out of sync.
+policy; there is no second ACL file to drift out of sync. The reserved `moirai`
+workspace is the explicit global-admin-only layer for generated hypotheses.
 
 Every memory visible to a non-admin belongs to a concrete visibility group.
 Reads are allowed through materialized `MEMORY_IN_RBAC_GROUP` edges, not by
@@ -116,20 +117,23 @@ cannot be resolved.
 | Role | Scope | Read | Write | Manage RBAC |
 |:-----|:------|:-----|:------|:------------|
 | `admin` | Global | Every memory and group | For any owner, in any existing group; unscoped writes stay admin-only | Yes |
-| `teamlead` | Assigned groups | All memories in those groups | No | No |
-| `groupadmin` | Assigned groups | All memories in those groups | Own memories and memories owned by group members | No |
+| `groupadmin` | One or more assigned groups | All memories in those groups | Own memories and memories owned by group members | Membership and roles in those non-reserved groups |
 | `moderator` | Assigned groups | All memories in those groups | Own memories and memories owned by group members | No |
 | `worker` | Assigned groups | All memories in those groups | Only memories authored under their own `user_id` | No |
 | `viewer` | Assigned groups | All memories in those groups | No | No |
 
-Only a global `admin` can manage groups, roles, the user registry, and dedup
-federations. The last global administrator cannot be revoked. Group assignments
-are deactivated rather than erased, so the registry and audit history survive
-removal.
+A global `admin` manages the full graph, user registry, group lifecycle, reserved
+workspaces, global roles, and dedup federations. A `groupadmin` is the operational
+team-lead role: the same principal may administer several assigned groups and can
+add, remove, or change members there. The old read-only `teamlead` grant is retired;
+existing assignments remain readable until an administrator explicitly converts
+them with `helixir rbac migrate-teamleads --yes`. The last global administrator
+cannot be revoked. Assignments are deactivated rather than erased, so audit history
+survives removal.
 
 ### Reserved workspaces and onboarding
 
-The one-way, resumable bootstrap creates two protected groups:
+The one-way, resumable bootstrap creates three protected groups:
 
 - `default` receives pre-RBAC memories and previously trusted principals.
   Those principals become equal `groupadmin` peers there, preserving the old
@@ -137,6 +141,10 @@ The one-way, resumable bootstrap creates two protected groups:
 - `onboarding` admits newly discovered users and agents as `worker`s. Their
   membership makes them visible in the graph-backed registry so an administrator
   can inspect them and assign normal working groups.
+- `moirai` is a membership-free, global-admin-only system workspace. Clotho,
+  Lachesis, and Atropos may analyze memories from every group, but their generated
+  hypotheses and provenance are persisted here and never enter a team's ordinary
+  search or dedup domain.
 
 A normal admission flow is:
 
@@ -170,8 +178,8 @@ helixir rbac dedup attach --group platform --dedup-group engineering
 
 Joining a federation grants the group access to its existing memory history.
 Detaching is prospective: historical visibility remains, while future writes
-return to the detached group's own dedup domain. The protected `default` and
-`onboarding` workspaces cannot join a federation.
+return to the detached group's own dedup domain. The protected `default`,
+`onboarding`, and `moirai` workspaces cannot join a federation.
 
 > **Trust boundary.** RBAC separates cooperative principals inside Helixir; it
 > is not identity authentication by itself. Stdio clients run locally. The
@@ -385,10 +393,10 @@ Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on 
 The chain *Rajasthan weather → guar harvest → guar gum → fracking cost → shale stocks* is never a single stored edge — it runs through layers of abstraction. Helixir's next step is to **generate** those connections itself: three background agents, named for the Fates, spin a second axis over the flat graph and surface non-obvious cross-domain links — always as **hypotheses with provenance**, never asserted truth (the charter, extended from stored facts to generated connections).
 
 - **Clotho — the Spinner.** Tags memories from a controlled, self-growing category vocabulary (embedding-match; on a miss it mints a fitting category via the LLM). Shared tags weave distant memories into subsets — a category layer that accretes over the graph from the corpus itself.
-- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it. Her second duty is **retroactive causal stitching**: a bounded pass proposes entity-overlapping pairs of *old* memories, an LLM judge conservatively confirms explicit causation, and survivors become `BECAUSE` edges tagged `lachesis-stitch` — causality the write path could not see because the two facts arrived days apart.
+- **Lachesis — the Measurer.** Routes chains *within* the subsets and gates them against apophenia: a coherence gate (geometric-mean edge weight) plus **PMI subset overlap** — a thick, everything-touching category gates itself out by arithmetic. It drills every link down to the anchor memories that witness it. Her second duty is **retroactive causal stitching**: a bounded pass proposes entity-overlapping pairs of *old* memories, an LLM judge conservatively confirms explicit causation, and survivors become admin-only hypothesis memories with provenance — never asserted `BECAUSE` edges in a team's base graph.
 - **Atropos — the Cutter.** Curates the survivors into ranked, deduplicated **insights** carrying provenance and a lifecycle (`proposed → verified → refuted`).
 
-The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli), with a per-Moira cadence (tag every pass, route insights every Nth). Each surviving insight is journaled **and persisted back into the graph** as a first-class hypothesis-memory under `user_id=helixir`, with `SUPPORTS` edges from its witness memories — so any connected agent can recall generated knowledge the same way it recalls stored facts. Drive and watch it all with the [`helixir` CLI](#cli).
+The three run as one orchestrated pass — on demand or on a schedule via the [daemon](#cli), with a per-Moira cadence (tag every pass, route insights every Nth). Only a global `admin` may invoke them. They read across all groups to find organization-wide patterns, while every surviving insight is persisted under `user_id=helixir` in reserved `moirai`, linked to witnesses by the non-traversable `MOIRAI_DERIVED_FROM` edge. Ordinary roles cannot read the hypothesis or use its category/provenance layer as a graph bridge. Drive and watch it all with the [`helixir` CLI](#cli).
 
 > **Status.** The pipeline is built and validated end-to-end — the guar chain reconstructs as a single insight on clean data, and a live multi-agent corpus produced 5-hop cross-domain chains (weather → agriculture → petrochemicals → battery tech). Insight quality tracks tag/corpus hygiene; the provenance is what lets you tell signal from noise.
 
@@ -442,7 +450,7 @@ The hierarchy enables traversal: searching for "Attribute" returns all facts, pr
 
 ## Graph Schema
 
-Helixir stores everything as a typed graph: **18 node types** (+ 5 vector-index types) connected by **37 edge types** — including the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) for the generative layer.
+Helixir stores everything as a typed graph: **22 node types** (+ 5 vector-index types) connected by **30 edge types** — including the **category subgraph** the Moirai weave over it (`Category` / `CategoryEmbedding` nodes; `TAGGED_AS`, `SUBCATEGORY_OF`, `ALIAS_OF` edges) and the admin-only `MOIRAI_DERIVED_FROM` provenance edge.
 
 ### Node types
 
@@ -514,6 +522,7 @@ failed those tests were removed in v0.9.x — see UPGRADING.)
 | **IS_A** | Concept → Concept | Dynamic ontology extension |
 | **CONCEPT_RELATED_TO** | Concept → Concept | Cross-concept links |
 | **ALIAS_OF** | Category → Category | Vocabulary convergence: near-synonym categories point at their canonical (Clotho wires these; mint-time convergence prevents new synonyms) |
+| **MOIRAI_DERIVED_FROM** | Moirai Memory → Memory | Admin-only provenance; deliberately absent from ordinary reasoning traversal |
 
 ### Edge types (in development)
 
@@ -586,6 +595,7 @@ helixir mode                           # show the privilege tier (solo | collect
 helixir onboard                        # backend, models, RBAC, MCP, skills, doctor
 helixir rbac bootstrap --operator root --principal codex --principal claude
 helixir rbac status --json              # inspect the HelixDB-backed RBAC graph
+helixir rbac migrate-teamleads --yes    # explicitly convert legacy read-only grants
 helixir rbac group create --id alpha --name "Alpha team"
 helixir rbac group add-user --group onboarding --user alice --role worker
 helixir rbac group add-user --group alpha --user alice --role worker
@@ -640,12 +650,12 @@ helixir rbac group remove-user --group development --user alice --json
 ```
 
 Removal deactivates assignments but retains the User node and role history.
-The reserved `default` and `onboarding` groups cannot be deleted or placed in a
-dedup federation, and policy refuses to revoke its last global administrator.
+The reserved `default`, `onboarding`, and membership-free `moirai` groups cannot
+be deleted or placed in a dedup federation, and policy refuses to revoke its last global administrator.
 When enforcement is enabled, management commands resolve the authenticated CLI
 principal from `HELIXIR_RBAC_ACTOR`; there is intentionally no `--actor` escape
-hatch. A global `admin` is required for grants, revocations, group changes, and
-role/roster inspection.
+hatch. A global `admin` owns global and reserved policy; a `groupadmin` may list
+and manage memberships and roles only inside its assigned non-reserved groups.
 
 The gateway deliberately assumes a trusted network by default: it listens on
 `gateway.default_bind` (`0.0.0.0:8765`) without authentication. To enable
@@ -857,8 +867,8 @@ helixir-rs/
         mind_toolbox/           # Search engine, entity, ontology, reasoning
         fast_think/             # Working memory (petgraph-based)
     schema/
-      schema.hx                 # Node/edge definitions (22 nodes + 5 vectors, 29 edges)
-      queries.hx                # HQL queries (170)
+      schema.hx                 # Node/edge definitions (22 nodes + 5 vectors, 30 edges)
+      queries.hx                # HQL queries (178)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)

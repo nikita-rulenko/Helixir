@@ -231,6 +231,23 @@ impl ToolingManager {
         Option<crate::toolkit::mind_toolbox::search::smart_traversal::ConnectionPath>,
         ToolingError,
     > {
+        self.connect_memories_with_generative(query_a, query_b, user_id, max_depth, true)
+            .await
+    }
+
+    /// Same path search with an explicit switch for the Moirai-maintained
+    /// category bridge. Ordinary RBAC callers use the base reasoning graph.
+    pub(crate) async fn connect_memories_with_generative(
+        &self,
+        query_a: &str,
+        query_b: &str,
+        user_id: &str,
+        max_depth: usize,
+        allow_generative: bool,
+    ) -> Result<
+        Option<crate::toolkit::mind_toolbox::search::smart_traversal::ConnectionPath>,
+        ToolingError,
+    > {
         info!(
             "connect_memories: '{}' <-> '{}' (depth {})",
             safe_truncate(query_a, 30),
@@ -295,6 +312,7 @@ impl ToolingManager {
             &seeds_b,
             max_depth,
             &self.config.retrieval.graph,
+            allow_generative,
         )
         .await
         .map_err(|e| ToolingError::Database(e.to_string()))
