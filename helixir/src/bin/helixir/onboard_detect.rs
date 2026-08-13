@@ -341,4 +341,18 @@ mod schema_contract_tests {
             "version": "legacy"
         })));
     }
+
+    #[test]
+    fn packaged_hql_reports_the_runtime_schema_contract() {
+        let queries = include_str!("../../../schema/queries.hx");
+        let expected = format!(
+            "RETURN \"{}\"",
+            helixir::installer::backend::SCHEMA_CONTRACT_VERSION
+        );
+
+        assert!(
+            queries.contains(&expected),
+            "queries.hx must report the runtime schema contract {expected}"
+        );
+    }
 }

@@ -64,9 +64,13 @@ Pass `agent_id` on writes for swarm presence. One-shot agents call
 | Graph around one memory | `get_memory_graph` |
 | Correct one known row | `update_memory` |
 | Resume unfinished reasoning | `search_incomplete_thoughts` |
+| Check an accepted async write | `get_add_status` with its `pending_id` |
+| See active agents | `swarm_status` |
+| Orient available identities | `list_users` |
+| Settle a charter dispute | `resolve_contradiction` |
 
 Results are curated. `metadata.collapsed` lists folded same-story ids.
-`superseded:true` is historical; follow `superseded_by`. A
+`superseded:true` is historical; follow `superseded_by`.
 Lachesis-generated causal proposals belong to the global-admin-only `moirai`
 workspace and are not ordinary `BECAUSE` facts. For time windows, present
 `flashback:true` rows with their original
@@ -137,6 +141,20 @@ part of ordinary reasoning traversal.
 Pending results are visible only to their owner, creator, or global admin.
 Outbox payloads are owner/admin-only. Never change `user_id` to bypass an
 `actor_id` check.
+
+Every `add_memory` result may also deliver `pending_outcomes` from earlier
+buffered work:
+
+- `contradiction_review` must be settled with `resolve_contradiction` using
+  `confirm`, `retract`, or `preference`; all three preserve history;
+- `ops_alert` is a Hygieia health incident or recovery and must be surfaced to
+  the operator;
+- repeated contradiction verdicts may return a `rule_proposal`. Adopt only the
+  exact proposed `add_memory` call (or ask the operator); active rules are
+  readable through `memory://rules`.
+
+Use `swarm_status` before parallel work or unexplained load. Pass `agent_id` on
+writes as the heartbeat, and call `agent_farewell` when a one-shot agent exits.
 
 Manage policy only through `helixir rbac`. Useful commands:
 

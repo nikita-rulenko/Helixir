@@ -79,11 +79,7 @@ impl FastThinkManager {
 
         // Recalled evidence becomes SUPPORTS provenance edges (LLM-free) —
         // not "[Evidence: ...]" text glued into the content.
-        let committed_ids: Vec<String> = if result.memory_ids.is_empty() {
-            result.deduped.clone()
-        } else {
-            result.memory_ids.clone()
-        };
+        let committed_ids = committed_memory_ids(&result);
         for sid in &supporting_ids {
             for mid in &committed_ids {
                 if sid == mid {
@@ -410,5 +406,66 @@ impl FastThinkManager {
             }
         }
         saved
+    }
+}
+
+fn committed_memory_ids(result: &crate::core::helixir_client::AddMemoryResult) -> Vec<String> {
+    let mut ids =
+        Vec::with_capacity(result.memory_ids.len() + result.updated.len() + result.deduped.len());
+    for id in result
+        .memory_ids
+        .iter()
+        .chain(&result.updated)
+        .chain(&result.deduped)
+    {
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn add_result(
+        memory_ids: &[&str],
+        updated: &[&str],
+        deduped: &[&str],
+    ) -> crate::core::helixir_client::AddMemoryResult {
+        crate::core::helixir_client::AddMemoryResult {
+            memories_added: memory_ids.len(),
+            memory_ids: memory_ids.iter().map(ToString::to_string).collect(),
+            updated: updated.iter().map(ToString::to_string).collect(),
+            deduped: deduped.iter().map(ToString::to_string).collect(),
+            chunks_created: 0,
+            entities_extracted: 0,
+            relations_created: 0,
+            stats: HashMap::new(),
+            needs_clarification: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn committed_ids_cover_add_update_and_dedup_without_duplicates() {
+        let result = add_result(
+            &["mem_added", "mem_shared"],
+            &["mem_updated", "mem_shared"],
+            &["mem_deduped", "mem_updated"],
+        );
+
+        assert_eq!(
+            committed_memory_ids(&result),
+            ["mem_added", "mem_shared", "mem_updated", "mem_deduped"]
+        );
+    }
+
+    #[test]
+    fn updated_only_commit_returns_the_existing_memory_id() {
+        let result = add_result(&[], &["mem_updated"], &[]);
+
+        assert_eq!(committed_memory_ids(&result), ["mem_updated"]);
     }
 }
