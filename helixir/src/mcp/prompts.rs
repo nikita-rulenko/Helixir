@@ -19,5 +19,32 @@ pub fn get_server_instructions() -> String {
      ordinary recalls and reasoning chains never treat their provenance as asserted truth. \
      (6) To recall a PERIOD, pass time_from/time_to to search_memory; rows outside the window that the graph pulled in \
      arrive flagged flashback with their event_date — present them as dated associations, not as events of that period. \
+     (7) RBAC is permanent and fail-closed: pass your stable actor_id on every call, and pass a concrete group_id on \
+     working-group writes; user_id is provenance, not a credential, and a dedup federation id is never a write target. \
+     (8) Read pending_outcomes on writes: surface ops_alert notices and settle contradiction_review notices with \
+     resolve_contradiction instead of silently choosing a winner. \
      Your memory is your identity.".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_instructions_cover_permanent_rbac_and_outbox_handling() {
+        let instructions = get_server_instructions();
+
+        for required in [
+            "RBAC is permanent",
+            "actor_id",
+            "group_id",
+            "pending_outcomes",
+            "resolve_contradiction",
+        ] {
+            assert!(
+                instructions.contains(required),
+                "server instructions must mention {required}"
+            );
+        }
+    }
 }

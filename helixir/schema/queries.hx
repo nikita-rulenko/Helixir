@@ -319,7 +319,7 @@ QUERY getRbacPolicySnapshot() =>
   dedup_links <- groups::OutE<RBAC_GROUP_IN_DEDUP_GROUP>::WHERE(_::{active}::EQ(1))
   RETURN config, groups, assignments, dedup_groups, dedup_links
 QUERY getHelixirSchemaVersion() =>
-  RETURN "helixir-rbac-default-onboarding-v3"
+  RETURN "helixir-rbac-moirai-v4"
 QUERY setRbacEnabled(enabled: I64, updated_at: String, updated_by: String) =>
   existing <- N<RbacConfig>::WHERE(_::{config_id}::EQ("default"))
   config <- existing::UpsertN({ config_id: "default", enabled: enabled, updated_at: updated_at, updated_by: updated_by })

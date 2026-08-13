@@ -94,4 +94,23 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn canonical_skill_covers_rbac_swarm_and_charter_operations() {
+        let skill = include_str!("../../skills/helixir-memory/SKILL.md");
+
+        for required in [
+            "RBAC is permanently enabled",
+            "swarm_status",
+            "resolve_contradiction",
+            "pending_outcomes",
+            "memory://rules",
+            "helixir rbac dedup attach",
+        ] {
+            assert!(
+                skill.contains(required),
+                "canonical skill must mention {required}"
+            );
+        }
+    }
 }
