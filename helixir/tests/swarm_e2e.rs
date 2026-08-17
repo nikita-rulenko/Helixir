@@ -15,6 +15,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -105,4 +107,85 @@ async fn two_hosts_appear_in_one_roster() {
                 .unwrap_or_else(|| "never".into())
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + Agent presence schema deployed"]
+async fn mcp_presence_is_activity_driven_and_farewell_stays_terminal() {
+    assert_eq!(std::env::var("HELIX_E2E").unwrap_or_default(), "1");
+
+    // Stable id keeps repeated live runs idempotent instead of growing the
+    // durable Agent registry with one test principal per invocation.
+    let actor = "mcp-heartbeat-e2e".to_string();
+    let (mut mcp, _) = common::McpClient::spawn_with_env(&[
+        ("HELIXIR_RBAC_ACTOR", actor.as_str()),
+        ("HELIXIR_MODE", "collective"),
+    ]);
+
+    let client = HelixirClient::from_env().expect("from_env");
+    client.initialize().await.expect("initialize observer");
+    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let roster = admin.tooling().list_swarm().await.expect("list_swarm");
+    let presence = roster
+        .iter()
+        .find(|item| item.agent_id == actor)
+        .expect("initialized MCP actor must appear without add_memory");
+
+    assert_eq!(presence.status, "connected");
+    assert!(presence.is_active(chrono::Utc::now(), 120));
+    let initialized_at = presence.last_seen.clone();
+
+    // The retired process-lifetime loop refreshed every 30 seconds with the
+    // default 90-second window. An idle transport must now leave its one
+    // initialization lease untouched.
+    tokio::time::sleep(std::time::Duration::from_secs(32)).await;
+    let roster = admin
+        .tooling()
+        .list_swarm()
+        .await
+        .expect("list_swarm after idle interval");
+    let presence = roster
+        .iter()
+        .find(|item| item.agent_id == actor)
+        .expect("idle MCP actor remains in the durable registry");
+    assert_eq!(presence.last_seen, initialized_at);
+
+    let (farewell, _) = mcp.call_tool("agent_farewell", serde_json::json!({"agent_id": actor}));
+    assert_eq!(farewell["status"], "done");
+    tokio::time::sleep(std::time::Duration::from_secs(32)).await;
+    let roster = admin
+        .tooling()
+        .list_swarm()
+        .await
+        .expect("list_swarm after farewell");
+    let presence = roster
+        .iter()
+        .find(|item| item.agent_id == actor)
+        .expect("farewell keeps durable provenance node");
+    assert_eq!(presence.status, "done");
+    assert!(
+        !presence.is_active(chrono::Utc::now(), 120),
+        "farewell must remove the agent from active presence immediately"
+    );
+
+    // A later real tool call starts a new lease. `swarm_status` has no actor
+    // argument, so it refreshes the configured MCP principal.
+    let (status, _) = mcp.call_tool("swarm_status", serde_json::json!({}));
+    assert_eq!(status["available"], true);
+    let roster = admin
+        .tooling()
+        .list_swarm()
+        .await
+        .expect("list_swarm after real tool activity");
+    let presence = roster
+        .iter()
+        .find(|item| item.agent_id == actor)
+        .expect("active MCP actor remains registered");
+    assert_eq!(presence.status, "working");
+    assert!(presence.is_active(chrono::Utc::now(), 120));
+
+    // Leave the shared live registry clean after the proof. A completed test
+    // process must not remain visible as an online worker until lease expiry.
+    let (farewell, _) = mcp.call_tool("agent_farewell", serde_json::json!({"agent_id": actor}));
+    assert_eq!(farewell["status"], "done");
 }

@@ -1,32 +1,44 @@
 //! Installation and onboarding orchestration.
 //!
 //! This module owns the machine-facing workflow that takes Helixir from a set
-//! of user choices to a verified installation. Frontends (the CLI today and a
-//! native UI later) gather choices and render progress; platform adapters
+//! of user choices to a verified installation. Frontends (the CLI and the
+//! browser control plane) gather choices and render progress; platform adapters
 //! detect and apply system changes. The plan in between is deterministic and
 //! testable without touching Docker, Ollama, model registries, or MCP clients.
+//! Both the interactive CLI and the admin-only web control plane consume this
+//! same contract; neither frontend owns installation policy.
 
 pub mod backend;
 pub mod client_config;
 pub mod clients;
 pub mod config;
 pub mod doctor;
+pub mod events;
 pub mod manifest;
 pub mod models;
+pub mod native;
+pub mod operation_worker;
+pub mod operations;
 mod planner;
 pub mod rbac;
 pub mod skills;
+pub mod supervisor;
+pub(crate) mod supervisor_operations;
+
+pub use events::{InstallEvent, InstallEventKind, InstallObserver};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::config::MemoryMode;
 
 /// MCP clients the onboarding flow can register automatically.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClientKind {
     /// Anthropic Claude Code CLI.
     ClaudeCode,
@@ -49,7 +61,8 @@ impl ClientKind {
 }
 
 /// What kind of backend is already present on the machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendState {
     /// No known local or remote backend is configured.
     Missing,
@@ -86,7 +99,7 @@ pub enum BackendState {
 }
 
 /// Ollama state relevant to onboarding.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct OllamaState {
     /// Whether an Ollama installation was detected.
     pub installed: bool,
@@ -97,7 +110,7 @@ pub struct OllamaState {
 }
 
 /// Read-only snapshot produced by platform detection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemState {
     /// Current backend state.
     pub backend: BackendState,
@@ -127,7 +140,8 @@ impl Default for SystemState {
 }
 
 /// Operator choice for the HelixDB backend.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendChoice {
     /// Install or reuse the managed local persistent backend.
     ProvisionLocal,
@@ -138,7 +152,7 @@ pub enum BackendChoice {
 }
 
 /// Explicit configuration for an OpenAI-compatible remote embedding service.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteEmbeddingConfig {
     /// Provider adapter name. The current remote adapter is `openai`.
     pub provider: String,
@@ -147,6 +161,7 @@ pub struct RemoteEmbeddingConfig {
     /// OpenAI-compatible API root, without the trailing `/embeddings` path.
     pub url: String,
     /// Secret used only in the protected central config and health probe.
+    #[serde(default)]
     pub api_key: String,
 }
 
@@ -163,7 +178,8 @@ impl fmt::Debug for RemoteEmbeddingConfig {
 }
 
 /// Exactly one embedding strategy selected during onboarding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "configuration", rename_all = "snake_case")]
 pub enum EmbeddingChoice {
     /// Recommended local path: Ollama plus `nomic-embed-text`.
     LocalOllamaNomic,
@@ -172,7 +188,7 @@ pub enum EmbeddingChoice {
 }
 
 /// User selections from an interactive UI or non-interactive flags.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallOptions {
     /// Memory privilege tier to write to the central config.
     pub mode: MemoryMode,
@@ -184,6 +200,9 @@ pub struct InstallOptions {
     pub embeddings: EmbeddingChoice,
     /// MCP clients selected for automatic registration.
     pub clients: BTreeSet<ClientKind>,
+    /// Explicit consent to replace a conflicting `helixir-local` client entry.
+    #[serde(default)]
+    pub replace_conflicting_clients: bool,
     /// Graph-backed authorization profile.
     pub rbac: rbac::RbacInstallOptions,
 }
@@ -196,13 +215,15 @@ impl Default for InstallOptions {
             local_llm_model: Some(crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()),
             embeddings: EmbeddingChoice::LocalOllamaNomic,
             clients: BTreeSet::new(),
+            replace_conflicting_clients: false,
             rbac: rbac::RbacInstallOptions::default(),
         }
     }
 }
 
 /// One idempotent system change or verification in an installation plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "configuration", rename_all = "snake_case")]
 pub enum InstallAction {
     /// Create the managed persistent HelixDB service and data volume.
     ProvisionBackend,
@@ -238,7 +259,7 @@ pub enum InstallAction {
 }
 
 /// Planned action together with its user-facing rationale.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallStep {
     /// Concrete adapter action.
     pub action: InstallAction,
@@ -259,7 +280,7 @@ impl InstallStep {
 }
 
 /// Complete ordered, previewable onboarding plan.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct InstallPlan {
     /// Steps in execution order.
     pub steps: Vec<InstallStep>,
@@ -303,7 +324,7 @@ pub trait PlanExecutor: Send + Sync {
 }
 
 /// Result of one attempted plan step.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepReport {
     /// Attempted action.
     pub action: InstallAction,
@@ -314,7 +335,7 @@ pub struct StepReport {
 }
 
 /// Machine-readable result of applying an installation plan.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct InstallReport {
     /// Per-step execution results in plan order.
     pub steps: Vec<StepReport>,
@@ -328,10 +349,21 @@ pub struct InstallReport {
 
 /// Apply a plan sequentially and roll back after the first required failure.
 pub async fn apply_plan(executor: &dyn PlanExecutor, plan: &InstallPlan) -> InstallReport {
+    apply_plan_observed(executor, plan, &events::NoopObserver).await
+}
+
+/// Apply a plan while emitting a deterministic event stream for CLI and web frontends.
+pub async fn apply_plan_observed(
+    executor: &dyn PlanExecutor,
+    plan: &InstallPlan,
+    observer: &dyn InstallObserver,
+) -> InstallReport {
     let mut report = InstallReport::default();
     let mut completed = Vec::new();
+    observer.observe(InstallEvent::plan_started(plan.steps.len()));
 
-    for step in &plan.steps {
+    for (index, step) in plan.steps.iter().enumerate() {
+        observer.observe(InstallEvent::step_started(index, plan.steps.len(), step));
         match executor.apply(&step.action).await {
             Ok(()) => {
                 completed.push(step.action.clone());
@@ -340,8 +372,15 @@ pub async fn apply_plan(executor: &dyn PlanExecutor, plan: &InstallPlan) -> Inst
                     succeeded: true,
                     detail: None,
                 });
+                observer.observe(InstallEvent::step_succeeded(index, plan.steps.len(), step));
             }
             Err(error) => {
+                observer.observe(InstallEvent::step_failed(
+                    index,
+                    plan.steps.len(),
+                    step,
+                    &error,
+                ));
                 report.steps.push(StepReport {
                     action: step.action.clone(),
                     succeeded: false,
@@ -349,15 +388,28 @@ pub async fn apply_plan(executor: &dyn PlanExecutor, plan: &InstallPlan) -> Inst
                 });
                 if step.required {
                     report.rollback_attempted = true;
+                    observer.observe(InstallEvent::rollback_started(
+                        index,
+                        plan.steps.len(),
+                        &step.action,
+                    ));
                     if let Err(rollback_error) = executor.rollback(&completed).await {
+                        observer.observe(InstallEvent::rollback_failed(
+                            index,
+                            plan.steps.len(),
+                            &step.action,
+                            &rollback_error,
+                        ));
                         report.rollback_error = Some(rollback_error);
                     }
+                    observer.observe(InstallEvent::plan_completed(false, plan.steps.len()));
                     return report;
                 }
             }
         }
     }
     report.ready = true;
+    observer.observe(InstallEvent::plan_completed(true, plan.steps.len()));
     report
 }
 

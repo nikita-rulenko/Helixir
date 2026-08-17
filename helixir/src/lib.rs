@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod control_plane;
 pub mod core;
 pub mod db;
 pub mod installer;

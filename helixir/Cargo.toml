@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.14.3"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
@@ -61,6 +61,8 @@ rmcp = { version = "0.8", features = [
 ] }
 # HTTP host for the gateway's StreamableHttpService (rmcp pins axum 0.8).
 axum = "0.8"
+tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "fs", "set-header", "trace"] }
+open = "5.4"
 
 # Config
 config = "0.14"

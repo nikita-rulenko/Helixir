@@ -94,6 +94,41 @@ pub(crate) async fn onboard_run(
     Ok(())
 }
 
+pub(crate) async fn apply_install_json() -> Result<()> {
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("read typed install options from supervisor")?;
+    let options: helixir::installer::InstallOptions =
+        serde_json::from_str(&input).context("decode typed install options")?;
+    let state = detect_onboard_state().await;
+    let plan = helixir::installer::Planner::build(&state, &options)
+        .map_err(|error| anyhow::anyhow!("cannot rebuild safe install plan: {error}"))?;
+    let executor = OnboardExecutor::new(&options, &state, false);
+    let observer = |event: helixir::installer::InstallEvent| {
+        if let Ok(encoded) = serde_json::to_string(&event) {
+            println!(
+                "{}{}",
+                helixir::installer::operation_worker::EVENT_PREFIX,
+                encoded
+            );
+        }
+    };
+    let report = helixir::installer::apply_plan_observed(&executor, &plan, &observer).await;
+    if report.ready {
+        write_install_manifest(&executor.effective_options(), executor.backend_manifest()?)?;
+    }
+    println!(
+        "{}{}",
+        helixir::installer::operation_worker::REPORT_PREFIX,
+        serde_json::to_string(&report).context("encode install report")?
+    );
+    anyhow::ensure!(report.ready, "installation plan did not reach readiness");
+    Ok(())
+}
+
 pub(crate) fn write_install_manifest(
     options: &helixir::installer::InstallOptions,
     backend: helixir::installer::manifest::BackendManifest,

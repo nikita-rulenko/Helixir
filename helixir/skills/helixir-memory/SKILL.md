@@ -49,8 +49,12 @@ Interpret write results exactly:
   suggested question or apply an established standing rule.
 - Only `ok:false` or `status:"failed"` is failure.
 
-Pass `agent_id` on writes for swarm presence. One-shot agents call
-`agent_farewell` when done.
+An initialized MCP session configured with `HELIXIR_RBAC_ACTOR` receives one
+bounded presence lease; real MCP tool activity refreshes it, but an idle process
+does not. Pass `agent_id` on writes when a distinct worker or sub-agent produced
+the memory. One-shot agents call `agent_farewell` when done; that terminal status
+remains inactive until later real activity, while the heartbeat window is the
+crash and idle fallback.
 
 ## Select the right tool
 
@@ -136,7 +140,10 @@ Roles:
 may explicitly convert old assignments with `helixir rbac migrate-teamleads --yes`.
 The Moirai may analyze every working group, but only a global `admin` can invoke
 them or read their `moirai` workspace. `MOIRAI_DERIVED_FROM` provenance is not
-part of ordinary reasoning traversal.
+part of ordinary reasoning traversal. The admin-only web control plane may
+project those witness edges for inspection; this never makes them recallable by
+non-admin agents. A Moirai hypothesis with zero witness edges is an integrity
+failure, not an ungrounded fact to consume.
 
 Pending results are visible only to their owner, creator, or global admin.
 Outbox payloads are owner/admin-only. Never change `user_id` to bypass an
@@ -153,8 +160,12 @@ buffered work:
   exact proposed `add_memory` call (or ask the operator); active rules are
   readable through `memory://rules`.
 
-Use `swarm_status` before parallel work or unexplained load. Pass `agent_id` on
-writes as the heartbeat, and call `agent_farewell` when a one-shot agent exits.
+Use `swarm_status` before parallel work or unexplained load. The MCP session
+heartbeats its configured actor automatically; pass `agent_id` on writes for a
+distinct worker identity, and call `agent_farewell` when a one-shot agent exits.
+`agent_farewell` is authoritative immediately; never keep treating a terminal
+`done`, `failed`, `offline`, `stopped`, `disconnected`, or `farewell` status as
+online merely because its timestamp is fresh.
 
 Manage policy only through `helixir rbac`. Useful commands:
 

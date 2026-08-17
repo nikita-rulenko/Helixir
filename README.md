@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/rust-1.88+-orange?logo=rust" alt="Rust 1.88+"/>
-  <img src="https://img.shields.io/badge/release-v0.14.3-2ea44f" alt="Release v0.14.3"/>
+  <img src="https://img.shields.io/badge/release-v0.15.0-2ea44f" alt="Release v0.15.0"/>
   <img src="https://img.shields.io/badge/MCP-compatible-4c8bf5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiPjwvc3ZnPg==" alt="MCP"/>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/>
   <img src="https://img.shields.io/badge/HelixDB-graph%20%2B%20vector-blueviolet" alt="HelixDB"/>
@@ -204,6 +204,12 @@ curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install
 The script detects the host and downloads the matching release asset into a
 versioned `~/.helixir/versions/<version>` directory, switches the atomic
 `~/.helixir/current` pointer, then launches the guided `helixir onboard` flow.
+After onboarding it starts the admin-only web control plane at
+`http://127.0.0.1:6971`. The SPA and Axum backend live together in a hardened
+container; the native install tree contains no Node.js or frontend assets. A
+token-authenticated typed supervisor performs the small set of approved host
+operations and both processes recover automatically after login/reboot on
+macOS and Linux. Use `install.sh --no-web` for a fully headless CLI install.
 The recommended flow installs and starts Ollama on macOS or Linux and provisions
 `nomic-embed-text`. A user may instead explicitly configure an OpenAI-compatible
 remote embedding provider, model, endpoint, and key. The flow also recommends an
@@ -257,6 +263,18 @@ make build          # Build release binaries for this host
 make install        # Versioned install + guided onboarding
 make onboard        # Re-run onboarding
 make doctor         # Readiness report + automatic embedding recovery
+```
+
+The ongoing admin dashboard exposes live memory/node/agent counters, RBAC user,
+group, role and dedup-federation administration, an interactive category-first
+memory graph, the Moirai evidence journal, Hygieia resource telemetry, and the
+same previewable/resumable installation plan as the CLI. It is deliberately
+unavailable to every non-global role. Lifecycle commands are:
+
+```bash
+helixir control-plane status
+helixir control-plane install
+helixir control-plane uninstall
 ```
 
 ### Prerequisites

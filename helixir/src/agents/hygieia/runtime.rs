@@ -12,10 +12,9 @@ pub fn orphan_daemon(
     let daemon = roster
         .iter()
         .find(|a| a.role == "daemon" && a.is_active(now, 1800))?;
-    let others_active = roster.iter().any(|a| {
-        a.role != "daemon"
-            && matches!(a.age_seconds(now), Some(age) if (0..=horizon_secs).contains(&age))
-    });
+    let others_active = roster
+        .iter()
+        .any(|a| a.role != "daemon" && a.is_active(now, horizon_secs));
     if others_active {
         None
     } else {
@@ -24,7 +23,7 @@ pub fn orphan_daemon(
 }
 
 /// `docker stats` one-shot for a container's memory cell.
-pub(super) async fn sample_container_memory(name: &str) -> Option<MemSample> {
+pub async fn sample_container_memory(name: &str) -> Option<MemSample> {
     let out = tokio::process::Command::new("docker")
         .args(["stats", "--no-stream", "--format", "{{.MemUsage}}", name])
         .output()

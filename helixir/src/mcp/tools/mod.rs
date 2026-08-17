@@ -13,7 +13,7 @@ use super::server::HelixirMcpServer;
 
 mod memory_graph;
 mod memory_read;
-mod memory_support;
+pub(crate) mod memory_support;
 mod memory_swarm;
 mod memory_write;
 mod think;

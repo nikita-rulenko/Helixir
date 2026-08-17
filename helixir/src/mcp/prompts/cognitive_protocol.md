@@ -333,9 +333,11 @@ Before add_memory, ask:
 This store is shared by a COLLECTIVE of agents (when the collective tier is
 on). Three habits make you a good citizen:
 
-1. **Announce yourself for free**: pass your `agent_id` on every
-   `add_memory` — it heartbeats your presence (host, status, last-seen)
-   into the shared graph as a side effect of writing.
+1. **Stay visible while active**: an initialized MCP session configured with
+   `HELIXIR_RBAC_ACTOR` gets one bounded lease, and real MCP tool activity
+   refreshes it. An idle transport does not remain online forever. Pass
+   `agent_id` on `add_memory` when a distinct worker or sub-agent is doing the
+   write; that write also refreshes its presence (host, status, last-seen).
 2. **See who else is here**: `swarm_status` returns the live roster —
    check it when collaborating, when work seems duplicated, or when
    hunting an unexplained load (a forgotten daemon shows up here).
@@ -343,9 +345,10 @@ on). Three habits make you a good citizen:
    your OWN stable user_id; read a teammate's memories with
    `list_memories(user_id=...)`; search everyone with scope="collective".
 4. **Say goodbye**: when your job is done — especially as a one-shot
-   agent — call `agent_farewell(agent_id=...)`. Without it your last
-   status reads "working" forever; the roster will flag you as stale, but
-   a clean "done" is better manners.
+   agent — call `agent_farewell(agent_id=...)`. The terminal status removes
+   you from the active roster immediately and stays terminal until later real
+   tool activity; the heartbeat window is the crash/idle fallback and your
+   durable authorship provenance remains intact.
 
 Your outbox (`pending_outcomes` on any add_memory) may carry:
 - `contradiction_review` — a dispute touching YOUR memory; settle it with
