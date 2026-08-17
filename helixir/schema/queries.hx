@@ -437,6 +437,10 @@ QUERY getMemoryRbacGroupsBatch(memory_ids: [String]) =>
   links <- memories::OutE<MEMORY_IN_RBAC_GROUP>
   groups <- memories::Out<MEMORY_IN_RBAC_GROUP>
   RETURN memories, links, groups
+QUERY getMemoriesInRbacGroup(group_id: String, limit: I64) =>
+  group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
+  memories <- group::In<MEMORY_IN_RBAC_GROUP>::RANGE(0, limit)
+  RETURN memories
 QUERY getMemoryRbacScopesBatch(memory_ids: [String]) =>
   memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
   group_links <- memories::OutE<MEMORY_IN_RBAC_GROUP>
@@ -1059,6 +1063,25 @@ QUERY getCategoryByName(name: String) =>
 QUERY getAllCategories(limit: I64) =>
   categories <- N<Category>::RANGE(0, limit)
   RETURN categories
+// One bounded read model for the admin category atlas. The control plane folds
+// this raw topology in memory and refreshes it asynchronously; browsers never
+// scan the Memory graph directly.
+QUERY getCategoryGraphSnapshot(category_limit: I64, memory_limit: I64) =>
+  categories <- N<Category>::RANGE(0, category_limit)
+  memories <- N<Memory>::RANGE(0, memory_limit)
+  tag_edges <- memories::OutE<TAGGED_AS>
+  subcategory_edges <- categories::OutE<SUBCATEGORY_OF>
+  alias_edges <- categories::OutE<ALIAS_OF>
+  group_edges <- memories::OutE<MEMORY_IN_RBAC_GROUP>
+  groups <- memories::Out<MEMORY_IN_RBAC_GROUP>
+  agent_edges <- memories::InE<AGENT_CREATED>
+  agents <- memories::In<AGENT_CREATED>
+  relation_edges <- memories::OutE<MEMORY_RELATION>
+  contradiction_edges <- memories::OutE<CONTRADICTS>
+  implies_edges <- memories::OutE<IMPLIES>
+  because_edges <- memories::OutE<BECAUSE>
+  moirai_edges <- memories::OutE<MOIRAI_DERIVED_FROM>
+  RETURN categories, memories, tag_edges, subcategory_edges, alias_edges, group_edges, groups, agent_edges, agents, relation_edges, contradiction_edges, implies_edges, because_edges, moirai_edges
 QUERY searchSimilarCategories(query_vector: [F64], limit: I64) =>
   embeddings <- SearchV<CategoryEmbedding>(query_vector, limit)
   RETURN embeddings

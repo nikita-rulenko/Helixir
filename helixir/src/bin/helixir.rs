@@ -104,6 +104,9 @@ pub(crate) use gateway::*;
 #[path = "helixir/journal.rs"]
 mod journal;
 pub(crate) use journal::*;
+#[path = "helixir/control_plane_service.rs"]
+mod control_plane_service;
+pub(crate) use control_plane_service::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {

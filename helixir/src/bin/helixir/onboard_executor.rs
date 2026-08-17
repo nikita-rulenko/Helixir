@@ -363,9 +363,11 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                     .map_err(|error| error.to_string())?;
                 Ok(())
             }
-            InstallAction::RegisterClient(client) => {
-                register_onboard_client(*client, self.interactive)
-            }
+            InstallAction::RegisterClient(client) => register_onboard_client(
+                *client,
+                self.interactive,
+                self.options.replace_conflicting_clients,
+            ),
             InstallAction::InstallAgentSkill(clients) => install_agent_skills(clients),
             InstallAction::RunDoctor => {
                 if !doctor_config_ready() {

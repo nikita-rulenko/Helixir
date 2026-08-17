@@ -3,6 +3,7 @@ use super::*;
 pub(crate) fn register_onboard_client(
     client: helixir::installer::ClientKind,
     interactive: bool,
+    replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
     let server = helixir::installer::clients::StdioServer::new(
         current_sibling("helixir-mcp").display().to_string(),
@@ -13,7 +14,13 @@ pub(crate) fn register_onboard_client(
         let path = helixir::installer::clients::default_json_config_path(client, &home)
             .ok_or_else(|| "Cursor home not found".to_string())?;
         let existing = existing_json_registration(&path, "helixir-local")?;
-        approve_registration_change(client, existing.as_ref(), &server, interactive)?;
+        approve_registration_change(
+            client,
+            existing.as_ref(),
+            &server,
+            interactive,
+            replace_conflicting,
+        )?;
         let registration =
             helixir::installer::clients::register_json_client(&path, "helixir-local", &server)
                 .map_err(|error| error.to_string())?;
@@ -42,7 +49,13 @@ pub(crate) fn register_onboard_client(
     {
         return Ok(());
     }
-    approve_registration_change(client, existing.as_ref(), &server, interactive)?;
+    approve_registration_change(
+        client,
+        existing.as_ref(),
+        &server,
+        interactive,
+        replace_conflicting,
+    )?;
     let backup = backup_native_client_config(client)?;
     let update = (|| {
         if existing.is_some() {
@@ -217,11 +230,15 @@ fn approve_registration_change(
     existing: Option<&serde_json::Value>,
     server: &helixir::installer::clients::StdioServer,
     interactive: bool,
+    replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
     let Some(existing) = existing else {
         return Ok(());
     };
     if registrations_match(existing, &server.json_entry()) {
+        return Ok(());
+    }
+    if replace_conflicting {
         return Ok(());
     }
     if !interactive {
@@ -335,9 +352,22 @@ mod tests {
             Some(&serde_json::json!({"command": "old"})),
             &helixir::installer::clients::StdioServer::new("new"),
             false,
+            false,
         )
         .expect_err("conflict must require approval");
         assert!(error.contains("rerun interactively"));
+    }
+
+    #[test]
+    fn reviewed_non_interactive_conflict_is_approved() {
+        approve_registration_change(
+            helixir::installer::ClientKind::Codex,
+            Some(&serde_json::json!({"command": "old"})),
+            &helixir::installer::clients::StdioServer::new("new"),
+            false,
+            true,
+        )
+        .expect("typed control-plane consent should approve replacement");
     }
 
     #[cfg(unix)]

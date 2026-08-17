@@ -23,3 +23,10 @@ helixir-insights.jsonl
 
 # Generated architecture visualization site (local browsing only)
 /architecture-site/
+
+# Web control-plane build products (recreated by `make web-build`).
+/helixir/web/node_modules/
+/helixir/web/dist/
+/helixir/web/test-results/
+/helixir/web/playwright-report/
+/helixir/web/*.tsbuildinfo

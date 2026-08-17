@@ -18,7 +18,7 @@ use rmcp::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::core::config::HelixirConfig;
 use crate::core::helixir_client::{HelixirClient, HelixirClientError};
@@ -98,6 +98,38 @@ impl HelixirMcpServer {
         self.client.load_full()
     }
 
+    /// Refresh presence only for actual MCP activity. Initialization grants one
+    /// bounded lease; unlike the old process-lifetime loop, an idle transport
+    /// cannot resurrect a principal after `agent_farewell`.
+    pub(super) async fn touch_presence(&self, actor_id: &str, status: &str) {
+        let client = self.client();
+        if !client.config().mode.collective_enabled() {
+            return;
+        }
+        let role = client.config().swarm.default_role.clone();
+        if let Err(error) = client
+            .tooling()
+            .register_or_heartbeat(
+                actor_id,
+                &role,
+                super::tools::memory_support::machine_hostname(),
+                status,
+            )
+            .await
+        {
+            debug!(%error, %actor_id, "MCP activity presence refresh failed");
+        }
+    }
+
+    pub(super) async fn touch_configured_presence(&self, status: &str) {
+        if let Some(actor_id) = std::env::var("HELIXIR_RBAC_ACTOR")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        {
+            self.touch_presence(&actor_id, status).await;
+        }
+    }
+
     /// Resolve an MCP principal without allowing an enabled RBAC deployment
     /// to fall back to a caller-controlled owner parameter.  The fallback is
     /// retained only for the documented disabled/trusted-network mode.
@@ -107,6 +139,7 @@ impl HelixirMcpServer {
         legacy_owner: &str,
     ) -> Result<String, McpError> {
         if let Some(actor) = requested {
+            self.touch_presence(actor, "working").await;
             return Ok(actor.to_string());
         }
         let policy = self
@@ -121,6 +154,7 @@ impl HelixirMcpServer {
                 None,
             ));
         }
+        self.touch_presence(legacy_owner, "working").await;
         Ok(legacy_owner.to_string())
     }
 
@@ -140,9 +174,11 @@ impl HelixirMcpServer {
         if !policy.enabled {
             return Ok(None);
         }
-        requested.map(str::to_string).map(Some).ok_or_else(|| {
+        let actor = requested.ok_or_else(|| {
             McpError::invalid_request("RBAC-enabled MCP calls require actor_id", None)
-        })
+        })?;
+        self.touch_presence(actor, "working").await;
+        Ok(Some(actor.to_string()))
     }
 
     /// #52: re-read the layered config (defaults -> helixir.toml -> env),

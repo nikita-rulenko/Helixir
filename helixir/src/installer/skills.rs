@@ -106,6 +106,7 @@ mod tests {
             "pending_outcomes",
             "memory://rules",
             "helixir rbac dedup attach",
+            "HELIXIR_RBAC_ACTOR",
         ] {
             assert!(
                 skill.contains(required),

@@ -38,6 +38,21 @@ pub struct HealthEvent {
     pub detail: serde_json::Value,
 }
 
+/// Bounded, secret-free health projection for the administrator UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthSnapshot {
+    pub enabled: bool,
+    pub container_name: String,
+    pub memory_used_mib: Option<f64>,
+    pub memory_limit_mib: Option<f64>,
+    pub memory_percent: Option<f64>,
+    pub alert_percent: f64,
+    pub restart_percent: f64,
+    pub backup_enabled: bool,
+    pub newest_backup_age_hours: Option<f64>,
+    pub events: Vec<HealthEvent>,
+}
+
 /// Journal path: `$HELIXIR_HEALTH_LOG` or `~/.helixir/health.jsonl`.
 pub fn journal_path() -> PathBuf {
     if let Ok(p) = std::env::var("HELIXIR_HEALTH_LOG") {
@@ -69,6 +84,60 @@ pub fn journal(event: &HealthEvent) {
         }
         Err(e) => warn!("hygieia: journal serialize failed: {e}"),
     }
+}
+
+/// Read the tail of Hygieia's journal and sample the configured DB container.
+/// The file read is capped so a long-running journal cannot inflate the web API.
+pub async fn snapshot(limit: usize) -> HealthSnapshot {
+    let config = crate::core::HelixirConfig::from_env().watchdog;
+    let sample = if config.container_name.is_empty() {
+        None
+    } else {
+        sample_container_memory(&config.container_name).await
+    };
+    let newest_backup_age_hours = if config.backup_dir.is_empty() {
+        None
+    } else {
+        newest_backup_age_hours(std::path::Path::new(&config.backup_dir))
+    };
+    HealthSnapshot {
+        enabled: config.enabled,
+        container_name: config.container_name,
+        memory_used_mib: sample.as_ref().map(|value| value.used_mib),
+        memory_limit_mib: sample.as_ref().map(|value| value.limit_mib),
+        memory_percent: sample.as_ref().map(MemSample::pct),
+        alert_percent: config.mem_alert_pct,
+        restart_percent: config.mem_restart_pct,
+        backup_enabled: !config.backup_source_dir.is_empty(),
+        newest_backup_age_hours,
+        events: recent_events(limit.min(100)),
+    }
+}
+
+fn recent_events(limit: usize) -> Vec<HealthEvent> {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX_BYTES: u64 = 256 * 1024;
+    let Ok(mut file) = std::fs::File::open(journal_path()) else {
+        return Vec::new();
+    };
+    let length = file.metadata().map(|meta| meta.len()).unwrap_or_default();
+    let start = length.saturating_sub(MAX_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut body = String::new();
+    if file.read_to_string(&mut body).is_err() {
+        return Vec::new();
+    }
+    let mut events: Vec<_> = body
+        .lines()
+        .skip(usize::from(start > 0))
+        .filter_map(|line| serde_json::from_str::<HealthEvent>(line).ok())
+        .collect();
+    let keep_from = events.len().saturating_sub(limit);
+    events.drain(..keep_from);
+    events.reverse();
+    events
 }
 
 /// The insight-flood brake: N CONSECUTIVE passes that hit the Atropos persist

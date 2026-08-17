@@ -10,7 +10,7 @@ use crate::core::{
 };
 
 /// Security profile selected by onboarding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RbacInstallOptions {
     /// Sole initial global administrator.
     pub operator_id: String,
@@ -20,7 +20,7 @@ pub struct RbacInstallOptions {
 }
 
 /// Read-only graph state used to keep repeat onboarding idempotent.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RbacInstallState {
     pub enabled: bool,
     pub migration_active: bool,

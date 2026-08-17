@@ -1,4 +1,4 @@
-.PHONY: build test test-e2e-hive check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-hive test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
@@ -6,7 +6,10 @@ MCP_BIN    := $(BINARY_DIR)/helixir-mcp
 DEPLOY_BIN := $(BINARY_DIR)/helixir-deploy
 SCHEMA_DIR := helixir/schema
 SKILLS_DIR := helixir/skills
+WEB_DIR    := helixir/web
 VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
+CONTROL_PLANE_IMAGE ?= helixir-control-plane:$(VERSION)
+CONTROL_PLANE_TOKEN_FILE ?= $(HOME)/.helixir/run/control-plane-browser.token
 INSTALL_ROOT ?= $(HOME)/.helixir
 ifndef INSTALL_ID
 INSTALL_ID := $(VERSION)-source-$(shell date -u +%Y%m%d%H%M%S)
@@ -16,6 +19,7 @@ HELIX_HOST ?= localhost
 HELIX_PORT ?= 6969
 ONBOARD_ARGS ?=
 NON_INTERACTIVE ?= 0
+INSTALL_WEB ?= $(if $(filter 1,$(NON_INTERACTIVE)),0,1)
 ONBOARD_FLAGS := $(ONBOARD_ARGS)
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -26,15 +30,34 @@ endif
 ifeq ($(NON_INTERACTIVE),1)
 ONBOARD_FLAGS += --non-interactive
 endif
+ifeq ($(INSTALL_WEB),1)
+INSTALL_DEPS := build control-plane-image
+else
+INSTALL_DEPS := build
+endif
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build release binaries
+web-build: ## Build the HTML5/Tailwind control plane
+	cd $(WEB_DIR) && npm ci && npm run build
+
+build: ## Build native release binaries for this host
 	cd helixir && RUSTFLAGS="$(RUSTFLAGS) $(RUNTIME_RPATH)" $(CARGO) build --release
 
-install: build ## Install versioned binaries/assets and run guided onboarding
+control-plane-image: ## Build the isolated web frontend/backend image
+	docker build --target control-plane --tag "$(CONTROL_PLANE_IMAGE)" helixir
+
+control-plane-secrets: build ## Initialize private control-plane credentials
+	"$(BINARY_DIR)/helixir" web --prepare-token --no-open --token-file "$(CONTROL_PLANE_TOKEN_FILE)"
+
+control-plane-supervisor: build ## Run the authenticated native host bridge
+	"$(BINARY_DIR)/helixir" supervisor
+
+helixir: build ## Compatibility alias: `make helixir`
+
+install: $(INSTALL_DEPS) ## Install native components and run guided onboarding
 	@set -eu; \
 	if [ -e "$(INSTALL_ROOT)/current" ] && [ ! -L "$(INSTALL_ROOT)/current" ]; then \
 		echo "refusing to replace non-symlink $(INSTALL_ROOT)/current" >&2; exit 1; \
@@ -66,6 +89,9 @@ install: build ## Install versioned binaries/assets and run guided onboarding
 		fi; \
 		echo 'onboarding failed; restored the previous current pointer' >&2; \
 		exit 1; \
+	fi; \
+	if [ "$(INSTALL_WEB)" = "1" ]; then \
+		HELIXIR_CONTROL_PLANE_IMAGE="$(CONTROL_PLANE_IMAGE)" "$(INSTALL_ROOT)/current/helixir" control-plane install; \
 	fi
 
 onboard: ## Run the interactive onboarding orchestrator
@@ -80,6 +106,9 @@ test: ## Run all tests
 test-e2e-hive: ## Hive cross-user E2E (needs live HelixDB + LLM + embeddings; same env as MCP)
 	cd helixir && HELIX_E2E=1 $(CARGO) test hive_cross_user_collective_link_e2e --test hive_memory_e2e -- --ignored --nocapture
 
+test-control-plane-soak: ## Bounded live polling soak (requires running control-plane)
+	python3 tools/control_plane_soak.py
+
 check: ## Run cargo check + clippy
 	cd helixir && $(CARGO) check && $(CARGO) clippy
 
@@ -91,6 +120,17 @@ deploy-schema: ## Deploy schema to running HelixDB
 
 setup: docker-up deploy-schema ## Start HelixDB + deploy schema
 	@echo "\n  HelixDB running on $(HELIX_HOST):$(HELIX_PORT), schema deployed.\n"
+
+control-plane-up: control-plane-secrets control-plane-image ## Start the isolated admin UI and its managed HelixDB
+	HELIXIR_CONTROL_PLANE_IMAGE="$(CONTROL_PLANE_IMAGE)" HELIXIR_CONTROL_PLANE_TOKEN_SOURCE="$(CONTROL_PLANE_TOKEN_FILE)" docker compose -f helixir/docker-compose.yml up -d control-plane
+	@token=$$(tr -d '\r\n' < "$(CONTROL_PLANE_TOKEN_FILE)"); printf 'Helixir web control plane: http://127.0.0.1:%s/#token=%s\n' "$${HELIXIR_WEB_PORT:-6971}" "$$token"
+
+stack-up: control-plane-secrets control-plane-image ## Start the managed HelixDB + admin control plane stack
+	HELIXIR_CONTROL_PLANE_IMAGE="$(CONTROL_PLANE_IMAGE)" HELIXIR_CONTROL_PLANE_TOKEN_SOURCE="$(CONTROL_PLANE_TOKEN_FILE)" docker compose -f helixir/docker-compose.yml up -d
+	@token=$$(tr -d '\r\n' < "$(CONTROL_PLANE_TOKEN_FILE)"); printf 'Helixir web control plane: http://127.0.0.1:%s/#token=%s\n' "$${HELIXIR_WEB_PORT:-6971}" "$$token"
+
+stack-down: ## Stop the managed stack without deleting its volume
+	docker compose -f helixir/docker-compose.yml down
 
 config: ## Print MCP config for Cursor
 	@echo '{'
@@ -171,11 +211,9 @@ migrate-helix-fresh: ## Archive helixdb_data volume to .helix-archives/, wipe vo
 	echo "Done. Next: make docker-up && make deploy-schema   OR   helix dockerdev run (repo-root helix.toml)"; \
 	echo "MCP: HELIXIR_RETRIEVAL_PROFILE=algo_opt for native BM25 hybrid when Helix has bm25=true."
 
-docker-compose-up: ## Start full stack via docker-compose
-	cd helixir && docker compose up -d
+docker-compose-up: stack-up ## Compatibility alias for the managed stack
 
-docker-compose-down: ## Stop full docker-compose stack
-	cd helixir && docker compose down
+docker-compose-down: stack-down ## Compatibility alias for stopping the managed stack
 
 clean: ## Remove build artifacts
 	cd helixir && $(CARGO) clean

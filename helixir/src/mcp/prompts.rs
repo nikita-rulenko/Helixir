@@ -47,4 +47,16 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn cognitive_protocol_explains_session_and_worker_presence() {
+        let protocol = get_cognitive_protocol();
+
+        for required in ["HELIXIR_RBAC_ACTOR", "distinct worker", "agent_farewell"] {
+            assert!(
+                protocol.contains(required),
+                "cognitive protocol must mention {required}"
+            );
+        }
+    }
 }

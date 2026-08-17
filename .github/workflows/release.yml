@@ -164,39 +164,48 @@ jobs:
           path: helixir/${{ matrix.artifact }}.tar.gz
 
   docker:
-    name: Build Docker Image
+    name: Build Docker image (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: build
-    # Only run if Docker Hub credentials are configured. Otherwise the Login
-    # step would fail every release. Set DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
-    # in repo secrets to enable.
-    if: ${{ vars.PUBLISH_DOCKER == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: runtime
+            image: helixir
+          - target: control-plane
+            image: helixir-control-plane
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: ./helixir
+          target: ${{ matrix.target }}
           push: true
           tags: |
-            helixir/helixir:latest
-            helixir/helixir:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, docker]
     # Tag pushes only: workflow_dispatch runs are build validation, and
     # action-gh-release must never fire from a bare branch ref.
     if: startsWith(github.ref, 'refs/tags/')

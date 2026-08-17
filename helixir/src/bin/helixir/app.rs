@@ -92,6 +92,13 @@ pub(crate) async fn run() -> Result<()> {
     if let Cmd::Health { tail } = &cli.cmd {
         return health_tail(*tail);
     }
+    if let Cmd::ControlPlane { cmd } = &cli.cmd {
+        return match cmd {
+            ControlPlaneCmd::Install { image } => control_plane_install(image.as_deref()),
+            ControlPlaneCmd::Status => control_plane_status(),
+            ControlPlaneCmd::Uninstall => control_plane_uninstall(),
+        };
+    }
 
     // Gateway: Run serves over HTTP (its own mcp-style client init); Start/Stop/
     // Status are process management (no DB) — all handled before the shared init.
@@ -164,8 +171,55 @@ pub(crate) async fn run() -> Result<()> {
         .await;
     }
 
+    if matches!(&cli.cmd, Cmd::ApplyInstallJson) {
+        return apply_install_json().await;
+    }
+
     if let Cmd::Doctor { json } = &cli.cmd {
         return doctor_run(*json).await;
+    }
+
+    if let Cmd::Web {
+        bind,
+        assets,
+        token_file,
+        prepare_token,
+        no_open,
+        containerized,
+    } = &cli.cmd
+    {
+        let token_path =
+            helixir::control_plane::session::token_path(token_file.as_deref(), *containerized);
+        if *prepare_token {
+            let _token = helixir::control_plane::session::load_or_create_token(&token_path)?;
+            eprintln!("Helixir browser token: {}", token_path.display());
+            return Ok(());
+        }
+        return helixir::control_plane::serve(helixir::control_plane::ControlPlaneConfig {
+            bind: bind
+                .parse()
+                .context("parse web control-plane bind address")?,
+            assets: assets.clone(),
+            token_file: Some(token_path),
+            open_browser: !no_open,
+            containerized: *containerized,
+        })
+        .await;
+    }
+
+    if let Cmd::Supervisor { bind, token_file } = &cli.cmd {
+        let token_path = token_file
+            .clone()
+            .unwrap_or_else(helixir::installer::supervisor::default_token_path);
+        let token = helixir::installer::supervisor::load_or_create_token(&token_path)?;
+        eprintln!("Helixir supervisor token: {}", token_path.display());
+        return helixir::installer::supervisor::serve(
+            helixir::installer::supervisor::SupervisorConfig {
+                bind: bind.parse().context("parse supervisor bind address")?,
+                token,
+            },
+        )
+        .await;
     }
 
     let client = HelixirClient::from_env().context("from_env (set HELIX_* env)")?;
@@ -280,7 +334,13 @@ pub(crate) async fn run() -> Result<()> {
         Cmd::Health { .. } => unreachable!("health handled before client init"),
         Cmd::Setup { .. } => unreachable!("setup handled before client init"),
         Cmd::Onboard { .. } => unreachable!("onboard handled before client init"),
+        Cmd::ApplyInstallJson => unreachable!("typed install apply handled before client init"),
         Cmd::Doctor { .. } => unreachable!("doctor handled before client init"),
+        Cmd::Web { .. } => unreachable!("web handled before client init"),
+        Cmd::Supervisor { .. } => unreachable!("supervisor handled before client init"),
+        Cmd::ControlPlane { .. } => {
+            unreachable!("control-plane lifecycle handled before client init")
+        }
         Cmd::Rbac { cmd } => rbac_run(&client, cmd).await?,
         Cmd::Gateway { .. } => unreachable!("gateway handled before client init"),
         Cmd::Mode => unreachable!("mode handled before client init"),

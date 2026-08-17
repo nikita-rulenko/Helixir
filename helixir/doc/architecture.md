@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.14.3`. Last verified: 2026-08-13._
+> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
 
 ## 1. System context
 
@@ -49,9 +49,29 @@ factory pins Cerebras requests to `gpt-oss-120b`, while DeepSeek and Ollama
 retain independently configured model names. The
 backend adapter snapshots the persistent Docker volume before schema changes,
 and the manifest records the selected version/models/clients atomically. The
-CLI and a future native UI are frontends over this module; they must not own
-Docker, model-download, or MCP-client mutation policy themselves. The CLI root is
-thin; domain modules live under `src/bin/helixir/`. The same 500-line budget
+CLI and the v0.15 browser control plane are frontends over this module; they
+must not own Docker, model-download, or MCP-client mutation policy themselves.
+The HTML5/CSS3/Tailwind SPA and its Axum backend are packaged only in the
+`helixir-control-plane` image, beside but separate from the HelixDB container.
+The image is non-root and read-only, binds through a host-loopback publication,
+and receives neither `docker.sock` nor host home directories. Dashboard reads
+go directly to HelixDB under global-admin RBAC. Host discovery and deterministic
+plan construction cross a narrow bearer-authenticated native supervisor; the
+container receives only its read-only token file. Browser authorization uses a
+second, persistent 64-hex-character token under `~/.helixir/run/`; it survives
+container restarts and is never reused as host-supervisor authority. A configured
+container fails closed when either secret is absent or malformed. If the host
+bridge is absent or unreachable, host operations fail closed instead of inspecting
+the container's namespace and pretending it is the host. Long-running installation
+applies are owned by that supervisor as durable operations under
+`~/.helixir/run/operations/`: each typed event has a stable cursor, files are
+atomically replaced with private permissions, and an in-flight record becomes
+explicitly `interrupted` and resumable after process restart. The web backend
+proxies authenticated SSE from a cursor and never persists `InstallOptions` or
+provider secrets; resume first rebuilds the plan and requires the original
+fingerprint. The CLI root is thin;
+domain modules live under
+`src/bin/helixir/`. The same 500-line budget
 applies to every maintained Rust source file under `src/`, with
 `tests/module_budget.rs` preventing regressions. Large responsibilities are
 split into private submodules while their public facades remain stable.
@@ -142,6 +162,9 @@ bug to file — not a feature to copy.
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
 | Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports, explicit embedding strategies; frontends and platform adapters meet here |
+| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, and Hygieia telemetry directly from HelixDB; never owns host mutation policy |
+| Control-plane image | `Dockerfile` (`control-plane` target), `docker-compose.yml` | Immutable frontend/backend packaging and the restricted runtime boundary; no host filesystem or Docker authority |
+| Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, a bounded Hygieia health/journal projection, and an allowlisted set of typed Moirai/Hygieia lifecycle operations; shares installer/health DTOs and exposes no general shell or filesystem endpoint |
 | RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |
 
 ## 4. Cross-cutting concerns
@@ -459,4 +482,13 @@ MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`
 remains the memory owner/target. Agents must provide a stable `actor_id`; an
 authenticated gateway should populate it explicitly before accepting remote
-requests.
+requests. Once the MCP handshake completes, a server configured with
+`HELIXIR_RBAC_ACTOR` grants that principal one bounded graph-backed presence
+lease. Real MCP tool activity refreshes the lease; an idle transport performs no
+background heartbeats. Explicit `agent_id` writes continue to heartbeat distinct
+worker and sub-agent identities. Terminal presence states make an agent inactive
+immediately and remain terminal until later real activity; the heartbeat window
+is the crash/idle fallback. The global-admin web graph may project
+`MOIRAI_DERIVED_FROM` edges and their witness memories for audit, but ordinary
+agent traversal still omits them and every zero-witness hypothesis is reported
+as an integrity violation.

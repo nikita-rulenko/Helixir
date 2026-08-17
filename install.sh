@@ -12,11 +12,12 @@ ROOT="${HELIXIR_HOME:-${HOME}/.helixir}"
 VERSION="${HELIXIR_VERSION:-latest}"
 NON_INTERACTIVE=false
 DRY_RUN=false
+INSTALL_WEB=true
 SOURCE_DIR=""
 
 usage() {
   printf '%s\n' \
-    'Usage: install.sh [--version VERSION] [--dir PATH] [--non-interactive] [--dry-run]' \
+    'Usage: install.sh [--version VERSION] [--dir PATH] [--non-interactive] [--dry-run] [--no-web]' \
     '' \
     'If run from a Helixir checkout, this delegates to make install.'
 }
@@ -27,6 +28,7 @@ while (($#)); do
     --dir) ROOT="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --no-web) INSTALL_WEB=false; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -40,7 +42,9 @@ if [[ -n "$SOURCE_DIR" ]]; then
   args=()
   $NON_INTERACTIVE && args+=(--non-interactive)
   $DRY_RUN && args+=(--dry-run)
-  exec make -C "$SOURCE_DIR" install INSTALL_ROOT="$ROOT" ONBOARD_ARGS="${args[*]-}"
+  install_web=1
+  $INSTALL_WEB || install_web=0
+  exec make -C "$SOURCE_DIR" install INSTALL_ROOT="$ROOT" INSTALL_WEB="$install_web" ONBOARD_ARGS="${args[*]-}"
 fi
 
 command -v curl >/dev/null || { echo 'curl is required' >&2; exit 1; }
@@ -116,5 +120,8 @@ if ! "${ROOT}/current/helixir" onboard "${onboard_args[@]}"; then
   fi
   echo 'onboarding failed; restored the previous current pointer' >&2
   exit 1
+fi
+if $INSTALL_WEB && ! $DRY_RUN; then
+  "${ROOT}/current/helixir" control-plane install
 fi
 printf 'Helixir %s installed at %s/current\n' "$VERSION" "$ROOT"

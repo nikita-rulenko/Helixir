@@ -259,11 +259,50 @@ pub(crate) enum Cmd {
         #[command(flatten)]
         security: OnboardSecurityArgs,
     },
+    /// Internal typed apply bridge used by the authenticated host supervisor.
+    #[command(hide = true)]
+    ApplyInstallJson,
     /// Readiness report; repairs broken embeddings with Ollama/Nomic.
     Doctor {
         /// Emit a stable machine-readable JSON report.
         #[arg(long)]
         json: bool,
+    },
+    /// Launch the local browser control plane for setup and administration.
+    Web {
+        /// Listen address. Native mode accepts loopback addresses only.
+        #[arg(long, default_value = "127.0.0.1:6971")]
+        bind: String,
+        /// Directory containing the built HTML5 frontend.
+        #[arg(long)]
+        assets: Option<PathBuf>,
+        /// Private browser-token file. Defaults to ~/.helixir/run/control-plane-browser.token.
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+        /// Initialize the stable browser token and exit.
+        #[arg(long, hide = true)]
+        prepare_token: bool,
+        /// Do not open the system browser automatically.
+        #[arg(long)]
+        no_open: bool,
+        /// Run in the isolated web container; host operations require its supervisor.
+        #[arg(long, hide = true)]
+        containerized: bool,
+    },
+    /// Serve the authenticated host bridge used by the isolated web container.
+    #[command(hide = true)]
+    Supervisor {
+        /// Docker-bridge-facing address. Every request still requires the token.
+        #[arg(long, default_value = "0.0.0.0:6972")]
+        bind: String,
+        /// Private token file mounted read-only into the control-plane container.
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
+    /// Install and manage the isolated browser control plane.
+    ControlPlane {
+        #[command(subcommand)]
+        cmd: ControlPlaneCmd,
     },
     /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
     Mode,

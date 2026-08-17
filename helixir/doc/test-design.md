@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.14.3`. Last verified: 2026-08-13._
+> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
 
 ## 1. Stance
 
@@ -26,7 +26,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.14.3` working tree):** 272 library unit tests plus 18 CLI tests
+**Current (`v0.15.0`):** more than 300 library unit tests plus 17 CLI tests
 (`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -54,6 +54,35 @@ NLI is part of every build. Unit coverage verifies host-variant digest
 availability and the contradiction/paraphrase readiness contract; installer
 coverage requires NLI download before doctor, and doctor fails closed when the
 model is missing. CI runs the same full NLI-enabled surface on Ubuntu and macOS.
+
+The v0.15 control plane adds a separate browser contract. Every API route is
+covered by the same persistent browser-token and graph-backed global-admin
+middleware;
+projection parsers tolerate HelixDB's wrapped/null response shapes. Automated
+Playwright gates cover Chromium, Firefox, WebKit and a mobile Chromium viewport,
+the complete plan/apply/verify journey, fail-closed admin isolation, WCAG
+serious/critical findings, responsiveness and bounded polling. Manual live
+browser smoke additionally covers all six navigation surfaces, searchable/paginated RBAC
+registries and mutations, reserved-workspace guards, graph identity/workspace
+filters, node inspection and zoom controls, group/author clusters, admin-only
+`MOIRAI_DERIVED_FROM` witness rendering, expandable evidence ledgers, the
+Hygieia resource/journal bridge, RBAC permission simulation, offline-presence pruning,
+typed Moirai/Hygieia lifecycle operations, remote database/embedding choices, and the
+installer mutation preview. The production
+container is also checked as non-root, read-only, capability-free, and
+`no-new-privileges`. Token tests prove private atomic creation, strict container
+failure for absent or malformed secrets, stable browser reuse across requests,
+authenticated-URL capture, and the explicit HTTP 401 recovery signal. Live smoke
+must additionally reload the same browser tab after two container restarts.
+Installer-operation coverage injects failure into every required action, proves rollback,
+replays SSE strictly after its cursor, rejects a changed-plan resume, redacts
+sensitive event/report detail on disk, and reopens a running journal as an
+explicit resumable interruption.
+
+`tools/control_plane_soak.py` performs authenticated polling against the real
+overview, access, memory-field, Moirai and Hygieia projections while sampling
+the container working set. The release budget is at most 96 MiB growth; the
+v0.15.0 release run completed 100 live reads with 0.3 MiB peak growth.
 
 `tests/rbac_e2e.rs` is an ignored, enabled-state live contract. It never turns
 RBAC off. It covers federated fingerprint equality, isolated-group inequality,
@@ -87,7 +116,7 @@ denies the compatibility `default` groupadmin.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 36 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
+| Installer | `src/installer/` | 41 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, private durable operation journals, cursor replay, restart recovery, changed-plan refusal, failure-injection resume, secret redaction, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
 | CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
 | Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
