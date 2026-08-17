@@ -19,7 +19,7 @@ use super::memory_support::machine_hostname;
 #[tool_router(router = memory_swarm_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE if its last heartbeat is within active_window_secs (default from config, ~90s). Agents silent past presence_ttl_secs (default 30 min) are presumed gone and hidden from the roster (hidden_stale counts them); their authorship provenance on memories is untouched. Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
+        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE only when its status is non-terminal and its last heartbeat is within active_window_secs (default from config, ~90s). agent_farewell makes it inactive immediately; the time window is the crash fallback. Agents silent past presence_ttl_secs (default 30 min) are presumed gone and hidden from the roster (hidden_stale counts them); their authorship provenance on memories is untouched. Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
     )]
     async fn swarm_status(
         &self,
@@ -35,6 +35,8 @@ impl HelixirMcpServer {
                 payload.to_string(),
             )]));
         }
+
+        self.touch_configured_presence("working").await;
 
         let window = params
             .active_window_secs
@@ -193,7 +195,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Say goodbye to the swarm: stamp your presence status 'done' when your job is finished (one-shot agents especially — without a farewell your last status reads 'working' forever). Pass the same agent_id you used on add_memory. Cheap and idempotent; your authorship provenance is untouched. GATED by the collective tier: Solo returns {available:false}."
+        description = "Say goodbye to the swarm: stamp your presence status 'done' and become inactive immediately when your job is finished. Pass the same agent_id you used on add_memory. Cheap and idempotent; your durable Agent node and authorship provenance remain intact. GATED by the collective tier: Solo returns {available:false}."
     )]
     async fn agent_farewell(
         &self,

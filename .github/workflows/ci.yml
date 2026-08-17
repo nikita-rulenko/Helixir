@@ -37,6 +37,31 @@ jobs:
       - name: docs lint
         run: python3 .github/scripts/docs_lint.py
 
+  web:
+    name: control-plane frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: helixir/web/package-lock.json
+      - name: Build production frontend
+        working-directory: helixir/web
+        run: npm ci && npm test && npm run build
+      - name: Install release-gate browser
+        working-directory: helixir/web
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Browser E2E, RBAC denial, accessibility and polling soak
+        working-directory: helixir/web
+        run: npm run test:e2e
+      - name: Audit production dependencies
+        working-directory: helixir/web
+        run: npm audit --omit=dev --audit-level=high
+      - name: Validate managed Compose stack
+        run: docker compose -f helixir/docker-compose.yml config --quiet
+
   rustdoc:
     name: rustdoc
     runs-on: ubuntu-latest

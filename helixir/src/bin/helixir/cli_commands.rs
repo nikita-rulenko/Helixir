@@ -1,6 +1,20 @@
 use super::*;
 
 #[derive(Subcommand)]
+pub(crate) enum ControlPlaneCmd {
+    /// Install the reboot-safe supervisor service and hardened web container.
+    Install {
+        /// Immutable control-plane image to run.
+        #[arg(long)]
+        image: Option<String>,
+    },
+    /// Report supervisor and container lifecycle state.
+    Status,
+    /// Remove the web container and supervisor login service.
+    Uninstall,
+}
+
+#[derive(Subcommand)]
 pub(crate) enum RbacCmd {
     /// Converge the permanent default/onboarding/Moirai RBAC workspaces.
     Bootstrap {

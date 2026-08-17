@@ -185,6 +185,8 @@ fn explicit_remote_embeddings_skip_ollama_but_keep_nli_required() {
 
     let debug = format!("{options:?}");
     assert!(!debug.contains("must-not-leak"));
+    let transport = serde_json::to_string(&options).unwrap();
+    assert!(transport.contains("must-not-leak"));
     let actions: Vec<_> = Planner::build(&state, &options)
         .unwrap()
         .steps
@@ -358,5 +360,90 @@ async fn required_failure_stops_and_rolls_back_completed_steps() {
     assert_eq!(
         *executor.rolled_back.lock().unwrap(),
         vec![InstallAction::ProvisionBackend]
+    );
+}
+
+#[tokio::test]
+async fn every_required_installer_action_fails_closed_and_rolls_back() {
+    let actions = vec![
+        InstallAction::ProvisionBackend,
+        InstallAction::StartBackend,
+        InstallAction::BackupBackend,
+        InstallAction::DeploySchema,
+        InstallAction::VerifyBackend,
+        InstallAction::InstallOllama,
+        InstallAction::StartOllama,
+        InstallAction::PullOllamaModel("nomic-embed-text".into()),
+        InstallAction::DownloadNli,
+        InstallAction::WriteCentralConfig,
+        InstallAction::BootstrapRbac {
+            operator_id: "operator".into(),
+            principals: vec!["codex".into()],
+        },
+        InstallAction::RegisterClient(ClientKind::Codex),
+        InstallAction::InstallAgentSkill(vec![ClientKind::Codex]),
+        InstallAction::RunDoctor,
+    ];
+
+    for failing in actions {
+        let prerequisite = InstallAction::VerifyBackend;
+        let plan = InstallPlan {
+            steps: vec![
+                InstallStep::required(prerequisite.clone(), "prerequisite"),
+                InstallStep::required(failing.clone(), "injected target"),
+                InstallStep::required(InstallAction::RunDoctor, "must not run"),
+            ],
+        };
+        let executor = FakeExecutor {
+            fail_on: Some(failing.clone()),
+            ..FakeExecutor::default()
+        };
+        let report = apply_plan(&executor, &plan).await;
+        assert!(!report.ready, "{failing:?} unexpectedly reached readiness");
+        assert!(report.rollback_attempted, "{failing:?} skipped rollback");
+        if failing == prerequisite {
+            assert!(executor.rolled_back.lock().unwrap().is_empty());
+        } else {
+            assert_eq!(*executor.rolled_back.lock().unwrap(), vec![prerequisite]);
+        }
+        assert_eq!(report.steps.last().unwrap().action, failing);
+    }
+}
+
+#[tokio::test]
+async fn observed_failure_has_ordered_terminal_event() {
+    let plan = InstallPlan {
+        steps: vec![
+            InstallStep::required(InstallAction::VerifyBackend, "backend"),
+            InstallStep::required(InstallAction::RunDoctor, "doctor"),
+        ],
+    };
+    let executor = FakeExecutor {
+        fail_on: Some(InstallAction::RunDoctor),
+        ..FakeExecutor::default()
+    };
+    let events = Mutex::new(Vec::new());
+    let observer = |event| events.lock().unwrap().push(event);
+
+    let report = apply_plan_observed(&executor, &plan, &observer).await;
+    let kinds: Vec<_> = events
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+
+    assert!(!report.ready);
+    assert_eq!(
+        kinds,
+        vec![
+            InstallEventKind::PlanStarted,
+            InstallEventKind::StepStarted,
+            InstallEventKind::StepSucceeded,
+            InstallEventKind::StepStarted,
+            InstallEventKind::StepFailed,
+            InstallEventKind::RollbackStarted,
+            InstallEventKind::PlanCompleted,
+        ]
     );
 }

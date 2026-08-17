@@ -12,6 +12,22 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.14.3 → v0.15.0 — the memory observatory
+
+v0.15.0 adds the containerized global-admin control plane and its native typed
+supervisor. Use the normal backup-first installer flow, then run
+`helixir doctor --json`. The installer publishes no HTML/JavaScript into the
+native tree: it pulls the immutable GHCR image, installs the supervisor as a
+launchd or systemd user service, and starts the loopback-only container. Use
+`install.sh --no-web` when the host is intentionally headless.
+
+RBAC remains permanent and HelixDB remains the only authorization source. The
+upgrade preserves memories, visibility edges, role history, dedup federations,
+Moirai provenance and the existing backend ownership contract. Restart MCP
+clients after replacing the binaries so their cached prompts/tool schemas pick
+up the v0.15 guidance. Check `helixir control-plane status` and open
+`http://127.0.0.1:6971` with the private browser token printed by the installer.
+
 ## v0.14.0 → v0.14.1 — the compatible judge
 
 v0.14.1 is a binary-only compatibility patch. It keeps the v0.14.0 schema,

@@ -1,7 +1,7 @@
 //! Shared helpers for the memory MCP routers.
 
 /// Cached machine hostname for swarm presence — resolved once per process.
-pub(super) fn machine_hostname() -> &'static str {
+pub(crate) fn machine_hostname() -> &'static str {
     use std::sync::OnceLock;
 
     static HOST: OnceLock<String> = OnceLock::new();

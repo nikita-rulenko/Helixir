@@ -1,5 +1,5 @@
 # ============================================================================
-# Helixir Docker Compose — HelixDB only.
+# Helixir Docker Compose — persistent database plus isolated admin control plane.
 #
 # IMPORTANT — how the image gets here: there is NO public helixdb/helixdb
 # image on Docker Hub. The HelixDB server image is built LOCALLY by the
@@ -15,6 +15,10 @@
 # by your MCP client (Claude Desktop / Cursor / zeroclaw) — point it at
 # ~/.helixir/bin/helixir-mcp (`make install`). For a network-reachable
 # endpoint use `helixir gateway` (streamable HTTP) on the host.
+#
+# The web container receives neither docker.sock nor host home directories.
+# Host discovery and installation are carried by the native supervisor once
+# connected; the permanent dashboard talks directly to HelixDB.
 # ============================================================================
 
 services:
@@ -22,7 +26,7 @@ services:
     image: helix-helixir-dev:latest
     container_name: helixdb
     ports:
-      - "6969:6969"
+      - "127.0.0.1:${HELIX_HOST_PORT:-6969}:6969"
     volumes:
       # ⚠️ Persistence: newer HelixDB defaults to IN-MEMORY storage — without
       # HELIX_DATA_DIR pointing at a mounted volume, stopping the container
@@ -56,5 +60,54 @@ services:
         max-size: "20m"
         max-file: "3"
 
+  control-plane:
+    image: ${HELIXIR_CONTROL_PLANE_IMAGE:-helixir-control-plane:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: control-plane
+    container_name: helixir-control-plane
+    depends_on:
+      helixdb:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HELIXIR_WEB_PORT:-6971}:6971"
+    environment:
+      HELIX_HOST: helixdb
+      HELIX_PORT: 6969
+      HELIXIR_RBAC_ACTOR: ${HELIXIR_RBAC_ACTOR:-helixir-operator}
+      HELIXIR_SUPERVISOR_URL: http://host.docker.internal:6972
+      HELIXIR_SUPERVISOR_TOKEN_FILE: /run/secrets/helixir-supervisor-token
+      HELIXIR_CONTROL_PLANE_TOKEN_FILE: /run/secrets/helixir-control-plane-token
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    secrets:
+      - source: helixir_supervisor_token
+        target: helixir-supervisor-token
+      - source: helixir_control_plane_token
+        target: helixir-control-plane-token
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    memswap_limit: 768m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   helixdb_data:
+
+secrets:
+  helixir_supervisor_token:
+    file: ${HELIXIR_SUPERVISOR_TOKEN_FILE:-${HOME}/.helixir/run/control-plane.token}
+  helixir_control_plane_token:
+    file: ${HELIXIR_CONTROL_PLANE_TOKEN_SOURCE:-${HOME}/.helixir/run/control-plane-browser.token}

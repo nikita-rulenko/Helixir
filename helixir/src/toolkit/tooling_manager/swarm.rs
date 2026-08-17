@@ -30,10 +30,23 @@ impl AgentPresence {
         Some((now - seen.with_timezone(&chrono::Utc)).num_seconds())
     }
 
-    /// Live if the last heartbeat is within `window` seconds (and not in the future).
+    /// Live when the agent has not explicitly left and its last heartbeat is
+    /// within `window` seconds (and not in the future). Explicit terminal
+    /// states win immediately; the time window is only the crash fallback.
     pub fn is_active(&self, now: chrono::DateTime<chrono::Utc>, window: i64) -> bool {
-        matches!(self.age_seconds(now), Some(age) if (0..=window).contains(&age))
+        status_allows_activity(&self.status)
+            && matches!(self.age_seconds(now), Some(age) if (0..=window).contains(&age))
     }
+}
+
+/// Whether a stored presence status represents a process that still claims
+/// to be online. Unknown non-terminal statuses remain active for compatibility
+/// with descriptive worker states such as `testing` or `reviewing`.
+pub fn status_allows_activity(status: &str) -> bool {
+    !matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "done" | "failed" | "offline" | "stopped" | "disconnected" | "farewell"
+    )
 }
 
 /// The response from `getAgent`/`listAgents` may nest the node under its RETURN
@@ -188,6 +201,25 @@ mod tests {
         let now = at("2026-06-16T12:00:00Z");
         let p = presence("2026-06-16T12:05:00Z"); // clock skew, 5m ahead
         assert!(!p.is_active(now, 90));
+    }
+
+    #[test]
+    fn farewell_status_is_immediately_inactive_inside_window() {
+        let now = at("2026-06-16T12:00:00Z");
+        let mut p = presence("2026-06-16T12:00:00Z");
+        p.status = "done".into();
+
+        assert_eq!(p.age_seconds(now), Some(0));
+        assert!(!p.is_active(now, 90));
+    }
+
+    #[test]
+    fn descriptive_non_terminal_status_remains_active() {
+        let now = at("2026-06-16T12:00:00Z");
+        let mut p = presence("2026-06-16T11:59:59Z");
+        p.status = "testing v0.15 control plane".into();
+
+        assert!(p.is_active(now, 90));
     }
 
     #[test]

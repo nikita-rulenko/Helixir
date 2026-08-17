@@ -1,6 +1,6 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.14.3`. Last verified: 2026-08-13._
+> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
 and `helixir/schema/queries.hx` (178 HQL queries that materialize the
@@ -55,7 +55,7 @@ Nodes group into five purposes:
 | Node | Key fields | Notes |
 |---|---|---|
 | **User** | `user_id`, `name`, `email`, `created_at`, `metadata` | One per identity. |
-| **Agent** | `agent_id`, `role`, `capabilities`, `agent_version`, `host`, `last_seen`, `status` | Tracks which agent wrote which memory — and, since #39, doubles as the swarm presence record: `add_memory(agent_id=…)` heartbeats it (`heartbeatAgent`), `swarm_status` reads the roster. |
+| **Agent** | `agent_id`, `role`, `capabilities`, `agent_version`, `host`, `last_seen`, `status` | Tracks writers and doubles as the swarm presence record: MCP initialization grants the configured `HELIXIR_RBAC_ACTOR` one bounded lease, real tool activity refreshes it, `add_memory(agent_id=…)` refreshes a distinct worker identity, and `swarm_status` reads the roster. |
 | **Session** | `session_id`, `started_at`, `ended_at`, `status`, `session_type` | Reserved — no code path creates Sessions yet. |
 | **Memory** | `memory_id`, `content_key`, `rbac_scope`, `user_id`, `content`, `memory_type`, `certainty`, `importance`, `created_at/updated_at`, `valid_from/until`, `immutable`, `verified`, `context_tags`, `source`, `metadata`, `is_deleted/deleted_at/deleted_by`, `user_count` | Core unit. `content_key` and `rbac_scope` keep Hive consensus inside its security domain. |
 | **RbacGroup** | `group_id`, `name`, `description`, `active` | Concrete access group. |

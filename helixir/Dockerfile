@@ -3,7 +3,18 @@
 # Multi-stage build for minimal production image
 # ============================================================================
 
-# Stage 1: Build
+# Stage 1: Compile the browser application. These assets exist only in the
+# control-plane image; native installation never copies them onto the host.
+FROM node:22-bookworm-slim AS web-builder
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/index.html web/tsconfig.json web/tsconfig.app.json web/vite.config.ts ./
+COPY web/src ./src
+RUN npm run build
+
+# Stage 2: Build Rust binaries
 FROM rust:1.88-slim-bookworm AS builder
 
 ARG TARGETARCH
@@ -63,16 +74,20 @@ COPY memory-charter.md ./memory-charter.md
 RUN touch src/lib.rs src/bin/helixir_mcp.rs src/bin/helixir_deploy.rs && \
     cargo build --release --bin helixir --bin helixir-mcp --bin helixir-deploy
 
-# The runtime image must be ready without a hidden post-build model step.
+# The native MCP runtime must be ready without a hidden post-build model step.
+# Keep model acquisition outside the shared binary builder so the web-only
+# image does not download or carry NLI weights it never executes.
+FROM builder AS model-builder
 RUN LD_LIBRARY_PATH=/opt/onnxruntime/lib /app/target/release/helixir model download
 
 # ============================================================================
-# Stage 2: Runtime
-FROM debian:bookworm-slim AS runtime
+# Stage 3: Shared native runtime
+FROM debian:bookworm-slim AS runtime-base
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/onnxruntime/lib/libonnxruntime.so* /usr/local/lib/
@@ -83,31 +98,43 @@ RUN useradd -m -u 1000 helixir
 USER helixir
 WORKDIR /home/helixir
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/helixir-mcp /usr/local/bin/helixir-mcp
-COPY --from=builder /app/target/release/helixir-deploy /usr/local/bin/helixir-deploy
-COPY --from=builder /app/target/release/helixir /usr/local/bin/helixir
-COPY --from=builder --chown=helixir:helixir /root/.helixir/models/nli/ /home/helixir/.helixir/models/nli/
-
-# Copy schema files (for deployment)
-COPY --chown=helixir:helixir schema/ ./schema/
-
 # Environment variables (defaults)
 ENV HELIX_HOST=localhost
 ENV HELIX_PORT=6969
 ENV HELIX_INSTANCE=default
 ENV HELIX_LLM_PROVIDER=cerebras
 ENV HELIX_LLM_MODEL=gpt-oss-120b
-ENV HELIX_EMBEDDING_PROVIDER=openai
-ENV HELIX_EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
+ENV HELIX_EMBEDDING_PROVIDER=ollama
+ENV HELIX_EMBEDDING_MODEL=nomic-embed-text
+ENV HELIX_EMBEDDING_URL=http://localhost:11434
 ENV RUST_LOG=helixir=warn,helixir::mcp=info
 
-# Expose nothing - MCP uses stdio
-# EXPOSE 8080
+# Stage 4a: Native MCP runtime. It remains a stdio process and contains no
+# browser assets.
+FROM runtime-base AS runtime
 
-# Health check (optional, for orchestrators)
-# HEALTHCHECK --interval=30s --timeout=3s \
-#     CMD echo '{"jsonrpc":"2.0","method":"ping","id":1}' | helixir-mcp || exit 1
+COPY --from=builder /app/target/release/helixir-mcp /usr/local/bin/helixir-mcp
+COPY --from=builder /app/target/release/helixir-deploy /usr/local/bin/helixir-deploy
+COPY --from=builder /app/target/release/helixir /usr/local/bin/helixir
+COPY --from=model-builder --chown=helixir:helixir /root/.helixir/models/nli/ /home/helixir/.helixir/models/nli/
+COPY --chown=helixir:helixir schema/ ./schema/
 
-# Default command
 ENTRYPOINT ["helixir-mcp"]
+
+# Stage 4b: Permanent admin-only web control plane. Docker isolation is the
+# packaging boundary: no Docker socket or host home directories are needed.
+FROM runtime-base AS control-plane
+
+COPY --from=builder /app/target/release/helixir /usr/local/bin/helixir
+COPY --from=web-builder --chown=helixir:helixir /web/dist/ /opt/helixir/web/
+
+ENV HELIXIR_WEB_DIST=/opt/helixir/web
+ENV HELIX_HOST=helixdb
+ENV HELIX_PORT=6969
+
+EXPOSE 6971
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:6971/ >/dev/null || exit 1
+
+ENTRYPOINT ["helixir", "web", "--bind", "0.0.0.0:6971", "--no-open", "--containerized"]

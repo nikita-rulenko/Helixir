@@ -1,6 +1,9 @@
 # Build artifacts
 target/
 *.rs.bk
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
 
 # IDE
 .idea/
