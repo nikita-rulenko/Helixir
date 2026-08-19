@@ -4,23 +4,39 @@ on 2026-07-04: a stale table of contents, a wrong tool count, and a release
 without a migration note. No LLM, runs in milliseconds, fails loud.
 
 Checks:
-  1. README.md Contents block: every internal anchor resolves to a real
-     heading (GitHub anchor rules), and listed sub-items appear in the same
-     order as their headings do in the body.
+  1. Every README.md internal anchor resolves to a real heading and the root
+     landing page stays within its concise presentation budget.
   2. "N tools" claims in GLOSSARY.md/README.md match the number of #[tool(
      definitions under helixir/src/mcp/tools/.
   3. Documented schema/MCP counts match their authoritative sources.
   4. UPGRADING.md mentions the current minor version from Cargo.toml.
   5. Known removed schema names do not reappear as current contracts.
+  6. Maintained Markdown files contain no broken local links and Mermaid
+     blocks have a supported diagram declaration.
 """
 
 import glob
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 failures = []
+
+MAINTAINED_DOCS = [
+    ROOT / "README.md",
+    ROOT / "GLOSSARY.md",
+    ROOT / "UPGRADING.md",
+    ROOT / "AGENTS.md",
+    ROOT / "integration/README.md",
+    ROOT / "integration/AGENTS.md",
+    ROOT / "integration/SKILLS.md",
+    ROOT / "helixir/skills/helixir-memory/SKILL.md",
+    ROOT / "helixir/src/mcp/prompts/cognitive_protocol.md",
+    *sorted((ROOT / "helixir/doc").glob("*.md")),
+    *sorted((ROOT / "helixir/doc/v0.16.0").glob("*.md")),
+]
 
 
 def fail(msg):
@@ -37,38 +53,83 @@ def github_anchor(heading):
     return text.strip().replace(" ", "-")
 
 
-def check_toc():
+def check_internal_anchors():
     readme = (ROOT / "README.md").read_text()
+    if len(readme.splitlines()) > 400:
+        fail("README: product landing page exceeds the 400-line presentation budget")
     headings = re.findall(r"^(#{2,4})\s+(.+)$", readme, re.M)
     anchors = [github_anchor(h) for _, h in headings]
-    heading_order = {a: i for i, a in enumerate(anchors) if a not in {}}
+    heading_set = set(anchors)
 
-    m = re.search(r"## Contents\n(.*?)\n---", readme, re.S)
-    if not m:
-        fail("README: no Contents block found")
-        return
-    toc_links = re.findall(r"\[([^\]]+)\]\(#([^)]+)\)", m.group(1))
-    prev_pos = -1
-    for label, anchor in toc_links:
-        if anchor not in heading_order:
-            fail(f"README TOC: anchor '#{anchor}' ('{label}') has no matching heading")
-            continue
-        pos = heading_order[anchor]
-        if pos < prev_pos:
-            fail(
-                f"README TOC: '{label}' (#{anchor}) is listed out of order "
-                "relative to the previous TOC entry's heading position"
-            )
-        prev_pos = pos
+    for label, anchor in re.findall(r"\[([^\]]+)\]\(#([^)]+)\)", readme):
+        if anchor not in heading_set:
+            fail(f"README: anchor '#{anchor}' ('{label}') has no matching heading")
+    for anchor in re.findall(r'href="#([^"]+)"', readme):
+        if anchor not in heading_set:
+            fail(f"README: HTML anchor '#{anchor}' has no matching heading")
+
+
+def markdown_anchors(path):
+    text = path.read_text()
+    return {
+        github_anchor(heading)
+        for _, heading in re.findall(r"^(#{1,6})\s+(.+)$", text, re.M)
+    }
+
+
+def check_local_links_and_mermaid():
+    supported_mermaid = (
+        "flowchart",
+        "graph",
+        "sequenceDiagram",
+        "classDiagram",
+        "stateDiagram",
+        "erDiagram",
+        "journey",
+        "gantt",
+        "pie",
+        "mindmap",
+        "timeline",
+    )
+    for path in MAINTAINED_DOCS:
+        text = path.read_text()
+        for target in re.findall(r"!?\[[^\]]*\]\(([^)]+)\)", text):
+            target = target.strip().strip("<>")
+            if not target or target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            target = target.split(maxsplit=1)[0]
+            relative, _, fragment = target.partition("#")
+            resolved = (path.parent / unquote(relative)).resolve()
+            if not resolved.exists():
+                fail(f"{path.relative_to(ROOT)}: local link target does not exist: {target}")
+                continue
+            if fragment and resolved.is_file() and resolved.suffix.lower() == ".md":
+                if unquote(fragment) not in markdown_anchors(resolved):
+                    fail(
+                        f"{path.relative_to(ROOT)}: anchor '#{fragment}' does not exist in "
+                        f"{resolved.relative_to(ROOT)}"
+                    )
+
+        blocks = re.findall(r"```mermaid\s*\n(.*?)\n```", text, re.S)
+        if text.count("```mermaid") != len(blocks):
+            fail(f"{path.relative_to(ROOT)}: unclosed Mermaid fence")
+        for block in blocks:
+            source_lines = [
+                line.strip()
+                for line in block.splitlines()
+                if line.strip() and not line.lstrip().startswith("%%")
+            ]
+            if not source_lines or not source_lines[0].startswith(supported_mermaid):
+                fail(f"{path.relative_to(ROOT)}: unsupported or missing Mermaid declaration")
 
 
 def check_tool_count():
     actual = 0
     for f in glob.glob(str(ROOT / "helixir/src/mcp/tools/*.rs")):
         actual += Path(f).read_text().count("#[tool(")
-    for doc in ["GLOSSARY.md", "README.md"]:
+    for doc in ["GLOSSARY.md", "README.md", "AGENTS.md"]:
         text = (ROOT / doc).read_text()
-        for n in re.findall(r"the (\d+) tools", text):
+        for n in re.findall(r"\b(\d+) tools\b", text):
             if int(n) != actual:
                 fail(f"{doc}: claims '{n} tools' but the server exposes {actual}")
 
@@ -175,7 +236,8 @@ def check_upgrading():
         )
 
 
-check_toc()
+check_internal_anchors()
+check_local_links_and_mermaid()
 check_tool_count()
 check_contract_counts()
 check_removed_contracts()
@@ -186,4 +248,4 @@ if failures:
     for f in failures:
         print(f"  ✗ {f}")
     sys.exit(1)
-print("docs-lint: TOC, schema/MCP counts, removed contracts and upgrade freshness are consistent")
+print("docs-lint: landing budget, links, Mermaid, schema/MCP counts, removed contracts and upgrade freshness are consistent")

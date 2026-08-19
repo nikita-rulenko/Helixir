@@ -1,6 +1,6 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
 and `helixir/schema/queries.hx` (180 HQL queries that materialize the
@@ -8,19 +8,32 @@ contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
 
+The diagram is the active conceptual core, not a substitute for the complete
+node/edge tables below.
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff3d6","primaryTextColor":"#17130d","primaryBorderColor":"#c88613","lineColor":"#6f675b","secondaryColor":"#eee9ff","tertiaryColor":"#e7f7ef","fontFamily":"Inter, ui-sans-serif, system-ui"}}}%%
+flowchart LR
+    User(("User")) -->|HAS_MEMORY| Memory["Memory<br/>atomic fact"]
+    Agent(("Agent")) -->|CREATED| Memory
+    Memory -->|MEMORY_IN_RBAC_GROUP| Group["RbacGroup"]
+    User --> Assignment["RbacAssignment"] --> Group
+
+    Memory -->|MENTIONS| Entity(("Entity"))
+    Memory -->|INSTANCE_OF| Concept(("Concept"))
+    Memory -->|TAGGED_AS| Category(("Category"))
+    Memory -->|BECAUSE · IMPLIES · CONTRADICTS| Related["Memory"]
+    Memory -->|typed MEMORY_RELATION| Related
+    Memory -->|HAS_CHUNK| Chunk["MemoryChunk"]
+    Embedding[("MemoryEmbedding")] -. "vector projection" .-> Memory
+
+    Dedup["RbacDedupGroup"] -->|RBAC_GROUP_IN_DEDUP| Group
+    Moirai["Moirai hypothesis<br/>reserved moirai"] -->|MOIRAI_DERIVED_FROM| Memory
 ```
-                  ┌─────────────────────────────┐
-                  │  HelixDB (graph + vector)   │
-                  │                             │
-                  │   22 node types             │
-                  │    + 5 vector-index types   │
-                  │   30 edge types             │
-                  │     ├── active in code      │
-                  │     └── reserved (see §3)   │
-                  │   180 named HQL queries     │
-                  │   vector dim: 768 (default) │
-                  └─────────────────────────────┘
-```
+
+The complete store contains **22 node types**, **5 vector-index types**, **30
+edge types**, and **180 named HQL queries**. The default embedding dimension is
+768.
 
 There is no relational database or Redis. Every durable memory, reasoning,
 identity and RBAC fact lives in HelixDB. Host-local configuration, operation
@@ -29,30 +42,8 @@ knowledge or authorization store.
 
 ## 2. Node taxonomy
 
-Nodes group into five purposes:
-
-```
-                ┌─────────────────┐
-                │  Identity / who │   User, Agent, Session
-                └─────────────────┘
-                ┌─────────────────┐
-                │  Content / what │   Memory, MemoryChunk
-                └─────────────────┘
-                ┌─────────────────┐
-                │  Semantics      │   Entity, Concept, Context
-                └─────────────────┘
-                ┌─────────────────┐
-                │  Reasoning      │   Reasoning, Constraint, HistoryEvent
-                └─────────────────┘
-                ┌─────────────────┐
-                │  Vectors        │   MemoryEmbedding, EntityEmbedding,
-                │                 │   ChunkEmbedding, ConceptEmbedding
-                └─────────────────┘
-                ┌─────────────────┐
-                │  Doc pipeline   │   DocPage, DocChunk, CodeExample,
-                │  (reserved)     │   ErrorCode
-                └─────────────────┘
-```
+Nodes group into identity, content, semantics, reasoning, vector-index,
+authorization, category, and reserved document-pipeline purposes.
 
 | Node | Key fields | Notes |
 |---|---|---|

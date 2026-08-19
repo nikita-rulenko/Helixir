@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -106,7 +106,7 @@ Releases as evidence of the project's direction. Source:
 | (in `dev`) | 2026-05-12 | Audit-driven hardening | CI on push/PR (#5). Blanket `#![allow]` removed (#6). Embedding URL single-source (#7). Self-loop guard in reasoning (#16). `(id, content)` pair consistency in chain projection (#17). Edge deduplication in `get_memory_graph` (#18). `list_memories` empty-user graceful path (#19). Real fallback score in `search_by_concept` (#22). |
 | v0.14.3 | 2026-08-13 | Aligned runtime contract | Packaged HQL reports the schema version required by the runtime; FastThink acknowledgements return ids for UPDATE outcomes; prompts and the shipped skill cover permanent RBAC, pending ingest outcomes, contradiction handling, and swarm lifecycle. |
 | v0.15.0 | 2026-08-17 | Admin observatory | A global-admin-only containerized control plane projects bounded graph/RBAC/Moirai/Hygieia state and delegates typed host mutations to a token-authenticated reboot-safe native supervisor. |
-| v0.16.0 (unreleased) | — | Distribution and stewardship | Release-native Homebrew/APT channels, versioned embedding-cache invalidation, shared CLI/browser installer services, a hardened versioned API, redacted post-install settings and guarded managed-volume backup/restore. |
+| v0.16.0 | 2026-08-19 | Distribution and stewardship | Release-native Homebrew/APT channels, versioned embedding-cache invalidation, shared CLI/browser installer services, a hardened versioned API, redacted post-install settings and guarded managed-volume backup/restore. |
 | v0.14.2 | 2026-08-05 | Governed generative layer | `groupadmin` becomes the multi-group team-lead role; legacy `teamlead` grants require explicit migration; reserved `moirai` isolates cross-group generated hypotheses and non-traversable provenance to global admins. |
 | v0.14.1 | 2026-08-05 | Compatible local judge | NLI explicitly targets ONNX Runtime API 23 so the mandatory judge works with the official universal macOS 1.23.2 runtime shipped in release artifacts; no data-model change. |
 | v0.14.0 | 2026-08-05 | Governed shared memory | Permanent graph-backed RBAC with reserved `default` and `onboarding` workspaces; group roles and dedup federations; administrative CLI; transactional guided installer with mandatory NLI and verified embeddings; scan-free hot projections and supervised HelixDB v2.3.5 memory envelope; repository-wide 500-line module budget. |

@@ -1,8 +1,6 @@
-# v0.16.0 — Distribution and Stewardship (unreleased)
+# v0.16.0 — The Stewarded Graph
 
-> **Draft.** This describes locally completed release work. Homebrew/APT
-> channels, images and tag are not considered published until the release
-> workflow and clean-install gates succeed.
+Released 2026-08-19.
 
 Helixir v0.16.0 makes installation and post-install administration one coherent
 product surface while preserving HelixDB as the only memory and RBAC source of
@@ -69,6 +67,16 @@ truth.
 
 ## Documentation contract
 
+- The root README is now a 296-line GitHub product landing page: product
+  identity, explicit “is / is not”, a working Quick Start, core capabilities,
+  security boundaries, and a direct map into detailed documentation. Exact
+  installation and operational reference moved to maintained
+  `doc/installation.md` and `doc/operations.md` instead of competing for the
+  first screen.
+- GitHub-native Mermaid diagrams now render the runtime architecture, an
+  RBAC-scoped memory graph, and the active data-model core. Their source stays
+  inline and reviewable; no duplicated binary render can drift. This adopts the
+  durable presentation idea raised in #38 against the current v0.16 contracts.
 - The product README, upgrade guide, glossary, engineering guides, integration
   templates, canonical Agent Skill and embedded cognitive protocol now describe
   the same permanent-RBAC identity/group rules.

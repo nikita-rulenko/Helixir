@@ -3,8 +3,9 @@
 > ⚠️ **HelixDB version pin: CLI v2.3.5.** Helixir targets the v2 (LMDB)
 > generation of HelixDB; **v3.x is incompatible** (different engine, no
 > `helix check`/`helix build`, schema never registers — `query_count: 0`).
-> Every `helix …` command in this file assumes CLI 2.3.5 — see the README
-> Prerequisites for the pinned install command. Do NOT `helix update`.
+> Every `helix …` command in this file assumes CLI 2.3.5 — see the
+> [installation prerequisites](helixir/doc/installation.md#prerequisites) for
+> the pinned install command. Do NOT `helix update`.
 
 > ⚠️ **Before ANY upgrade that touches HelixDB itself:** newer HelixDB builds
 > default to **in-memory storage** — stopping the instance ERASES everything
@@ -20,10 +21,10 @@ distribution, a persistent versioned embedding cache, one installer service
 shared by CLI and browser flows, a hardened versioned admin API, redacted
 post-install settings, and a managed backup vault.
 
-> **Unreleased branch note.** The commands below become package-manager paths
-> only after the v0.16.0 release workflow publishes and signs both channels.
-> Until then, use the current signed release archive or build this branch from
-> source; do not treat a missing formula/package as an installation failure.
+The v0.16.0 release workflow publishes and validates both signed package
+channels after the native release artifacts are immutable. If a downstream
+mirror is temporarily unavailable, use the signed release installer rather
+than mixing files from multiple versions.
 
 Choose one package path:
 

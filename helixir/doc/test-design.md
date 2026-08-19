@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
 
 ## 1. Stance
 
@@ -28,7 +28,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (post-`v0.15.0`):** 333 library unit tests plus CLI tests
+**Current (`v0.16.0`):** 333 library unit tests plus CLI tests
 (`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,

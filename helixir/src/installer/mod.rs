@@ -197,7 +197,7 @@ pub enum EmbeddingChoice {
 /// User selections from an interactive UI or non-interactive flags.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallOptions {
-    /// Memory privilege tier to write to the central config.
+    /// Memory mode to write to the central config.
     pub mode: MemoryMode,
     /// Backend ownership/connection choice.
     pub backend: BackendChoice,

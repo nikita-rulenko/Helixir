@@ -6,7 +6,7 @@
 > `dataflow.md §2`. `algo_opt` has been the default since v0.4.0.
 
 > _Research snapshot: `dev` @ e1b05e5, observed 2026-05-12. Outcome status
-> last reconciled against the unreleased v0.16 branch on 2026-08-19._
+> last reconciled against the v0.16.0 release branch on 2026-08-19._
 
 This document collects everything we learned from a focused research pass on
 graph traversal theory, HelixDB's native primitives, and the current state of

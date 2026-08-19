@@ -1,0 +1,369 @@
+# Operations
+
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+
+This guide covers the native CLI, RBAC administration, configuration, gateway,
+Moirai, Hygieia, the web control plane, and development operations. Installation
+and package lifecycle are documented in [installation.md](installation.md).
+
+## Operating model
+
+HelixDB is the single source of truth for memories and RBAC. The native CLI,
+MCP server, and global-admin web control plane are clients of the same graph
+contracts; none owns a second user registry, ACL, dedup map, or memory cache of
+record.
+
+The main native binaries are:
+
+| Binary | Purpose |
+|:-------|:--------|
+| `helixir` | Installation, RBAC, operations, Moirai, Hygieia, gateway, and configuration CLI |
+| `helixir-mcp` | Native stdio MCP server used by agent clients |
+| `helixir-deploy` | Version-pinned schema deployment helper |
+
+## Daily commands
+
+```bash
+helixir doctor --json                 # prove required runtime dependencies
+helixir mode                          # solo | collective | insights capability tier
+helixir rbac status --json            # inspect permanent graph policy
+helixir config get                    # redacted effective configuration
+helixir control-plane status          # browser UI and native supervisor
+helixir model status                  # mandatory NLI readiness
+helixir health                        # bounded Hygieia event journal
+helixir journal                       # system activity journal
+helixir insights                      # Moirai insight journal with provenance
+```
+
+Modes are capability tiers, not access-control profiles. Permanent RBAC applies
+in `solo`, `collective`, and `insights`.
+
+## RBAC administration
+
+The authenticated CLI principal comes from `HELIXIR_RBAC_ACTOR`. There is no
+`--actor` flag that can spoof a different administrator.
+
+### Bootstrap and status
+
+```bash
+export HELIXIR_RBAC_ACTOR=root
+
+helixir rbac bootstrap \
+  --operator root \
+  --principal codex \
+  --principal claude
+
+helixir rbac status --json
+```
+
+Bootstrap is one-way, resumable, and idempotent. It creates:
+
+- `default` for pre-RBAC memories and previously trusted principals;
+- `onboarding` for newly discovered principals;
+- membership-free `moirai` for global-admin-only generated hypotheses.
+
+Only the explicit operator receives global `admin`. Trusted legacy peers receive
+equal `groupadmin` access inside `default`, which recreates the historical
+shared data plane without granting global control-plane privileges.
+
+### Users and groups
+
+```bash
+helixir rbac user list --json
+helixir rbac user show --user alice --json
+
+helixir rbac group list --json
+helixir rbac group create --id development --name "Development"
+
+helixir rbac group add-user \
+  --group development \
+  --user alice \
+  --role worker \
+  --json
+
+helixir rbac group remove-user \
+  --group development \
+  --user alice \
+  --json
+```
+
+Removing a user deactivates assignments but preserves the User node and role
+history. Reserved workspaces cannot be deleted. The last global administrator
+cannot be revoked.
+
+Roles:
+
+| Role | Authority |
+|:-----|:----------|
+| `admin` | Global memories, policy, reserved workspaces, Moirai, and web UI |
+| `groupadmin` | Read/write and membership/role management in assigned non-reserved groups |
+| `moderator` | Read/write assigned groups and group members' memories |
+| `worker` | Read assigned groups; write only own authored memories |
+| `viewer` | Read-only in assigned groups |
+
+`teamlead` is retired legacy state. Convert existing assignments explicitly:
+
+```bash
+helixir rbac migrate-teamleads --yes
+```
+
+### Dedup federations
+
+Groups deduplicate independently by default. A federation deliberately shares
+deduplication and new-memory visibility across selected groups.
+
+```bash
+helixir rbac dedup create \
+  --id engineering \
+  --name "Engineering federation"
+
+helixir rbac dedup attach \
+  --group development \
+  --dedup-group engineering
+
+helixir rbac dedup attach \
+  --group platform \
+  --dedup-group engineering
+
+helixir rbac dedup detach \
+  --group platform
+```
+
+Joining exposes existing federation history to the group. Detaching preserves
+historical visibility but prevents future memories from receiving that group's
+visibility edge. Never pass a dedup federation id as `group_id` on a memory
+write; Helixir resolves federation membership server-side.
+
+### Permission inspection
+
+```bash
+helixir rbac check --user alice --action read --owner bob
+helixir rbac check --user alice --action write --owner alice
+```
+
+Normal MCP writes pass a stable `actor_id`, the memory owner as `user_id`, and
+the concrete working `group_id`. Authorization fails closed when the principal,
+group, or deployed policy query cannot be resolved.
+
+## Configuration
+
+Effective configuration is layered in this order:
+
+```text
+built-in defaults < ~/.helixir/helixir.toml (or HELIXIR_CONFIG) < environment
+```
+
+Environment values win. Persistent secrets should normally live in the private
+central configuration rather than duplicated MCP-client files.
+
+```bash
+helixir config get
+helixir config get --raw
+helixir config set <key> <value>
+helixir config edit
+helixir config apply
+```
+
+Secret-shaped fields (`*_key`, `*_token`, `*_password`, `*_secret`, and
+`*_credential`) are redacted from resolved and raw output. The web Stewardship
+room presents the same allowlisted configuration surface; secrets are
+write-only and never returned to the browser.
+
+`config apply` validates cross-field constraints, writes atomically, and
+hot-reloads supported MCP/gateway processes. Daemon and watchdog instances that
+hold deeper snapshots are reported as requiring a restart.
+
+### Environment reference
+
+| Variable | Default | Purpose |
+|:---------|:--------|:--------|
+| `HELIX_HOST` | `localhost` | HelixDB address |
+| `HELIX_PORT` | `6969` | HelixDB port; a detected existing endpoint is preserved |
+| `HELIXIR_RBAC_ACTOR` | — | Stable authenticated graph principal for this process |
+| `HELIXIR_MODE` | `solo` | `solo`, `collective`, or `insights` capability tier |
+| `HELIX_LLM_PROVIDER` | `cerebras` | Primary reasoning provider: `cerebras`, `deepseek`, or `ollama` |
+| `HELIX_LLM_MODEL` | `gpt-oss-120b` | Primary reasoning model |
+| `HELIX_LLM_API_KEY` | — | Remote primary-provider credential |
+| `HELIX_LLM_BASE_URL` | provider default | Custom OpenAI-compatible or Ollama URL |
+| `HELIX_LLM_FALLBACK_CHAIN` | `deepseek,ollama` | Ordered generation fallback tiers |
+| `HELIX_DEEPSEEK_API_KEY` | — | DeepSeek fallback credential |
+| `HELIX_EMBEDDING_PROVIDER` | `ollama` | `ollama` or OpenAI-compatible `openai` |
+| `HELIX_EMBEDDING_URL` | `http://localhost:11434` | Embedding endpoint |
+| `HELIX_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
+| `HELIX_EMBEDDING_API_KEY` | — | Optional remote embedding credential |
+| `HELIXIR_EMBED_CACHE_PATH` | — | Enable the private persistent embedding cache |
+| `HELIXIR_EMBED_CACHE_MAX_BYTES` | `134217728` | Durable cache byte ceiling |
+| `HELIXIR_EMBED_CACHE_EPOCH` | — | Explicit invalidation for opaque remote-model changes |
+| `HELIXIR_EMBED_MODEL_REVISION` | auto for Ollama | Primary artifact revision override |
+| `HELIXIR_EMBED_DIMENSION` | auto | Expected primary vector dimension |
+| `HELIXIR_EMBED_FALLBACK_MODEL_REVISION` | auto for Ollama | Fallback artifact revision override |
+| `HELIXIR_EMBED_FALLBACK_DIMENSION` | auto | Expected fallback vector dimension |
+| `HELIXIR_EMBED_CACHE_WARMUP` | — | `1` for background or `blocking` for synchronous warmup |
+| `HELIXIR_GATEWAY_TOKEN` | — | Bearer token for the network MCP gateway |
+| `RUST_LOG` | `helixir=warn` | Logging filter |
+
+The persistent embedding namespace includes format, provider, normalized
+endpoint, model, artifact revision, dimension, epoch, and a SHA-256 digest of
+the exact input. Raw memory text is not written to the cache. Changing the
+provider, endpoint, revision, dimension, or epoch produces safe misses without
+touching HelixDB.
+
+## MCP gateway
+
+The native stdio MCP process is the default local integration. The optional
+gateway exposes the same tools through streamable HTTP:
+
+```bash
+helixir gateway start
+helixir gateway status
+helixir gateway stop
+```
+
+The default gateway bind is `0.0.0.0:8765` and assumes a trusted network. Enable
+bearer authentication before exposing it beyond that boundary:
+
+```bash
+helixir config set gateway.auth_token <secret>
+helixir config apply
+helixir gateway start --require-auth
+```
+
+`--require-auth` fails closed with `503` until a token is configured. Do not use
+Helixir RBAC as a substitute for transport authentication against malicious
+clients that can submit arbitrary `actor_id` values.
+
+## Moirai
+
+The Moirai are background agents that compose normal graph primitives:
+
+| Agent | Responsibility |
+|:------|:---------------|
+| Clotho | Grow the controlled category dictionary and tag memories |
+| Lachesis | Route coherent cross-domain category paths with witnesses |
+| Atropos | Curate routes into ranked, provenance-bearing hypotheses |
+
+```bash
+helixir categories
+helixir clotho grow --user <id>
+helixir lachesis route --seed <category>
+helixir atropos
+helixir pipeline --user <id>
+helixir insights
+```
+
+The Moirai may analyze every working group, but only global admins can invoke
+them or read the reserved `moirai` workspace. Persisted hypotheses use
+`MOIRAI_DERIVED_FROM` witness edges, which ordinary reasoning traversal does
+not cross. A hypothesis with no witness edge is an integrity failure.
+
+### Background daemon
+
+```bash
+helixir daemon start --user <id> --interval 600
+helixir daemon status
+helixir daemon stop
+```
+
+Cadence can be set independently with `--clotho-every`, `--insight-every`,
+`--merge-every`, and `--reconcile-every`. `0` disables that pass; `1` runs it on
+every cycle; `N` runs every Nth cycle.
+
+## Hygieia
+
+Hygieia supervises database liveness, storage persistence, model readiness,
+container memory pressure, orphaned daemons, and backup activity. Alerts and
+recoveries are persisted as `ops_alert` outcomes for the configured operator.
+
+```bash
+helixir watch start
+helixir watch run --once
+helixir watch status
+helixir watch stop
+helixir watch install
+helixir watch uninstall
+helixir health
+```
+
+`watch install` creates a user-level launchd or systemd service on supported
+macOS/Linux hosts. `watchdog.on_alert_cmd` can mirror each bounded alert to a
+human-facing integration; alert kind and summary are passed through dedicated
+environment values.
+
+## Admin control plane
+
+```bash
+helixir control-plane install
+helixir control-plane status
+helixir control-plane uninstall
+```
+
+The browser surface binds to loopback, is available only to a graph-backed
+global administrator, and combines:
+
+- bounded memory, node, user, group, and live-agent projections;
+- searchable RBAC and dedup-federation administration;
+- category-first graph exploration with drill-down into real memory nodes;
+- Moirai evidence and Hygieia event journals;
+- redacted settings with review-before-apply;
+- resumable operation history;
+- managed-database backup create, verify, and guarded restore.
+
+The control-plane container is non-root, read-only, capability-free, and has no
+Docker socket or host-home mount. Host mutations go through a narrow
+token-authenticated native supervisor and typed allowlist.
+
+### Backup vault
+
+Managed backup operations are enabled only for a Helixir-managed local
+database. Existing-local and remote installations remain observe-only because
+their lifecycle belongs to another operator.
+
+Restore requires the exact phrase `RESTORE <archive-id>`. The supervisor creates
+a fresh safety snapshot, restores the selected archive, and probes the live
+schema. An incompatible recovery automatically rolls back to the safety
+snapshot and verifies the current schema again.
+
+## Development operations
+
+```bash
+make build
+make check
+make test
+make run
+make deploy-schema
+make docker-up
+make docker-down
+```
+
+The repository targets Helix CLI v2.3.5. Before any schema transition:
+
+1. create and verify a recoverable backup of the persistent volume;
+2. stop writers;
+3. run `helix check` with v2.3.5;
+4. rebuild/recreate against the same persistent volume;
+5. perform health and read-only query verification;
+6. resume writers only after the schema contract is proven.
+
+### Test gates
+
+```bash
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+```
+
+Live E2E suites are ignored unless their explicit environment gates are set.
+They must run against an appropriate disposable or backed-up live database;
+never convert a flaky model assertion into a retry-until-green loop.
+
+```bash
+HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
+  cargo test --test read_path_e2e -- --ignored --nocapture
+
+HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
+  cargo test --test mcp_read_e2e -- --ignored --nocapture
+```
+
+See [test-design.md](test-design.md) for the complete coverage map and
+[UPGRADING.md](../../UPGRADING.md) for release-specific operational changes.

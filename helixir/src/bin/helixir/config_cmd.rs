@@ -203,13 +203,13 @@ pub(crate) fn cmd_name(cmd: &Cmd) -> &'static str {
     }
 }
 
-/// Print the effective privilege tier and what it permits.
+/// Print the effective memory mode and what it permits.
 pub(crate) fn print_mode() -> Result<()> {
     // Layered config (toml + env), same as the gates — a raw env read here
     // showed "solo" while every gate honored the toml's Insights.
     let mode = helixir::core::config::HelixirConfig::from_env().mode;
     let on = |b: bool| if b { "ON" } else { "off" };
-    println!("Privilege tier: {} (HELIXIR_MODE)", mode.label());
+    println!("Memory mode: {} (HELIXIR_MODE)", mode.label());
     println!(
         "  cross-user collective (link / contradict / collective reads): {}",
         on(mode.collective_enabled())

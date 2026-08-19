@@ -73,6 +73,8 @@ with `file:line` citations. Layout:
 ```
 helixir/doc/
 ├── README.md             index + conventions
+├── installation.md       packages, onboarding, topology, models, MCP clients
+├── operations.md         CLI, RBAC, config, gateway, Moirai, Hygieia, admin UI
 ├── architecture.md       sysdesign — layers, components, ownership
 ├── data-model.md         datadesign — 22 nodes / 30 edges / ontology / invariants
 ├── dataflow.md           add_memory + search_memory + FastThink commit pipelines
@@ -193,6 +195,8 @@ the rules do not.
    - `dataflow.md` — if it changes `add_memory`, `search_memory`, or FastThink.
    - `userflow.md` — if it adds/changes an MCP tool, prompt, or resource.
    - `test-design.md` — if it adds tests or touches the test surface.
+   - `installation.md` / `operations.md` — if it changes packaging,
+     onboarding, configuration, CLI administration, or service lifecycle.
    - `helixir/doc/<latest-version>/` — for the most recent release's context.
 
    Skipping the rationale + the relevant doc is the most common cause of

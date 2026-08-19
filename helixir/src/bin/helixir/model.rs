@@ -48,7 +48,7 @@ pub(crate) fn nli_check() -> Result<()> {
     println!("Local NLI judge — liveness + readiness check");
     println!("Loading from {} …\n", dir.display());
     let mut judge = NliJudge::load(&dir).context(
-        "load NLI model (collective/insights setup downloads it to ~/.helixir/models/nli)",
+        "load NLI model (onboarding downloads the required judge to ~/.helixir/models/nli)",
     )?;
     // Introspected, not assumed — this is what bit us before.
     println!("  model inputs : {:?}", judge.input_names());
