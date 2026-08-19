@@ -1,6 +1,8 @@
 use super::*;
+use crate::installer::native::detect_ollama;
 
-pub(crate) fn configured_embedding_choice(
+/// Resolve the configured embedding strategy without contacting the provider.
+pub fn configured_embedding_choice(
     config: &helixir::core::config::HelixirConfig,
 ) -> Result<helixir::installer::EmbeddingChoice> {
     if config.embedding_provider.eq_ignore_ascii_case("ollama") {
@@ -35,9 +37,8 @@ pub(crate) fn configured_embedding_choice(
     ))
 }
 
-pub(crate) async fn probe_embedding_choice(
-    choice: &helixir::installer::EmbeddingChoice,
-) -> Result<()> {
+/// Perform a real, bounded embedding request and validate the returned vector.
+pub async fn probe_embedding_choice(choice: &helixir::installer::EmbeddingChoice) -> Result<()> {
     let (provider, model, base_url, api_key) = match choice {
         helixir::installer::EmbeddingChoice::LocalOllamaNomic => (
             "ollama".to_string(),
@@ -79,8 +80,9 @@ pub(crate) async fn probe_embedding_choice(
     Ok(())
 }
 
-pub(crate) async fn repair_embeddings_with_local_fallback(
-    executor: &OnboardExecutor,
+/// Repair an invalid embedding path by installing and selecting local Ollama/Nomic.
+pub async fn repair_embeddings_with_local_fallback(
+    executor: &NativeInstallExecutor,
     reason: &str,
 ) -> Result<()> {
     eprintln!("doctor: selected embeddings are not ready: {reason}");

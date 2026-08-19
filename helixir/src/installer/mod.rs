@@ -10,10 +10,12 @@
 
 pub mod backend;
 pub mod client_config;
+pub mod client_registration;
 pub mod clients;
 pub mod config;
 pub mod doctor;
 pub mod events;
+pub mod executor;
 pub mod manifest;
 pub mod models;
 pub mod native;
@@ -21,6 +23,7 @@ pub mod operation_worker;
 pub mod operations;
 mod planner;
 pub mod rbac;
+pub mod service;
 pub mod skills;
 pub mod supervisor;
 pub(crate) mod supervisor_operations;

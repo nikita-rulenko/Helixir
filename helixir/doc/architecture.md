@@ -34,8 +34,12 @@ setup`) which pushes `schema.hx` and `queries.hx` to HelixDB over HTTP. It does
 not participate at runtime.
 
 Installation is a control plane outside the runtime dependency stack:
-`src/installer/` detects machine state, builds a typed installation plan, and
-coordinates platform adapters through apply/rollback boundaries. Its client
+`src/installer/` exposes one `InstallerService` that detects machine state,
+builds a typed installation plan, applies it and verifies the result. Both the
+CLI and browser supervisor call this same service. The concrete
+`NativeInstallExecutor` and its Docker, model, client-registration, config,
+RBAC and doctor adapters live in the library; frontends own only prompts,
+consent and rendering. Its client
 adapters use native Claude Code/Codex commands and strict Cursor JSON merges;
 provider secrets stay outside MCP entries. Embeddings are a closed choice:
 recommended local Ollama/Nomic, or an explicitly configured OpenAI-compatible
@@ -165,7 +169,7 @@ bug to file — not a feature to copy.
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
-| Installer orchestrator | `src/installer/` | Read-only detection, deterministic install plans, ordered apply/rollback reports, explicit embedding strategies; frontends and platform adapters meet here |
+| Installer orchestrator | `src/installer/service.rs`, `src/installer/executor/` | One detect/prepare/apply/verify service, deterministic plans, concrete native mutation adapters, ordered rollback reports and explicit embedding strategies; frontends provide presentation and consent only |
 | Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, and Hygieia telemetry directly from HelixDB; never owns host mutation policy |
 | Control-plane image | `Dockerfile` (`control-plane` / artifact-only `release-control-plane` targets), `docker-compose.yml` | Immutable frontend/backend packaging and the restricted runtime boundary; releases reuse native ABI-gated binaries and a shared frontend artifact rather than recompiling Rust; no host filesystem or Docker authority |
 | Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, a bounded Hygieia health/journal projection, and an allowlisted set of typed Moirai/Hygieia lifecycle operations; shares installer/health DTOs and exposes no general shell or filesystem endpoint |

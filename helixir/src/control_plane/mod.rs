@@ -8,6 +8,7 @@ mod graph_project;
 mod graph_snapshot;
 mod moirai;
 mod operations;
+mod response_security;
 mod server;
 pub mod session;
 mod stats;

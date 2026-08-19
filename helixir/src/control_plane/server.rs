@@ -5,13 +5,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, ensure};
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::http::StatusCode;
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use super::auth::{require_same_origin, require_token};
@@ -19,6 +18,7 @@ use super::dto::ApiProblem;
 use super::graph::{MemoryFieldRequest, load_memory_field};
 use super::graph_snapshot::CategoryGraphCache;
 use super::moirai::load_moirai;
+use super::response_security::{security_header, validate_bind};
 use super::stats::{load_access, load_overview, load_system, resolve_operator_id};
 use super::supervisor::SupervisorClient;
 use super::{
@@ -348,15 +348,16 @@ async fn build_install_plan(
             .map(Json)
             .map_err(supervisor_error);
     }
-    let detected = crate::installer::native::detect_system_state().await;
-    crate::installer::Planner::build(&detected, &options)
-        .map(Json)
+    crate::installer::service::InstallerService::default()
+        .prepare(&options)
+        .await
+        .map(|prepared| Json(prepared.plan))
         .map_err(|error| {
             tracing::warn!(%error, "control-plane install plan rejected");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ApiProblem {
-                    code: "unsafe_install_plan",
+                    code: error.code(),
                     message: "the selected installation options do not form a safe plan"
                         .to_string(),
                 }),
@@ -472,14 +473,6 @@ pub(super) fn supervisor_error(error: anyhow::Error) -> (StatusCode, Json<ApiPro
     )
 }
 
-fn validate_bind(config: &ControlPlaneConfig) -> anyhow::Result<()> {
-    ensure!(
-        config.bind.ip().is_loopback() || config.containerized,
-        "native web mode is loopback-only; non-loopback binding is reserved for the isolated container"
-    );
-    Ok(())
-}
-
 fn resolve_assets(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
     explicit
         .map(Path::to_path_buf)
@@ -493,13 +486,6 @@ fn resolve_assets(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
         .chain([PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist")])
         .find(|path| path.join("index.html").is_file())
         .context("web frontend assets were not found; run `npm run build` in helixir/web")
-}
-
-fn security_header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {
-    SetResponseHeaderLayer::if_not_present(
-        HeaderName::from_static(name),
-        HeaderValue::from_static(value),
-    )
 }
 
 #[cfg(test)]

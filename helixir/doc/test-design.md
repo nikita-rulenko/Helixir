@@ -108,7 +108,11 @@ must additionally reload the same browser tab after two container restarts.
 Installer-operation coverage injects failure into every required action, proves rollback,
 replays SSE strictly after its cursor, rejects a changed-plan resume, redacts
 sensitive event/report detail on disk, and reopens a running journal as an
-explicit resumable interruption.
+explicit resumable interruption. Shared-installer tests additionally prove that
+CLI and browser adapters converge on the same `InstallerService`, plan/debug
+projections never disclose provider secrets, conflicting MCP registrations need
+explicit replacement consent, and every concrete executor module remains within
+the 500-line source budget.
 
 `tools/control_plane_soak.py` performs authenticated polling against the real
 overview, access, memory-field, Moirai and Hygieia projections while sampling
@@ -147,7 +151,7 @@ denies the compatibility `default` groupadmin.
 | Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 41 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, private durable operation journals, cursor replay, restart recovery, changed-plan refusal, failure-injection resume, secret redaction, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
+| Installer | `src/installer/` | 58 | One shared detect/prepare/apply/verify service for CLI and browser adapters; fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, private durable operation journals, cursor replay, restart recovery, changed-plan refusal, failure-injection resume, secret-safe plan/debug projections, central TOML/permissions and manifest atomicity, explicit MCP-conflict consent, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
 | CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
 | Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
