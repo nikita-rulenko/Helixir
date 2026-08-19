@@ -74,6 +74,14 @@ user state. Release Linux binaries use an Ubuntu 22.04 build container and a
 symbol-version gate so the native archive and derived packages keep a Debian
 12/Ubuntu LTS-compatible glibc baseline; release validation clean-installs both
 architectures on both supported distribution families before publication.
+Container publication reuses those same ABI-gated Linux archives. A native
+runner for each architecture packages both runtime images without compiling
+Rust in Docker or under QEMU; the architecture-specific NLI model and the
+single shared frontend build are workflow artifacts. Per-target/per-architecture
+BuildKit GHA scopes retain the small immutable packaging layers across warm
+releases. Only after both architecture jobs succeed does the manifest job move
+the immutable release tag and `latest` together, keeping the post-native-build
+container budget below 20 minutes.
 
 The v0.15 control plane adds a separate browser contract. Every API route is
 covered by the same persistent browser-token and graph-backed global-admin

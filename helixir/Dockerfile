@@ -138,3 +138,60 @@ HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
     CMD curl -fsS http://127.0.0.1:6971/ >/dev/null || exit 1
 
 ENTRYPOINT ["helixir", "web", "--bind", "0.0.0.0:6971", "--no-open", "--containerized"]
+
+# ============================================================================
+# Release-only packaging targets
+#
+# The release workflow already compiles and ABI-checks both Linux architectures
+# on native runners. These stages consume those immutable artifacts instead of
+# rebuilding Rust (and especially ARM64) through Docker/QEMU.
+# ============================================================================
+
+FROM debian:bookworm-slim AS release-base
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY release/payload/libonnxruntime.so* /usr/local/lib/
+RUN ldconfig && useradd -m -u 1000 helixir
+
+USER helixir
+WORKDIR /home/helixir
+
+ENV HELIX_HOST=localhost
+ENV HELIX_PORT=6969
+ENV HELIX_INSTANCE=default
+ENV HELIX_LLM_PROVIDER=cerebras
+ENV HELIX_LLM_MODEL=gpt-oss-120b
+ENV HELIX_EMBEDDING_PROVIDER=ollama
+ENV HELIX_EMBEDDING_MODEL=nomic-embed-text
+ENV HELIX_EMBEDDING_URL=http://localhost:11434
+ENV RUST_LOG=helixir=warn,helixir::mcp=info
+
+FROM release-base AS release-runtime
+
+COPY --chown=1000:1000 release/payload/helixir-mcp /usr/local/bin/helixir-mcp
+COPY --chown=1000:1000 release/payload/helixir-deploy /usr/local/bin/helixir-deploy
+COPY --chown=1000:1000 release/payload/helixir /usr/local/bin/helixir
+COPY --chown=1000:1000 release/nli/ /home/helixir/.helixir/models/nli/
+COPY --chown=1000:1000 release/payload/schema/ ./schema/
+
+ENTRYPOINT ["helixir-mcp"]
+
+FROM release-base AS release-control-plane
+
+COPY --chown=1000:1000 release/payload/helixir /usr/local/bin/helixir
+COPY --chown=1000:1000 release/web/ /opt/helixir/web/
+
+ENV HELIXIR_WEB_DIST=/opt/helixir/web
+ENV HELIX_HOST=helixdb
+ENV HELIX_PORT=6969
+
+EXPOSE 6971
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:6971/ >/dev/null || exit 1
+
+ENTRYPOINT ["helixir", "web", "--bind", "0.0.0.0:6971", "--no-open", "--containerized"]
