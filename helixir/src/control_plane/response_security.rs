@@ -1,5 +1,8 @@
-//! Response-header helpers for the browser control-plane boundary.
+//! Static assets and response policy for the browser control-plane boundary.
 
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
 use axum::http::{HeaderName, HeaderValue};
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -21,4 +24,19 @@ pub(super) fn security_header(
         HeaderName::from_static(name),
         HeaderValue::from_static(value),
     )
+}
+
+pub(super) fn resolve_assets(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
+    explicit
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(std::env::var_os("HELIXIR_WEB_DIST").map(PathBuf::from))
+        .chain(
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|parent| parent.join("web"))),
+        )
+        .chain([PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist")])
+        .find(|path| path.join("index.html").is_file())
+        .context("web frontend assets were not found; run `npm run build` in helixir/web")
 }

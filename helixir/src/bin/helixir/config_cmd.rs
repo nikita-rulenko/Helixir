@@ -173,56 +173,15 @@ pub(crate) fn config_apply() -> Result<()> {
     }
     println!("config valid: {}", p.display());
 
-    #[cfg(unix)]
-    {
-        let out = std::process::Command::new("pgrep")
-            .args(["-f", "helixir-mcp|helixir gateway"])
-            .output()?;
-        let pids: Vec<i32> = String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .filter_map(|s| s.parse().ok())
-            .filter(|pid| *pid != std::process::id() as i32)
-            .collect();
-        if pids.is_empty() {
-            println!("no running MCP/gateway processes found — nothing to signal");
-        }
-        for pid in pids {
-            let ok = std::process::Command::new("kill")
-                .args(["-HUP", &pid.to_string()])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            println!(
-                "SIGHUP -> pid {pid}: {}",
-                if ok {
-                    "reloading (client rebuilt + swapped)"
-                } else {
-                    "FAILED"
-                }
-            );
-        }
-        for name in ["daemon", "watch"] {
-            if let Some(state) = read_pid_state(name) {
-                let pid = state.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                if is_alive(pid) {
-                    println!(
-                        "{name} (pid {pid}): restart to apply — `helixir {}`",
-                        if name == "daemon" {
-                            "daemon stop && helixir daemon start"
-                        } else {
-                            "watch stop && helixir watch start"
-                        }
-                    );
-                }
-            }
-        }
-        println!("note: active FastThink sessions keep their pre-reload memory handle by design");
-        println!(
-            "note: processes running a binary OLDER than the hot-reload feature EXIT on SIGHUP\n      (no handler installed) — their supervisor/client restarts them with the new config"
-        );
+    let receipt = helixir::installer::settings_reload::reload()?;
+    println!(
+        "reload signals: {} succeeded, {} failed",
+        receipt.signalled_processes, receipt.failed_signals
+    );
+    for process in receipt.restart_required {
+        println!("{process}: restart required to apply deeper configuration snapshots");
     }
-    #[cfg(not(unix))]
-    println!("hot-reload signaling is unix-only; restart processes to apply");
+    println!("note: active FastThink sessions keep their pre-reload memory handle by design");
     Ok(())
 }
 

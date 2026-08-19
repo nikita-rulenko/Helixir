@@ -96,6 +96,23 @@ pub async fn serve(config: SupervisorConfig) -> anyhow::Result<()> {
         )
         .route("/v1/install/verify", post(verify))
         .route("/v1/operations/run", post(operation))
+        .route(
+            "/v1/settings",
+            get(super::supervisor_admin::settings).post(super::supervisor_admin::apply_settings),
+        )
+        .route("/v1/backups", get(super::supervisor_admin::backups))
+        .route(
+            "/v1/backups/create",
+            post(super::supervisor_admin::create_backup),
+        )
+        .route(
+            "/v1/backups/verify",
+            post(super::supervisor_admin::verify_backup),
+        )
+        .route(
+            "/v1/backups/restore",
+            post(super::supervisor_admin::restore_backup),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), authorize))
         .with_state(state);

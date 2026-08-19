@@ -9,6 +9,7 @@
 //! same contract; neither frontend owns installation policy.
 
 pub mod backend;
+pub mod backups;
 pub mod client_config;
 pub mod client_registration;
 pub mod clients;
@@ -24,8 +25,11 @@ pub mod operations;
 mod planner;
 pub mod rbac;
 pub mod service;
+pub mod settings;
+pub mod settings_reload;
 pub mod skills;
 pub mod supervisor;
+pub(crate) mod supervisor_admin;
 pub(crate) mod supervisor_operations;
 
 pub use events::{InstallEvent, InstallEventKind, InstallObserver};

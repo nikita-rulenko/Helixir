@@ -159,6 +159,43 @@ export interface HostOperationResult {
   operation: string; succeeded: boolean; output: string;
 }
 
+export interface SettingsSnapshot {
+  config_path: string;
+  locked_fields: string[];
+  mode: "Solo" | "Collective" | "Insights";
+  database: { host: string; port: number; instance: string };
+  reasoning: { provider: string; model: string; base_url: string; temperature: number; api_key_configured: boolean };
+  embeddings: { provider: string; model: string; url: string; api_key_configured: boolean };
+  swarm: { active_window_secs: number; presence_ttl_secs: number };
+  watchdog: {
+    enabled: boolean; sample_interval_secs: number; mem_alert_pct: number; mem_restart_pct: number;
+    allow_container_restart: boolean; allow_cache_reclaim: boolean; backup_interval_hours: number; backup_keep: number;
+  };
+}
+
+export interface SettingsPatch {
+  mode?: SettingsSnapshot["mode"];
+  reasoning_provider?: string; reasoning_model?: string; reasoning_base_url?: string;
+  reasoning_temperature?: number; reasoning_api_key?: string;
+  embedding_provider?: string; embedding_model?: string; embedding_url?: string; embedding_api_key?: string;
+  swarm_active_window_secs?: number; swarm_presence_ttl_secs?: number;
+  watchdog_enabled?: boolean; watchdog_sample_interval_secs?: number;
+  watchdog_mem_alert_pct?: number; watchdog_mem_restart_pct?: number;
+  watchdog_allow_container_restart?: boolean; watchdog_allow_cache_reclaim?: boolean;
+  backup_interval_hours?: number; backup_keep?: number;
+}
+
+export interface SettingsMutationReceipt {
+  apply: { changed: boolean; config_backup: string | null; reload_required: boolean; settings: SettingsSnapshot };
+  reload: { signalled_processes: number; failed_signals: number; restart_required: string[] };
+}
+
+export interface BackupRecord { id: string; created_at: string; size_bytes: number; kind: "manual" | "safety" | "automatic" }
+export interface BackupInventory {
+  available: boolean; reason: string | null; directory: string; retention: number; archives: BackupRecord[];
+}
+export interface BackupReceipt { operation: string; backup_id: string; safety_backup_id: string | null; message: string }
+
 export interface InstallStep {
   action: { kind: string; configuration?: unknown };
   required: boolean;

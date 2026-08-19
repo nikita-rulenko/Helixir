@@ -6,6 +6,7 @@ mod dto;
 mod graph;
 mod graph_project;
 mod graph_snapshot;
+mod host_admin;
 mod moirai;
 mod operations;
 mod response_security;

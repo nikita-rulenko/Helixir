@@ -13,7 +13,7 @@ export function Mark() {
   );
 }
 
-export function Glyph({ name }: { name: "overview" | "setup" | "people" | "memory" | "moirai" | "system" }) {
+export function Glyph({ name }: { name: "overview" | "setup" | "people" | "memory" | "moirai" | "system" | "settings" }) {
   const paths = {
     overview: <path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z" />,
     setup: <path d="m14.5 4-5 5m1-5 5 5M5 14h14M7 18h10" />,
@@ -21,6 +21,7 @@ export function Glyph({ name }: { name: "overview" | "setup" | "people" | "memor
     memory: <path d="M8 6.5A3.5 3.5 0 0 1 14.5 5 3.5 3.5 0 0 1 18 8.5c0 4.5-6 8.5-6 8.5S6 13 6 8.5A3.5 3.5 0 0 1 8 6.5Zm4 1.5v5m-2.5-2.5h5" />,
     moirai: <path d="M5 6.5h5l2 3 2-3h5M7 17.5h4l1-3 1 3h4M12 9.5v5" />,
     system: <path d="M12 3v3m0 12v3M3 12h3m12 0h3m-3.6-5.4-2.1 2.1M8.7 15.3l-2.1 2.1m10.8 0-2.1-2.1M8.7 8.7 6.6 6.6M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />,
+    settings: <path d="M5 7h8m4 0h2M5 12h2m4 0h8M5 17h6m4 0h4M13 5v4M7 10v4m6 1v4" />,
   };
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">{paths[name]}</svg>;
 }

@@ -1,6 +1,6 @@
 //! Axum host for the versioned control-plane API and compiled frontend.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
@@ -18,7 +18,7 @@ use super::dto::ApiProblem;
 use super::graph::{MemoryFieldRequest, load_memory_field};
 use super::graph_snapshot::CategoryGraphCache;
 use super::moirai::load_moirai;
-use super::response_security::{security_header, validate_bind};
+use super::response_security::{resolve_assets, security_header, validate_bind};
 use super::stats::{load_access, load_overview, load_system, resolve_operator_id};
 use super::supervisor::SupervisorClient;
 use super::{
@@ -117,6 +117,14 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         )
         .route("/install/verify", post(verify_installation))
         .route("/operations/run", post(run_host_operation))
+        .route(
+            "/settings",
+            get(super::host_admin::settings).post(super::host_admin::apply_settings),
+        )
+        .route("/backups", get(super::host_admin::backups))
+        .route("/backups/create", post(super::host_admin::create_backup))
+        .route("/backups/verify", post(super::host_admin::verify_backup))
+        .route("/backups/restore", post(super::host_admin::restore_backup))
         .fallback(api_not_found)
         .method_not_allowed_fallback(api_method_not_allowed)
         .layer(DefaultBodyLimit::max(1024 * 1024))
@@ -471,21 +479,6 @@ pub(super) fn supervisor_error(error: anyhow::Error) -> (StatusCode, Json<ApiPro
             },
         }),
     )
-}
-
-fn resolve_assets(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
-    explicit
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(std::env::var_os("HELIXIR_WEB_DIST").map(PathBuf::from))
-        .chain(
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("web"))),
-        )
-        .chain([PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist")])
-        .find(|path| path.join("index.html").is_file())
-        .context("web frontend assets were not found; run `npm run build` in helixir/web")
 }
 
 #[cfg(test)]
