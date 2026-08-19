@@ -157,7 +157,7 @@ denies the compatibility `default` groupadmin.
 | Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
 | Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
 | Installer and stewardship | `src/installer/` | 64 | One shared detect/prepare/apply/verify service for CLI and browser adapters; fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, command safety, rollback/resume journals, secret-safe projections, atomic config, explicit MCP-conflict consent, redacted post-install settings, bounded backup inventory, safety snapshots and schema-verified restore rollback. |
-| CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
+| CLI onboarding | `src/bin/helixir/` | 14 | RBAC command parsing, deterministic local/remote onboarding flags, reuse of the persisted global-admin identity during an enabled-RBAC upgrade, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
 | Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
 
 ### Integration / E2E

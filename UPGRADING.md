@@ -43,6 +43,10 @@ helixir doctor --json
 helixir control-plane status
 ```
 
+When RBAC is already active, repeat onboarding reuses the global administrator
+recorded in `~/.helixir/install.json`; pass `--rbac-operator` or
+`HELIXIR_RBAC_ACTOR` only to select another existing global administrator.
+
 Existing-local and remote HelixDB installations remain observe-only in the
 web backup vault. Only a Helixir-managed local database can create, verify, or
 restore managed archives. Restore always requires the exact phrase

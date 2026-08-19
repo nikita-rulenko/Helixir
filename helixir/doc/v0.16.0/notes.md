@@ -22,6 +22,9 @@ truth.
   It distinguishes managed-local, existing-local and remote HelixDB, provisions
   mandatory NLI and verified embeddings, registers detected clients and
   converges permanent graph RBAC.
+- Repeat onboarding of an existing enabled-RBAC installation reuses the
+  persisted global administrator instead of mistaking the local OS account for
+  a new bootstrap operator.
 
 ## Shared installer and hardened API
 
