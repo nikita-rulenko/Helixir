@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased cache hardening. Last verified: 2026-08-18._
 
 ## 1. System context
 
@@ -311,10 +311,19 @@ plus the root `README.md`.
     `getMemoryLogicalConnections` call per visited node. Semantics mirror
     the legacy DFS (every unvisited neighbour scored; top-3 per parent
     expand), with a single search-wide visited set.
-  - The embedding cache persists to disk (`HELIXIR_EMBED_CACHE_PATH`,
-    JSONL, model-scoped, entries never expire) with optional corpus
-    warmup at startup (`HELIXIR_EMBED_CACHE_WARMUP=1|blocking`), so
-    re-rank phases run with zero embedding HTTP calls once warm.
+  - The embedding cache optionally persists to private JSONL
+    (`HELIXIR_EMBED_CACHE_PATH`) with corpus warmup at startup
+    (`HELIXIR_EMBED_CACHE_WARMUP=1|blocking`). Durable keys contain a
+    versioned namespace over provider, normalized endpoint, model, optional
+    artifact revision, expected dimension, and explicit cache epoch. Reachable
+    Ollama aliases are resolved to their `/api/tags` digest before the durable
+    cache opens; opaque remote aliases use the operator-controlled epoch. Text is
+    represented only by SHA-256. Startup scans the complete file and retains
+    the newest unique set. Advisory cross-process locking plus synced atomic
+    snapshots keep it valid under multiple stdio MCP processes, while entry
+    and `HELIXIR_EMBED_CACHE_MAX_BYTES` ceilings bound growth (128 MiB by
+    default). Foreign, malformed, truncated, or dimension-mismatched rows are
+    invalidated rather than returned.
   - Reasoning chains (`get_chain` with `ChainGuidance`) walk true BFS and
     pick the next hop by **cosine similarity to the query** — the read
     path makes zero LLM calls. Chain seeds widen `contextual → full`

@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased distribution/cache hardening. Last verified: 2026-08-18._
 
 ## 1. Stance
 
@@ -54,6 +54,26 @@ NLI is part of every build. Unit coverage verifies host-variant digest
 availability and the contradiction/paraphrase readiness contract; installer
 coverage requires NLI download before doctor, and doctor fails closed when the
 model is missing. CI runs the same full NLI-enabled surface on Ubuntu and macOS.
+
+The persistent embedding-cache contract is covered separately: provider,
+endpoint, revision, dimension and epoch produce isolated namespaces; startup
+keeps the newest unique entry/byte-bounded set; malformed, foreign and
+wrong-dimension rows fail safe; durable clear survives restart; an orphaned
+temporary snapshot cannot replace the last valid cache; and concurrent store
+handles cannot interleave JSONL records during append or compaction. Diagnostics
+assert hits, misses, bytes, compactions and invalidations without exposing raw
+memory text or vectors.
+
+Package-distribution CI renders the Homebrew formula from release-style
+checksums, validates Ruby syntax, builds byte-identical Debian packages twice,
+checks package metadata and runtime-resource layout, builds both Debian
+architectures, assembles an ephemeral APT repository, and verifies its
+`InRelease` signature while rejecting tampered metadata. The contract installs
+an older indexed version, upgrades it through APT, and proves that purge keeps
+user state. Release Linux binaries use an Ubuntu 22.04 build container and a
+symbol-version gate so the native archive and derived packages keep a Debian
+12/Ubuntu LTS-compatible glibc baseline; release validation clean-installs both
+architectures on both supported distribution families before publication.
 
 The v0.15 control plane adds a separate browser contract. Every API route is
 covered by the same persistent browser-token and graph-backed global-admin

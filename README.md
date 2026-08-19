@@ -33,6 +33,7 @@
 - [Access control (RBAC)](#access-control-rbac)
 - [**Quick Start**](#quick-start)
   - [One-command install](#one-command-install)
+  - [Package managers (planned)](#package-managers-planned)
   - [Prerequisites](#prerequisites)
 - [How It Works](#how-it-works)
   - [Architecture](#architecture)
@@ -252,6 +253,75 @@ specified explicitly. `helixir doctor` sends a real embedding probe. If the
 remote path is missing or broken, it reports the failure, installs/starts Ollama,
 pulls Nomic, atomically switches the central config, and verifies the repair.
 `--no-local-llm` skips only the optional fallback LLM.
+
+### Package managers (planned)
+
+Homebrew and APT are the next supported distribution channels. They are tracked
+in [#151](https://github.com/nikita-rulenko/Helixir/issues/151) and
+[#152](https://github.com/nikita-rulenko/Helixir/issues/152), respectively, and
+are **not published yet**. Until those issues close, use the one-command release
+installer above rather than the preview commands below.
+
+Once the Homebrew tap is published, macOS users and Linux hosts on the supported
+Debian 12 / Ubuntu 22.04-or-newer ABI baseline will install the released native
+package and start the same guided onboarding flow with:
+
+```bash
+brew install nikita-rulenko/tap/helixir
+helixir onboard
+```
+
+Homebrew lifecycle commands remain package-only:
+
+```bash
+brew upgrade helixir
+brew pin helixir        # keep the installed release
+brew unpin helixir
+brew uninstall helixir  # preserves ~/.helixir and external services/data
+```
+
+Once the signed Helixir APT repository is published and configured, Debian and
+Ubuntu users will use:
+
+```bash
+curl -fsSL https://nikita-rulenko.github.io/Helixir/helixir-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/helixir-archive-keyring.gpg >/dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helixir-archive-keyring.gpg] https://nikita-rulenko.github.io/Helixir stable main" \
+  | sudo tee /etc/apt/sources.list.d/helixir.list >/dev/null
+sudo apt update
+sudo apt install helixir
+helixir onboard
+```
+
+The dedicated archive-key fingerprint is
+`82AE 7735 0E9F DBF0 D7AF 8B58 E0A8 D062 DC6C 5161`; verify it before
+trusting a newly downloaded key. A replacement key will be published and
+documented alongside the old key for an overlap period before repository
+metadata changes signers. Pinning and removal use normal APT semantics:
+
+```bash
+sudo apt-mark hold helixir
+sudo apt-mark unhold helixir
+sudo apt remove helixir  # preserves ~/.helixir and external services/data
+```
+
+Package managers will own only immutable Helixir binaries and packaged runtime
+resources. `helixir onboard` remains the single orchestrator for HelixDB topology,
+mandatory NLI, local Ollama/Nomic or explicit remote embeddings, MCP client
+registration, permanent RBAC bootstrap, doctor verification, and the optional
+web control plane. Upgrades and removals will preserve `~/.helixir`, database
+volumes, models, configuration, backups, and MCP client entries unless the user
+explicitly removes them.
+
+For unattended hosts, append `--non-interactive` to `helixir onboard` after
+providing every required choice and secret through the protected central config
+or environment. The release-archive fallback remains available independently of
+either package channel:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install.sh \
+  | bash -s -- --non-interactive
+```
 
 Or install manually:
 
@@ -772,9 +842,29 @@ All settings are passed as environment variables.
 | `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
 | `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
 | `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
+| `HELIXIR_EMBED_CACHE_PATH` | — | Enable the private persistent embedding cache at this path |
+| `HELIXIR_EMBED_CACHE_MAX_BYTES` | `134217728` | Hard byte ceiling applied during atomic cache compaction |
+| `HELIXIR_EMBED_CACHE_EPOCH` | — | Explicitly invalidate cached vectors after an opaque remote-model update |
+| `HELIXIR_EMBED_MODEL_REVISION` | auto for Ollama | Explicit primary artifact revision override; Ollama digest is discovered from `/api/tags` |
+| `HELIXIR_EMBED_DIMENSION` | auto | Expected primary vector dimension; mismatches fail safe |
+| `HELIXIR_EMBED_FALLBACK_MODEL_REVISION` | auto for Ollama | Explicit fallback artifact revision override; Ollama digest is discovered from `/api/tags` |
+| `HELIXIR_EMBED_FALLBACK_DIMENSION` | auto | Expected local fallback vector dimension |
+| `HELIXIR_EMBED_CACHE_WARMUP` | — | `1` warms in background; `blocking` finishes before serving |
 | `HELIX_LLM_FALLBACK_CHAIN` | `deepseek,ollama` | Ordered fallback tiers after the primary; empty value disables fallback |
 | `HELIX_DEEPSEEK_API_KEY` | — | Credentials for the `deepseek` fallback tier |
 | `RUST_LOG` | `helixir=warn` | Log level |
+
+Persistent cache keys contain a format version, provider, normalized endpoint,
+model, optional artifact revision, vector dimension, cache epoch, and SHA-256 of
+the exact embedded text. Raw memory text is not written to the cache. Startup
+keeps the newest valid bounded set, and cross-process writers share a file lock;
+compaction writes and syncs a same-directory snapshot before atomically replacing
+the previous file. Changing the provider, endpoint, revision, dimension, or epoch
+therefore recomputes vectors without touching HelixDB. For an alias whose remote
+provider does not expose artifact revisions, increment `HELIXIR_EMBED_CACHE_EPOCH`.
+When persistence is enabled, Helixir resolves reachable Ollama model aliases to
+their `/api/tags` digest before opening the cache; pulling a new artifact under
+the same alias therefore creates a new namespace automatically.
 
 > **Automatic fallback chain.** When the primary LLM provider errors — a
 > network outage *or* an exhausted quota — Helixir transparently retries the

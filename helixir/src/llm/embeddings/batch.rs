@@ -31,7 +31,7 @@ impl EmbeddingGenerator {
 
         if use_cache {
             for (i, text) in texts.iter().enumerate() {
-                if let Some(cached) = self.cache.get(text) {
+                if let Some(cached) = self.cache.get(&self.primary_cache_namespace, text) {
                     debug!("Batch cache HIT for: {}...", crate::safe_truncate(text, 50));
                     results[i] = Some(cached);
                 } else {
@@ -63,15 +63,19 @@ impl EmbeddingGenerator {
             other => return Err(EmbeddingError::NotImplemented(other.to_string())),
         };
 
-        let embeddings = match embeddings_result {
+        let (embeddings, used_fallback) = match embeddings_result {
             Ok(embs) => {
                 self.using_fallback.store(false, Ordering::SeqCst);
-                embs
+                (embs, false)
             }
             Err(e) => {
                 debug!("Batch primary embedding failed, trying fallback: {}", e);
                 if self.fallback_enabled && self.provider != "ollama" {
-                    self.fallback_batch_to_ollama(&uncached_texts, &e).await?
+                    (
+                        self.fallback_batch_to_ollama(&uncached_texts, &e, use_cache)
+                            .await?,
+                        true,
+                    )
                 } else {
                     return Err(e);
                 }
@@ -80,7 +84,12 @@ impl EmbeddingGenerator {
 
         for (idx, embedding) in uncached_indices.into_iter().zip(embeddings) {
             if use_cache {
-                self.cache.set(texts[idx], embedding.clone());
+                let namespace = if used_fallback {
+                    &self.fallback_cache_namespace
+                } else {
+                    &self.primary_cache_namespace
+                };
+                self.cache.set(namespace, texts[idx], embedding.clone());
             }
             results[idx] = Some(embedding);
         }
@@ -170,6 +179,7 @@ impl EmbeddingGenerator {
         &self,
         texts: &[String],
         original_error: &EmbeddingError,
+        use_cache: bool,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         use futures::future::join_all;
 
@@ -180,16 +190,29 @@ impl EmbeddingGenerator {
             texts.len()
         );
 
-        let futures: Vec<_> = texts
+        let mut embeddings = vec![None; texts.len()];
+        let mut missing_indices = Vec::new();
+        let mut missing_texts = Vec::new();
+        for (index, text) in texts.iter().enumerate() {
+            if use_cache && let Some(cached) = self.cache.get(&self.fallback_cache_namespace, text)
+            {
+                embeddings[index] = Some(cached);
+            } else {
+                missing_indices.push(index);
+                missing_texts.push(text);
+            }
+        }
+
+        let futures: Vec<_> = missing_texts
             .iter()
             .map(|text| self.generate_fallback_ollama_single(text))
             .collect();
+        let generated_count = missing_indices.len();
         let results = join_all(futures).await;
 
-        let mut embeddings = Vec::with_capacity(texts.len());
-        for result in results {
+        for (index, result) in missing_indices.into_iter().zip(results) {
             match result {
-                Ok(emb) => embeddings.push(emb),
+                Ok(embedding) => embeddings[index] = Some(embedding),
                 Err(e) => {
                     return Err(EmbeddingError::BothFailed(
                         original_error.to_string(),
@@ -200,7 +223,8 @@ impl EmbeddingGenerator {
         }
 
         self.using_fallback.store(true, Ordering::SeqCst);
-        self.fallback_count.fetch_add(texts.len(), Ordering::SeqCst);
+        self.fallback_count
+            .fetch_add(generated_count, Ordering::SeqCst);
 
         info!(
             "Fallback batch successful! count={}, total_fallbacks={}",
@@ -208,6 +232,13 @@ impl EmbeddingGenerator {
             self.fallback_count.load(Ordering::SeqCst)
         );
 
-        Ok(embeddings)
+        embeddings
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                EmbeddingError::InvalidResponse(
+                    "fallback batch did not populate every requested embedding".to_string(),
+                )
+            })
     }
 }

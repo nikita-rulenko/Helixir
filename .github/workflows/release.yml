@@ -13,12 +13,17 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Linux artifacts are built against the Ubuntu 22.04 ABI baseline so the
+    # same archive works on Debian 12 and current Ubuntu LTS releases. A null
+    # matrix value leaves native macOS/Windows jobs on their host runner.
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            container: ubuntu:22.04
             artifact: helixir-linux-x86_64
             # Full features again (#80): NLI links against Microsoft's
             # official ONNX Runtime release (fetched below, sha-pinned) via
@@ -33,10 +38,11 @@ jobs:
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+            container: ubuntu:22.04
             artifact: helixir-linux-arm64
             # Native ARM runner + Microsoft's pinned ARM64 runtime: every
             # release artifact includes the mandatory NLI capability.
-            flags: --features vendored-tls
+            flags: ''
             ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-linux-aarch64-1.24.2.tgz
             ort_sha: 6715b3d19965a2a6981e78ed4ba24f17a8c30d2d26420dbed10aac7ceca0085e
             ort_dir: onnxruntime-linux-aarch64-1.24.2
@@ -44,6 +50,7 @@ jobs:
 
           - target: x86_64-apple-darwin
             os: macos-latest
+            container: null
             artifact: helixir-macos-x86_64
             flags: ''
             ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-universal2-1.23.2.tgz
@@ -53,6 +60,7 @@ jobs:
 
           - target: aarch64-apple-darwin
             os: macos-latest
+            container: null
             artifact: helixir-macos-arm64
             flags: ''
             ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-universal2-1.23.2.tgz
@@ -62,6 +70,7 @@ jobs:
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            container: null
             artifact: helixir-windows-x86_64
             ext: .exe
             # Full features again (#80): same MS-release linking as the
@@ -72,6 +81,14 @@ jobs:
             ort_dir: onnxruntime-win-x64-1.24.2
 
     steps:
+      - name: Install Linux build baseline dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates clang cmake curl git libssl-dev pkg-config python3
+
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
@@ -84,10 +101,6 @@ jobs:
         with:
           workspaces: helixir
           key: ${{ matrix.target }}
-
-      - name: Install cross (for cross-compilation)
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
 
       - name: Fetch ONNX Runtime (NLI link target, #80)
         if: matrix.ort_url
@@ -117,23 +130,17 @@ jobs:
       # during the next outage.
       - name: Blackhole cdn.pyke.io (Linux)
         if: matrix.ort_url && runner.os == 'Linux'
-        run: echo "127.0.0.1 cdn.pyke.io" | sudo tee -a /etc/hosts
+        run: echo "127.0.0.1 cdn.pyke.io" >> /etc/hosts
       - name: Blackhole cdn.pyke.io (Windows)
         if: matrix.ort_url && runner.os == 'Windows'
         shell: pwsh
         run: Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 cdn.pyke.io"
 
-      - name: Build (native)
-        if: ${{ !matrix.cross }}
+      - name: Build release binaries
         working-directory: helixir
         env:
           RUSTFLAGS: ${{ matrix.rustflags || '' }}
-        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-
-      - name: Build (cross)
-        if: matrix.cross
-        working-directory: helixir
-        run: cross build --release --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
       - name: Package artifacts
         shell: bash
@@ -156,6 +163,16 @@ jobs:
           fi
           cd dist
           tar -czvf ../${{ matrix.artifact }}.tar.gz *
+
+      - name: Enforce Debian-compatible glibc baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: helixir
+        run: |
+          mapfile -t elf_objects < <(find dist -maxdepth 1 -type f \
+            \( -name 'helixir*' -o -name 'libonnxruntime*.so*' \) -print)
+          test "${#elf_objects[@]}" -ge 4
+          ../tools/check_glibc_baseline.sh --max 2.35 "${elf_objects[@]}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -232,3 +249,16 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/SHA256SUMS
           generate_release_notes: true
+
+  distribution:
+    name: Publish package-manager channels
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/distribution.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

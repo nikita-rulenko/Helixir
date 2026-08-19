@@ -19,6 +19,7 @@ mod generator;
 mod single;
 mod wire;
 
+pub use cache::EmbeddingCacheDiagnostics;
 pub use config::EmbeddingConfig;
 pub use error::EmbeddingError;
 pub use generator::EmbeddingGenerator;

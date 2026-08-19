@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased cache hardening. Last verified: 2026-08-18._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -255,9 +255,11 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   score from HelixDB.
 - **How.** `SmartTraversalV2` calls `EmbeddingGenerator::generate` for
   each candidate and computes the cosine in
-  `mind_toolbox/search/smart_traversal/scoring.rs`. The embedding cache
-  (`moka`, LRU 1000, TTL 300 s) keeps re-embedding cheap for repeated
-  queries.
+  `mind_toolbox/search/smart_traversal/scoring.rs`. The process-local cache
+  keeps the newest 1,000 vectors by default (TTL 300 s). Optional durable
+  persistence is versioned by the complete embedding space and compacted
+  atomically under both entry and byte ceilings, so repeated queries stay
+  cheap without accepting stale vectors after a provider or artifact change.
 - **Why.** HelixDB's `SearchV` returns a result-set ordered by similarity
   but does not serialize the cosine distance in JSON (the `HVector`
   `Serialize` impl excludes it by design). Earlier Helixir releases used

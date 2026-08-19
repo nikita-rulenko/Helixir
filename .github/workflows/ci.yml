@@ -37,6 +37,91 @@ jobs:
       - name: docs lint
         run: python3 .github/scripts/docs_lint.py
 
+  packaging:
+    name: package-manager contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install package tooling
+        run: sudo apt-get update && sudo apt-get install -y apt-utils binutils dpkg-dev gnupg ruby
+      - name: Build deterministic fixture archive
+        run: |
+          mkdir -p fixture/schema fixture/skills/helixir-memory \
+            packages-a packages-b packages-arm packages-old packages-index
+          printf '#!/bin/sh\nprintf "helixir 9.9.9\\n"\n' > fixture/helixir
+          printf '#!/bin/sh\nprintf "helixir-mcp 9.9.9\\n"\n' > fixture/helixir-mcp
+          printf '#!/bin/sh\nprintf "helixir-deploy 9.9.9\\n"\n' > fixture/helixir-deploy
+          chmod 0755 fixture/helixir fixture/helixir-mcp fixture/helixir-deploy
+          touch fixture/schema/schema.hx fixture/schema/queries.hx fixture/helix.toml
+          touch fixture/skills/helixir-memory/SKILL.md
+          tar -C fixture -czf helixir-fixture.tar.gz .
+          printf '#!/bin/sh\nprintf "helixir 9.9.8\\n"\n' > fixture/helixir
+          tar -C fixture -czf helixir-fixture-old.tar.gz .
+          sha=$(sha256sum helixir-fixture.tar.gz | awk '{print $1}')
+          for asset in helixir-macos-arm64.tar.gz helixir-macos-x86_64.tar.gz \
+            helixir-linux-arm64.tar.gz helixir-linux-x86_64.tar.gz; do
+            printf '%s  %s\n' "$sha" "$asset" >> SHA256SUMS
+          done
+      - name: Validate Homebrew rendering
+        run: |
+          tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
+            --output Formula/helixir.rb
+          ruby -c Formula/helixir.rb
+          tools/check_glibc_baseline.sh --max 99.99 /bin/sh
+      - name: Validate deterministic Debian packages
+        env:
+          SOURCE_DATE_EPOCH: 1
+        run: |
+          tools/build_deb.sh --archive helixir-fixture.tar.gz --version 9.9.9 \
+            --arch amd64 --output packages-a
+          tools/build_deb.sh --archive helixir-fixture.tar.gz --version 9.9.9 \
+            --arch amd64 --output packages-b
+          tools/build_deb.sh --archive helixir-fixture.tar.gz --version 9.9.9 \
+            --arch arm64 --output packages-arm
+          tools/build_deb.sh --archive helixir-fixture-old.tar.gz --version 9.9.8 \
+            --arch amd64 --output packages-old
+          test "$(sha256sum packages-a/*.deb | awk '{print $1}')" = \
+            "$(sha256sum packages-b/*.deb | awk '{print $1}')"
+          dpkg-deb --info packages-a/*.deb
+          test "$(dpkg-deb --field packages-a/*.deb Architecture)" = amd64
+          test "$(dpkg-deb --field packages-arm/*.deb Architecture)" = arm64
+          dpkg-deb --extract packages-a/*.deb extracted
+          test "$(extracted/usr/bin/helixir --version)" = 'helixir 9.9.9'
+      - name: Validate signed APT repository
+        run: |
+          export GNUPGHOME=$RUNNER_TEMP/helixir-package-test-gpg
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --passphrase '' --quick-generate-key \
+            'Helixir CI package fixture <ci@example.invalid>' rsa2048 sign 1d
+          key=$(gpg --batch --with-colons --list-secret-keys \
+            | awk -F: '$1 == "sec" {print $5; exit}')
+          cp packages-a/*.deb packages-arm/*.deb packages-old/*.deb packages-index/
+          tools/build_apt_repository.sh --packages packages-index \
+            --output apt-site --signing-key "$key"
+          gpgv --keyring apt-site/helixir-archive-keyring.gpg \
+            apt-site/dists/stable/InRelease
+          cp apt-site/dists/stable/InRelease tampered-InRelease
+          sed -i 's/Helixir signed/Helixor signed/' tampered-InRelease
+          if gpgv --keyring apt-site/helixir-archive-keyring.gpg tampered-InRelease; then
+            echo 'tampered APT metadata unexpectedly verified' >&2
+            exit 1
+          fi
+          sudo install -m 0644 apt-site/helixir-archive-keyring.gpg \
+            /usr/share/keyrings/helixir-ci-keyring.gpg
+          printf 'deb [signed-by=/usr/share/keyrings/helixir-ci-keyring.gpg] file:%s/apt-site stable main\n' \
+            "$PWD" | sudo tee /etc/apt/sources.list.d/helixir-ci.list >/dev/null
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y helixir=9.9.8 >/dev/null
+          test "$(dpkg-query -W -f='${Version}' helixir)" = '9.9.8'
+          test "$(helixir --version)" = 'helixir 9.9.8'
+          mkdir -p "$HOME/.helixir" && touch "$HOME/.helixir/preserve-me"
+          sudo apt-get install --only-upgrade -y helixir >/dev/null
+          test "$(dpkg-query -W -f='${Version}' helixir)" = '9.9.9'
+          test "$(helixir --version)" = 'helixir 9.9.9'
+          test -f "$HOME/.helixir/preserve-me"
+          sudo apt-get purge -y helixir >/dev/null
+          test -f "$HOME/.helixir/preserve-me"
+
   web:
     name: control-plane frontend
     runs-on: ubuntu-latest

@@ -109,7 +109,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "HELIXIR_EMBED_CACHE_PATH enables the persistent embedding cache and HELIXIR_EMBED_CACHE_WARMUP pre-embeds the corpus at startup, eliminating cold-start re-embedding.",
+        "HELIXIR_EMBED_CACHE_PATH enables a private bounded persistent embedding cache; its namespace includes provider, endpoint, model revision, vector dimension and HELIXIR_EMBED_CACHE_EPOCH, while HELIXIR_EMBED_CACHE_WARMUP pre-embeds the corpus at startup.",
     ),
     (
         80,
