@@ -17,7 +17,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
-use super::{InstallOptions, InstallPlan, Planner, SystemState};
+use super::{InstallOptions, InstallPlan, SystemState};
 
 /// Host supervisor settings. The listener may face the Docker bridge, so every
 /// route requires the high-entropy token stored in a private file.
@@ -96,6 +96,23 @@ pub async fn serve(config: SupervisorConfig) -> anyhow::Result<()> {
         )
         .route("/v1/install/verify", post(verify))
         .route("/v1/operations/run", post(operation))
+        .route(
+            "/v1/settings",
+            get(super::supervisor_admin::settings).post(super::supervisor_admin::apply_settings),
+        )
+        .route("/v1/backups", get(super::supervisor_admin::backups))
+        .route(
+            "/v1/backups/create",
+            post(super::supervisor_admin::create_backup),
+        )
+        .route(
+            "/v1/backups/verify",
+            post(super::supervisor_admin::verify_backup),
+        )
+        .route(
+            "/v1/backups/restore",
+            post(super::supervisor_admin::restore_backup),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), authorize))
         .with_state(state);
@@ -119,16 +136,21 @@ async fn health() -> Json<crate::agents::hygieia::HealthSnapshot> {
 async fn plan(
     Json(options): Json<InstallOptions>,
 ) -> Result<Json<InstallPlan>, (StatusCode, Json<SupervisorProblem>)> {
-    let state = super::native::detect_system_state().await;
-    Planner::build(&state, &options).map(Json).map_err(|error| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(SupervisorProblem {
-                code: "unsafe_install_plan".to_string(),
-                message: error.to_string(),
-            }),
-        )
-    })
+    super::service::InstallerService::default()
+        .prepare(&options)
+        .await
+        .map(|prepared| Json(prepared.plan))
+        .map_err(|error| {
+            tracing::warn!(%error, "host supervisor install plan rejected");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(SupervisorProblem {
+                    code: error.code().to_string(),
+                    message: "the selected installation options do not form a safe plan"
+                        .to_string(),
+                }),
+            )
+        })
 }
 
 async fn verify() -> Result<Json<serde_json::Value>, (StatusCode, Json<SupervisorProblem>)> {

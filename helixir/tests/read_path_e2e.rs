@@ -544,7 +544,7 @@ async fn read_path_e2e() {
         connection.found, connection.hops, connection.confidence, connect_ms
     );
     println!(
-        "reasoning_chain: {} chains, deepest {}, {:.1}ms (LLM key is dead — zero LLM calls)",
+        "reasoning_chain: {} chains, deepest {}, {:.1}ms (generation-LLM key is dead — no reasoning-model calls)",
         chains.chains.len(),
         chains.deepest_chain,
         chain_ms

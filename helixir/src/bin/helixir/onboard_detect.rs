@@ -1,8 +1,7 @@
 //! CLI compatibility facade over the shared native installer detector.
 
 pub(crate) use helixir::installer::native::{
-    backend_reachable, client_available, detect_local_backend_tcp, detect_ollama,
-    probe_backend_schema_contract, schema_dir_for_install,
+    client_available, detect_local_backend_tcp, detect_ollama,
 };
 
 pub(crate) async fn detect_onboard_state() -> helixir::installer::SystemState {

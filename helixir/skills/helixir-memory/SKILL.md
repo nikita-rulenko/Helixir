@@ -16,11 +16,12 @@ Choose one stable identity before the first call:
    `HELIXIR_RBAC_ACTOR` (`claude`, `codex`, or `cursor` after onboarding).
 2. Otherwise use an explicitly assigned agent name, then the OS user as a
    last resort.
-3. Use the same lower-case value as `actor_id` on every call.
+3. Use the same lower-case value as `actor_id` on every tool that accepts it.
 4. Use one stable `user_id` for memory ownership. It may equal `actor_id`, but
    it is not an authorization credential.
-5. If identity is uncertain, call `list_users`; never silently adopt another
-   principal.
+5. If identity is uncertain, read the onboarding/client configuration or ask
+   the operator. Only a global admin may use `list_users`; never silently adopt
+   another principal.
 
 ## Recall, work, capture
 
@@ -67,10 +68,10 @@ crash and idle fallback.
 | Bulk audit or count | `list_memories` |
 | Graph around one memory | `get_memory_graph` |
 | Correct one known row | `update_memory` |
-| Resume unfinished reasoning | `search_incomplete_thoughts` |
+| Find historical pre-RBAC partial reasoning | `search_incomplete_thoughts` |
 | Check an accepted async write | `get_add_status` with its `pending_id` |
 | See active agents | `swarm_status` |
-| Orient available identities | `list_users` |
+| Administer/orient registered identities | `list_users` with admin `actor_id` |
 | Settle a charter dispute | `resolve_contradiction` |
 
 Results are curated. `metadata.collapsed` lists folded same-story ids.
@@ -93,7 +94,9 @@ think_commit(session_id, user_id, actor_id, group_id?)
 ```
 
 Repeat the same actor throughout the lifecycle. A session id is not a
-credential. Commit one coherent conclusion; discard dead ends.
+credential. Commit one coherent conclusion; discard dead ends. Under permanent
+RBAC, a timed-out session fails closed rather than guessing an owner/group and
+auto-persisting a partial conclusion.
 
 ## RBAC operating contract
 

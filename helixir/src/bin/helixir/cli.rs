@@ -153,8 +153,8 @@ pub(crate) enum Cmd {
     },
     /// Manage the local NLI model (#55) — the contradiction-safe judge for
     /// paraphrase merging. The repo ships only the downloader; it fetches the
-    /// ONNX variant matching your CPU/OS on demand (~90 MB). Used by the
-    /// collective/insights tiers.
+    /// ONNX variant matching your CPU/OS on demand (~90 MB). Required in every
+    /// memory mode as the contradiction-safety judge.
     Model {
         #[command(subcommand)]
         sub: ModelCmd,
@@ -231,7 +231,7 @@ pub(crate) enum Cmd {
         /// Clients then carry no HELIX_* env — just the gateway URL.
         #[arg(long)]
         gateway: Option<String>,
-        /// Privilege tier to write (solo | collective | insights). When omitted,
+        /// Memory mode to write (solo | collective | insights). When omitted,
         /// setup recommends `collective` (shared memory — the point of the tool);
         /// pass `--mode solo` for private, single-user memory. The silent library
         /// default (no setup) stays solo.
@@ -246,7 +246,7 @@ pub(crate) enum Cmd {
         /// Print the plan without applying platform changes.
         #[arg(long = "dry-run")]
         dry_run: bool,
-        /// Privilege tier to provision (solo | collective | insights).
+        /// Memory mode to provision (solo | collective | insights).
         #[arg(long)]
         mode: Option<String>,
         /// Deterministic local-model choices shared with interactive onboarding.
@@ -304,7 +304,7 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         cmd: ControlPlaneCmd,
     },
-    /// Show the current privilege tier (HELIXIR_MODE) and what it permits.
+    /// Show the current memory mode (HELIXIR_MODE) and what it permits.
     Mode,
     /// Manage HelixDB-backed role assignments and groups.
     Rbac {

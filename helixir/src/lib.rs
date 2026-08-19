@@ -13,7 +13,7 @@ pub use utils::{safe_truncate, safe_truncate_ellipsis};
 pub use core::config::HelixirConfig;
 pub use core::error::{HelixirError, Result};
 pub use db::{HelixClient, HelixClientError};
-pub use llm::embeddings::EmbeddingGenerator;
+pub use llm::embeddings::{EmbeddingCacheDiagnostics, EmbeddingGenerator};
 
 // Canonical shared defaults — the single home for these strings/values, so
 // config.rs (and providers) reference them instead of re-hardcoding.

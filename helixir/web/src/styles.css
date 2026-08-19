@@ -219,6 +219,21 @@ body::before {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+@media (max-width: 1180px) {
+  .settings-ledger{grid-template-columns:repeat(2,1fr)}
+  .settings-grid{grid-template-columns:1fr}
+  .restore-drawer{grid-template-columns:1fr 1fr}.restore-drawer>div{grid-column:1/-1}
+}
+
+@media (max-width: 760px) {
+  .settings-ledger{grid-template-columns:1fr}
+  .settings-fields{grid-template-columns:1fr}
+  .change-dock{position:static;align-items:stretch;flex-direction:column}
+  .vault-panel>header{align-items:stretch;flex-direction:column}
+  .vault-row{grid-template-columns:70px 1fr 20px}.vault-row time,.vault-row em{display:none}
+  .restore-drawer{grid-template-columns:1fr}
+}
+
 /* Control-plane readability floor: operational data must remain legible on
    high-density desktop displays, not collapse into decorative microtype. */
 .eyebrow,.nav-caption,.micro-label{font-size:12px}.brand small,.sidebar-foot p{font-size:12px}.nav-item span{font-size:14px}.nav-item em{font-size:11px}.breadcrumb,.live-pill,.version{font-size:12px}.metric-detail,.terrain-panel header button,.system-row span,.system-row em,.panel-link{font-size:12px}.system-row strong{font-size:13px}.section-lede{font-size:21px}.inspection-line,.choice-row strong,.choice-row small,.client-pill,.guarantee-line,.form-problem,.plan-list strong,.plan-list small,.plan-lock p{font-size:12px}.stage-rail strong{font-size:14px}.stage-rail small,.stage-rail li>span,.choice-card legend,.choice-row em,.plan-list li>span,.plan-list em{font-size:12px}

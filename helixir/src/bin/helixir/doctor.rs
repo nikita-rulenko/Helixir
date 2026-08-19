@@ -2,9 +2,9 @@ use super::*;
 
 pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
     let config = helixir::core::config::HelixirConfig::from_env();
-    let selected_embeddings = configured_embedding_choice(&config);
+    let selected_embeddings = helixir::installer::executor::configured_embedding_choice(&config);
     let embedding_probe = match &selected_embeddings {
-        Ok(choice) => probe_embedding_choice(choice).await,
+        Ok(choice) => helixir::installer::executor::probe_embedding_choice(choice).await,
         Err(error) => Err(anyhow::anyhow!(error.to_string())),
     };
     let repaired_embeddings = if let Err(error) = embedding_probe {
@@ -13,9 +13,15 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
             embeddings: helixir::installer::EmbeddingChoice::LocalOllamaNomic,
             ..helixir::installer::InstallOptions::default()
         };
-        let executor =
-            OnboardExecutor::new(&options, &helixir::installer::SystemState::default(), false);
-        repair_embeddings_with_local_fallback(&executor, &error.to_string()).await?;
+        let executor = helixir::installer::executor::NativeInstallExecutor::new(
+            &options,
+            &helixir::installer::SystemState::default(),
+        );
+        helixir::installer::executor::repair_embeddings_with_local_fallback(
+            &executor,
+            &error.to_string(),
+        )
+        .await?;
         true
     } else {
         false
@@ -52,7 +58,8 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
         local_llm_model: None,
         ..helixir::installer::InstallOptions::default()
     };
-    let backend_executor = OnboardExecutor::new(&backend_options, &state, false);
+    let backend_executor =
+        helixir::installer::executor::NativeInstallExecutor::new(&backend_options, &state);
     let backend_ready = helixir::installer::PlanExecutor::apply(
         &backend_executor,
         &helixir::installer::InstallAction::VerifyBackend,
@@ -65,7 +72,7 @@ pub(crate) async fn doctor_run(json_output: bool) -> Result<()> {
     let rbac_ready = doctor_rbac_ready().await;
     let inputs = helixir::installer::doctor::DoctorInputs {
         binaries: Some(binaries_ready),
-        config: Some(doctor_config_ready()),
+        config: Some(helixir::installer::executor::doctor_config_ready()),
         backend: Some(backend_ready),
         llm: Some(llm_ready),
         embeddings: Some(embeddings_ready),
@@ -142,28 +149,6 @@ async fn doctor_rbac_ready() -> bool {
     }
 }
 
-pub(crate) fn doctor_config_ready() -> bool {
-    let path = helixir::core::config::HelixirConfig::config_file_path().or_else(|| {
-        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".helixir/helixir.toml"))
-    });
-    let Some(path) = path else { return false };
-    let Ok(contents) = std::fs::read_to_string(&path) else {
-        return false;
-    };
-    if toml::from_str::<helixir::core::config::HelixirConfig>(&contents).is_err() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|meta| meta.permissions().mode() & 0o077 == 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    true
-}
-
 pub(crate) fn doctor_clients_ready() -> bool {
     use helixir::installer::ClientKind;
 
@@ -205,7 +190,11 @@ pub(crate) fn doctor_clients_ready() -> bool {
     selected.into_iter().all(|client| {
         let server = helixir::installer::clients::StdioServer::new(&mcp_binary)
             .with_env("HELIXIR_RBAC_ACTOR", client.principal_id());
-        client_registration_matches(client, "helixir-local", &server)
+        helixir::installer::client_registration::client_registration_matches(
+            client,
+            "helixir-local",
+            &server,
+        )
     })
 }
 

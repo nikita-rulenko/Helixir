@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -24,8 +24,9 @@ Helixir is a graph-based persistent memory layer for LLM agents. Specifically:
 
 - **A typed knowledge graph**, not a vector store with metadata. The base
   atom is `Memory` — one fact — classified into one of eight ontology
-  types, linked to entities, concepts, contexts, and other memories by
-  ~24 named edge types.
+  types, linked to entities, concepts, contexts, and other memories through a
+  schema of 30 physical edge types. The API projects semantic relation names
+  independently of whether they use a dedicated edge or `MEMORY_RELATION`.
 - **A decision-engine on the write path**, not append-only. Every
   `add_memory` call passes each extracted fact through `LLMDecisionEngine`,
   which picks one of `ADD / UPDATE / SUPERSEDE / CONTRADICT / LINK_EXISTING
@@ -34,8 +35,9 @@ Helixir is a graph-based persistent memory layer for LLM agents. Specifically:
   cross-user echo.
 - **A shared knowledge graph across users**, not a chat-history silo. Each
   author keeps a provenance-preserving `Memory` node; equivalent nodes share a
-  scoped `content_key` consensus group. Disabled mode shares globally. Enabled
-  RBAC shares only inside a concrete group or an explicit dedup federation.
+  scoped `content_key` consensus group. Permanent RBAC shares only inside a
+  concrete group or an explicit dedup federation; reserved `default` preserves
+  the former full-trust collaboration domain for legacy data.
 - **A two-tier memory system**: long-term graph in HelixDB, plus an
   in-process FastThink scratchpad (`petgraph`) for ephemeral reasoning that
   never reaches HelixDB unless the agent calls `think_commit`.
@@ -47,9 +49,11 @@ What Helixir **is not**:
 - Not a RAG retriever. Vector search is one of three signals in the read
   path (vector + BM25 + smart traversal), and the write path actively
   curates what is persisted.
-- Not user-isolated. Memory is shared by default at the graph level;
-  what a user "sees" is controlled by their `HasMemory` edges and by
-  `scope` parameters, not by per-user partitioning.
+- Not a per-user storage silo. `HAS_MEMORY` records authorship and stance;
+  it is not an ACL. Permanent RBAC authorizes reads through materialized
+  `MEMORY_IN_RBAC_GROUP` edges, and both candidate recall and dedup stay inside
+  a concrete group or explicit federation. `scope` changes whose authored
+  knowledge is ranked only after that security boundary is applied.
 - Not a fixed-schema RDF/OWL system. The ontology is small, deliberate,
   and code-owned, not extensible by users at runtime.
 
@@ -63,8 +67,10 @@ mundane, whose chain is an insight. Design consequences, each enforceable:
 
 - **No deletion.** There is no delete MCP tool by design; supersession keeps
   history (`HAS_HISTORY`, `valid_until`). Pruning "irrelevant" facts destroys
-  the middle of chains nobody has asked about yet. (The decision engine's
-  internal `DELETE` path is scheduled to become SUPERSEDE-only — issue #34.)
+  the middle of chains nobody has asked about yet. A model `DELETE` verdict is
+  already executed as `SUPERSEDE` under charter C1. The only destructive path
+  is an explicit operator repair helper for purging known debug artifacts; it
+  is not exposed to agents.
 - **Time governs attention, not reachability.** Temporal windows and decay
   apply to search entry points; graph traversal pulls connected context from
   any era. A three-day window anchors *where you start*, not *what exists*.
@@ -100,6 +106,7 @@ Releases as evidence of the project's direction. Source:
 | (in `dev`) | 2026-05-12 | Audit-driven hardening | CI on push/PR (#5). Blanket `#![allow]` removed (#6). Embedding URL single-source (#7). Self-loop guard in reasoning (#16). `(id, content)` pair consistency in chain projection (#17). Edge deduplication in `get_memory_graph` (#18). `list_memories` empty-user graceful path (#19). Real fallback score in `search_by_concept` (#22). |
 | v0.14.3 | 2026-08-13 | Aligned runtime contract | Packaged HQL reports the schema version required by the runtime; FastThink acknowledgements return ids for UPDATE outcomes; prompts and the shipped skill cover permanent RBAC, pending ingest outcomes, contradiction handling, and swarm lifecycle. |
 | v0.15.0 | 2026-08-17 | Admin observatory | A global-admin-only containerized control plane projects bounded graph/RBAC/Moirai/Hygieia state and delegates typed host mutations to a token-authenticated reboot-safe native supervisor. |
+| v0.16.0 | 2026-08-19 | Distribution and stewardship | Release-native Homebrew/APT channels, versioned embedding-cache invalidation, shared CLI/browser installer services, a hardened versioned API, redacted post-install settings and guarded managed-volume backup/restore. |
 | v0.14.2 | 2026-08-05 | Governed generative layer | `groupadmin` becomes the multi-group team-lead role; legacy `teamlead` grants require explicit migration; reserved `moirai` isolates cross-group generated hypotheses and non-traversable provenance to global admins. |
 | v0.14.1 | 2026-08-05 | Compatible local judge | NLI explicitly targets ONNX Runtime API 23 so the mandatory judge works with the official universal macOS 1.23.2 runtime shipped in release artifacts; no data-model change. |
 | v0.14.0 | 2026-08-05 | Governed shared memory | Permanent graph-backed RBAC with reserved `default` and `onboarding` workspaces; group roles and dedup federations; administrative CLI; transactional guided installer with mandatory NLI and verified embeddings; scan-free hot projections and supervised HelixDB v2.3.5 memory envelope; repository-wide 500-line module budget. |
@@ -148,8 +155,9 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
 - **How.** `OntologyManager::map_memory_to_concepts` runs the LLM-derived
   type through the leaf nodes of the `Attribute` / `Event` subtrees of
   the canonical `Thing` tree (see `data-model.md §4`) and writes
-  `INSTANCE_OF` / `BELONGS_TO_CATEGORY` edges. `search_by_concept` filters
-  by this label.
+  `INSTANCE_OF` edges. `search_by_concept` filters by this label. The
+  separate Moirai category axis uses `TAGGED_AS` and does not extend the
+  ontology.
 - **Why.** The point of an ontology is to make retrieval intent-shaped:
   "what does the user want" is a different query than "what is the user
   good at" or "what happened last week". Eight types are enough to
@@ -168,10 +176,10 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   which returns one of `ADD / UPDATE / SUPERSEDE / CONTRADICT /
   LINK_EXISTING / CROSS_CONTRADICT / NOOP / DELETE`. The pipeline acts on
   this decision; the user does not pick.
-- **How.** Phase 1 searches the caller's memories (`scope=personal`,
-  contextual mode). Phase 2 searches across all users
-  (`scope=collective`, full mode, in the background since v0.2.2). Both
-  result sets feed the decision prompt; the engine picks the operation.
+- **How.** Phase 1 searches owner-anchored candidates and Phase 2 checks
+  cross-owner consensus, but both sets are first restricted to the already
+  resolved RBAC security domain. The decision prompt never receives a row
+  from an isolated group merely because its text is similar.
 - **Why.** A memory layer for an agent must answer not just "is this
   similar?" but "**what should I do** with it?" Append-only stores grow
   forever and dilute relevance. Time-windowed stores forget too much.
@@ -188,17 +196,19 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   collapses that fingerprint group and derives its holder count.
 - **How.** Phase 2 of `add_memory` searches collective candidates inside the
   resolved security domain. Pre-RBAC data retains the legacy fingerprint only
-  inside reserved `default`; new data uses either `group:<group_id>` or
-  `dedup:<dedup_group_id>`. The same domain
+  inside reserved `default`; persisted `Memory.rbac_scope` uses either
+  `rbac:group:<group_id>` or `rbac:dedup:<dedup_group_id>` for new data.
+  (The internal policy-domain enum uses the shorter `group:` / `dedup:` form
+  before converting to the persisted scope.) The same domain
   salts `content_key`, filters decision candidates, and constrains Atropos
   paraphrase merging. Cross-domain contradiction and reasoning edges are not
   created by the write pipeline.
 - **Why.** Memory layers built per-user silo can only ever recall what a
   given user said. A shared knowledge graph can answer "what does anyone
   here know about X?" and "who disagrees about Y?" with the same primitives
-  it already uses for the single-user case. Privacy semantics live at the
-  `scope` parameter and at what the agent chooses to ingest, not at the
-  data layer.
+  it already uses for the single-user case. Visibility is enforced in the
+  data layer through graph-backed RBAC; `scope` is a ranking/projection choice
+  inside the authorized rows, never the confidentiality boundary.
 - **Authorization boundary.** `MEMORY_IN_RBAC_GROUP` edges materialize who may
   read each node. An optional `RbacDedupGroup` deliberately federates multiple
   groups. Removing a group preserves old edges but prevents future federation
@@ -234,9 +244,10 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   `think_commit`.
 - **How.** `FastThinkManager` keeps a `HashMap<session_id, ThinkingSession>`
   under `RwLock`. Default limits: 90 s wall clock, 150 thoughts. On
-  timeout, `commit_partial` writes a Memory tagged
-  `context_tags=incomplete_thought` so the session can be picked up later
-  via `search_incomplete_thoughts`.
+  timeout under permanent RBAC, the session fails closed: the timer has no
+  explicit owner/group context and therefore cannot safely persist a partial
+  conclusion. `search_incomplete_thoughts` remains for historical pre-RBAC
+  partial memories.
 - **Why.** Long-term memory is expensive to write to (extraction,
   embedding, decision, enrichment) and expensive to read from later
   (every hypothesis pollutes future searches). FastThink lets the agent
@@ -255,9 +266,11 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   score from HelixDB.
 - **How.** `SmartTraversalV2` calls `EmbeddingGenerator::generate` for
   each candidate and computes the cosine in
-  `mind_toolbox/search/smart_traversal/scoring.rs`. The embedding cache
-  (`moka`, LRU 1000, TTL 300 s) keeps re-embedding cheap for repeated
-  queries.
+  `mind_toolbox/search/smart_traversal/scoring.rs`. The process-local cache
+  keeps the newest 1,000 vectors by default (TTL 300 s). Optional durable
+  persistence is versioned by the complete embedding space and compacted
+  atomically under both entry and byte ceilings, so repeated queries stay
+  cheap without accepting stale vectors after a provider or artifact change.
 - **Why.** HelixDB's `SearchV` returns a result-set ordered by similarity
   but does not serialize the cosine distance in JSON (the `HVector`
   `Serialize` impl excludes it by design). Earlier Helixir releases used
@@ -290,7 +303,7 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   extracted fact, the original message is also stored as a
   `source="raw_input"` Memory.
 - **How.** Conditional save in `store_raw_source`
-  (`add_pipeline.rs:932`). It is tagged `memory_type="fact"` and
+  (`tooling_manager/add_pipeline/store.rs`). It is tagged `memory_type="fact"` and
   participates in normal search.
 - **Why.** Atomization is lossy by design — it strips API endpoint
   signatures, entity field lists, code snippets, dependency chains. The
@@ -326,34 +339,35 @@ read (semantic):            search_memory  (modes: recent/contextual/deep/full)
 read (exhaustive):          list_memories
 read (graph view):          get_memory_graph
 read (recovery):            search_incomplete_thoughts
-mutate:                     update_memory
+mutate:                     update_memory / resolve_contradiction
 working memory (FastThink): think_start / think_add / think_recall /
                             think_conclude / think_commit / think_discard /
                             think_status
 collective layer:           scope = personal | collective | all
                             user_count, controversy detection,
-                            CROSS_CONTRADICT
+                            CROSS_CONTRADICT, list_users, swarm_status,
+                            agent_farewell
 audit & history:            HAS_HISTORY edges, HistoryEvent nodes
 versioning:                 SUPERSEDES edges
+administration:             graph-backed RBAC CLI + global-admin web control
+                            plane, settings and managed backup vault
 ```
 
 ---
 
 ## 5. Direction (read off the reserved schema surface)
 
-The schema declares nodes/edges and HQL queries for surfaces that the
-Rust pipeline does not yet wire. Each reserved surface is a design
-decision already made:
+The schema declares nodes, edges and HQL queries for surfaces that the Rust
+pipeline does not yet wire. They reserve storage shapes, not delivery dates:
 
-- **`DocPage / DocChunk / CodeExample / ErrorCode`** + their edges
-  (`PAGE_TO_CHUNK`, `CHUNK_TO_EMBEDDING`, `CHUNK_MENTIONS_CONCEPT`,
-  `CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT`) — memory of
-  **documents and codebases**, not only conversations.
-- **`Constraint` + `APPLIES_IN`** — rules that hold within a context
-  ("at work I don't drink coffee"); enables per-context filtering and
-  policy.
-- **`Session` + `IN_SESSION` / `CREATED_IN`** — conversation-scope
-  views of memory; time-windowed reasoning over a session's contributions.
+- **`DocPage / DocChunk / CodeExample / ErrorCode`** plus
+  `CHUNK_TO_EMBEDDING` — a future document/code ingestion substrate. The
+  current schema deliberately does not claim page/chunk/concept relation
+  edges that have no contract.
+- **`Constraint`** — a reserved policy node. Contextual memory itself already
+  uses the live `VALID_IN` edge; no constraint-to-context edge is declared.
+- **`Session` + `CREATED_IN`** — a reserved conversation-scope link. Session
+  creation is not wired, and no second session-membership edge is declared.
 - **`PART_OF`** — entity composition, enabling structural queries
   ("which engines belong to which cars").
 - **`IS_A` / `CONCEPT_RELATED_TO`** — normalized internal concept-graph

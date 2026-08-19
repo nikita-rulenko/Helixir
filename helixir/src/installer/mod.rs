@@ -9,11 +9,14 @@
 //! same contract; neither frontend owns installation policy.
 
 pub mod backend;
+pub mod backups;
 pub mod client_config;
+pub mod client_registration;
 pub mod clients;
 pub mod config;
 pub mod doctor;
 pub mod events;
+pub mod executor;
 pub mod manifest;
 pub mod models;
 pub mod native;
@@ -21,8 +24,12 @@ pub mod operation_worker;
 pub mod operations;
 mod planner;
 pub mod rbac;
+pub mod service;
+pub mod settings;
+pub mod settings_reload;
 pub mod skills;
 pub mod supervisor;
+pub(crate) mod supervisor_admin;
 pub(crate) mod supervisor_operations;
 
 pub use events::{InstallEvent, InstallEventKind, InstallObserver};
@@ -190,7 +197,7 @@ pub enum EmbeddingChoice {
 /// User selections from an interactive UI or non-interactive flags.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallOptions {
-    /// Memory privilege tier to write to the central config.
+    /// Memory mode to write to the central config.
     pub mode: MemoryMode,
     /// Backend ownership/connection choice.
     pub backend: BackendChoice,

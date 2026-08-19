@@ -5,7 +5,7 @@ use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HelixirConfig {
-    /// Privilege tier — what the tool is allowed to do (default Solo).
+    /// Memory mode — which collaboration capabilities are enabled (default Solo).
     pub mode: MemoryMode,
     pub host: String,
     pub port: u16,
@@ -235,7 +235,7 @@ impl HelixirConfig {
         {
             self.port = p;
         }
-        // Privilege tier — opt-in only; unset/unknown stays whatever was set.
+        // Memory mode — opt-in only; unset/unknown stays whatever was set.
         if let Ok(m) = std::env::var("HELIXIR_MODE") {
             self.mode = MemoryMode::parse(&m);
         }

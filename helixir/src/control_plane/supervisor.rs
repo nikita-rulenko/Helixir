@@ -121,6 +121,46 @@ impl SupervisorClient {
         self.post("/v1/operations/run", request).await
     }
 
+    pub(super) async fn settings(
+        &self,
+    ) -> anyhow::Result<crate::installer::settings::SettingsSnapshot> {
+        self.get("/v1/settings").await
+    }
+
+    pub(super) async fn apply_settings(
+        &self,
+        patch: &crate::installer::settings::SettingsPatch,
+    ) -> anyhow::Result<crate::installer::supervisor_admin::SettingsMutationReceipt> {
+        self.post("/v1/settings", patch).await
+    }
+
+    pub(super) async fn backups(
+        &self,
+    ) -> anyhow::Result<crate::installer::backups::BackupInventory> {
+        self.get("/v1/backups").await
+    }
+
+    pub(super) async fn create_backup(
+        &self,
+    ) -> anyhow::Result<crate::installer::backups::BackupReceipt> {
+        self.post("/v1/backups/create", &serde_json::json!({}))
+            .await
+    }
+
+    pub(super) async fn verify_backup(
+        &self,
+        request: &crate::installer::supervisor_admin::BackupIdRequest,
+    ) -> anyhow::Result<crate::installer::backups::BackupReceipt> {
+        self.post("/v1/backups/verify", request).await
+    }
+
+    pub(super) async fn restore_backup(
+        &self,
+        request: &crate::installer::backups::RestoreRequest,
+    ) -> anyhow::Result<crate::installer::backups::BackupReceipt> {
+        self.post("/v1/backups/restore", request).await
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         let response = self
             .client

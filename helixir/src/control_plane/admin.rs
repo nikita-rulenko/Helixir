@@ -329,7 +329,7 @@ fn mutation_error(error: anyhow::Error) -> (StatusCode, Json<ApiProblem>) {
     problem(
         StatusCode::UNPROCESSABLE_ENTITY,
         "rbac_mutation_rejected",
-        &error.to_string(),
+        "the graph-backed RBAC service rejected this mutation",
     )
 }
 

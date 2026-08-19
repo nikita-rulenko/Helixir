@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
@@ -70,6 +70,7 @@ toml = "0.8"
 
 # Caching
 lru = "0.12"
+fs2 = "0.4"
 
 # Lazy static initialization
 lazy_static = "1.5"
@@ -124,6 +125,9 @@ vendored-tls = ["dep:openssl"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 temp-env = "0.3.6"

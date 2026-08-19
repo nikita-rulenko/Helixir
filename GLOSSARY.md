@@ -22,8 +22,8 @@ work on atoms; a blob memory is a dead end. (`src/llm/extractor.rs`)
 
 **The writer pays, the reader flies.** The cost asymmetry principle. All
 LLM work (extraction, dedup decisions, relation inference) happens at write
-time; the read path is pure math over precomputed structure — zero LLM
-calls, ~15–30 ms warm. This is why a fully local setup is practical.
+time; the read path makes zero generative/reasoning-LLM calls and is ~15–30 ms
+warm. A cold semantic query still uses the configured embedding endpoint.
 
 **Dogfooding.** The maintainers (human and agents) use Helixir as their own
 long-term memory while building it. The project's decisions, gotchas and
@@ -50,20 +50,23 @@ the anti-gaslight backstop on the merge path.)
 
 ## Modes & the hive
 
-**Solo / Collective / Insights.** The three privilege tiers
-(`HELIXIR_MODE`). *Solo*: private, no cross-user visibility. *Collective*:
-shared graph — cross-user dedup, consensus counting, `list_users`,
-`swarm_status`. *Insights*: collective + the generative Moirai layer.
-Higher tiers strictly add capabilities.
+**Solo / Collective / Insights.** The three capability tiers
+(`HELIXIR_MODE`), not substitutes for ACLs. *Solo* disables collective
+features. *Collective* enables cross-owner consensus, `list_users` and
+`swarm_status` inside the actor's graph-backed RBAC visibility. *Insights*
+adds the global-admin-only Moirai layer. Permanent RBAC governs every tier.
 
 **Hive memory.** The collective-tier behaviour: one fact, many knowers.
-When N agents state the same fact, it stays ONE memory node whose
-`user_count` grows — consensus is a property of the node, not N copies.
-Contradictions across agents are scored and surfaced, never merged away.
+When N agents in the same group/federation state the same fact, each author
+keeps a provenance-preserving Memory node, while all equivalent nodes share a
+security-scoped `content_key`. Collective projection collapses that family and
+derives `user_count`; isolated groups never contribute to the same family.
+Contradictions are scored and surfaced only inside that domain.
 
-**Consensus / `user_count`.** The per-memory counter of independent
-knowers, derived from `HAS_MEMORY` edges (idempotent per user — re-adding
-doesn't inflate it). Ranking treats it as a consensus signal.
+**Consensus / `user_count`.** The projection-time count of independent
+knowers in one scoped `content_key` family, derived from `HAS_MEMORY`
+authorship edges (idempotent per user). `HAS_MEMORY` is provenance, while
+`MEMORY_IN_RBAC_GROUP` is the read boundary.
 
 **Rendezvous.** Agents discovering each other *through the database
 itself*, with no side channel: `add_memory(agent_id=...)` auto-heartbeats
@@ -90,9 +93,11 @@ Confirm-or-promise (above) is its ack contract. (`ingest.*` in config)
 ## Retrieval
 
 **Read path.** The entire search machinery — dense vectors + BM25 + graph
-expansion + PPR ranking — with **zero LLM calls**. `search_memory`,
-`search_reasoning_chain`, `connect_memories` and `get_memory_graph` all run
-on it; they work identically with no LLM configured at all.
+expansion + PPR ranking — with **zero generative/reasoning-LLM calls**.
+`search_memory`, `search_reasoning_chain`, `connect_memories` and
+`get_memory_graph` never call Cerebras/DeepSeek/Ollama generation. Semantic
+search still embeds the query through the configured local Nomic or explicit
+remote embedding endpoint; graph-only projections do not need that step.
 
 **BM25.** The classic keyword-ranking function (term frequency × inverse
 document frequency, length-normalized). Helixir uses HelixDB's native BM25
@@ -108,10 +113,11 @@ keywords.
 combined: each result contributes `1/(k + rank)` from each list it appears
 in. Rank-based, so the two arms' incomparable scores never need calibrating.
 
-**Ego-network.** The subgraph around the fused seed results — expanded one
-batched HQL call per depth level across the edge families (relations,
-entities, history, chunks...), keeping parent provenance. This is the
-neighbourhood PPR runs over.
+**Ego-network.** The bounded subgraph around fused seed results. The main
+search path expands each frontier node by primary-key HQL lookup across eight
+edge families, retaining parent provenance and avoiding HelixDB v2.3.5 label
+scans. Path/longest-chain helpers still use the bounded level-batch query.
+This is the neighbourhood PPR runs over.
 
 **PPR — Personalized PageRank.** PageRank with teleport biased to the seed
 memories: a random walker keeps jumping back to what matched your query, so
@@ -166,8 +172,8 @@ self-learns — and silence further proposals of their shape.
 **NLI edge router.** A local cross-encoder (deberta) that types confident
 SUPPORTS (bidirectional entailment) and CONTRADICTS (same-subject
 contradiction) edges before the LLM is consulted — part of making the
-write path cheap (#96). Neutral or unconfident pairs still go to the
-model; lean builds without the `nli` feature route everything to the LLM.
+write path cheap (#96). Neutral or unconfident pairs still go to the model.
+Supported builds do not have an NLI-free profile: the local judge is mandatory.
 
 **Polysemy guard.** Lachesis' defence against apophenia hubs (#91): a
 routed thread truncates at a pivot category whose neighbours sit in
@@ -211,13 +217,16 @@ types need no schema change. (`src/toolkit/mind_toolbox/reasoning/`)
 **NLI — Natural Language Inference.** The local ONNX judge (entail /
 contradict / neutral) used as the paraphrase-merge backstop: two memories
 merge only if each entails the other — and divergent numbers fail
-entailment, which is exactly the anti-gaslight property. Runs offline;
+entailment, which is exactly the anti-gaslight property. NLI is mandatory in
+every supported build and installation, runs offline, and
 `helixir model download` fetches the weights.
 
 **Supersede (never delete).** There is no delete tool by design. An
 outdated fact gets a `SUPERSEDES` edge from its replacement and a
 `valid_until` stamp; history stays reachable through `HAS_HISTORY` forever.
-Time affects attention, not reachability.
+Time affects attention, not reachability. A model `DELETE` verdict is converted
+to supersession by charter C1; only an explicit non-MCP operator repair helper
+can physically purge a known debug artifact.
 
 **Ontology.** The 20-concept tree (`Thing → Attribute/Event/Entity/
 Relation/State → ...`) seeded into the graph at boot. Every memory gets an
@@ -261,9 +270,10 @@ zero — it gates itself out *by arithmetic*, not by a blocklist.
 **Atropos — the Cutter.** Curates routed threads into ranked, deduplicated
 **insights**: enforces the quality bar, drops threads subsumed by longer
 ones, journals the survivors, and persists each as a first-class
-hypothesis-memory under `user_id=helixir` with `SUPPORTS` edges from its
-witnesses — closing the loop: generated knowledge flows back into the
-memory it came from.
+hypothesis-memory under `user_id=helixir` in reserved `moirai`, with
+admin-only `MOIRAI_DERIVED_FROM` edges to its witnesses. Those provenance
+edges are deliberately excluded from ordinary reasoning traversal, so a
+generated hypothesis cannot bridge isolated working groups.
 
 **Insight.** The Moirai's unit of output: a cross-domain *hypothesis with
 provenance* (category path + witness memories per link) and a lifecycle
@@ -330,8 +340,10 @@ via `search_incomplete_thoughts`.
 ## Infrastructure
 
 **HelixDB.** The single storage engine — graph and vector index in one
-database (LMDB-backed), queried in HQL. There is no relational DB, no
-Redis, no filesystem state; everything Helixir persists lives here.
+database (LMDB-backed), queried in HQL. There is no relational DB or Redis;
+all durable memory, reasoning, identity and RBAC truth lives here. Host-local
+configuration, operation journals, model files and recovery archives are
+operational state rather than a competing knowledge/policy store.
 
 **HQL.** HelixDB's query language. Schema (`schema.hx`) and named queries
 (`queries.hx`) are *compiled into the server* — deploying a query change
@@ -351,13 +363,26 @@ the body, not the status code.
 
 **MCP — Model Context Protocol.** The interface agents speak to Helixir:
 a stdio (or streamable-HTTP via the gateway) server exposing the 21 tools.
-Any MCP client — Claude Code, Claude Desktop, Cursor, zeroclaw — connects
+Any MCP client — Codex, Claude Code, Claude Desktop, Cursor, zeroclaw — connects
 with a few lines of config; `helixir setup` writes them for you.
 
 **Layered config.** Effective settings = built-in defaults ←
 `~/.helixir/helixir.toml` ← environment variables, later layers winning.
 Gotcha: one invalid field rejects the whole TOML layer, and enum values are
-capitalized (`mode = "Insights"`).
+capitalized (`mode = "Insights"`). CLI `config` and the web Stewardship room
+share the same validation/reload path; browser-visible secrets are write-only.
+
+**Backend ownership.** The installer distinguishes a Helixir-managed local
+HelixDB, an already existing local instance and an explicit remote endpoint.
+Only the first gives Helixir lifecycle and volume-recovery authority. The other
+two are observed and configured without pretending that Helixir owns their
+process or storage.
+
+**Stewardship room.** The global-admin-only post-install web surface for
+redacted operational settings and the managed backup vault. It is a typed
+frontend over the native supervisor, not a filesystem browser or a second RBAC
+authority. Restore uses opaque archive ids, exact confirmation, a safety
+snapshot and live schema verification.
 
 **Fallback chain.** The LLM resilience strategy: on *any* primary-provider
 error (outage, exhausted quota) the same prompt cascades down an ordered

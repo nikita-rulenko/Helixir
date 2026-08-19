@@ -9,7 +9,7 @@ pub mod providers;
 
 pub use decision::{LLMDecisionEngine, MemoryDecision, MemoryOperation, SimilarMemory};
 
-pub use embeddings::{EmbeddingConfig, EmbeddingGenerator};
+pub use embeddings::{EmbeddingCacheDiagnostics, EmbeddingConfig, EmbeddingGenerator};
 pub use extractor::LlmExtractor;
 pub use factory::LlmProviderFactory;
 pub use providers::base::LlmProvider;

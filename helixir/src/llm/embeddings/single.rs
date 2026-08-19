@@ -15,7 +15,7 @@ impl EmbeddingGenerator {
             return Err(EmbeddingError::EmptyText);
         }
 
-        if use_cache && let Some(cached) = self.cache.get(text) {
+        if use_cache && let Some(cached) = self.cache.get(&self.primary_cache_namespace, text) {
             debug!("Cache HIT for: {}...", crate::safe_truncate(text, 50));
             return Ok(cached);
         }
@@ -29,7 +29,8 @@ impl EmbeddingGenerator {
         match result {
             Ok(embedding) => {
                 if use_cache {
-                    self.cache.set(text, embedding.clone());
+                    self.cache
+                        .set(&self.primary_cache_namespace, text, embedding.clone());
                 }
                 self.using_fallback.store(false, Ordering::SeqCst);
                 Ok(embedding)
@@ -107,6 +108,10 @@ impl EmbeddingGenerator {
         use_cache: bool,
         original_error: &EmbeddingError,
     ) -> Result<Vec<f32>, EmbeddingError> {
+        if use_cache && let Some(cached) = self.cache.get(&self.fallback_cache_namespace, text) {
+            self.using_fallback.store(true, Ordering::SeqCst);
+            return Ok(cached);
+        }
         info!(
             "Using fallback Ollama ({}/{}) - primary unavailable",
             self.fallback_url, self.fallback_model
@@ -133,7 +138,8 @@ impl EmbeddingGenerator {
         let embedding = response.embedding;
 
         if use_cache {
-            self.cache.set(text, embedding.clone());
+            self.cache
+                .set(&self.fallback_cache_namespace, text, embedding.clone());
         }
 
         self.using_fallback.store(true, Ordering::SeqCst);

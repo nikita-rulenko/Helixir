@@ -198,6 +198,23 @@ pub fn restore(spec: &BackendSpec, backup_dir: &Path, archive_name: &str) -> Doc
     ])
 }
 
+/// Remove the current contents of a stopped managed volume before restore.
+#[must_use]
+pub fn clear_volume(spec: &BackendSpec) -> DockerCommand {
+    DockerCommand::new([
+        "run",
+        "--rm",
+        "-v",
+        &format!("{}:/data", spec.volume),
+        "alpine",
+        "find",
+        "/data",
+        "-mindepth",
+        "1",
+        "-delete",
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +228,9 @@ mod tests {
         let restore = restore(&spec, Path::new("/tmp/helixir-backups"), "snapshot.tar.gz");
         assert!(restore.args.iter().any(|arg| arg == "helixdb_data:/data"));
         assert!(restore.args.iter().any(|arg| arg == "/out/snapshot.tar.gz"));
+        let clear = clear_volume(&spec);
+        assert!(clear.args.windows(2).any(|args| args == ["-mindepth", "1"]));
+        assert!(clear.args.iter().any(|arg| arg == "-delete"));
     }
 
     #[test]

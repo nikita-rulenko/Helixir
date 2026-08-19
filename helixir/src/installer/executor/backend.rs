@@ -1,10 +1,11 @@
 use super::*;
 
-impl OnboardExecutor {
-    pub(crate) fn new(
+impl NativeInstallExecutor {
+    /// Resolve the concrete backend and rollback state from detected state and choices.
+    #[must_use]
+    pub fn new(
         options: &helixir::installer::InstallOptions,
         state: &helixir::installer::SystemState,
-        interactive: bool,
     ) -> Self {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
         let schema_dir = schema_dir_for_install();
@@ -87,7 +88,6 @@ impl OnboardExecutor {
             embedding_repaired: std::sync::atomic::AtomicBool::new(false),
             managed_backend,
             recreate_managed_backend,
-            interactive,
             previous_image: std::sync::Mutex::new(None),
         }
     }
@@ -330,7 +330,7 @@ mod tests {
             ..Default::default()
         };
 
-        let executor = OnboardExecutor::new(&options, &state, false);
+        let executor = NativeInstallExecutor::new(&options, &state);
 
         assert_eq!(executor.backend.host, "helix.internal");
         assert_eq!(executor.backend.port, 7443);

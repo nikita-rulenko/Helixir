@@ -1,24 +1,24 @@
 //! Axum host for the versioned control-plane API and compiled frontend.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
-use axum::extract::{Query, State};
-use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::StatusCode;
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use super::auth::require_token;
+use super::auth::{require_same_origin, require_token};
 use super::dto::ApiProblem;
 use super::graph::{MemoryFieldRequest, load_memory_field};
 use super::graph_snapshot::CategoryGraphCache;
 use super::moirai::load_moirai;
+use super::response_security::{resolve_assets, security_header, validate_bind};
 use super::stats::{load_access, load_overview, load_system, resolve_operator_id};
 use super::supervisor::SupervisorClient;
 use super::{
@@ -117,6 +117,19 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         )
         .route("/install/verify", post(verify_installation))
         .route("/operations/run", post(run_host_operation))
+        .route(
+            "/settings",
+            get(super::host_admin::settings).post(super::host_admin::apply_settings),
+        )
+        .route("/backups", get(super::host_admin::backups))
+        .route("/backups/create", post(super::host_admin::create_backup))
+        .route("/backups/verify", post(super::host_admin::verify_backup))
+        .route("/backups/restore", post(super::host_admin::restore_backup))
+        .fallback(api_not_found)
+        .method_not_allowed_fallback(api_method_not_allowed)
+        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(security_header("cache-control", "no-store"))
+        .layer(middleware::from_fn(require_same_origin))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     let static_files = ServeDir::new(&assets).fallback(ServeFile::new(index));
     let app = Router::new()
@@ -131,7 +144,15 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         ))
         .layer(security_header("referrer-policy", "no-referrer"))
         .layer(security_header("x-content-type-options", "nosniff"))
-        .layer(security_header("x-frame-options", "DENY"));
+        .layer(security_header("x-frame-options", "DENY"))
+        .layer(security_header(
+            "permissions-policy",
+            "camera=(), geolocation=(), microphone=()",
+        ))
+        .layer(security_header(
+            "cross-origin-resource-policy",
+            "same-origin",
+        ));
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -284,6 +305,26 @@ async fn health(
     Ok(Json(snapshot))
 }
 
+async fn api_not_found() -> (StatusCode, Json<ApiProblem>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiProblem {
+            code: "api_route_not_found",
+            message: "the requested control-plane API route does not exist".to_string(),
+        }),
+    )
+}
+
+async fn api_method_not_allowed() -> (StatusCode, Json<ApiProblem>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ApiProblem {
+            code: "api_method_not_allowed",
+            message: "the requested method is not supported by this API route".to_string(),
+        }),
+    )
+}
+
 fn projection_unavailable() -> (StatusCode, Json<ApiProblem>) {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -315,15 +356,18 @@ async fn build_install_plan(
             .map(Json)
             .map_err(supervisor_error);
     }
-    let detected = crate::installer::native::detect_system_state().await;
-    crate::installer::Planner::build(&detected, &options)
-        .map(Json)
+    crate::installer::service::InstallerService::default()
+        .prepare(&options)
+        .await
+        .map(|prepared| Json(prepared.plan))
         .map_err(|error| {
+            tracing::warn!(%error, "control-plane install plan rejected");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ApiProblem {
-                    code: "unsafe_install_plan",
-                    message: error.to_string(),
+                    code: error.code(),
+                    message: "the selected installation options do not form a safe plan"
+                        .to_string(),
                 }),
             )
         })
@@ -434,36 +478,6 @@ pub(super) fn supervisor_error(error: anyhow::Error) -> (StatusCode, Json<ApiPro
                 "the native Helixir supervisor did not complete the request".to_string()
             },
         }),
-    )
-}
-
-fn validate_bind(config: &ControlPlaneConfig) -> anyhow::Result<()> {
-    ensure!(
-        config.bind.ip().is_loopback() || config.containerized,
-        "native web mode is loopback-only; non-loopback binding is reserved for the isolated container"
-    );
-    Ok(())
-}
-
-fn resolve_assets(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
-    explicit
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(std::env::var_os("HELIXIR_WEB_DIST").map(PathBuf::from))
-        .chain(
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("web"))),
-        )
-        .chain([PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist")])
-        .find(|path| path.join("index.html").is_file())
-        .context("web frontend assets were not found; run `npm run build` in helixir/web")
-}
-
-fn security_header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {
-    SetResponseHeaderLayer::if_not_present(
-        HeaderName::from_static(name),
-        HeaderValue::from_static(value),
     )
 }
 
