@@ -146,13 +146,14 @@ pub(crate) fn gather_onboard_options(
         }
     }
 
-    let operator_default = security_args
-        .rbac_operator
-        .clone()
-        .or_else(|| std::env::var("HELIXIR_RBAC_ACTOR").ok())
-        .or_else(|| std::env::var("USER").ok())
-        .or_else(|| std::env::var("USERNAME").ok())
-        .unwrap_or_else(|| "helixir-operator".to_string());
+    let operator_default = select_rbac_operator(
+        &state.rbac,
+        security_args.rbac_operator.clone(),
+        std::env::var("HELIXIR_RBAC_ACTOR").ok(),
+        installed_rbac_operator(),
+        std::env::var("USER").ok(),
+        std::env::var("USERNAME").ok(),
+    );
     let operator_id = if interactive && security_args.rbac_operator.is_none() {
         Input::<String>::new()
             .with_prompt("Initial RBAC administrator id")
@@ -185,6 +186,49 @@ pub(crate) fn gather_onboard_options(
     };
 
     Ok(options)
+}
+
+fn installed_rbac_operator() -> Option<String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let operator = helixir::installer::manifest::read(&home.join(".helixir/install.json"))
+        .ok()??
+        .rbac?
+        .operator_id
+        .trim()
+        .to_string();
+    (!operator.is_empty()).then_some(operator)
+}
+
+fn select_rbac_operator(
+    state: &helixir::installer::rbac::RbacInstallState,
+    explicit: Option<String>,
+    env_actor: Option<String>,
+    installed: Option<String>,
+    user: Option<String>,
+    username: Option<String>,
+) -> String {
+    explicit
+        .or(env_actor)
+        .or_else(|| {
+            installed
+                .filter(|operator| !state.enabled || state.global_admins.contains(operator.trim()))
+        })
+        .or_else(|| {
+            user.filter(|candidate| {
+                !state.enabled || state.global_admins.contains(candidate.trim())
+            })
+        })
+        .or_else(|| {
+            username.filter(|candidate| {
+                !state.enabled || state.global_admins.contains(candidate.trim())
+            })
+        })
+        .or_else(|| {
+            (state.enabled && state.global_admins.len() == 1)
+                .then(|| state.global_admins.iter().next().cloned())
+                .flatten()
+        })
+        .unwrap_or_else(|| "helixir-operator".to_string())
 }
 
 pub(crate) fn gather_remote_embedding_config(
@@ -342,5 +386,76 @@ pub(crate) fn install_action_label(action: &helixir::installer::InstallAction) -
             "Install canonical Helixir memory/RBAC Agent Skill".to_string()
         }
         InstallAction::RunDoctor => "Run helixir doctor with embedding recovery".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::select_rbac_operator;
+    use helixir::installer::rbac::RbacInstallState;
+
+    #[test]
+    fn existing_install_reuses_its_global_admin_before_os_user() {
+        let state = RbacInstallState {
+            enabled: true,
+            global_admins: BTreeSet::from(["codex".to_string(), "claude".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            select_rbac_operator(
+                &state,
+                None,
+                None,
+                Some("codex".to_string()),
+                Some("local-account".to_string()),
+                None,
+            ),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn stale_manifest_operator_is_not_used_for_enabled_rbac() {
+        let state = RbacInstallState {
+            enabled: true,
+            global_admins: BTreeSet::from(["root".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            select_rbac_operator(
+                &state,
+                None,
+                None,
+                Some("former-admin".to_string()),
+                Some("local-account".to_string()),
+                None,
+            ),
+            "root"
+        );
+    }
+
+    #[test]
+    fn explicit_operator_remains_authoritative() {
+        let state = RbacInstallState {
+            enabled: true,
+            global_admins: BTreeSet::from(["root".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            select_rbac_operator(
+                &state,
+                Some("requested".to_string()),
+                None,
+                Some("root".to_string()),
+                None,
+                None,
+            ),
+            "requested"
+        );
     }
 }

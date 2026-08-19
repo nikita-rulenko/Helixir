@@ -1,5 +1,9 @@
 # Changes — generative-memory agents: the `agents/` layer (2026-06-14)
 
+> **Historical record.** This captures the original Moirai implementation
+> work. Current behavior, RBAC boundaries and dataflow live in
+> `architecture.md`, `dataflow.md` and `design-rationale.md`.
+
 Branch `feat/daemon-multiclient`. (`main` untouched.) Helixir stops being only an
 MCP server and becomes an **agent** whose MCP surface is one part: a new
 `src/agents/` layer holds background agents that *compose* toolkit primitives.

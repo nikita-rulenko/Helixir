@@ -122,10 +122,13 @@ impl RetrievalProfile {
         matches!(self, Self::AlgoOpt)
     }
 
-    /// P1.3 — levelwise batched graph expansion: one `getConnectionsLevelBatch`
-    /// HQL call per BFS level instead of one `getMemoryLogicalConnections` call
-    /// per visited node. Opt out with `HELIXIR_DISABLE_BATCH_EXPANSION=1` if the
-    /// query is not deployed on the instance.
+    /// Enables the optimized bounded graph-expansion implementation.
+    ///
+    /// The main search walk now resolves each frontier node through the
+    /// primary-key `getConnectionsByInternalId` query to avoid HelixDB v2.3.5
+    /// label-scan arena growth. Path and longest-chain helpers retain the
+    /// bounded `getConnectionsLevelBatch` query. The historic environment
+    /// variable name remains for compatibility.
     pub fn batched_graph_expansion(self) -> bool {
         if !matches!(self, Self::AlgoOpt) {
             return false;

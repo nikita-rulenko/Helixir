@@ -60,23 +60,6 @@ pub(crate) use onboard_options::*;
 #[path = "helixir/onboard_run.rs"]
 mod onboard_run;
 pub(crate) use onboard_run::*;
-#[path = "helixir/onboard_executor.rs"]
-mod onboard_executor;
-pub(crate) use onboard_executor::*;
-#[path = "helixir/embedding_recovery.rs"]
-mod embedding_recovery;
-#[path = "helixir/onboard_backend_executor.rs"]
-mod onboard_backend_executor;
-pub(crate) use embedding_recovery::*;
-#[path = "helixir/onboard_utils.rs"]
-mod onboard_utils;
-pub(crate) use onboard_utils::*;
-#[path = "helixir/onboard_skills.rs"]
-mod onboard_skills;
-pub(crate) use onboard_skills::*;
-#[path = "helixir/onboard_clients.rs"]
-mod onboard_clients;
-pub(crate) use onboard_clients::*;
 #[path = "helixir/doctor.rs"]
 mod doctor;
 pub(crate) use doctor::*;

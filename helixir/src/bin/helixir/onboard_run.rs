@@ -10,7 +10,7 @@ pub(crate) async fn onboard_run(
 ) -> Result<()> {
     println!("Helixir onboarding plan\n");
     let state = detect_onboard_state().await;
-    let options = gather_onboard_options(
+    let mut options = gather_onboard_options(
         &state,
         interactive,
         mode,
@@ -18,8 +18,13 @@ pub(crate) async fn onboard_run(
         &backend_args,
         &security_args,
     )?;
-    let plan = helixir::installer::Planner::build(&state, &options)
-        .map_err(|error| anyhow::anyhow!("cannot build a safe install plan: {error}"))?;
+    approve_client_registration_conflicts(&mut options, interactive)?;
+    let service = helixir::installer::service::InstallerService::default();
+    let prepared = service
+        .prepare(&options)
+        .await
+        .map_err(|error| anyhow::anyhow!("{}: {error}", error.code()))?;
+    let plan = prepared.plan;
 
     println!("Selected tier: {}", options.mode.label());
     match &options.local_llm_model {
@@ -69,8 +74,10 @@ pub(crate) async fn onboard_run(
         println!("\nDry run: no system changes were made.");
     } else {
         println!("\nApplying plan...");
-        let executor = OnboardExecutor::new(&options, &state, interactive);
-        let report = helixir::installer::apply_plan(&executor, &plan).await;
+        let report = service
+            .apply(&options)
+            .await
+            .map_err(|error| anyhow::anyhow!("{}: {error}", error.code()))?;
         for step in &report.steps {
             let marker = if step.succeeded { "✓" } else { "✗" };
             println!("  {marker} {}", install_action_label(&step.action));
@@ -88,7 +95,6 @@ pub(crate) async fn onboard_run(
             report.ready,
             "onboarding failed; inspect the step report above"
         );
-        write_install_manifest(&executor.effective_options(), executor.backend_manifest()?)?;
         println!("\nOnboarding complete. Run `helixir doctor` to re-check readiness.");
     }
     Ok(())
@@ -103,10 +109,7 @@ pub(crate) async fn apply_install_json() -> Result<()> {
         .context("read typed install options from supervisor")?;
     let options: helixir::installer::InstallOptions =
         serde_json::from_str(&input).context("decode typed install options")?;
-    let state = detect_onboard_state().await;
-    let plan = helixir::installer::Planner::build(&state, &options)
-        .map_err(|error| anyhow::anyhow!("cannot rebuild safe install plan: {error}"))?;
-    let executor = OnboardExecutor::new(&options, &state, false);
+    let service = helixir::installer::service::InstallerService::default();
     let observer = |event: helixir::installer::InstallEvent| {
         if let Ok(encoded) = serde_json::to_string(&event) {
             println!(
@@ -116,10 +119,10 @@ pub(crate) async fn apply_install_json() -> Result<()> {
             );
         }
     };
-    let report = helixir::installer::apply_plan_observed(&executor, &plan, &observer).await;
-    if report.ready {
-        write_install_manifest(&executor.effective_options(), executor.backend_manifest()?)?;
-    }
+    let report = service
+        .apply_observed(&options, &observer)
+        .await
+        .map_err(|error| anyhow::anyhow!("{}: {error}", error.code()))?;
     println!(
         "{}{}",
         helixir::installer::operation_worker::REPORT_PREFIX,
@@ -129,49 +132,43 @@ pub(crate) async fn apply_install_json() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn write_install_manifest(
-    options: &helixir::installer::InstallOptions,
-    backend: helixir::installer::manifest::BackendManifest,
+fn approve_client_registration_conflicts(
+    options: &mut helixir::installer::InstallOptions,
+    interactive: bool,
 ) -> Result<()> {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-    let install_dir = std::env::current_exe()?
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let models = options
-        .local_llm_model
-        .iter()
-        .cloned()
-        .chain(
-            matches!(
-                options.embeddings,
-                helixir::installer::EmbeddingChoice::LocalOllamaNomic
-            )
-            .then(|| helixir::DEFAULT_EMBEDDING_MODEL.to_string()),
-        )
-        .collect();
-    let clients = options
-        .clients
-        .iter()
-        .map(|client| client.label().to_string())
-        .collect();
-    let manifest = helixir::installer::manifest::InstallManifest {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        install_dir,
-        backend_volume: backend.volume.clone(),
-        backend,
-        models,
-        clients,
-        rbac: Some(helixir::installer::rbac::RbacManifest {
-            enabled: true,
-            operator_id: options.rbac.operator_id.clone(),
-            group_id: helixir::core::DEFAULT_GROUP_ID.to_string(),
-            principals: options.rbac.principals.iter().cloned().collect(),
-        }),
-        last_backup: None,
-    };
-    helixir::installer::manifest::write(&home.join(".helixir/install.json"), &manifest)
-        .map_err(Into::into)
+    let conflicts =
+        helixir::installer::client_registration::registration_conflicts(&options.clients)
+            .map_err(anyhow::Error::msg)?;
+    if conflicts.is_empty() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        interactive || options.replace_conflicting_clients,
+        "conflicting MCP registrations require --interactive approval"
+    );
+    if options.replace_conflicting_clients {
+        return Ok(());
+    }
+    for conflict in conflicts {
+        println!(
+            "{} helixir-local change:\n  old: {}\n  new: {}",
+            conflict.client.label(),
+            conflict.existing,
+            conflict.requested
+        );
+        let approved = Confirm::new()
+            .with_prompt(format!(
+                "Replace {} helixir-local registration?",
+                conflict.client.label()
+            ))
+            .default(false)
+            .interact()?;
+        anyhow::ensure!(
+            approved,
+            "{} registration replacement declined",
+            conflict.client.label()
+        );
+    }
+    options.replace_conflicting_clients = true;
+    Ok(())
 }
-
-// The concrete executor is implemented in the adjacent module.

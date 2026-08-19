@@ -1,4 +1,4 @@
-//! Levelwise batched graph expansion (algo_opt, research doc §6 P1.3).
+//! Bounded levelwise graph expansion (algo_opt, evolved from research §6 P1.3).
 //!
 //! Replaces the per-node recursive DFS of [`super::phases::graph_expansion_phase`]
 //! with a breadth-first walk that fetches each frontier node by its HelixDB
@@ -286,8 +286,11 @@ pub(crate) struct LevelFetch {
     pub(crate) edges: Vec<LevelEdge>,
 }
 
-/// Fetches the whole frontier's neighbourhood in one HQL call and resolves
-/// edge directions (shared by graph expansion and connect_memories).
+/// Fetches a bounded frontier in one HQL call and resolves edge directions.
+///
+/// This helper is used by path and longest-chain projections. The main search
+/// expansion uses primary-key `getConnectionsByInternalId` fetches above to
+/// avoid HelixDB v2.3.5 label-scan arena growth.
 pub(crate) async fn fetch_level(
     client: &HelixClient,
     memory_ids: &[&str],

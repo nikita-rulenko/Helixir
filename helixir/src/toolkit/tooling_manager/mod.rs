@@ -173,7 +173,7 @@ impl ToolingManager {
             .await
             .is_err()
         {
-            missing.push("getConnectionsLevelBatch (batched graph expansion)");
+            missing.push("getConnectionsLevelBatch (bounded path expansion)");
         }
 
         let probe = serde_json::json!({ "text": "helixir-startup-probe", "limit": 1 });

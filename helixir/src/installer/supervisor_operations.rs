@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use super::operations::{JournalObserver, OperationEventBatch, OperationSnapshot};
 use super::supervisor::{SupervisorProblem, SupervisorState, supervisor_problem};
-use super::{InstallOptions, InstallReport, Planner};
+use super::{InstallOptions, InstallReport};
 
 type Problem = (StatusCode, Json<SupervisorProblem>);
 
@@ -90,14 +90,17 @@ pub(super) async fn apply_legacy(
 }
 
 async fn rebuild_plan(options: &InstallOptions) -> Result<super::InstallPlan, Problem> {
-    let detected = super::native::detect_system_state().await;
-    Planner::build(&detected, options).map_err(|error| {
-        supervisor_problem(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "unsafe_install_plan",
-            error.to_string(),
-        )
-    })
+    super::service::InstallerService::default()
+        .prepare(options)
+        .await
+        .map(|prepared| prepared.plan)
+        .map_err(|error| {
+            supervisor_problem(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                error.code(),
+                "the selected installation options do not form a safe plan".to_string(),
+            )
+        })
 }
 
 fn spawn(store: super::operations::OperationStore, operation_id: String, options: InstallOptions) {

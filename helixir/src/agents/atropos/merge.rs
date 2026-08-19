@@ -36,7 +36,7 @@ impl Atropos<'_> {
         cosine_threshold: f64,
     ) -> Result<MergeSummary> {
         let mut judge = NliJudge::load(&NliJudge::default_dir()).context(
-            "NLI model unavailable — run `helixir model download` (collective/insights)",
+            "NLI model unavailable — run `helixir model download`; the judge is required in every memory mode",
         )?;
 
         let briefs = self.tooling.list_recent_briefs(limit).await;

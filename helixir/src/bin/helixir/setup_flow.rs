@@ -65,7 +65,7 @@ pub(crate) fn lan_ip() -> Option<std::net::IpAddr> {
     (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
-/// Interactive privilege-tier picker for `helixir setup` when no tier was
+/// Interactive memory-mode picker for `helixir setup` when no mode was
 /// stated via `--mode` or HELIXIR_MODE. Collective is the recommended default
 /// (index 0): a person running the wizard is consciously joining the shared
 /// memory, which is the point of the tool. Solo and Insights stay one keystroke
@@ -77,7 +77,7 @@ pub(crate) fn prompt_mode_recommendation() -> Result<MemoryMode> {
         "insights — collective + the generative Moirai (advanced)",
     ];
     let idx = Select::new()
-        .with_prompt("Privilege tier")
+        .with_prompt("Memory mode")
         .default(0)
         .items(&options)
         .interact()?;
@@ -140,9 +140,9 @@ pub(crate) async fn setup_run(
         None => MemoryMode::Collective, // non-interactive setup → the recommendation
     };
     let mode_label = effective_mode.label();
-    println!("Privilege tier: {mode_label} (HELIXIR_MODE).\n");
+    println!("Memory mode: {mode_label} (HELIXIR_MODE).\n");
 
-    // NLI is a required write-safety component in every privilege tier.
+    // NLI is a required write-safety component in every memory mode.
     ensure_setup_nli_model(dry_run).await?;
 
     // Gateway mode short-circuits DB discovery: clients talk to the per-host
@@ -151,7 +151,7 @@ pub(crate) async fn setup_run(
         let url = normalize_gateway_url(&gw);
         println!("Gateway mode — wiring clients to {url}");
         println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
-        println!("  The privilege tier lives on the GATEWAY process — start it with");
+        println!("  The memory mode lives on the GATEWAY process — start it with");
         println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
         let entry = mcp_entry_gateway(&url);
         return wire_entry_to_clients(

@@ -1,26 +1,90 @@
-use super::*;
+//! Verified, rollback-safe MCP client registration used by the native executor.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate as helixir;
+
+/// Secret-safe description of an MCP entry that needs explicit replacement.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RegistrationConflict {
+    /// Client whose stable `helixir-local` entry would change.
+    pub client: helixir::installer::ClientKind,
+    /// Existing command, arguments and environment key names without values.
+    pub existing: serde_json::Value,
+    /// Requested command, arguments and environment key names without values.
+    pub requested: serde_json::Value,
+}
+
+/// Inspect selected clients without mutation so a frontend can request consent.
+pub fn registration_conflicts(
+    clients: &BTreeSet<helixir::installer::ClientKind>,
+) -> std::result::Result<Vec<RegistrationConflict>, String> {
+    let mut conflicts = Vec::new();
+    for client in clients {
+        let server = desired_server(*client);
+        let existing = if *client == helixir::installer::ClientKind::Cursor {
+            let home = PathBuf::from(
+                std::env::var("HOME").map_err(|_| "HOME is required for MCP config".to_string())?,
+            );
+            existing_json_registration(&home.join(".cursor/mcp.json"), "helixir-local")?
+        } else {
+            existing_native_registration(*client, "helixir-local")?
+        };
+        if let Some(existing) = existing
+            && !registrations_match(&existing, &server.json_entry())
+        {
+            conflicts.push(RegistrationConflict {
+                client: *client,
+                existing: safe_registration_summary(&existing),
+                requested: safe_registration_summary(&server.json_entry()),
+            });
+        }
+    }
+    Ok(conflicts)
+}
+
+fn current_sibling(name: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(name)))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn native_client_executable(client: helixir::installer::ClientKind) -> Option<PathBuf> {
+    let command = match client {
+        helixir::installer::ClientKind::ClaudeCode => "claude",
+        helixir::installer::ClientKind::Codex => "codex",
+        helixir::installer::ClientKind::Cursor => return None,
+    };
+    helixir::installer::clients::resolve_command(command).or_else(|| {
+        (client == helixir::installer::ClientKind::Codex)
+            .then(|| {
+                [
+                    "/Applications/ChatGPT.app/Contents/Resources/codex",
+                    "/Applications/Codex.app/Contents/Resources/codex",
+                ]
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+            })
+            .flatten()
+    })
+}
 
 pub(crate) fn register_onboard_client(
     client: helixir::installer::ClientKind,
-    interactive: bool,
     replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
-    let server = helixir::installer::clients::StdioServer::new(
-        current_sibling("helixir-mcp").display().to_string(),
-    )
-    .with_env("HELIXIR_RBAC_ACTOR", client.principal_id());
+    let server = desired_server(client);
     if client == helixir::installer::ClientKind::Cursor {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
         let path = helixir::installer::clients::default_json_config_path(client, &home)
             .ok_or_else(|| "Cursor home not found".to_string())?;
         let existing = existing_json_registration(&path, "helixir-local")?;
-        approve_registration_change(
-            client,
-            existing.as_ref(),
-            &server,
-            interactive,
-            replace_conflicting,
-        )?;
+        approve_registration_change(client, existing.as_ref(), &server, replace_conflicting)?;
         let registration =
             helixir::installer::clients::register_json_client(&path, "helixir-local", &server)
                 .map_err(|error| error.to_string())?;
@@ -49,13 +113,7 @@ pub(crate) fn register_onboard_client(
     {
         return Ok(());
     }
-    approve_registration_change(
-        client,
-        existing.as_ref(),
-        &server,
-        interactive,
-        replace_conflicting,
-    )?;
+    approve_registration_change(client, existing.as_ref(), &server, replace_conflicting)?;
     let backup = backup_native_client_config(client)?;
     let update = (|| {
         if existing.is_some() {
@@ -102,7 +160,7 @@ pub(crate) fn register_onboard_client(
     update
 }
 
-pub(crate) fn client_registration_matches(
+pub fn client_registration_matches(
     client: helixir::installer::ClientKind,
     server_name: &str,
     server: &helixir::installer::clients::StdioServer,
@@ -121,6 +179,15 @@ pub(crate) fn client_registration_matches(
             .as_ref()
             .is_some_and(|entry| registrations_match(entry, &server.json_entry()))
     })
+}
+
+fn desired_server(
+    client: helixir::installer::ClientKind,
+) -> helixir::installer::clients::StdioServer {
+    helixir::installer::clients::StdioServer::new(
+        current_sibling("helixir-mcp").display().to_string(),
+    )
+    .with_env("HELIXIR_RBAC_ACTOR", client.principal_id())
 }
 
 fn registrations_match(existing: &serde_json::Value, expected: &serde_json::Value) -> bool {
@@ -229,7 +296,6 @@ fn approve_registration_change(
     client: helixir::installer::ClientKind,
     existing: Option<&serde_json::Value>,
     server: &helixir::installer::clients::StdioServer,
-    interactive: bool,
     replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
     let Some(existing) = existing else {
@@ -241,34 +307,10 @@ fn approve_registration_change(
     if replace_conflicting {
         return Ok(());
     }
-    if !interactive {
-        return Err(format!(
-            "{} has a conflicting helixir-local entry; rerun interactively to approve replacement",
-            client.label()
-        ));
-    }
-    println!(
-        "{} helixir-local change:\n  old: {}\n  new: {}",
-        client.label(),
-        safe_registration_summary(existing),
-        safe_registration_summary(&server.json_entry())
-    );
-    let approved = Confirm::new()
-        .with_prompt(format!(
-            "Replace {} helixir-local registration?",
-            client.label()
-        ))
-        .default(false)
-        .interact()
-        .map_err(|error| error.to_string())?;
-    if approved {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} registration replacement declined",
-            client.label()
-        ))
-    }
+    Err(format!(
+        "{} has a conflicting helixir-local entry; explicit replacement approval is required",
+        client.label()
+    ))
 }
 
 fn safe_registration_summary(entry: &serde_json::Value) -> serde_json::Value {
@@ -352,10 +394,9 @@ mod tests {
             Some(&serde_json::json!({"command": "old"})),
             &helixir::installer::clients::StdioServer::new("new"),
             false,
-            false,
         )
         .expect_err("conflict must require approval");
-        assert!(error.contains("rerun interactively"));
+        assert!(error.contains("explicit replacement approval"));
     }
 
     #[test]
@@ -364,7 +405,6 @@ mod tests {
             helixir::installer::ClientKind::Codex,
             Some(&serde_json::json!({"command": "old"})),
             &helixir::installer::clients::StdioServer::new("new"),
-            false,
             true,
         )
         .expect("typed control-plane consent should approve replacement");

@@ -1,7 +1,8 @@
 # AGENTS.md — Helixir memory
 
 > Template. Copy to your project root as `AGENTS.md` (or merge this section into
-> your existing one). Replace `claude` with your agent's stable `user_id`.
+> your existing one). Replace `claude` with your agent's stable RBAC principal
+> and memory-owner id.
 > Requires the `helixir-local` MCP server wired into your agent — see
 > `integration/README.md`.
 
@@ -9,25 +10,28 @@
 
 This project is backed by **Helixir**, a reasoning-aware memory exposed as MCP
 tools (`mcp__helixir-local__*`). You are NOT stateless: treat it as your own
-long-term knowledge and keep it current. Always pass a **consistent `user_id`**
-so the memory stays coherent and personal search is scoped. `claude` below is a
-PLACEHOLDER — establish YOUR id first (next section) and use it everywhere.
+long-term knowledge and keep it current. Always pass a stable lower-case
+**`actor_id`** for authorization and a consistent **`user_id`** for ownership.
+They may be equal, but `user_id` is never a credential. `claude` below is a
+PLACEHOLDER — establish YOUR principal first and use it consistently.
 
 ### Establish your identity (BEFORE the first recall)
-The `user_id` is YOUR name in the memory — the wrong one recalls another agent's
-memories as your own. Pick ONE stable id, in this order: (1) an id you were
-explicitly assigned/configured; else (2) your own name from your system prompt
-(e.g. "You are Zeroclaw…" → `zeroclaw`) or, in a shell, the OS user (`whoami`).
-Use that SAME id for the first `search_memory` and every `add_memory`. If recall
-is empty/thin and you're unsure, call `list_users` to see who exists and confirm
-your id — never silently adopt another agent's. Replace every `claude` below.
+Prefer the principal configured by onboarding in `HELIXIR_RBAC_ACTOR`; otherwise
+use an explicitly assigned lower-case agent id. Use it as `actor_id` on every
+tool that accepts it. Choose one stable `user_id` for authored memory. If
+identity is uncertain, inspect the onboarding/client configuration or ask the
+operator; `list_users` is global-admin-only under permanent RBAC. Never silently
+adopt another principal. A principal must be enrolled in `onboarding` or an
+assigned working group before normal use.
 
 Helixir stores typed facts in a knowledge graph with causal edges, so it returns
-*why* things are true — not just similar text. The read path makes no LLM calls
-and is fast; search liberally instead of guessing or asking the user to repeat.
+*why* things are true — not just similar text. The read path makes no
+generative/reasoning-LLM calls and is fast; a cold semantic query still uses
+the configured embedding endpoint. Search liberally instead of guessing or
+asking the user to repeat.
 
 ### 1. Recall first — before answering any non-trivial request (and after a summary)
-Call `search_memory(query="<the user's topic>", user_id="claude")`. If it
+Call `search_memory(query="<the user's topic>", user_id="claude", actor_id="claude")`. If it
 returns nothing for your user_id, retry once with `scope="collective"`. Build on
 what you find rather than re-deriving known decisions. **After a context
 summary / compaction, recall first too** — the summary is lossy, the memory is
@@ -36,7 +40,7 @@ the ground truth; refresh from Helixir before continuing.
 ### 2. Capture durable facts — proactively, as you work
 When the user states or you establish a **decision, preference, goal,
 constraint, outcome, or gotcha**, store it:
-`add_memory(message="<one plain sentence>", user_id="claude")`.
+`add_memory(message="<one plain sentence>", user_id="claude", actor_id="claude", group_id="<working-group>")`.
 - `needs_clarification` in the result → the charter blocked a silent conflict
   (e.g. a reversed preference). **Ask** the `suggested_question` or apply a
   standing rule; never overwrite silently.
@@ -70,8 +74,9 @@ think_conclude (required) → think_commit` (once). Reuse one `session_id`;
 ### 5. You are part of a swarm
 Pass your stable `agent_id` on every `add_memory` — presence in the shared
 roster comes free with the write. `swarm_status` shows who else is working
-this memory right now (and exposes forgotten daemons); `list_users` orients
-identities. Watch `pending_outcomes`: `contradiction_review` means a dispute
+this memory right now (and exposes forgotten daemons); global-admin
+`list_users(actor_id=...)` orients registered identities. Watch
+`pending_outcomes`: `contradiction_review` means a dispute
 touches YOUR memory — settle it with `resolve_contradiction`
 (confirm/retract/preference, all non-destructive); `ops_alert` is the
 memory's own health watchdog speaking — relay it to your human.
@@ -90,7 +95,9 @@ memory's own health watchdog speaking — relay it to your human.
 
 **Principle:** the memory does not gaslight its owner — surface
 `needs_clarification`, never silently overwrite a conflicting fact. Recall before
-you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
+you re-derive. Keep one stable `actor_id` for authorization and one stable
+`user_id` for ownership; never swap owners to bypass policy. Write durable
+facts, not trivia.
 
 ### Reading what the memory returns
 
@@ -142,7 +149,7 @@ you re-derive. One identity (same `user_id`). Write durable facts, not trivia.
 
   ```
   # "what happened with deploys in June?"
-  search_memory(query="deploys", user_id="claude",
+  search_memory(query="deploys", user_id="claude", actor_id="claude",
                 time_from="2026-06-01", time_to="2026-06-30")
   -> June rows, plus:
      {content: "the token rotation policy changed",
@@ -174,15 +181,17 @@ verification. Do not mutate a live volume without a recoverable backup.
 RBAC is permanently enabled, stored in HelixDB, and is the shared source of
 truth for CLI, MCP, and Rust. The one-way resumable bootstrap puts pre-RBAC
 memories and trusted peers in reserved `default` with equal group-admin access,
-while reserved `onboarding` admits new principals. Authorization is
+reserved `onboarding` admits new principals, and membership-free `moirai`
+stores generated hypotheses for global admins only. Authorization is
 deny-by-default. `actor_id` is the
 authenticated principal and is required on MCP calls; `user_id` is the memory
 owner/target. Omitted `group_id` is inferred only when exactly one reserved
 workspace is writable; other non-admin `add_memory` and `think_commit` calls
 must pass one concrete group.
 Never pass a dedup federation id as the write group and
-never authorize by changing the target owner parameter. Roles are `admin`, `teamlead`, `groupadmin`, `moderator`,
-`worker`, and `viewer` with the semantics documented in `integration/SKILLS.md`.
+never authorize by changing the target owner parameter. Roles are `admin`,
+`groupadmin`, `moderator`, `worker`, and `viewer`; `teamlead` is retired legacy
+state and must be explicitly migrated to `groupadmin`.
 Active or historical membership in either reserved workspace contributes to
 the graph-backed principal registry. Use `helixir rbac user` and
 `helixir rbac group add-user/remove-user`;

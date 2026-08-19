@@ -11,7 +11,7 @@ pub(crate) struct SetupConfig {
     pub(crate) emb_model: String,
     pub(crate) emb_url: String,
     pub(crate) mcp_bin: String,
-    /// Privilege tier written as HELIXIR_MODE (default solo).
+    /// Memory mode written as HELIXIR_MODE (default solo).
     pub(crate) mode: String,
 }
 

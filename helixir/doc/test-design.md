@@ -1,14 +1,16 @@
 # Test design
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
 
 ## 1. Stance
 
-Unit-test coverage is **deliberately minimal**. The codebase rewrites fast;
-heavy unit-test scaffolding would burn more tokens than the feature work it
-guards. The goal is therefore not "high % coverage" but **a small, stable set
-of tests that defend the contracts that would silently corrupt the system if
-broken**.
+Coverage is **contract-driven**, not percentage-driven. Pure policy,
+validation, projection and orchestration code is exercised with fast unit
+tests; HelixDB snapshot behavior, HQL, MCP transport, model adapters, browser
+flows and package installation use progressively heavier integration gates.
+The goal is evidence at the boundary that can actually fail, with special
+weight on contracts that could corrupt memory, leak RBAC scope, expose a secret
+or make recovery destructive.
 
 This document captures the current state, the contracts worth guarding, and
 the gap between the two.
@@ -26,13 +28,14 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.15.0`):** more than 300 library unit tests plus 17 CLI tests
-(`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
+**Current (`v0.16.0`):** 333 library unit tests plus CLI tests
+(`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
-negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
-E2E are run by hand (not in CI yet); the manual recipe lives in the suites'
-module docs. Run unit tests: `cargo test --lib` from `helixir/`.
+negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
+`cargo test`; record the provider, database fixture and date whenever claiming
+a live run. The manual recipes live in the suites' module docs. Run unit tests:
+`cargo test --lib` from `helixir/`.
 
 The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
@@ -55,9 +58,40 @@ availability and the contradiction/paraphrase readiness contract; installer
 coverage requires NLI download before doctor, and doctor fails closed when the
 model is missing. CI runs the same full NLI-enabled surface on Ubuntu and macOS.
 
+The persistent embedding-cache contract is covered separately: provider,
+endpoint, revision, dimension and epoch produce isolated namespaces; startup
+keeps the newest unique entry/byte-bounded set; malformed, foreign and
+wrong-dimension rows fail safe; durable clear survives restart; an orphaned
+temporary snapshot cannot replace the last valid cache; and concurrent store
+handles cannot interleave JSONL records during append or compaction. Diagnostics
+assert hits, misses, bytes, compactions and invalidations without exposing raw
+memory text or vectors.
+
+Package-distribution CI renders the Homebrew formula from release-style
+checksums, validates Ruby syntax, builds byte-identical Debian packages twice,
+checks package metadata and runtime-resource layout, builds both Debian
+architectures, assembles an ephemeral APT repository, and verifies its
+`InRelease` signature while rejecting tampered metadata. The contract installs
+an older indexed version, upgrades it through APT, and proves that purge keeps
+user state. Release Linux binaries use an Ubuntu 22.04 build container and a
+symbol-version gate so the native archive and derived packages keep a Debian
+12/Ubuntu LTS-compatible glibc baseline; release validation clean-installs both
+architectures on both supported distribution families before publication.
+Container publication reuses those same ABI-gated Linux archives. A native
+runner for each architecture packages both runtime images without compiling
+Rust in Docker or under QEMU; the architecture-specific NLI model and the
+single shared frontend build are workflow artifacts. Per-target/per-architecture
+BuildKit GHA scopes retain the small immutable packaging layers across warm
+releases. Only after both architecture jobs succeed does the manifest job move
+the immutable release tag and `latest` together, keeping the post-native-build
+container budget below 20 minutes.
+
 The v0.15 control plane adds a separate browser contract. Every API route is
 covered by the same persistent browser-token and graph-backed global-admin
-middleware;
+middleware. Unit contracts additionally reject mismatched Origin/Host pairs and
+cross-site fetch metadata while keeping bearer-authenticated non-browser clients
+possible; the router caps JSON bodies at 1 MiB and returns stable problem codes
+without projecting internal RBAC/planner errors;
 projection parsers tolerate HelixDB's wrapped/null response shapes. Automated
 Playwright gates cover Chromium, Firefox, WebKit and a mobile Chromium viewport,
 the complete plan/apply/verify journey, fail-closed admin isolation, WCAG
@@ -77,7 +111,14 @@ must additionally reload the same browser tab after two container restarts.
 Installer-operation coverage injects failure into every required action, proves rollback,
 replays SSE strictly after its cursor, rejects a changed-plan resume, redacts
 sensitive event/report detail on disk, and reopens a running journal as an
-explicit resumable interruption.
+explicit resumable interruption. Shared-installer tests additionally prove that
+CLI and browser adapters converge on the same `InstallerService`, plan/debug
+projections never disclose provider secrets, conflicting MCP registrations need
+explicit replacement consent, and every concrete executor module remains within
+the 500-line source budget. Stewardship tests additionally cover write-only
+secret rendering, allowlisted settings patches, complete cross-field validation,
+vault path confinement, exact restore confirmation, frontend review-before-write,
+and disabled recovery actions for non-managed databases.
 
 `tools/control_plane_soak.py` performs authenticated polling against the real
 overview, access, memory-field, Moirai and Hygieia projections while sampling
@@ -96,85 +137,78 @@ then verifies that upgrade reifies them under `moirai`, removes ordinary-graph
 bridges, preserves unrelated generic relations, restores embedding parity, and
 denies the compatibility `default` groupadmin.
 
-### Unit-test distribution
+### Representative unit contracts
 
-| Area | File | Tests | What they actually check |
-|---|---|---|---|
-| Config | `src/core/config.rs` | 2 | `from_env` reads `HELIX_LLM_BASE_URL`; default has no base url. |
-| Search modes | `src/core/search_modes.rs` | 3 | Default, parse-from-str, token-cost estimate. |
-| Levels (deploy ordering) | `src/core/levels/utils.rs` | 3 | Deployment order, dependencies, accumulated schema. |
-| Velocity metrics | `src/core/velocity/metrics.rs` | 3 | Score min/max/zero edge cases. |
-| Event bus | `src/core/events/bus.rs` | 1 | `emit` invokes the handler once. |
-| DB client | `src/db/client.rs` | 2 | Constructor works; `from_env` constructor works. |
-| LLM decision | `src/llm/decision/engine.rs` | 6 | Builder constructors, cross-user prompt branches. |
-| LLM extractor | `src/llm/extractor.rs` | 1 | `ExtractionResult` serializes round-trip. |
-| LLM factory | `src/llm/factory.rs` | 10 | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
-| Helixir client | `src/core/helixir_client.rs` | 3 | Constructor, env constructor, config access. |
-| Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | 3 | `should_chunk`, Cyrillic split, semantic split. |
-| Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | 4 | Map preference, map skill, no-match, case-insensitive. |
-| Reasoning engine | `src/toolkit/mind_toolbox/reasoning/engine.rs` | 3 | Type→edge name, relation construction, reasoning trail. |
-| Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
-| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
-| Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer | `src/installer/` | 41 | Fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, Ollama/model command safety, interrupted API pull retry plus verified inventory, `:latest` equivalence, hardware-aware non-Gemma recommendations, required-step rollback, private durable operation journals, cursor replay, restart recovery, changed-plan refusal, failure-injection resume, secret redaction, central TOML/permissions and manifest atomicity, native client command safety, atomic JSON registration, healthy/failed/skipped/degraded doctor reports and malformed-config refusal. |
-| CLI onboarding | `src/bin/helixir/` | 15 | RBAC command parsing, deterministic local/remote onboarding flags, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
-| Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
+Exact per-module counts are intentionally omitted: they drift without saying
+whether an architectural boundary is protected. The repository-wide totals
+above come from the current runner; this table maps stable contracts to their
+owners.
+
+| Area | File | Contract focus |
+|---|---|---|
+| Config | `src/core/config.rs` | Environment layering, defaults and validation. |
+| Search modes | `src/core/search_modes.rs` | Default, parsing and token-cost estimates. |
+| Levels (deploy ordering) | `src/core/levels/utils.rs` | Deployment order, dependencies and accumulated schema. |
+| Event bus | `src/core/events/bus.rs` | Handler delivery. |
+| DB client | `src/db/client.rs` | Explicit and environment-backed construction. |
+| LLM decision | `src/llm/decision/engine.rs` | Builder and scoped cross-owner decision branches. |
+| LLM extractor | `src/llm/extractor.rs` | Typed extraction-result serialization. |
+| LLM factory | `src/llm/factory.rs` | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
+| Helixir client | `src/core/helixir_client/` | Construction, configuration and administrative facade boundaries. |
+| Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | Chunk eligibility and multilingual splitting. |
+| Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | Fixed-type mapping and normalization. |
+| Reasoning engine | `src/toolkit/mind_toolbox/reasoning/engine.rs` | Semantic relation mapping and reasoning trails. |
+| Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | Freshness and event-time parsing. |
+| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | Cosine, combined rank and temporal freshness. |
+| Utils | `src/utils.rs` | Unicode-safe truncation. |
+| Installer and stewardship | `src/installer/` | Shared CLI/browser service, three backend topologies, mandatory models, transaction journal, secret-safe projections, settings and guarded backup/restore. |
+| CLI onboarding | `src/bin/helixir/` | Stable parsing, RBAC operator reuse, remote-embedding probes, registration conflicts and redaction. |
+| Module budget | `tests/module_budget.rs` | Every maintained Rust source under `src/` stays at or below 500 lines. |
 
 ### Integration / E2E
 
 - `helixir/tests/hive_memory_e2e.rs::hive_cross_user_collective_link_e2e`
   — marked `#[ignore]`. Runs only with `make test-e2e-hive` and requires:
   live HelixDB, real LLM API key, real embedding API key.
-  Asserts: adding the same fact for two user_ids yields `user_count ≥ 2` on
-  the first memory.
+  Asserts: two owners in one authorized RBAC group/federation contribute to
+  one scoped consensus family (`user_count ≥ 2`), while isolated groups do not.
 - `helixir/tests/test_hive_queries.sh` — bash script poking HelixDB queries
   directly. Not invoked from `make test`.
 
 ## 3. Contract map: what is guarded vs. what isn't
 
-The five layers from `architecture.md`, scored by how protected they are
-against silent regression:
+The current suite protects every architectural boundary with a different kind
+of evidence rather than an invented coverage percentage:
 
-```
-L5  process entry          ░░░░░░░░░░  0%  no smoke test that `helixir-mcp` starts
-L4  MCP surface            ░░░░░░░░░░  0%  no test that tool names match registered
-L3  HelixirClient facade   ███░░░░░░░ 30%  constructor & config tests only
-L2  ToolingManager         ██░░░░░░░░ 20%  unit tests on isolated managers
-L1  external adapters      ███░░░░░░░ 30%  unit tests on factory/decision/scoring
-                                          E2E only via the ignored hive test
-```
+| Boundary | Primary evidence |
+|---|---|
+| Process entry and MCP transport | `mcp_full_surface_e2e`, multi-consumer and concurrent MCP suites spawn real `helixir-mcp` processes and exercise the registered surface through JSON-RPC. |
+| MCP schema and resources | handler/parameter unit tests plus full-surface e2e keep tool names, required arguments, config/rules resources and wire responses aligned. |
+| `HelixirClient` / `ToolingManager` | focused unit tests protect deterministic policy, scoring and projection code; live suites prove persistence and graph behavior against HelixDB. |
+| HelixDB graph contract | schema-version, edge-verification, RBAC/bootstrap, temporal, contradiction, ontology and Moirai suites inspect persisted outcomes rather than trusting HTTP status alone. |
+| External model adapters | mandatory local NLI readiness is deterministic; real LLM/embedding behavior remains opt-in behind `HELIX_E2E=1`. |
+| Installer and host mutations | typed-plan unit tests, failure injection, durable-operation replay, command-boundary tests and manual disposable-host smoke. |
+| Browser control plane | API authorization/unit contracts, frontend component tests, Playwright release gates, container hardening checks and live browser smoke. |
+| Distribution | reproducible package construction, ABI/symbol gates, signed ephemeral APT metadata and clean-install/upgrade matrices. |
 
-### Contracts that would corrupt data if violated
+### Remaining data-integrity risks
 
-These are the assertions that **must** continue to hold or the persisted store
-gets wrong. They are exactly where to focus the (minimal) test budget.
+The high-value live suites cover embedding parity during RBAC/Moirai migration,
+persisted reasoning edges, dedup/federation isolation, contradiction resolution,
+supersession demotion and ontology classification. The remaining gaps are
+bounded properties that require a deliberately corrupted fixture rather than a
+normal product flow:
 
-1. **Memory persistence ↔ embedding parity.** Every persisted `Memory` has
-   exactly one `HAS_EMBEDDING` edge to a `MemoryEmbedding` whose model name
-   matches `embedding_model`. Today: not checked.
-2. **SUPERSEDES acyclic.** Following SUPERSEDES backwards from any Memory
-   eventually reaches a non-superseded Memory. Today: not checked.
-3. **`user_count` monotone.** Across `add_memory` calls for any
-   `memory_id`, `user_count` never decreases. Today: only checked via the
-   E2E hive test, and only for the 1→2 transition.
-4. **Decision engine never returns ADD when score ≥ exact_duplicate_score
-   (0.98).** Today: no test wires the engine to a real similarity input.
-5. **`HAS_HISTORY` on every UPDATE/SUPERSEDE/DELETE.** Today: not checked.
-6. **Ontology classifier never assigns a non-leaf concept.** Today: not
-   checked.
-7. **Soft delete leaves `is_deleted=1` and `deleted_at != ""`.** Today: not
-   checked.
+1. A global graph audit that proves `SUPERSEDES` is acyclic across an arbitrary
+   imported database.
+2. A corpus-wide assertion that every non-deleted memory has exactly one current
+   embedding of the configured dimension after an interrupted external restore.
+3. A long-running monotonicity audit over consensus holder counts during
+   concurrent federation attach/detach and supersession.
 
-### Contracts that would corrupt behavior (not data)
-
-These cause user-visible incorrectness but not stored garbage. Lower
-priority but still cheap to add:
-
-- `list_memories(memory_type=X, limit=N)` returns ≤ N items of type X.
-  (Currently broken — issue #14 — so a test would pin the regression.)
-- `search_memory(mode=recent)` excludes memories older than ~4h.
-- `read_resource("config://helixir").version == env!("CARGO_PKG_VERSION")`.
-- `read_resource("config://helixir").tools` matches the registered tool set.
+These are release-hardening opportunities, not known shipped regressions. The
+managed restore path reduces their blast radius by probing the live schema and
+rolling back to a fresh safety snapshot when recovery is incompatible.
 
 ## 4. Test strategy going forward
 
@@ -185,24 +219,16 @@ that change only with deliberate decisions.
 
 ### Tier 2 — add (small, deliberate)
 
-Add **one fake-backed contract test** per L4/L3/L2 boundary, replacing the
-HelixDB client with an in-memory fake. This protects against silent contract
-drift without paying the cost of full mocks.
-
-| Test | Replaces | Defends |
-|---|---|---|
-| `mcp_tool_list_matches_router` | Manually maintained list in `read_resource` | Issue #14 root cause |
-| `version_resource_matches_cargo_pkg` | Hardcoded `"0.3.0"` string | Issue #8 root cause |
-| `decision_engine_never_adds_on_exact_dup` | Brittle prompt regression | Data integrity invariant #4 |
-| `soft_delete_sets_flag_and_timestamp` | Bare CRUD path | Invariant #7 |
-| `supersede_creates_edge_and_history` | Bare graph helpers | Invariants #2, #5 |
-| `list_memories_filters_in_query` | Issue #14 fix verification | Behavior-level |
+Add one contract at the narrowest stable boundary whenever a regression is
+found. Prefer pure projection/validation tests and typed fake executors; use a
+real disposable HelixDB only for behavior that depends on HQL, snapshot
+visibility, vector search or graph traversal. Never mock an external boundary
+and then cite the mock as proof that the integration works.
 
 ### Tier 3 — gate
 
-E2E tests stay opt-in (`#[ignore]` + Make target). A CI workflow on push/PR
-runs the following (added in `dev` while closing #5; verify it is on `main`
-before relying on it):
+LLM/HelixDB E2E tests stay opt-in (`#[ignore]`, `HELIX_E2E=1` and dedicated
+Make targets). Push/PR CI runs the deterministic native gates:
 
 ```
 cargo fmt --all -- --check
@@ -214,13 +240,14 @@ cargo check --all-targets                 # MSRV 1.88 job pinned in CI
 
 ### Tier 4 — refuse
 
-Things that should NOT be tested at this stage:
+Things that should not be asserted as brittle snapshots:
 
 - The exact prompt text sent to LLMs. It changes constantly; a snapshot
   test would generate noise every refactor.
 - HelixDB's own behavior. It is an external dependency.
 - Concrete embedding values. They change with model versions.
-- UI / output formatting strings.
+- Pixel-identical UI rendering. Test semantics, accessibility, responsive
+  layout and visual regressions at deliberate checkpoints instead.
 
 ## 5. Open testing-related issues
 
@@ -250,7 +277,8 @@ instead.
 
 Two suites over a shared golden query set (10 queries tied to the bench
 corpus), both gated by `HELIX_E2E=1` and run with a deliberately **dead LLM
-key** — passing proves the read path makes zero LLM calls:
+generation-LLM key** — passing proves the read path does not call the reasoning
+model; its embedding endpoint remains live:
 
 - `tests/read_path_e2e.rs` — library level (`HelixirClient`): hit@5 / MRR
   quality bars (baseline MRR 0.687 after PPR), cold/warm latency, causal

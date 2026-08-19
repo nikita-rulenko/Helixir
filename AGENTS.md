@@ -32,7 +32,8 @@ graph/vector-DB familiarity. Concretely that means:
   `ServerHandler` trait, request lifecycle, and the stdio transport quirks.
 - **HelixDB / `helix-rs`** — you read `.hx` schema and query files fluently, know
   the difference between `N::` (node), `E::` (edge), `V::` (vector) types in HQL,
-  and treat the `query/queries.hx` file as a typed API contract.
+  and treat `helixir/schema/schema.hx` plus `helixir/schema/queries.hx` as the
+  typed persistence API contract.
 
 If a Rust-specific question makes you uncertain, **do not guess** — pull the relevant
 section of `helixir/doc/architecture.md`, check the actual crate sources, or use the
@@ -72,6 +73,8 @@ with `file:line` citations. Layout:
 ```
 helixir/doc/
 ├── README.md             index + conventions
+├── installation.md       packages, onboarding, topology, models, MCP clients
+├── operations.md         CLI, RBAC, config, gateway, Moirai, Hygieia, admin UI
 ├── architecture.md       sysdesign — layers, components, ownership
 ├── data-model.md         datadesign — 22 nodes / 30 edges / ontology / invariants
 ├── dataflow.md           add_memory + search_memory + FastThink commit pipelines
@@ -147,23 +150,24 @@ of these.
 |---|---|---|
 | Hive consensus is scoped by RBAC security domain; author nodes share `content_key` only inside a group/dedup federation | `add_pipeline/` + `RbacMemoryScope` | You will either break Hive consensus or leak isolated-group knowledge through global dedup. |
 | 8 ontology types are fixed in code and schema | `OntologyManager`, `data-model.md §4` | You will propose "dynamic ontology" and dilute the type space. |
-| `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class edges, not metadata | `ReasoningEngine`, `mind_toolbox/reasoning/` | You will collapse them into a single `metadata.reason` string and lose traversal. |
-| Decision matrix replaces append-only | `LLMDecisionEngine`, `add_pipeline.rs` | You will propose unconditional `ADD` and grow the corpus forever. |
+| `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class graph semantics, not metadata; `BECAUSE` / `IMPLIES` / `CONTRADICTS` have dedicated edges while `SUPPORTS` is stored through typed `MEMORY_RELATION` | `ReasoningEngine`, `mind_toolbox/reasoning/`, `schema.hx` | You will collapse them into a single `metadata.reason` string and lose traversal. |
+| Decision matrix replaces append-only | `LLMDecisionEngine`, `tooling_manager/add_pipeline/` | You will propose unconditional `ADD` and grow the corpus forever. |
 | FastThink does not touch HelixDB until `think_commit` | `fast_think/manager.rs` | You will persist thoughts eagerly and pollute long-term memory. |
 | Real cosine is computed by re-embedding on the client (HelixDB does not expose it) | `smart_traversal/scoring.rs` | You will treat re-embedding as wasteful and remove it. |
-| Long inputs persist a `source="raw_input"` Memory alongside atomized facts | `add_pipeline.rs::store_raw_source` | You will treat the duplicate as redundancy and remove it. |
+| Long inputs persist a `source="raw_input"` Memory alongside atomized facts | `tooling_manager/add_pipeline/store.rs` | You will treat the duplicate as redundancy and remove it. |
 | All decision/enrichment cost is on the writer; reader stays fast | two-phase add pipeline | You will move enrichment to read time and slow searches by an order of magnitude. |
 
 ### 1bis.4 Capability surface (one paragraph)
 
-Tools today: `add_memory` (returns charter escalations in
+The MCP surface contains 21 tools. Its core tools are `add_memory` (returns charter escalations in
 `needs_clarification` under `algo_opt`), `search_memory` (modes `recent /
 contextual / deep / full`; scopes `personal / collective / all`; explicit
 event-time windows via `time_from`/`time_to`, out-of-window graph rows come
 back as flagged flashbacks; results carry
 provenance), `connect_memories` (path between two concepts), `search_by_concept`
 (8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`,
-LLM-free under `algo_opt`), `list_memories`, `get_memory_graph`,
+free of generative/reasoning-LLM calls under the default `algo_opt` profile),
+`list_memories`, `get_memory_graph`,
 `update_memory`, `search_incomplete_thoughts`,
 plus seven FastThink tools (`think_start/add/recall/conclude/commit/discard/status`).
 The write-path escalation rules live in `helixir/memory-charter.md`.
@@ -191,6 +195,8 @@ the rules do not.
    - `dataflow.md` — if it changes `add_memory`, `search_memory`, or FastThink.
    - `userflow.md` — if it adds/changes an MCP tool, prompt, or resource.
    - `test-design.md` — if it adds tests or touches the test surface.
+   - `installation.md` / `operations.md` — if it changes packaging,
+     onboarding, configuration, CLI administration, or service lifecycle.
    - `helixir/doc/<latest-version>/` — for the most recent release's context.
 
    Skipping the rationale + the relevant doc is the most common cause of
@@ -400,7 +406,7 @@ Inside issues, PRs, and chat replies, always cite code with file path + line num
 Don't paraphrase code; quote it. For inline citations in markdown:
 
 ```rust
-// helixir/src/core/helixir_client.rs:131
+// helixir/src/core/helixir_client/client.rs:131
 let is_openai_compat = config.embedding_provider == "openai";
 ```
 
@@ -494,7 +500,7 @@ section is the "before you file" checklist.
 - Looks like a privacy leak / missing `user_id` filter.
 - In the reserved `default` workspace this may be the shared Hive graph at work:
   `Memory.user_id` is provenance, not an access tag.
-- With RBAC enabled, it is correct only when the memory has a visible
+- Under permanent RBAC, it is correct only when the memory has a visible
   `MEMORY_IN_RBAC_GROUP` edge. Dedup candidates must also share the exact
   `Memory.rbac_scope` (`group:<id>` or `dedup:<id>`).
 - **Do**: cross-check `design-rationale.md §3.4`, the per-memory group edges,

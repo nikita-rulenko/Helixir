@@ -21,8 +21,9 @@ import { MoiraiPage } from "./pages/MoiraiPage";
 import { AccessDenied, SessionRecovery } from "./pages/SessionBoundary";
 import { activeInstallOperationKey, InstallOperation } from "./pages/InstallOperation";
 import { SystemPage } from "./pages/SystemPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
-type Section = "overview" | "setup" | "people" | "memory" | "moirai" | "system";
+type Section = "overview" | "setup" | "people" | "memory" | "moirai" | "system" | "settings";
 
 const navigation: Array<{ id: Section; label: string }> = [
   { id: "overview", label: "Observatory" },
@@ -31,6 +32,7 @@ const navigation: Array<{ id: Section; label: string }> = [
   { id: "memory", label: "Memory field" },
   { id: "moirai", label: "Moirai" },
   { id: "system", label: "Hygieia" },
+  { id: "settings", label: "Stewardship" },
 ];
 
 function sectionFromLocation(): Section {
@@ -203,7 +205,7 @@ function App() {
             </button>
             <span className="micro-label">Graph link</span>
             <span className="live-pill"><StatusDot ok={status.backend} pulse />{status.backend ? "Live" : "Awaiting"}</span>
-            <span className="version">v{meta?.version ?? "0.15.0-dev"}</span>
+            <span className="version">v{meta?.version ?? "0.16.0-dev"}</span>
           </div>
         </header>
 
@@ -221,7 +223,8 @@ function App() {
         ) : section === "people" ? <AccessPage initialTab={accessTab} initialOnlineOnly={accessOnlineOnly} />
           : section === "memory" ? <MemoryPage />
           : section === "moirai" ? <MoiraiPage hostOperationsAvailable={meta?.host_operations_available ?? false} />
-          : <SystemPage discovery={discovery} hostOperationsAvailable={meta?.host_operations_available ?? false} />}
+          : section === "system" ? <SystemPage discovery={discovery} hostOperationsAvailable={meta?.host_operations_available ?? false} />
+          : <SettingsPage hostOperationsAvailable={meta?.host_operations_available ?? false} />}
       </main>
     </div>
   );

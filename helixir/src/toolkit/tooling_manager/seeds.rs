@@ -39,11 +39,11 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         90,
-        "Memory nodes are shared across users: one fact is stored once and linked to each knower by a HasMemory edge; user_count tracks how many users know it.",
+        "Equivalent facts keep author-level Memory nodes inside one RBAC group or dedup federation; their scoped content_key family projects consensus user_count without crossing isolated groups.",
     ),
     (
         90,
-        "All expensive work happens at write time (extraction, dedup decisions, relation inference); the read path makes zero LLM calls — the writer pays so the reader stays fast.",
+        "All generative and reasoning LLM work happens at write time; reads never call Cerebras, DeepSeek, or an Ollama generation model, though a cold semantic query still uses the configured embedding endpoint.",
     ),
     (
         90,
@@ -55,7 +55,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         90,
-        "Reasoning relations BECAUSE, IMPLIES, SUPPORTS and CONTRADICTS are first-class graph edges, not metadata; reasoning chains and connect_memories traverse them.",
+        "Reasoning relations BECAUSE, IMPLIES, SUPPORTS and CONTRADICTS are first-class graph semantics, not metadata; dedicated edges and typed MEMORY_RELATION edges are projected uniformly by reasoning chains and connect_memories.",
     ),
     (
         90,
@@ -97,7 +97,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "To upgrade HelixDB: run helix update for the CLI, then helix push <instance> from the workspace that owns the instance; archive the instance data volume first. CRITICAL: newer HelixDB builds default to IN-MEMORY storage — a stop erases everything unless the instance runs with disk persistence (helix start dev --disk); after ANY upgrade or fresh install, verify persistence by writing a marker, restarting, and confirming it survived.",
+        "Helixir is pinned to Helix CLI v2.3.5; never run helix update or use v3/hyperscale. Before any schema transition, create and verify a recoverable cold backup, stop writers, run helix check with v2.3.5, rebuild/recreate against the SAME persistent volume, then prove health and a read-only query before resuming writes.",
     ),
     (
         80,
@@ -105,11 +105,11 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "HELIXIR_RETRIEVAL_PROFILE=algo_opt enables the optimized read path (BM25 hybrid via RRF, batched graph expansion, PPR ranking, provenance, LLM-free chains); the default legacy profile preserves historic behaviour bit-for-bit.",
+        "HELIXIR_RETRIEVAL_PROFILE=algo_opt is the default since v0.4.0 and enables BM25 hybrid via RRF, bounded primary-key graph expansion, PPR ranking, provenance and generation-LLM-free chains; set legacy only for explicit v0.3.x compatibility/debugging.",
     ),
     (
         80,
-        "HELIXIR_EMBED_CACHE_PATH enables the persistent embedding cache and HELIXIR_EMBED_CACHE_WARMUP pre-embeds the corpus at startup, eliminating cold-start re-embedding.",
+        "HELIXIR_EMBED_CACHE_PATH enables a private bounded persistent embedding cache; its namespace includes provider, endpoint, model revision, vector dimension and HELIXIR_EMBED_CACHE_EPOCH, while HELIXIR_EMBED_CACHE_WARMUP pre-embeds the corpus at startup.",
     ),
     (
         80,
@@ -117,7 +117,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         80,
-        "The e2e suites read_path_e2e and mcp_read_e2e run with HELIX_E2E=1 and a deliberately dead LLM key, proving the read path needs no LLM.",
+        "The e2e suites read_path_e2e and mcp_read_e2e run with HELIX_E2E=1 and a deliberately dead generation-LLM key, proving retrieval does not call the reasoning model; semantic search still uses embeddings.",
     ),
     (
         80,
@@ -139,7 +139,7 @@ const SEEDS: &[(i32, &str)] = &[
     // --- Operations & integration (seeded at install: the manual lives inside the memory) ---
     (
         90,
-        "Helixir runs in three modes of escalating trust: solo (one agent, one user_id, private dedup), collective (write-time dedup across all user_ids; contradictions are scored by stances and user_count consensus, never resolved by rewriting the graph) and insights (the Moirai — Clotho, Lachesis, Atropos — generate tag dictionaries, indirect multi-hop correlations and curated hypotheses). Set mode in ~/.helixir/helixir.toml (mode = \"Solo|Collective|Insights\") or the HELIXIR_MODE env var; env overrides the toml.",
+        "Helixir modes are capability tiers, not ACL profiles: solo disables collective features, collective enables cross-owner consensus inside graph-backed RBAC visibility, and insights adds the admin-only Moirai layer. Permanent RBAC still controls every mode. Set mode in ~/.helixir/helixir.toml (mode = \"Solo|Collective|Insights\") or HELIXIR_MODE; env overrides TOML.",
     ),
     (
         85,
@@ -151,7 +151,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         85,
-        "To connect Claude Desktop or Claude Code, add an mcpServers entry named helixir-local running the helixir-mcp binary with HELIX_HOST/HELIX_PORT/HELIX_INSTANCE plus LLM and embedding provider env; helixir setup writes this non-destructively. For Cursor use ~/.cursor/mcp.json with the same env. For network clients, helixir gateway start serves the same MCP tools over streamable-HTTP at /mcp.",
+        "helixir onboard registers Codex, Claude Code and Cursor and installs the canonical skill; helixir setup is the lightweight registration-only path and also supports Claude Desktop and Gemini CLI. Keep MCP entries minimal (helixir-mcp command, backend address and stable HELIXIR_RBAC_ACTOR); provider settings and secrets belong in the protected central config, not duplicated per client. helixir gateway start serves the same tools over streamable HTTP at /mcp.",
     ),
     (
         85,
@@ -159,7 +159,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         90,
-        "Agents must establish identity BEFORE the first recall: use the assigned user_id; otherwise derive a stable one from the agent's own name, and consult list_users when unsure — never adopt another agent's id (the example id claude in templates is a placeholder to replace).",
+        "Agents must establish identity BEFORE the first recall: use the onboarding-configured actor_id and a stable owner user_id; if uncertain inspect client configuration or ask the operator, because list_users is global-admin-only under permanent RBAC. Never adopt another agent's id.",
     ),
     (
         90,

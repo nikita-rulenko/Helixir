@@ -1,0 +1,213 @@
+name: Package distribution
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing Helixir release tag to distribute
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
+      HELIXIR_APT_SIGNING_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Helixir release tag to distribute
+        required: true
+        type: string
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  HELIXIR_APT_SIGNING_FINGERPRINT: 82AE77350E9FDBF0D7AF8B58E0A8D062DC6C5161
+
+jobs:
+  validate:
+    name: Validate release input
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a published semantic release
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease --jq '.isDraft or .isPrerelease')" = false
+
+  homebrew:
+    name: Publish Homebrew formula
+    runs-on: macos-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Download immutable checksums
+        run: gh release download "${{ inputs.tag }}" --pattern SHA256SUMS --dir distribution
+
+      - name: Check out the Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: nikita-rulenko/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: homebrew-tap
+
+      - name: Render and validate formula
+        run: |
+          python3 tools/render_homebrew_formula.py \
+            --tag "${{ inputs.tag }}" \
+            --checksums distribution/SHA256SUMS \
+            --output homebrew-tap/Formula/helixir.rb
+          ruby -c homebrew-tap/Formula/helixir.rb
+          brew audit --formula --strict homebrew-tap/Formula/helixir.rb
+
+      - name: Install and remove the rendered formula
+        run: |
+          brew tap nikita-rulenko/tap "$GITHUB_WORKSPACE/homebrew-tap"
+          brew install nikita-rulenko/tap/helixir
+          prefix=$(brew --prefix helixir)
+          test "$("$prefix/bin/helixir" --version)" = "helixir ${INPUT_TAG#v}"
+          "$prefix/bin/helixir" onboard --help >/dev/null
+          test -f "$prefix/libexec/schema/schema.hx"
+          test -f "$prefix/libexec/skills/helixir-memory/SKILL.md"
+          brew uninstall helixir
+          brew untap nikita-rulenko/tap
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+
+      - name: Publish changed formula
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git -C homebrew-tap add Formula/helixir.rb
+          if git -C homebrew-tap diff --cached --quiet; then
+            exit 0
+          fi
+          git -C homebrew-tap -c user.name='helixir-release[bot]' \
+            -c user.email='helixir-release[bot]@users.noreply.github.com' \
+            commit -m "helixir $TAG"
+          git -C homebrew-tap push origin HEAD:main
+
+  debian:
+    name: Build Debian packages
+    runs-on: ubuntu-latest
+    needs: validate
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install package tooling
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: Enable arm64 package smoke tests
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Download and verify Linux release archives
+        run: |
+          mkdir -p distribution archives packages
+          gh release download "${{ inputs.tag }}" \
+            --pattern 'helixir-linux-*.tar.gz' --pattern SHA256SUMS --dir archives
+          (cd archives && sha256sum --ignore-missing -c SHA256SUMS)
+
+      - name: Build deterministic packages
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version=${TAG#v}
+          published=$(gh release view "$TAG" --json publishedAt --jq .publishedAt)
+          export SOURCE_DATE_EPOCH=$(date -d "$published" +%s)
+          tools/build_deb.sh --archive archives/helixir-linux-x86_64.tar.gz \
+            --version "$version" --arch amd64 --output packages
+          tools/build_deb.sh --archive archives/helixir-linux-arm64.tar.gz \
+            --version "$version" --arch arm64 --output packages
+          dpkg-deb --info packages/helixir_*_amd64.deb
+          dpkg-deb --info packages/helixir_*_arm64.deb
+
+      - name: Clean-install packages on Debian and Ubuntu baselines
+        run: |
+          for arch in amd64 arm64; do
+            package=$(realpath packages/helixir_*_${arch}.deb)
+            for image in debian:12-slim ubuntu:22.04; do
+              docker run --rm --platform "linux/$arch" \
+                -v "$package:/packages/helixir.deb:ro" "$image" sh -ec '
+                apt-get update >/dev/null
+                DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/helixir.deb >/dev/null
+                helixir --version
+                helixir onboard --help >/dev/null
+                mkdir -p /root/.helixir && touch /root/.helixir/preserve-me
+                DEBIAN_FRONTEND=noninteractive apt-get purge -y helixir >/dev/null
+                test -f /root/.helixir/preserve-me
+              '
+            done
+          done
+
+      - name: Attach packages to the GitHub release
+        run: gh release upload "${{ inputs.tag }}" packages/*.deb --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-packages-${{ inputs.tag }}
+          path: packages/*.deb
+
+  apt-repository:
+    name: Assemble signed APT repository
+    runs-on: ubuntu-latest
+    needs: debian
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install repository tooling
+        run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev gnupg
+
+      - name: Import dedicated signing key
+        env:
+          SIGNING_KEY: ${{ secrets.HELIXIR_APT_SIGNING_KEY }}
+        run: printf '%s' "$SIGNING_KEY" | gpg --batch --import
+
+      - name: Collect every published Debian package
+        run: |
+          mkdir -p packages
+          while IFS= read -r tag; do
+            gh release download "$tag" --pattern 'helixir_*.deb' \
+              --dir packages --clobber 2>/dev/null || true
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+          test -n "$(find packages -maxdepth 1 -name 'helixir_*.deb' -print -quit)"
+
+      - name: Build and sign repository metadata
+        run: |
+          key=$(gpg --batch --with-colons --list-secret-keys \
+            | awk -F: '$1 == "sec" {print $5; exit}')
+          test -n "$key"
+          tools/build_apt_repository.sh --packages packages --output apt-site --signing-key "$key"
+          test "$(tr -d '[:space:]' < apt-site/KEY-FINGERPRINT)" = \
+            "$HELIXIR_APT_SIGNING_FINGERPRINT"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apt-site
+
+  deploy-apt:
+    name: Publish APT repository
+    runs-on: ubuntu-latest
+    needs: apt-repository
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy signed repository to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,5 +1,9 @@
 # Codebase audit — 2026-06-13
 
+> **Historical audit.** Measurements and branch conclusions below are frozen
+> to 2026-06-13 and must not be used as current inventory. See
+> `architecture.md` and `test-design.md` for the maintained state.
+
 **Why:** before committing to the memory-provider / daemon architecture (#42), take
 stock of the codebase. It feels large and sprawling with a lot of "suspended"
 work; we want to know what is dead, what is parked, what is fragile, and what

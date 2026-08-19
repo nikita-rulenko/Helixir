@@ -1,5 +1,9 @@
 # Changes — codebase health, liveness oracle, cleanup (2026-06-13/14)
 
+> **Historical record.** Counts, branch names and MCP surface below describe
+> the June 2026 cleanup only. For current architecture and tests, use
+> `architecture.md` and `test-design.md`.
+
 Branch `audit/codebase-health` → merged into `rw_buff` → `dev`. (`main` untouched;
 a release lands there once the daemon track is done.) This is the material for
 that future release note.

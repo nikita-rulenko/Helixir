@@ -1,6 +1,27 @@
-use super::*;
+//! Concrete native installation executor shared by CLI and web/supervisor flows.
 
-pub(crate) struct OnboardExecutor {
+mod backend;
+mod embeddings;
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use crate as helixir;
+use anyhow::{Context, Result};
+
+use crate::installer::client_registration::register_onboard_client;
+use crate::installer::native::{
+    backend_reachable, detect_local_backend_tcp, nli_installed as onboard_nli_installed,
+    probe_backend_schema_contract, schema_dir_for_install,
+};
+
+pub use self::embeddings::{
+    configured_embedding_choice, probe_embedding_choice, repair_embeddings_with_local_fallback,
+};
+
+/// Concrete native adapter for the shared installer service.
+pub struct NativeInstallExecutor {
     pub(super) options: helixir::installer::InstallOptions,
     pub(super) backend: helixir::installer::backend::BackendSpec,
     pub(super) backup_dir: PathBuf,
@@ -8,11 +29,10 @@ pub(crate) struct OnboardExecutor {
     pub(super) embedding_repaired: std::sync::atomic::AtomicBool,
     pub(super) managed_backend: bool,
     pub(super) recreate_managed_backend: bool,
-    pub(super) interactive: bool,
     pub(super) previous_image: std::sync::Mutex<Option<String>>,
 }
 
-impl OnboardExecutor {
+impl NativeInstallExecutor {
     pub(crate) fn effective_options(&self) -> helixir::installer::InstallOptions {
         let mut options = self.options.clone();
         if self
@@ -262,7 +282,7 @@ impl OnboardExecutor {
 }
 
 #[async_trait::async_trait]
-impl helixir::installer::PlanExecutor for OnboardExecutor {
+impl helixir::installer::PlanExecutor for NativeInstallExecutor {
     async fn apply(
         &self,
         action: &helixir::installer::InstallAction,
@@ -363,11 +383,9 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
                     .map_err(|error| error.to_string())?;
                 Ok(())
             }
-            InstallAction::RegisterClient(client) => register_onboard_client(
-                *client,
-                self.interactive,
-                self.options.replace_conflicting_clients,
-            ),
+            InstallAction::RegisterClient(client) => {
+                register_onboard_client(*client, self.options.replace_conflicting_clients)
+            }
             InstallAction::InstallAgentSkill(clients) => install_agent_skills(clients),
             InstallAction::RunDoctor => {
                 if !doctor_config_ready() {
@@ -429,4 +447,52 @@ impl helixir::installer::PlanExecutor for OnboardExecutor {
         }
         Ok(())
     }
+}
+
+fn resolve_program(name: &str) -> Option<PathBuf> {
+    crate::installer::clients::resolve_command(name)
+}
+
+fn install_agent_skills(
+    clients: &[crate::installer::ClientKind],
+) -> std::result::Result<(), String> {
+    let home = PathBuf::from(
+        std::env::var("HOME")
+            .map_err(|_| "HOME is required to install agent skills".to_string())?,
+    );
+    let source = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .map(|parent| parent.join("skills/helixir-memory/SKILL.md"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills/helixir-memory/SKILL.md")
+        });
+    crate::installer::skills::install(&source, &home, clients)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Verify that the central configuration parses and has private permissions.
+#[must_use]
+pub fn doctor_config_ready() -> bool {
+    let path = crate::core::config::HelixirConfig::config_file_path().or_else(|| {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".helixir/helixir.toml"))
+    });
+    let Some(path) = path else { return false };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    if toml::from_str::<crate::core::config::HelixirConfig>(&contents).is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o077 == 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    true
 }

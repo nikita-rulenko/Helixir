@@ -79,7 +79,7 @@ fn think_commit_fast_path_latency_and_evidence_edge() {
     );
 
     // Conclusion is deliberately DISTANT from the evidence text: no near
-    // neighbours → the deterministic gate decides ADD with zero LLM calls,
+    // neighbours → the deterministic gate decides ADD with zero reasoning-LLM calls,
     // which is the fast path's headline property.
     let conclusion = format!(
         "Retry policy fastc {run}: exponential backoff capped at ninety seconds with jitter."
