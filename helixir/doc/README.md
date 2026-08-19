@@ -17,7 +17,7 @@ doc/
 ├── dataflow.md           how data moves: add_memory + search + FastThink pipelines
 ├── userflow.md           MCP tools and typical agent sessions
 ├── test-design.md        what is tested, what is not, what to add next
-├── retrieval-research.md research record behind the algo_opt profile (mostly shipped)
+├── retrieval-research.md historical research record behind the default algo_opt profile
 ├── design-rationale.md   what Helixir is, evolution by release, and WHY
 │                         the load-bearing decisions are the way they are
 └── <version>/            per-version snapshot (release notes, state)
@@ -25,7 +25,8 @@ doc/
     └── state-snapshot.md
 ```
 
-`codebase-audit.md` and `changes-2026-06-*.md` are dated engineering records,
+`codebase-audit.md`, `changes-2026-06-*.md`, `retrieval-research.md`, and
+`moira.private.md` are dated engineering/design records,
 not descriptions of the current branch. Their old branch names, counts and
 tool totals are intentionally preserved as historical evidence. Current facts
 belong in the six evergreen design documents above or the newest version draft.

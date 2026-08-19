@@ -68,6 +68,7 @@ is available to authorize a connection-level notification.
  │    for each memory i:                                                │
  │       SearchEngine::search(...)  (mind_toolbox/search/dispatch/)     │
  │           mode="contextual" scope="personal" k=5                     │
+ │           candidates already restricted to resolved rbac_scope      │
  │       LLMDecisionEngine::decide[_batch] (llm/decision/engine.rs)     │
  │           returns MemoryDecision { op, target_id, confidence, ... }  │
  └──────────────────────────────────────────────────────────────────────┘
@@ -84,7 +85,7 @@ is available to authorize a connection-level notification.
  │      LINK_EXISTING  → write MEMORY_RELATION to target                │
  │      CROSS_CONTRADICT → store new + Hive contradiction               │
  │      NOOP           → return early, increment skipped                │
- │      DELETE         → soft-delete target                             │
+ │      DELETE         → preserve intent, execute as SUPERSEDE          │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -93,9 +94,9 @@ is available to authorize a connection-level notification.
  │    add_pipeline/enrich.rs                                            │
  │       ├── EntityManager: MENTIONS / EXTRACTED_ENTITY edges           │
  │       ├── OntologyManager::map_memory_to_concepts                    │
- │       │     → INSTANCE_OF / BELONGS_TO_CATEGORY                      │
- │       └── ReasoningEngine: derive IMPLIES / BECAUSE / CONTRADICTS    │
- │                            / SUPPORTS edges                          │
+ │       │     → INSTANCE_OF; Clotho later adds TAGGED_AS               │
+ │       └── ReasoningEngine: derive typed IMPLIES / BECAUSE /          │
+ │                            CONTRADICTS / SUPPORTS relations           │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -144,7 +145,7 @@ is available to authorize a connection-level notification.
 | `LINK_EXISTING` | New memory is related, not duplicate | No new Memory; relation only | `MEMORY_RELATION` |
 | `NOOP` | Exact duplicate (score ≥ `exact_duplicate_score`, 0.98) | Skip | — |
 | `CROSS_CONTRADICT` | Hive contradiction with another user's memory | Store new + Hive contradiction | `CONTRADICTS` |
-| `DELETE` | Explicit removal directive | Soft-delete via `is_deleted` flag | `HAS_HISTORY` |
+| `DELETE` | Model proposes removal of the same subject | Charter C1 blocks destruction; store the new fact and execute as `SUPERSEDE` | `SUPERSEDES`, `HAS_HISTORY` |
 
 ### Cross-user (Hive) phase
 
@@ -173,10 +174,17 @@ working group salts by group id, and a dedup federation salts by federation id.
 
 ## 2. `search_memory` pipeline
 
+The MCP facade resolves `actor_id` first. Every candidate set and graph
+expansion is intersected with that actor's materialized
+`MEMORY_IN_RBAC_GROUP` visibility before projection. `scope=collective|all`
+widens authorship ranking only inside this authorized set; `mode=full` removes
+the time bound, not the RBAC bound.
+
 ### High-level shape
 
 ```
- query (str), user_id, mode, scope, limit, temporal_days, graph_depth
+ actor_id, query, user_id, mode, scope, limit,
+ temporal_days | time_from/time_to, graph_depth
        │
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
@@ -237,7 +245,7 @@ working group salts by group id, and a dedup federation salts by federation id.
  ┌──────────────────────────────────────────────────────────────────────┐
  │  STEP 5 — Hive scope adjustment (if scope != "personal")             │
  │    fetch_memory_user_count_static                                    │
- │       boosts memories shared across users                            │
+ │       boosts scoped consensus families with multiple owners         │
  │    fetch_controversy_static                                          │
  │       annotates collective results with contradiction count          │
  └──────────────────────────────────────────────────────────────────────┘

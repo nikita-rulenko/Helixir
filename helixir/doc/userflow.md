@@ -16,17 +16,17 @@ There are 21 tools, 2 prompts, and 3 resources.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` plus `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` when buffered. |
-| `get_add_status` | `pending_id` | `actor_id` | Polling a promised buffered write. Enabled RBAC permits only its owner, creator, or a global admin. |
-| `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
-| `list_memories` | `user_id` | `limit`, `memory_type` | Bounded newest-first audit/debug view; filtering is applied by the query contract. |
-| `update_memory` | `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
-| `get_memory_graph` | `user_id` | `memory_id`, `depth` | Visualizing relationships around a node. |
-| `search_by_concept` | `user_id`, `query` | `concept_type`, `tags`, `mode`, `limit` | When the agent knows it wants skills, preferences, goals, etc. |
-| `search_reasoning_chain` | `user_id`, `query` | `chain_mode` (`causal`/`forward`/`both`/`deep`), `max_depth`, `limit` | Answering "why" / "what follows" questions. |
-| `connect_memories` | `user_id`, `query_a`, `query_b` | `max_depth` | "How is A related to B?" — path between two concepts with edge types and confidence. |
-| `search_incomplete_thoughts` | — | `limit` | Session start, to resume interrupted FastThink sessions. |
-| `list_users` | — | `limit` | Orientation in a shared store: which identities exist. Collective-gated (`available:false` in Solo); privacy-safe (ids/names only). |
+| `add_memory` | `actor_id`, `user_id`, `message` | `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Non-admin working-group writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` plus `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` when buffered. |
+| `get_add_status` | `actor_id`, `pending_id` | — | Polling a promised buffered write. RBAC permits only its owner, creator, or a global admin. |
+| `search_memory` | `actor_id`, `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `time_from`, `time_to`, `graph_depth` | Session start, before reasoning, when context is needed. Scope never widens RBAC visibility. |
+| `list_memories` | `actor_id`, `user_id` | `limit`, `memory_type` | Bounded newest-first audit/debug view; filtering is applied by the query contract. |
+| `update_memory` | `actor_id`, `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
+| `get_memory_graph` | `actor_id`, `user_id` | `memory_id`, `depth` | Visualizing authorized relationships around a node. |
+| `search_by_concept` | `actor_id`, `user_id`, `query` | `concept_type`, `tags`, `mode`, `limit` | When the agent knows it wants skills, preferences, goals, etc. |
+| `search_reasoning_chain` | `actor_id`, `user_id`, `query` | `chain_mode` (`causal`/`forward`/`both`/`deep`), `max_depth`, `limit` | Answering "why" / "what follows" questions. |
+| `connect_memories` | `actor_id`, `user_id`, `query_a`, `query_b` | `max_depth` | "How is A related to B?" — authorized path between two concepts with edge types and confidence. |
+| `search_incomplete_thoughts` | `actor_id` | `user_id`, `limit` | Locate historical pre-RBAC incomplete FastThink memories; current RBAC timeouts do not auto-persist. |
+| `list_users` | `actor_id` | `limit` | Global-admin registry orientation: which identities exist. Also collective-tier gated; returns only ids/names/timestamps. |
 | `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
 | `resolve_contradiction` | `from_id`, `to_id`, `resolution` | — | Answering a `contradiction_review` notice: `confirm` / `retract` (supersedes, history kept) / `preference`. Retired disputes stop re-surfacing. |
 | `agent_farewell` | `agent_id` | — | Marking a one-shot agent as done in the swarm roster without changing authorship provenance. |
@@ -41,13 +41,20 @@ question; the agent decides whether to ask the human.
 
 | Tool | Mandatory params | Optional params | When to call |
 |---|---|---|---|
-| `think_start` | `session_id`, `initial_thought` | `actor_id` | Beginning a complex reasoning task; enabled RBAC binds the session to this actor. |
-| `think_add` | `session_id`, `content` | `actor_id`, `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step; enabled RBAC requires the bound actor. |
-| `think_recall` | `session_id`, `query`, `parent_idx` | `actor_id`, `user_id` | Pulling authorized persistent memories into the live session. |
-| `think_conclude` | `session_id`, `conclusion` | `actor_id`, `supporting_idx[]` | Marking a final answer in the actor-bound session. |
-| `think_commit` | `session_id`, `user_id` | `actor_id`, `group_id` | Persisting the conclusion through the same RBAC-scoped write pipeline. |
-| `think_discard` | `session_id` | `actor_id` | Throwing away the actor's own session. |
-| `think_status` | `session_id` | `actor_id` | Checking the actor's own session status. |
+| `think_start` | `actor_id`, `session_id`, `initial_thought` | — | Beginning a complex reasoning task and binding it to this actor. |
+| `think_add` | `actor_id`, `session_id`, `content` | `thought_type` (`reasoning`/`hypothesis`/`observation`/`question`), `parent_idx` | Each reasoning step under the bound actor. |
+| `think_recall` | `actor_id`, `session_id`, `query`, `parent_idx` | `user_id` | Pulling authorized persistent memories into the live session. |
+| `think_conclude` | `actor_id`, `session_id`, `conclusion` | `supporting_idx[]` | Marking a final answer in the actor-bound session. |
+| `think_commit` | `actor_id`, `session_id`, `user_id` | `group_id` | Persisting the conclusion through the same RBAC-scoped write pipeline. |
+| `think_discard` | `actor_id`, `session_id` | — | Throwing away the actor's own session. |
+| `think_status` | `actor_id`, `session_id` | — | Checking the actor's own session status. |
+
+`actor_id` remains `Option` in applicable wire structs only for the internal
+pre-bootstrap compatibility path. In normal permanent-RBAC operation it is
+mandatory whenever the tool schema exposes it. Three trusted-endpoint support
+tools have narrower identity contracts: `swarm_status` takes only its time
+window, `agent_farewell` takes the exact `agent_id`, and
+`resolve_contradiction` takes the exact ids from a delivered notice.
 
 Under permanent RBAC, ingest completion logging notifications are disabled:
 they carry no request actor. Poll with `get_add_status`, or receive the result

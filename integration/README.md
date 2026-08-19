@@ -11,10 +11,11 @@ quality.
 | File | For | How to use |
 |---|---|---|
 | [`AGENTS.md`](AGENTS.md) | Any coding agent (Cursor, Claude Code, Codex, Aider, Continue, …) via the [agents.md](https://agents.md) convention | Copy to your **project root** as `AGENTS.md` (or merge into your existing one). Most agents read it automatically. |
-| [`SKILLS.md`](SKILLS.md) | Claude (Claude Code / Claude Desktop) as a reusable **Skill** | Copy to `~/.claude/skills/helixir-memory/SKILL.md` (rename to `SKILL.md`). It auto-triggers when memory is relevant. |
+| [`SKILLS.md`](SKILLS.md) | Legacy portable copy of the reusable **Skill** | Copy only when the client cannot consume the canonical [`helixir/skills/helixir-memory/SKILL.md`](../helixir/skills/helixir-memory/SKILL.md). |
 
-Both are self-contained and use the same use-case model — pick whichever fits
-your agent stack (or both).
+Both are self-contained. The versioned canonical skill in `helixir/skills/`
+is what `helixir onboard` installs for Codex, Claude Code and Cursor; keep a
+manual copy only for clients the orchestrator cannot manage.
 
 ## Prerequisite: install and wire Helixir
 
@@ -47,10 +48,11 @@ new machine.
 Or add it manually to your client's MCP config (stdio transport, the
 `helixir-mcp` binary). See the repo README → **Integration**.
 
-## Customize one thing: `user_id`
+## Customize identity and access
 
-The templates use `claude` as the example `user_id`. Replace it with a stable id
-for your agent or user — keep it **consistent** across sessions so the memory
-stays coherent and personal search is scoped correctly. For a shared team
-collective, give each agent its own `user_id` and use `scope="collective"` to
-read across them.
+The templates use `claude` as both example values. Replace it with the stable
+principal provisioned by onboarding and pass that lower-case value as
+`actor_id` on every call. Keep a stable `user_id` for memory ownership; it may
+equal the actor, but it is provenance rather than an authorization credential.
+Working-group writes also name their concrete `group_id`. `scope="collective"`
+can rank other owners only inside groups the actor is already allowed to read.

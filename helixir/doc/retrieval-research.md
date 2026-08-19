@@ -1,13 +1,12 @@
-# Graph traversal & retrieval research — proposals for acceleration
+# Historical retrieval research — proposals and outcomes
 
-> **Status (2026-06-12):** this research is largely SHIPPED on `dev` under the
-> `algo_opt` retrieval profile. Landed: P0.1–P0.4, P1.1 (native BM25 + RRF),
-> P1.2-equivalent (LLM-free embedding-guided chains), P1.3 (levelwise batched
-> expansion), P2.3, plus PPR re-ranking and `connect_memories` that grew out
-> of §6. Open: P1.4 (HNSW tuning), P1.5a (HelixDB distance exposure), P2.1,
-> P2.2, P2.4. Kept as the historical record of the reasoning behind the work.
+> **Historical record, reconciled 2026-08-19.** Sections 1–8 preserve the
+> May/June 2026 observations and proposals; they are not the current runtime
+> specification. Current behavior lives in `architecture.md §7.2` and
+> `dataflow.md §2`. `algo_opt` has been the default since v0.4.0.
 
-> _Reflects code as of `dev` @ e1b05e5. Last verified: 2026-05-12. Source for §1–§3 is the audit performed on the live build; §4–§6 cross-reference HelixDB docs and current RAG literature (2026)._
+> _Research snapshot: `dev` @ e1b05e5, observed 2026-05-12. Outcome status
+> last reconciled against the unreleased v0.16 branch on 2026-08-19._
 
 This document collects everything we learned from a focused research pass on
 graph traversal theory, HelixDB's native primitives, and the current state of
@@ -18,6 +17,22 @@ It is **research output**, not a roadmap. Each proposal links back to the
 finding that motivates it and the load-bearing invariant it must respect
 (`design-rationale.md` §3). Implementation tickets are out of scope here —
 file them separately when we agree on the direction.
+
+### Outcome map
+
+| Proposal | Current outcome |
+|---|---|
+| P0.1–P0.4 | Shipped in the default `algo_opt` profile. |
+| P1.1 | Shipped: native BM25 + dense ANN fused with RRF. |
+| P1.2 / P2.3 | Shipped as LLM-free embedding-guided true BFS. |
+| P1.3 | Superseded after #89: the levelwise walker now fetches bounded frontier nodes by HelixDB primary key through `getConnectionsByInternalId`, avoiding the v2.3.5 label-scan arena growth. |
+| P1.4 | Still a benchmark/research opportunity, not a release blocker. |
+| P1.5a | Still depends on HelixDB exposing ANN distance; Helixir continues bounded client-side re-embedding for real cosine. |
+| P2.1 / P2.2 / P2.4 | Not part of the current release contract. |
+| P2.5 | The active levelwise walker uses configurable `beam_width` per parent. |
+
+Statements below phrased as “today” or “current” mean the 2026-05-12 snapshot,
+not v0.16.
 
 ---
 

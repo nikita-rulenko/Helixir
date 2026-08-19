@@ -9,7 +9,9 @@ Checks:
      order as their headings do in the body.
   2. "N tools" claims in GLOSSARY.md/README.md match the number of #[tool(
      definitions under helixir/src/mcp/tools/.
-  3. UPGRADING.md mentions the current minor version from Cargo.toml.
+  3. Documented schema/MCP counts match their authoritative sources.
+  4. UPGRADING.md mentions the current minor version from Cargo.toml.
+  5. Known removed schema names do not reappear as current contracts.
 """
 
 import glob
@@ -71,6 +73,93 @@ def check_tool_count():
                 fail(f"{doc}: claims '{n} tools' but the server exposes {actual}")
 
 
+def check_contract_counts():
+    schema = (ROOT / "helixir/schema/schema.hx").read_text()
+    tool_count = sum(
+        Path(path).read_text().count("#[tool(")
+        for path in glob.glob(str(ROOT / "helixir/src/mcp/tools/*.rs"))
+    )
+    counts = {
+        "node": len(re.findall(r"^N::", schema, re.M)),
+        "edge": len(re.findall(r"^E::", schema, re.M)),
+        "vector": len(re.findall(r"^V::", schema, re.M)),
+        "query": len(
+            re.findall(r"^QUERY\s+", (ROOT / "helixir/schema/queries.hx").read_text(), re.M)
+        ),
+        "prompt": len(
+            re.findall(r"^\s*#\[prompt\(", (ROOT / "helixir/src/mcp/handler.rs").read_text(), re.M)
+        ),
+        "resource": len(
+            re.findall(r"RawResource::new\(", (ROOT / "helixir/src/mcp/handler.rs").read_text())
+        ),
+    }
+    claims = {
+        "README.md": [
+            (rf"\b{counts['node']} node types\b", "node count"),
+            (rf"\b{counts['edge']} edge types\b", "edge count"),
+        ],
+        "helixir/doc/architecture.md": [
+            (rf"\b{counts['query']} HQL queries\b", "query count"),
+            (rf"\b{counts['node']} nodes / {counts['edge']} edges\b", "schema counts"),
+        ],
+        "helixir/doc/userflow.md": [
+            (
+                rf"There are {tool_count} tools, {counts['prompt']} prompts, and {counts['resource']} resources\.",
+                "MCP prompt/resource counts",
+            )
+        ],
+        "AGENTS.md": [
+            (rf"The MCP surface contains {tool_count} tools\.", "agent-guide tool count")
+        ],
+    }
+    for relative, expected in claims.items():
+        text = (ROOT / relative).read_text()
+        for pattern, label in expected:
+            if not re.search(pattern, text):
+                fail(f"{relative}: missing current {label} ({counts})")
+
+
+def check_removed_contracts():
+    current_docs = [
+        ROOT / "helixir/doc/architecture.md",
+        ROOT / "helixir/doc/dataflow.md",
+        ROOT / "helixir/doc/design-rationale.md",
+    ]
+    removed = [
+        "BELONGS_TO_CATEGORY",
+        "NEXT_CHUNK",
+        "APPLIES_IN",
+        "IN_SESSION",
+        "PAGE_TO_CHUNK",
+        "CHUNK_MENTIONS_CONCEPT",
+        "CONCEPT_HAS_EXAMPLE",
+        "ERROR_REFERENCES_CONCEPT",
+        "CATEGORY_HAS_EMBEDDING",
+    ]
+    for path in current_docs:
+        text = path.read_text()
+        for name in removed:
+            if name in text:
+                fail(f"{path.relative_to(ROOT)}: removed schema name {name} is presented in an evergreen doc")
+
+    stale_claims = {
+        ROOT / "helixir/doc/dataflow.md": ["Soft-delete via `is_deleted` flag"],
+        ROOT / "helixir/doc/design-rationale.md": [
+            "commit_partial writes a Memory",
+            "scheduled to become SUPERSEDE-only",
+        ],
+        ROOT / "README.md": [
+            "one batched HQL call per depth level",
+            "no LLM configured at all",
+        ],
+    }
+    for path, phrases in stale_claims.items():
+        text = path.read_text()
+        for phrase in phrases:
+            if phrase in text:
+                fail(f"{path.relative_to(ROOT)}: stale contract phrase: {phrase}")
+
+
 def check_upgrading():
     cargo = (ROOT / "helixir/Cargo.toml").read_text()
     m = re.search(r'^version\s*=\s*"(\d+)\.(\d+)\.', cargo, re.M)
@@ -88,6 +177,8 @@ def check_upgrading():
 
 check_toc()
 check_tool_count()
+check_contract_counts()
+check_removed_contracts()
 check_upgrading()
 
 if failures:
@@ -95,4 +186,4 @@ if failures:
     for f in failures:
         print(f"  ✗ {f}")
     sys.exit(1)
-print("docs-lint: TOC anchors, tool count and UPGRADING freshness all consistent")
+print("docs-lint: TOC, schema/MCP counts, removed contracts and upgrade freshness are consistent")

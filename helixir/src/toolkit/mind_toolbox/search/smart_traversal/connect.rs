@@ -5,7 +5,7 @@
 //! guar harvest → guar gum → fracking → shale stocks) is a **path query
 //! between two seed sets**, which none of the outward-walking tools can
 //! answer. This module runs two breadth-first waves — one from each anchor —
-//! over `getConnectionsLevelBatch` (one DB call per level per side) until the
+//! over bounded `getConnectionsLevelBatch` calls (one per level per side) until the
 //! waves meet, then reconstructs the path with edge types and a cumulative
 //! confidence (product of edge weights).
 

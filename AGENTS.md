@@ -32,7 +32,8 @@ graph/vector-DB familiarity. Concretely that means:
   `ServerHandler` trait, request lifecycle, and the stdio transport quirks.
 - **HelixDB / `helix-rs`** — you read `.hx` schema and query files fluently, know
   the difference between `N::` (node), `E::` (edge), `V::` (vector) types in HQL,
-  and treat the `query/queries.hx` file as a typed API contract.
+  and treat `helixir/schema/schema.hx` plus `helixir/schema/queries.hx` as the
+  typed persistence API contract.
 
 If a Rust-specific question makes you uncertain, **do not guess** — pull the relevant
 section of `helixir/doc/architecture.md`, check the actual crate sources, or use the
@@ -147,7 +148,7 @@ of these.
 |---|---|---|
 | Hive consensus is scoped by RBAC security domain; author nodes share `content_key` only inside a group/dedup federation | `add_pipeline/` + `RbacMemoryScope` | You will either break Hive consensus or leak isolated-group knowledge through global dedup. |
 | 8 ontology types are fixed in code and schema | `OntologyManager`, `data-model.md §4` | You will propose "dynamic ontology" and dilute the type space. |
-| `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class edges, not metadata | `ReasoningEngine`, `mind_toolbox/reasoning/` | You will collapse them into a single `metadata.reason` string and lose traversal. |
+| `BECAUSE / IMPLIES / SUPPORTS / CONTRADICTS` are first-class graph semantics, not metadata; `BECAUSE` / `IMPLIES` / `CONTRADICTS` have dedicated edges while `SUPPORTS` is stored through typed `MEMORY_RELATION` | `ReasoningEngine`, `mind_toolbox/reasoning/`, `schema.hx` | You will collapse them into a single `metadata.reason` string and lose traversal. |
 | Decision matrix replaces append-only | `LLMDecisionEngine`, `tooling_manager/add_pipeline/` | You will propose unconditional `ADD` and grow the corpus forever. |
 | FastThink does not touch HelixDB until `think_commit` | `fast_think/manager.rs` | You will persist thoughts eagerly and pollute long-term memory. |
 | Real cosine is computed by re-embedding on the client (HelixDB does not expose it) | `smart_traversal/scoring.rs` | You will treat re-embedding as wasteful and remove it. |
@@ -156,14 +157,15 @@ of these.
 
 ### 1bis.4 Capability surface (one paragraph)
 
-Tools today: `add_memory` (returns charter escalations in
+The MCP surface contains 21 tools. Its core tools are `add_memory` (returns charter escalations in
 `needs_clarification` under `algo_opt`), `search_memory` (modes `recent /
 contextual / deep / full`; scopes `personal / collective / all`; explicit
 event-time windows via `time_from`/`time_to`, out-of-window graph rows come
 back as flagged flashbacks; results carry
 provenance), `connect_memories` (path between two concepts), `search_by_concept`
 (8 types), `search_reasoning_chain` (modes `causal / forward / both / deep`,
-LLM-free under `algo_opt`), `list_memories`, `get_memory_graph`,
+free of generative/reasoning-LLM calls under the default `algo_opt` profile),
+`list_memories`, `get_memory_graph`,
 `update_memory`, `search_incomplete_thoughts`,
 plus seven FastThink tools (`think_start/add/recall/conclude/commit/discard/status`).
 The write-path escalation rules live in `helixir/memory-charter.md`.

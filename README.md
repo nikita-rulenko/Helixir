@@ -37,14 +37,14 @@
   - [Prerequisites](#prerequisites)
 - [How It Works](#how-it-works)
   - [Architecture](#architecture)
-  - [Read path (zero LLM calls)](#read-path-zero-llm-calls)
+  - [Read path (zero generative/reasoning LLM calls)](#read-path-zero-generativereasoning-llm-calls)
 - [**Generative memory — the Moirai**](#generative-memory--the-moirai) — Clotho · Lachesis · Atropos
 - [Ontology](#ontology)
 - [Graph Schema](#graph-schema)
 - [MCP Tools](#mcp-tools)
 - [Glossary](GLOSSARY.md) — PPR, RRF, apophenia gate, the Moirai and the rest of the vocabulary
 - [CLI](#cli) — `helixir setup` + driving the agents
-- [Integration](#integration) — Cursor, Claude Desktop
+- [Integration](#integration) — Codex, Cursor, Claude Code, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
 - [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.16)
@@ -68,7 +68,15 @@ appreciates.
 
 Helixir gives AI agents **memory that persists between sessions** — and more than that: memory that *reasons*. When an agent starts a new conversation, it recalls past decisions, preferences, goals and the **chains of reasoning behind them**, not a flat log of similar text.
 
-Every input is LLM-extracted into atomic facts, classified by ontology (8 types), linked to entities and to other facts by typed edges — causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative (`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine. Retrieval is a hybrid of dense vectors, BM25 keyword search and graph traversal ranked by Personalized PageRank — with **zero LLM calls on the read path**, so it is exactly as fast on a local ollama model as on a cloud API.
+Every input is LLM-extracted into atomic facts, classified by a fixed ontology
+(8 user-facing types), linked to entities and to other facts by typed edges —
+causal (`BECAUSE`, `IMPLIES`, `CONTRADICTS`, `SUPPORTS`) and associative
+(`RELATES_TO`, `PART_OF`, `IS_A`) — and stored in one graph+vector engine.
+These memory-level `IS_A` relations describe facts; they do not extend the
+code-owned ontology. Retrieval is a hybrid of dense vectors, BM25 keyword
+search and graph traversal ranked by Personalized PageRank — with **zero
+generative/reasoning LLM calls on the read path**. Cold semantic queries still
+use the configured local Nomic or explicit remote embedding endpoint.
 
 Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database) with native [MCP](https://modelcontextprotocol.io/) support for Codex, Cursor, Claude Desktop, Claude Code and any MCP-compatible client. Since v0.14.0, graph-backed RBAC is permanent: HelixDB itself owns principals, groups, roles, memory visibility and dedup federations, while `default` preserves the former full-trust workspace and `onboarding` admits new agents safely.
 
@@ -77,8 +85,8 @@ Built on [HelixDB](https://github.com/HelixDB/helix-db) (graph + vector database
 | Returns similar text chunks | Returns facts **with provenance**: what matched directly, what was pulled through which edge, and why |
 | Append-only — grows forever | Curated writes: ADD / UPDATE / SUPERSEDE / NOOP decided per fact |
 | No reasoning trail | Causal chains: *A because B*, *A implies C* — and `connect_memories(A, B)` finds the path between any two concepts |
-| LLM in the retrieval loop | Read path is LLM-free: ~15–30 ms warm searches, fully local |
-| Single-user silo | Shared graph: one fact, many knowers, consensus ranking, conflict detection |
+| LLM in the retrieval loop | No generation/reasoning LLM: ~15–30 ms warm; cold semantic queries use the configured embedding endpoint |
+| Single-user silo | RBAC-governed shared graph: consensus and conflict detection only inside a group or explicit federation |
 | Silent overwrites | Memory charter: conflicting writes escalate to the agent as questions |
 
 And recall is only the floor. Helixir now takes the next step — from *retrieving* chains to **generating** them: three background agents (the Moirai) weave a category layer over the graph and surface non-obvious cross-domain connections as **hypotheses with provenance**. See [Generative memory](#generative-memory--the-moirai).
@@ -89,7 +97,12 @@ Three principles drive every design decision; the long version lives in [`helixi
 
 **An elder brain forgets nothing.** There is deliberately **no delete tool**. Outdated facts are superseded — the old version stays in history (`HAS_HISTORY` edges, `valid_until`), reachable forever. Why? Because the value of memory is not in single facts but in long chains between them: *Rajasthan weather → guar harvest → guar gum price → fracking costs → shale stocks*. A memory that prunes "irrelevant" facts destroys the middle of chains it cannot yet see. Time affects **attention** (what surfaces first), never **reachability** (what can be found through connections).
 
-**The writer pays, the reader flies.** All expensive work — extraction, dedup decisions, relation inference — happens at write time. Reading is pure math over precomputed structure: no LLM, no re-embedding when warm. This is what makes a fully local setup (ollama + HelixDB) practical.
+**The writer pays, the reader flies.** All generative/reasoning LLM work —
+extraction, dedup decisions, relation inference — happens at write time.
+Reading ranks precomputed structure without calling Cerebras, DeepSeek or an
+Ollama generation model. Semantic search still embeds a cold query through the
+configured local Nomic or explicit remote embedding endpoint; warm queries use
+the cache.
 
 **The memory does not gaslight its owner.** Writes that conflict with what is already known — a reversed preference, a contradiction, anything destructive — are not resolved silently. They come back in `add_memory.needs_clarification` as ready-to-ask questions, governed by a human-editable [memory charter](helixir/memory-charter.md): a constitution of rules the engine may never override.
 
@@ -269,10 +282,13 @@ pulls Nomic, atomically switches the central config, and verifies the repair.
 
 ### Homebrew and APT
 
-Starting with v0.16.0, every signed release is published through both the
-`nikita-rulenko/tap` Homebrew tap and the Helixir APT repository. Package
-managers install immutable Helixir binaries and runtime resources; the same
-guided `helixir onboard` orchestrator then configures the machine.
+Beginning with v0.16.0, every signed release will be published through both the
+`nikita-rulenko/tap` Homebrew tap and the Helixir APT repository. **These
+channels are not live for the current v0.15.0 release:** use the commands below
+only after v0.16.0 and its signed indexes are published. Until then, use the
+release-archive fallback below or build from source. Package managers install
+immutable Helixir binaries and runtime resources; the same guided
+`helixir onboard` orchestrator then configures the machine.
 
 On macOS or Linuxbrew:
 
@@ -346,7 +362,7 @@ make onboard        # Re-run onboarding
 make doctor         # Readiness report + automatic embedding recovery
 ```
 
-The ongoing admin dashboard exposes live memory/node/agent counters, RBAC user,
+The admin dashboard exposes live memory/node/agent counters, RBAC user,
 group, role and dedup-federation administration, an interactive category-first
 memory graph, the Moirai evidence journal, Hygieia resource telemetry, and the
 same previewable/resumable installation plan as the CLI. It is deliberately
@@ -425,8 +441,8 @@ helixir control-plane uninstall
             Entity:     Entity:            Entity:      Concept:
             "AWS"       "server"           "Terraform"  Preference
                       |
-                Phase 1: Personal search (dedup check)
-                Phase 2: Cross-user search (shared facts)
+                Phase 1: Owner-anchored candidates in the resolved RBAC domain
+                Phase 2: Cross-owner consensus in that SAME domain
                       |
                 Decision: ADD / UPDATE / SUPERSEDE / NOOP
                       |
@@ -458,7 +474,7 @@ Engine  Reasoning Manager    |
   HelixDB (graph + vector database)
 ```
 
-### Read path (zero LLM calls)
+### Read path (zero generative/reasoning LLM calls)
 
 > **Curated output.** Results are compacted before they reach the agent:
 > capped at an honest top-K, deduplicated, and a raw source never coexists
@@ -472,8 +488,8 @@ Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ─
                                └──> BM25 keyword (SearchBM25)  ──┤
                                                                  ├──> RRF fusion
                                                                  v
-                              graph expansion: one batched HQL call per depth level
-                              (8 edge families, parent provenance kept)
+                              graph expansion: bounded frontier, primary-key HQL
+                              lookup per node (8 edge families, provenance kept)
                                                                  v
                               Personalized PageRank over the typed ego-network
                               final rank = 0.3·cosine + 0.5·PPR + 0.2·freshness
@@ -481,7 +497,9 @@ Query ──> embedding (cached) ──┬──> dense ANN (HelixDB HNSW)   ─
                     results with provenance: origin=seed|graph, edge, parent, ppr
 ```
 
-Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` run on the same machinery — the read path works identically with no LLM configured at all.
+Warm search: p50 ≈ 15–30 ms. Reasoning chains and `connect_memories` do not
+invoke a generative/reasoning LLM. Semantic search still requires the configured
+embedding path for cache misses; graph-only projections do not.
 
 > **Time windows & flashbacks.** `search_memory` takes an explicit event-time window (`time_from` / `time_to`, RFC3339 or `YYYY-MM-DD`). The window hard-filters the *seeds* — the direct answers — but graph expansion stays exempt: a memory from outside the window that is linked to an in-window result returns anyway, flagged `flashback: true` with its `event_date`, capped by a separate small allowance (`retrieval.flashback_max`, default 3) so associations never crowd the period's own rows. Like human memory: thinking about last week can surface last year — but you know it's old.
 
@@ -572,12 +590,11 @@ Helixir stores everything as a typed graph: **22 node types** (+ 5 vector-index 
 
 ### Memory ↔ memory relations (the edge arsenal)
 
-All seven typed relations between memories persist as ONE physical edge —
-`MEMORY_RELATION` — whose `relation_type` property names the type, so new
-relation types need no schema change. Four are **causal/logical** (these form
-reasoning chains and are what `search_reasoning_chain` walks); three are
-**associative/structural** (relatedness without a causal claim; they surface
-in `get_memory_graph`):
+The API presents seven semantic relations without exposing their physical
+storage shape. `IMPLIES`, `BECAUSE`, and `CONTRADICTS` have dedicated edges;
+`SUPPORTS`, `RELATES_TO`, `PART_OF`, and `IS_A` use `MEMORY_RELATION` with a
+typed `relation_type`. `search_reasoning_chain` and `get_memory_graph` project
+the same names either way:
 
 | relation_type | Kind | What it means |
 |:--------------|:-----|:--------------|
@@ -589,12 +606,11 @@ in `get_memory_graph`):
 | **PART_OF** | associative | A is a part/component of B |
 | **IS_A** | associative | A is a kind/instance of B |
 
-Two dedicated memory→memory edges are written by the **decision engine**
-(not the reasoning arsenal): `SUPERSEDES` (a new fact replaces an outdated
-one — with reason and timestamp) and `CONTRADICTS` (a tracked, resolvable
-conflict — with `resolved` / `resolution_strategy` for the reconcile pass).
+The **decision pipeline** also writes `SUPERSEDES` when a new fact replaces an
+outdated one and uses the dedicated `CONTRADICTS` edge for tracked, resolvable
+conflicts (`resolved` / `resolution_strategy` feed the reconcile pass).
 
-### Edge types (active)
+### Edge types (runtime-written)
 
 Every type below is verified against the code: it has a writer query AND a
 Rust caller. (An edge type earns its place by three tests: a read-path
@@ -604,23 +620,27 @@ failed those tests were removed in v0.9.x — see UPGRADING.)
 
 | Edge | From → To | What it means |
 |:-----|:----------|:--------------|
-| **HAS_MEMORY** | User → Memory | User owns this memory (consensus `user_count` derives from these) |
+| **RBAC_MEMBER_OF** | User → RbacGroup | Active graph-backed group membership |
+| **MEMORY_IN_RBAC_GROUP** | Memory → RbacGroup | Materialized read boundary for a memory |
+| **RBAC_GROUP_IN_DEDUP_GROUP** | RbacGroup → RbacDedupGroup | Current federation membership |
+| **MEMORY_IN_RBAC_DEDUP_GROUP** | Memory → RbacDedupGroup | Persisted dedup-domain provenance |
+| **HAS_MEMORY** | User → Memory | Authorship/stance provenance; never an ACL |
 | **INSTANCE_OF** | Memory → Concept | Memory is of this ontology type |
 | **TAGGED_AS** | Memory → Category | Clotho's category tag (the Moirai substrate) |
+| **SUBCATEGORY_OF** | Category → Category | Category hierarchy maintained by Clotho/tooling |
+| **ALIAS_OF** | Category → Category | Vocabulary convergence to a canonical category |
 | **MENTIONS** | Memory → Entity | Memory mentions this entity |
 | **EXTRACTED_ENTITY** | Memory → Entity | Entity was LLM-extracted from this memory |
 | **RELATES_TO** | Entity → Entity | Two entities are related (typed: works_at, uses, etc.) |
-| **PART_OF** | Entity → Entity | Hierarchical entity relations |
 | **VALID_IN** | Memory → Context | Memory applies in this context (work, personal...) |
-| **CREATED_IN** | Memory → Session | Which session created this memory |
 | **AGENT_CREATED** | Agent → Memory | Authorship provenance: this agent wrote it |
 | **HAS_HISTORY** | Memory → HistoryEvent | Audit trail: who changed what and when |
-| **HAS_CHUNK** | Memory → MemoryChunk | Memory split into chunks (long texts) |
+| **HAS_CHUNK** | Memory → MemoryChunk | Oversized source storage/reconstruction; chunks are not retrieval units |
+| **MEMORY_RELATION** | Memory → Memory | Physical edge for typed associative/reasoning relations |
+| **IMPLIES / BECAUSE / CONTRADICTS** | Memory → Memory | Dedicated causal/conflict relations retained by the live and compatibility paths |
+| **SUPERSEDES** | Memory → Memory | Replacement without deleting history |
 | **HAS_EMBEDDING** | Memory → MemoryEmbedding | Memory's vector index for semantic search |
 | **HAS_SUBTYPE** | Concept → Concept | Ontology hierarchy (Attribute → Skill) |
-| **IS_A** | Concept → Concept | Dynamic ontology extension |
-| **CONCEPT_RELATED_TO** | Concept → Concept | Cross-concept links |
-| **ALIAS_OF** | Category → Category | Vocabulary convergence: near-synonym categories point at their canonical (Clotho wires these; mint-time convergence prevents new synonyms) |
 | **MOIRAI_DERIVED_FROM** | Moirai Memory → Memory | Admin-only provenance; deliberately absent from ordinary reasoning traversal |
 
 ### Edge types (in development)
@@ -629,13 +649,16 @@ Declared in the schema with a named producer, not yet wired end-to-end:
 
 | Edge | From → To | Planned producer |
 |:-----|:----------|:-----------------|
-| ENTITY_HAS_EMBEDDING | Entity → EntityEmbedding | Entity-resolution v2: persisted vectors for cross-session entity dedup (fragmented entities break graph hubs) |
-| CHUNK_TO_EMBEDDING | DocChunk → ChunkEmbedding | Reserved doc pipeline. Memory-chunk vectors were rejected (#86): chunks are raw-source storage; the retrieval unit is the extracted atom |
+| `CREATED_IN` | Memory → Session | Session persistence is not wired |
+| `IS_A` / `CONCEPT_RELATED_TO` | Concept → Concept | Internal representation for the fixed ontology; never a user-extensible taxonomy |
+| `PART_OF` | Entity → Entity | HQL/helper exists, but the live extractor writes typed `RELATES_TO` relations instead |
+| `ENTITY_HAS_EMBEDDING` | Entity → EntityEmbedding | Persisted entity-resolution vectors |
+| `CHUNK_TO_EMBEDDING` | DocChunk → ChunkEmbedding | Reserved documentation pipeline. Memory chunks deliberately have no vector index (#86) |
 
-Everything else that used to sit in a "reserved" list — duplicate twins and
-an unbuilt documentation-ingestion subsystem — was removed from the schema
-in v0.9.x rather than left as fiction: a type without a producer misleads
-more than it reserves.
+Older names such as `BELONGS_TO_CATEGORY`, `NEXT_CHUNK`, `APPLIES_IN`, and
+`IN_SESSION` are not part of the current schema. The complete active/reserved
+inventory is maintained in
+[`helixir/doc/data-model.md`](helixir/doc/data-model.md).
 
 ---
 
@@ -653,7 +676,7 @@ more than it reserves.
 | `search_reasoning_chain` | Traverse causal/logical connections: IMPLIES, BECAUSE, CONTRADICTS, SUPPORTS — LLM-free |
 | `get_memory_graph` | Return memory as a graph of nodes and typed edges — causal (IMPLIES/BECAUSE/SUPPORTS/CONTRADICTS) plus associative (RELATES_TO/PART_OF/IS_A) |
 | `list_memories` | Bulk dump for a user (newest first, no ranking) — for counting/auditing |
-| `list_users` | Roster of identities (`user_id`s) for orientation — gated by the collective tier, privacy-safe (no emails/content); use it to find your own or a teammate's id |
+| `list_users` | Global-admin view of registered `user_id`s. Pass `actor_id`; collective-tier gated and privacy-safe (ids/names/timestamps, no content) |
 | `swarm_status` | **Rendezvous through the DB itself**: the live agent roster (role, host, status, last-seen) — who else is working this memory right now. Collective-gated; presence comes from `add_memory` heartbeats, no side channel |
 | `resolve_contradiction` | Answer a `contradiction_review` notice: `confirm` (my memory stands), `retract` (the disputing memory supersedes mine — history preserved) or `preference` (both coexist). Non-destructive in every branch |
 | `agent_farewell` | Mark a one-shot agent as done in the swarm roster without changing authorship provenance |
@@ -700,27 +723,39 @@ helixir rbac group add-user --group onboarding --user alice --role worker
 helixir rbac group add-user --group alpha --user alice --role worker
 helixir rbac grant --user root --role admin
 helixir rbac check --user alice --action read --owner bob
-helixir model download | status        # fetch / inspect the local NLI judge (ONNX weights)
-helixir gateway start | status | stop  # serve MCP over the network (streamable-HTTP, #42)
+helixir model download                  # fetch the local NLI judge (ONNX weights)
+helixir model status                    # inspect NLI readiness
+helixir gateway start                   # serve MCP over the network (streamable-HTTP, #42)
+helixir gateway status
+helixir gateway stop
 helixir categories                     # the category dictionary + member counts (coverage)
 helixir clotho grow --user <id>        # tag a user's memories, growing the dictionary on misses
 helixir lachesis route --seed <cat>    # route a cross-domain subset thread (with witnesses)
 helixir atropos                        # curate threads into ranked, journaled insights
 helixir pipeline --user <id>           # one orchestrated pass: Clotho → Lachesis → Atropos
 helixir daemon start --user <id> --interval 600   # run passes in the background
-helixir daemon status | stop           # inspect / stop the background daemon
+helixir daemon status                   # inspect the background daemon
+helixir daemon stop
 #   per-Moira cadence: --clotho-every 1 --insight-every 3 --merge-every 5 --reconcile-every 5
 #   (1 = every pass, N = every Nth, 0 = never; defaults live in moira.daemon.* of helixir.toml)
 helixir merge --limit <n>              # run the NLI paraphrase backstop once (collective)
-helixir journal | insights             # activity + insight journals (with provenance)
-helixir watch start | run --once | stop | status   # Hygieia, the health watchdog:
+helixir journal                         # activity journal
+helixir insights                        # insight journal with provenance
+helixir watch start                     # Hygieia, the health watchdog
+helixir watch run --once
+helixir watch status
+helixir watch stop
 #   DB liveness (self-heals via docker restart when allowed), container memory
 #   pressure, orphaned daemons; alerts land as ops_alert notices IN the memory
-helixir watch install | uninstall      # run the watchdog as a login service
+helixir watch install                   # run the watchdog as a login service
+helixir watch uninstall
 #   (launchd / systemd user unit); watchdog.on_alert_cmd pushes each alert to
 #   a human too — shell hook with HELIXIR_ALERT_KIND/_SUMMARY in the env
 helixir health                         # recent health events (health.jsonl)
-helixir config get | set <k> <v> | edit | apply   # the layered config, kubectl-style:
+helixir config get                      # redacted effective config
+helixir config set <k> <v>
+helixir config edit
+helixir config apply                    # validate and hot-reload supported processes
 #   edit ~/.helixir/helixir.toml (comments preserved), validate, then `apply`
 #   hot-reloads running MCP/gateway processes via SIGHUP — the client is rebuilt
 #   from the re-read file and swapped atomically, no Claude Desktop reboot.
@@ -775,57 +810,57 @@ Helixir Agent Skill, registers MCP non-destructively, and finishes with doctor.
 
 > **Make your agents *use* the memory well.** Wiring the MCP server is step one; the [`integration/`](integration/) templates (a drop-in `AGENTS.md` and a Claude `SKILLS.md`) encode how an agent should recall before answering, capture durable facts, and reason with FastThink — the same rules the maintainers run, so your agents get the same quality.
 
-### Cursor
+### Minimal stdio configuration
 
-Add to `~/.cursor/mcp.json`:
+`helixir onboard` installs a client entry named `helixir-local` for detected
+Codex, Claude Code and Cursor clients. `helixir setup` additionally supports
+Claude Desktop and Gemini CLI as a lightweight registration-only path. Prefer
+those commands: they preserve existing entries, install the current skill and
+write a stable `HELIXIR_RBAC_ACTOR`.
+
+For a custom MCP client, the entry itself should stay minimal. Provider URLs,
+models and secrets belong in the private central `~/.helixir/helixir.toml` (or
+process environment), not duplicated into every editor configuration:
 
 ```json
 {
   "mcpServers": {
-    "helixir": {
-      "command": "/path/to/helixir-mcp",
+    "helixir-local": {
+      "command": "/home/you/.helixir/current/helixir-mcp",
       "env": {
         "HELIX_HOST": "localhost",
         "HELIX_PORT": "6969",
-        "HELIX_LLM_PROVIDER": "cerebras",
-        "HELIX_LLM_MODEL": "gpt-oss-120b",
-        "HELIX_LLM_API_KEY": "YOUR_KEY",
-        "HELIX_EMBEDDING_PROVIDER": "openai",
-        "HELIX_EMBEDDING_MODEL": "nomic-embed-text-v1.5",
-        "HELIX_EMBEDDING_URL": "https://openrouter.ai/api/v1",
-        "HELIX_EMBEDDING_API_KEY": "YOUR_KEY"
+        "HELIXIR_RBAC_ACTOR": "codex"
       }
     }
   }
 }
 ```
 
-### Claude Desktop
+On macOS the command is `/Users/<you>/.helixir/current/helixir-mcp`. Use one
+stable lower-case actor per client; it must already exist in `onboarding` or an
+assigned working group. `actor_id` authorizes the call, while `user_id` remains
+the memory owner.
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+### Client configuration locations
 
-Same JSON structure as above.
+- Cursor: `~/.cursor/mcp.json`
+- Claude Desktop on macOS:
+  `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Claude Desktop on Windows:
+  `%APPDATA%\Claude\claude_desktop_config.json`
+- Codex and Claude Code: prefer their native registration commands, which
+  `helixir onboard`/`helixir setup` invoke safely.
 
-### Cursor Rules (recommended)
+### Agent instructions (recommended)
 
-Add to **Cursor Settings > Rules** so the agent actually uses its memory:
-
-```
-# Core Memory Behavior
-- At conversation start, call search_memory to recall relevant context
-- After completing tasks, save key outcomes with add_memory
-- Use search_by_concept for skill/preference/goal queries
-- Use search_reasoning_chain for "why" questions
-
-# FastThink for Complex Reasoning
-- Before major decisions, use FastThink to structure your reasoning
-- Flow: think_start -> think_add (repeat) -> think_recall -> think_conclude -> think_commit
-
-# What to Save
-- ALWAYS save: decisions, outcomes, architecture changes, error fixes, preferences
-- NEVER save: grep results, lint output, file contents, temporary data
-```
+Installing the server is not enough: agents must recall, pass `actor_id` to
+every tool that accepts it, write to a concrete group and close one-shot
+presence. `helixir onboard` installs the
+canonical skill. For manual integration, copy
+[`integration/AGENTS.md`](integration/AGENTS.md) or
+[`helixir/skills/helixir-memory/SKILL.md`](helixir/skills/helixir-memory/SKILL.md)
+instead of maintaining a shorter editor-specific prompt.
 
 ---
 
@@ -971,7 +1006,12 @@ HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt HELIX_LLM_API_KEY=dead-key \
   cargo test -p helixir --test mcp_read_e2e  -- --ignored --nocapture   # real MCP binary over stdio
 ```
 
-**Hive E2E:** `make test-e2e-hive` runs `hive_cross_user_collective_link_e2e` (ignored by default in `cargo test`). It adds the same fact for two `user_id` values and asserts collective `user_count ≥ 2` on the first memory. LLM decisions can be flaky—retry if needed.
+**Hive E2E:** `make test-e2e-hive` runs
+`hive_cross_user_collective_link_e2e` (ignored by default in `cargo test`). It
+writes the same fact for two owners inside one authorized RBAC group/federation
+and asserts that collective projection reports `user_count ≥ 2` for the scoped
+consensus family. Isolated groups must not merge. A failed live model assertion
+is evidence to inspect, not a reason to retry until green.
 
 ### Project structure
 

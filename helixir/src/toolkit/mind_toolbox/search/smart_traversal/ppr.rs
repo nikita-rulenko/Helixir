@@ -1,4 +1,4 @@
-//! Personalized PageRank over the ego-network collected during batched graph
+//! Personalized PageRank over the bounded ego-network collected during graph
 //! expansion (elder-brain #9).
 //!
 //! The legacy scoring multiplies an edge weight (< 1) per hop, so relevance
@@ -8,10 +8,11 @@
 //! several coherent paths from the seeds outranks a weakly-attached close
 //! neighbour. (Same move as HippoRAG, but over typed reasoning edges.)
 //!
-//! Scope note: the walk runs over the **ego-network** fetched by
-//! `getConnectionsLevelBatch` (seeds + their ≤depth-hop neighbourhood), not
-//! the whole graph. That keeps the read path O(depth) DB calls; the
-//! approximation is exact for everything the search can return anyway.
+//! Scope note: the main search walk builds the ego-network through bounded
+//! primary-key `getConnectionsByInternalId` fetches (seeds plus their
+//! ≤depth-hop neighbourhood), not a label scan over the whole graph. Path and
+//! longest-chain helpers may use `getConnectionsLevelBatch`. The
+//! approximation is exact for everything the bounded search can return.
 
 use std::collections::HashMap;
 

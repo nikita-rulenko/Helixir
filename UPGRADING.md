@@ -20,6 +20,11 @@ distribution, a persistent versioned embedding cache, one installer service
 shared by CLI and browser flows, a hardened versioned admin API, redacted
 post-install settings, and a managed backup vault.
 
+> **Unreleased branch note.** The commands below become package-manager paths
+> only after the v0.16.0 release workflow publishes and signs both channels.
+> Until then, use the current signed release archive or build this branch from
+> source; do not treat a missing formula/package as an installation failure.
+
 Choose one package path:
 
 ```bash
@@ -198,7 +203,8 @@ Because the new default expects the new HQL queries on your instance,
 existing installations should follow the steps below before (or right
 after) updating the binary — until then, searches fall back to slower
 legacy paths with a loud startup warning. To get the new read path (hybrid
-BM25 search, batched graph traversal, PPR ranking, provenance, LLM-free
+BM25 search, bounded primary-key graph traversal, PPR ranking, provenance,
+generation-LLM-free
 chains, `connect_memories`), follow the steps below **in order**.
 
 ### 1. Update the binary

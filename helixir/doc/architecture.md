@@ -123,7 +123,7 @@ should require deliberation.
 │     search/                search router, RBAC projection, scoring        │
 │     graph.rs               edges, history, user link                     │
 │     reasoning.rs           IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS    │
-│     crud.rs                update / delete                               │
+│     crud.rs                update + operator-only repair purge           │
 │                                                                          │
 │   mind_toolbox/            domain primitives                             │
 │     search/{vector,bm25,hybrid,onto_search,smart_traversal,...}       │
@@ -131,7 +131,7 @@ should require deliberation.
 │     ontology/              OntologyManager (8 concept types)             │
 │     reasoning/             ReasoningEngine                               │
 │     chunking/              ChunkingManager (storage/reconstruction)       │
-│     memory/{deletion,remark,...}    soft-delete, supersession, evolution │
+│     memory/{crud,remark,...}        supersession/evolution primitives    │
 │     memory_chain/          chain traversal                               │
 │     fast_think/            ephemeral working memory (petgraph)           │
 │                                                                          │
@@ -296,8 +296,8 @@ plus the root `README.md`.
   Entity, Relation, State}` tree in `data-model.md §4`.
 - **Decision matrix per write.** The `LLMDecisionEngine` picks one of
   `ADD / UPDATE / SUPERSEDE / CONTRADICT / LINK_EXISTING / CROSS_CONTRADICT
-  / NOOP / DELETE` per atomic fact, against the personal-then-collective
-  candidate set (v0.2.0 baseline; v0.2.1 wired `LINK_EXISTING` /
+  / NOOP / DELETE` per atomic fact, against owner-then-cross-owner candidates
+  inside one resolved RBAC security domain (v0.2.0 baseline; v0.2.1 wired `LINK_EXISTING` /
   `CROSS_CONTRADICT`; v0.3.1 added coherence guard so `UPDATE` with
   incoherent merged content downgrades to `ADD`).
 - **Coherence guard.** `is_coherent_memory` + `split_incoherent_memory`
@@ -318,19 +318,20 @@ plus the root `README.md`.
   re-embedding the candidate set on the client (v0.3.0). Earlier scoring
   evolved from a hardcoded 0.8 (pre-v0.2.3) → rank-based exp decay
   `0.95 * 0.92^rank` (v0.2.3) → true cosine (v0.3.0).
-- **`algo_opt` retrieval profile** (`HELIXIR_RETRIEVAL_PROFILE=algo_opt`,
-  branch `local-reasoning`; default `legacy` is bit-for-bit historic
-  behaviour). Changes under the flag:
+- **`algo_opt` retrieval profile** (`HELIXIR_RETRIEVAL_PROFILE=algo_opt`) is
+  the default since v0.4.0. Explicit `legacy` remains only as a v0.3.x
+  compatibility/debug profile. The optimized bundle provides:
   - Phase 1 fuses dense ANN with **native HelixDB `SearchBM25`** via RRF
     (k=60), query `searchMemoriesByBm25`; temporal cutoff is pushed into
     HQL (`smartVectorSearchWithChunksCutoff`) and re-checked in Rust as
     defence in depth (BM25 rows are not HQL-filtered).
-  - Phase 2 graph expansion is **levelwise-batched**: one
-    `getConnectionsLevelBatch` HQL call per BFS level
-    (`smart_traversal/batch_expansion.rs`) instead of one
-    `getMemoryLogicalConnections` call per visited node. Semantics mirror
-    the legacy DFS (every unvisited neighbour scored; top-3 per parent
-    expand), with a single search-wide visited set.
+  - Phase 2 graph expansion is **levelwise and primary-key anchored**.
+    `smart_traversal/batch_expansion.rs` calls
+    `getConnectionsByInternalId` for each bounded frontier node instead of
+    scanning the Memory label with an `IS_IN` batch predicate. This is more
+    local round trips than the original batch proposal, but avoids HelixDB
+    v2.3.5 request-arena growth (#89). `getConnectionsLevelBatch` remains the
+    bounded primitive for path/longest-chain consumers.
   - The embedding cache optionally persists to private JSONL
     (`HELIXIR_EMBED_CACHE_PATH`) with corpus warmup at startup
     (`HELIXIR_EMBED_CACHE_WARMUP=1|blocking`). Durable keys contain a
@@ -345,14 +346,15 @@ plus the root `README.md`.
     default). Foreign, malformed, truncated, or dimension-mismatched rows are
     invalidated rather than returned.
   - Reasoning chains (`get_chain` with `ChainGuidance`) walk true BFS and
-    pick the next hop by **cosine similarity to the query** — the read
-    path makes zero LLM calls. Chain seeds widen `contextual → full`
+    pick the next hop by **cosine similarity to the query** — the read path
+    makes zero generative/reasoning-LLM calls. Chain seeds widen `contextual → full`
     when the contextual window is empty (mature corpora).
 - **Modes.** `recent` (~4 h) · `contextual` (~30 d, default) · `deep`
   (~90 d) · `full` (unbounded). Defined in `src/core/search_modes.rs`.
-- **Scopes.** `personal` (caller's `HasMemory` edges) · `collective` /
-  `all` (fan out across all `HasMemory` edges with consensus ranking +
-  controversy annotation).
+- **Scopes.** After RBAC has removed every unauthorized row, `personal`
+  anchors on the requested owner's `HAS_MEMORY` provenance; `collective` and
+  `all` fan out across authorized owners with consensus ranking and controversy
+  annotation. Scope never widens the actor's group visibility.
 - **`search_by_concept`** — ontology-filtered retrieval gated by
   `INSTANCE_OF Concept(type=<one of 8>)`.
 - **`search_reasoning_chain`** — BFS over both directions of the four
@@ -363,8 +365,8 @@ plus the root `README.md`.
   (v0.3.0).
 - **`get_memory_graph`** — return a graph view (nodes + edges) around a
   memory or for a user.
-- **`search_incomplete_thoughts`** — locate FastThink sessions that
-  auto-committed on timeout (tagged `context_tags=incomplete_thought`).
+- **`search_incomplete_thoughts`** — locate historical pre-RBAC FastThink
+  sessions that were persisted as `context_tags=incomplete_thought`.
 
 ### 7.3 FastThink (ephemeral working memory)
 
@@ -372,9 +374,11 @@ In-process reasoning scratchpad on `petgraph::stable_graph` — no persistence
 until commit. Introduced as the v0.1.1 (`Think_fast`) tag. Tools:
 `think_start / think_add / think_recall / think_conclude / think_commit /
 think_discard / think_status`. `think_recall` pulls memories from the long-term
-store into the live session graph (read-only). On wall-clock or thought-count
-timeout the manager runs `commit_partial` and tags the resulting Memory with
-`context_tags=incomplete_thought` so it can be recovered later.
+store into the live session graph (read-only). Under permanent RBAC, a timeout
+fails closed and retains the actor-bound scratchpad for explicit discard or
+restart; it cannot infer a safe owner/group for `commit_partial`. Only
+historical pre-RBAC interrupted sessions may exist as
+`context_tags=incomplete_thought` memories.
 
 Default limits live in `FastThinkLimits::mcp`: 90 s wall clock, 150 thoughts.
 On SIGHUP, new sessions use the newly built client and limits while sessions
@@ -391,11 +395,10 @@ Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
   records share a security-scoped `content_key` consensus group.
 - `HAS_MEMORY` records authorship/stance. Enabled RBAC visibility is independent
   and materialized with `MEMORY_IN_RBAC_GROUP`.
-- `add_memory` runs a two-phase pipeline:
-  - Phase 1 — personal dedup; embedding-similarity match within the
-    caller's memories.
-  - Phase 2 — collective check inside the same `rbac_scope`; identical
-    author nodes share the scoped fingerprint group.
+- `add_memory` runs a two-phase pipeline after resolving one policy domain:
+  - Phase 1 — owner-anchored candidates inside that domain.
+  - Phase 2 — cross-owner consensus inside the exact same `rbac_scope`;
+    identical author nodes share the scoped fingerprint group.
 - Cross-user contradictions are wired through `CROSS_CONTRADICT`, which
   stores the new opinion alongside the existing one and links them with a
   `CONTRADICTS` edge.
@@ -418,9 +421,9 @@ They function as the roadmap-by-construction:
 
 | Surface | Schema artifacts | Implication |
 |---|---|---|
-| Documentation ingestion | `DocPage`, `DocChunk`, `CodeExample`, `ErrorCode` nodes; `PAGE_TO_CHUNK`, `CHUNK_TO_EMBEDDING`, `CHUNK_MENTIONS_CONCEPT`, `CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT` edges | Documents/codebases as first-class memory citizens. |
-| Constraint scoping | `Constraint` node; `APPLIES_IN` edge | Per-context rules (work/personal/project). |
-| Session tracking | `Session` node; `IN_SESSION`, `CREATED_IN` edges | Conversation-scope reasoning. |
+| Documentation ingestion | `DocPage`, `DocChunk`, `CodeExample`, `ErrorCode` nodes; `CHUNK_TO_EMBEDDING` edge | Reserved storage for a future document/code pipeline; page/chunk/concept relations are not yet declared. |
+| Constraint scoping | `Constraint` node | Reserved policy records; contextual memory already uses live `VALID_IN`. |
+| Session tracking | `Session` node; `CREATED_IN` edge | Reserved conversation-scope link; session creation is not wired. |
 | Internal concept-graph edges | `IS_A`, `CONCEPT_RELATED_TO` edges | Normalized representation of the **fixed** ontology hierarchy and explicit horizontal links between concepts. See note below. |
 | Hierarchical entities | `PART_OF` edge | Entity composition (`engine` PART_OF `car`). |
 

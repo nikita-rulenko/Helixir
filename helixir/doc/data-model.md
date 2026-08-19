@@ -63,7 +63,7 @@ Nodes group into five purposes:
 | **RbacGroup** | `group_id`, `name`, `description`, `active` | Concrete access group. |
 | **RbacDedupGroup** | `dedup_group_id`, `name`, `description`, `active` | Optional federation whose current groups share dedup and new-memory visibility. |
 | **RbacAssignment / RbacConfig** | subject/role/group audit fields; enabled flag | HelixDB-backed authorization source of truth. |
-| **MemoryChunk** | `chunk_id`, `position`, `parent_memory_id`, `content`, `token_count` | For long memories split for retrieval. |
+| **MemoryChunk** | `chunk_id`, `position`, `parent_memory_id`, `content`, `token_count` | Oversized-source storage and reconstruction only. Extracted atomic memories, not chunks, are retrieval units (#86). |
 | **Entity** | `entity_id`, `name`, `entity_type`, `properties`, `aliases` | LLM-extracted, deduplicated by name/aliases. |
 | **Concept** | `concept_id`, `name`, `level`, `description`, `parent_id`, `properties` | Ontology node. `parent_id` denormalizes the `IS_A` edge — see §6. |
 | **Context** | `context_id`, `name`, `context_type`, `properties`, `parent_context` | "work", "personal", custom scopes. |
@@ -87,9 +87,11 @@ membership lets it bridge to distant memories that share it.
 | **Category** node | `category_id`, `name` (normalized, English-canonical), `kind`, `description`, `created_at` | Dictionary entry. Seeded by `Clotho::seed_dictionary`. |
 | **CategoryEmbedding** node | `name` | Vector for embedding-match tagging. *Reserved* — Clotho v0 matches by in-memory cosine (SearchV exposes no readable score), so no producer wires this yet. |
 | `TAGGED_AS` edge | Memory → Category, `{confidence, source}` | The tag. `Clotho::auto_tag` (`source="clotho-embed"`). |
-| `SUBCATEGORY_OF` edge | Category → Category | Hierarchy (agriculture ⊂ raw-material). Not yet read at query time — Clotho propagates ancestors from the in-memory seed table. |
-| `ALIAS_OF` edge | Category → Category | Synonyms (collapses "raw material"/"сырьё"). |
-| `CATEGORY_HAS_EMBEDDING` edge | Category → CategoryEmbedding | *Reserved* (see CategoryEmbedding). |
+| `SUBCATEGORY_OF` edge | Category → Category | Persisted hierarchy. Clotho/tooling writes it; current query-time ancestor propagation still uses the in-memory seed table. |
+| `ALIAS_OF` edge | Category → Category | Synonyms (collapses "raw material"/"сырьё"); Clotho writes canonical aliases at mint time. |
+`CategoryEmbedding` is a reserved vector type without a graph edge in the
+current schema. Clotho embeds category names in process for matching; it does
+not persist category vectors yet.
 
 Routing reads: `getMemoryCategories`, `getMemoriesByCategory` (membership +
 global-admin-only cross-domain bridge in `connect_memories`); `category_member_ids` feeds
@@ -107,40 +109,37 @@ the next schema step (persists what PMI v0 computes on the fly).
                           │ MENTIONS ─────────► Entity
                           │ EXTRACTED_ENTITY ─► Entity
                           │ INSTANCE_OF ──────► Concept
-                          │ BELONGS_TO_CATEGORY► Concept
-                          │ VALID_IN ─────────► Context
                           │ TAGGED_AS ────────► Category
+                          │ VALID_IN ─────────► Context
                           │                       │
                           │ HAS_EMBEDDING ────► MemoryEmbedding
    Agent AGENT_CREATED ──►│                       │
                           │ HAS_HISTORY ──────► HistoryEvent
                           │                       │
-   REASONING (Memory→Memory):  MEMORY_RELATION{relation_type ∈ 7-type arsenal}
+   REASONING (Memory→Memory):  7 semantic types via dedicated + generic edges
    DECISION  (Memory→Memory):  SUPERSEDES · CONTRADICTS
 ```
 
-### Memory→memory relations: one physical edge, seven types
+### Memory→memory relations: seven semantics, two storage shapes
 
-The reasoning engine persists ALL typed memory↔memory relations as a single
-`MEMORY_RELATION` edge whose `relation_type` property is the type name
-(`ReasoningType::edge_name()`), so extending the arsenal needs no schema
-change. Four types are causal/logical — `IMPLIES`, `BECAUSE`, `CONTRADICTS`,
-`SUPPORTS` — and are what `search_reasoning_chain` walks; three are
-associative/structural — `RELATES_TO`, `PART_OF`, `IS_A` — surfaced by
-`get_memory_graph` without a causal claim.
+The reasoning API exposes seven typed memory↔memory relations. `IMPLIES`,
+`BECAUSE`, and `CONTRADICTS` use dedicated physical edges. `SUPPORTS`,
+`RELATES_TO`, `PART_OF`, and `IS_A` use `MEMORY_RELATION` with the semantic
+type in `relation_type`. `search_reasoning_chain` and `get_memory_graph`
+project the semantic type rather than requiring consumers to know the storage
+shape.
 (`src/toolkit/mind_toolbox/reasoning/types.rs`, `edges.rs`;
 query `addMemoryRelation`.)
 
-Separately, the **decision engine** writes two dedicated edges:
+The **decision pipeline** additionally uses these dedicated edges:
 
 | Edge | Properties | Created in |
 |---|---|---|
 | `SUPERSEDES` | `reason`, `superseded_at`, `is_contradiction` | decision verdict `SUPERSEDE` (`addMemorySupersession`) |
 | `CONTRADICTS` | `resolution`, `resolved`, `resolution_strategy` | verdict `CONTRADICT` / cross-user contradiction (`addMemoryContradiction`); `resolved`/`resolution_strategy` are what the Atropos reconcile pass flips |
 
-(The schema still declares dedicated `IMPLIES`/`BECAUSE`/`SUPPORTS` edges
-with HQL ready, but no Rust producer uses them — the arsenal rides
-`MEMORY_RELATION`.)
+There is no dedicated `SUPPORTS` schema edge; support is deliberately stored
+as `MEMORY_RELATION{relation_type="SUPPORTS"}`.
 
 ### Active edges
 
@@ -148,7 +147,6 @@ with HQL ready, but no Rust producer uses them — the arsenal rides
 |---|---|---|---|
 | `HAS_MEMORY` | User → Memory | `context`, `access_count` | `tooling_manager/add_pipeline/cross_user.rs`; consensus `user_count` derives from these (#54) |
 | `INSTANCE_OF` | Memory → Concept | `confidence` | ontology mapping in add pipeline |
-| `BELONGS_TO_CATEGORY` | Memory → Concept | `relevance` | ontology mapping |
 | `MENTIONS` | Memory → Entity | `salience`, `sentiment` | entity manager |
 | `EXTRACTED_ENTITY` | Memory → Entity | `confidence`, `method` | extractor output |
 | `RELATES_TO` | Entity → Entity | `relationship_type`, `strength`, `bidirectional` | extractor relations |
@@ -156,26 +154,39 @@ with HQL ready, but no Rust producer uses them — the arsenal rides
 | `AGENT_CREATED` | Agent → Memory | `timestamp`, `method` | tooling helpers — ensure-then-link: the Agent node is auto-created on first sight |
 | `HAS_HISTORY` | Memory → HistoryEvent | — | every UPDATE/SUPERSEDE/DELETE |
 | `HAS_CHUNK` | Memory → MemoryChunk | `chunk_index` | chunking manager |
-| `NEXT_CHUNK` | MemoryChunk → MemoryChunk | — | chunking manager |
-| `MEMORY_RELATION` | Memory → Memory | `relation_type`, `strength`, `created_at`, `metadata` | reasoning engine — see above |
-| `SUPERSEDES` / `CONTRADICTS` | Memory → Memory | see above | decision engine — see above |
+| `MEMORY_RELATION` | Memory → Memory | `relation_type`, `strength`, `created_at`, `metadata` | `SUPPORTS` plus associative relations — see above |
+| `IMPLIES` / `BECAUSE` | Memory → Memory | probability/strength + reasoning id | reasoning engine and contradiction reconciliation |
+| `SUPERSEDES` / `CONTRADICTS` | Memory → Memory | see above | decision/reasoning engines — see above |
 | `HAS_EMBEDDING` | Memory → MemoryEmbedding | `embedding_model` | add pipeline |
-| `ENTITY_HAS_EMBEDDING` | Entity → EntityEmbedding | `embedding_model` | entity manager |
 | `HAS_SUBTYPE` | Concept → Concept | — | ontology loader (seed; self-healing against duplicate trees, #67) |
 | `TAGGED_AS` | Memory → Category | `confidence`, `source` | `Clotho::auto_tag` (§2.1) |
+| `SUBCATEGORY_OF` / `ALIAS_OF` | Category → Category | — | category tooling / Clotho vocabulary convergence |
 | `MOIRAI_DERIVED_FROM` | Memory → Memory | `source`, `created_at` | Admin-only generated hypothesis → source-memory provenance; not traversed by ordinary reasoning/search |
+| `RBAC_MEMBER_OF` | User → RbacGroup | role/grant metadata | RBAC assignment service |
+| `MEMORY_IN_RBAC_GROUP` | Memory → RbacGroup | assignment audit | write path and migration; materialized visibility boundary |
+| `RBAC_GROUP_IN_DEDUP_GROUP` | RbacGroup → RbacDedupGroup | assignment audit | federation administration |
+| `MEMORY_IN_RBAC_DEDUP_GROUP` | Memory → RbacDedupGroup | assignment audit | write path; persisted dedup provenance |
 
 ### Reserved edges
 
-Schema-declared and HQL-ready, but no Rust producer yet:
+Schema-declared and HQL-ready, but not written by a live product flow:
 
-`OCCURRED_IN` (Memory→Context event-time linking), `IN_SESSION`,
-`CREATED_IN`, `IS_A` (Concept-level), `CONCEPT_RELATED_TO`, `PART_OF`
-(Entity-level), `APPLIES_IN`, `CHUNK_MENTIONS_CONCEPT`,
-`CONCEPT_HAS_EXAMPLE`, `ERROR_REFERENCES_CONCEPT` — plus the dedicated
-`IMPLIES`/`BECAUSE`/`SUPPORTS` declarations noted above and the
-`CATEGORY_HAS_EMBEDDING`/`SUBCATEGORY_OF`/`ALIAS_OF` states described
-in §2.1.
+- `CREATED_IN` (Memory→Session): helper/query exists, but Session creation is
+  not wired;
+- `IS_A` and `CONCEPT_RELATED_TO` (Concept→Concept): reserved internal
+  representation for the fixed ontology, not runtime ontology extension;
+- `PART_OF` (Entity→Entity): helper/query exists, while current extraction
+  persists typed entity `RELATES_TO` edges;
+- `ENTITY_HAS_EMBEDDING`: query exists for a future persisted entity-resolution
+  index, but no Rust caller writes it;
+- `CHUNK_TO_EMBEDDING`: belongs only to the reserved documentation pipeline.
+  `MemoryChunk` deliberately has no vector edge.
+
+The schema contains exactly 30 edge declarations. Names from older releases
+such as `BELONGS_TO_CATEGORY`, `NEXT_CHUNK`, `OCCURRED_IN`, `IN_SESSION`,
+`APPLIES_IN`, `CHUNK_MENTIONS_CONCEPT`, `CONCEPT_HAS_EXAMPLE`, and
+`ERROR_REFERENCES_CONCEPT` are historical and are not part of the current
+contract.
 
 ## 4. Ontology hierarchy (instances of `Concept`)
 
@@ -221,8 +232,9 @@ them is a data-integrity bug.
    Enforced only by convention; no DB constraint.
 3. **SUPERSEDES is acyclic.** The decision engine relies on chasing
    `SUPERSEDES` edges backward to find the live memory.
-4. **HAS_CHUNK / NEXT_CHUNK forms a path.** For a chunked Memory, chunks form
-   a linear sequence indexed by `chunk_index`.
+4. **HAS_CHUNK positions are ordered and unique per memory.** Memory chunks
+   are reconstructed by their stored position; the current schema has no
+   chunk-to-chunk edge.
 5. **INSTANCE_OF points to an `Attribute`-subtree or `Event`-subtree leaf.**
    The mapper rejects non-leaf classifications.
 6. **CONTRADICTS is symmetric in intent.** Code writes a single directed edge;
@@ -255,15 +267,20 @@ listed here so contributors recognize them without re-deriving from grep.
 
 ## 7. Migration approach (for future schema changes)
 
-There is no automated migration framework today. The current playbook is:
+There is no arbitrary per-tag data-migration framework today. For a manual
+schema change, the low-level playbook is:
 
 1. Edit `schema.hx` and `queries.hx`.
 2. Run `helixir-deploy --host … --port … --schema-dir helixir/schema`.
 3. HelixDB accepts the new schema but does not migrate existing data;
    adding a non-nullable field to a populated node is therefore not safe.
 
-If a migration framework is needed in the future, the likely shape is a
-per-tag set of HQL scripts plus an upgrade tool. No such tool exists today.
+The v0.16 installer does provide a higher-level **transactional deployment
+orchestrator** for a Helixir-managed local database: it identifies ownership,
+takes and verifies a cold backup before schema deployment, resumes an
+interrupted plan, and verifies the live contract afterwards. That safety layer
+does not synthesize arbitrary data transformations and never assumes lifecycle
+authority over an existing-local or remote database.
 
 ## 8. RBAC graph and compatibility bootstrap
 

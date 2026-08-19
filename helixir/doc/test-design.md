@@ -29,12 +29,13 @@ Tests (v0.3.1 baseline):
 ```
 
 **Current (post-`v0.15.0`):** 333 library unit tests plus CLI tests
-(`cargo test --all-targets`) and **43 HELIX_E2E-gated suites** in
+(`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
-negative_inputs, …). A full e2e gate run on cerebras is all-green (0 flaky).
-E2E are run by hand (not in CI yet); the manual recipe lives in the suites'
-module docs. Run unit tests: `cargo test --lib` from `helixir/`.
+negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
+`cargo test`; record the provider, database fixture and date whenever claiming
+a live run. The manual recipes live in the suites' module docs. Run unit tests:
+`cargo test --lib` from `helixir/`.
 
 The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
@@ -136,37 +137,41 @@ then verifies that upgrade reifies them under `moirai`, removes ordinary-graph
 bridges, preserves unrelated generic relations, restores embedding parity, and
 denies the compatibility `default` groupadmin.
 
-### Unit-test distribution
+### Representative unit contracts
 
-| Area | File | Tests | What they actually check |
-|---|---|---|---|
-| Config | `src/core/config.rs` | 2 | `from_env` reads `HELIX_LLM_BASE_URL`; default has no base url. |
-| Search modes | `src/core/search_modes.rs` | 3 | Default, parse-from-str, token-cost estimate. |
-| Levels (deploy ordering) | `src/core/levels/utils.rs` | 3 | Deployment order, dependencies, accumulated schema. |
-| Velocity metrics | `src/core/velocity/metrics.rs` | 3 | Score min/max/zero edge cases. |
-| Event bus | `src/core/events/bus.rs` | 1 | `emit` invokes the handler once. |
-| DB client | `src/db/client.rs` | 2 | Constructor works; `from_env` constructor works. |
-| LLM decision | `src/llm/decision/engine.rs` | 6 | Builder constructors, cross-user prompt branches. |
-| LLM extractor | `src/llm/extractor.rs` | 1 | `ExtractionResult` serializes round-trip. |
-| LLM factory | `src/llm/factory.rs` | 10 | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
-| Helixir client | `src/core/helixir_client/` | 3 | Constructor, env constructor, config access. |
-| Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | 3 | `should_chunk`, Cyrillic split, semantic split. |
-| Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | 4 | Map preference, map skill, no-match, case-insensitive. |
-| Reasoning engine | `src/toolkit/mind_toolbox/reasoning/engine.rs` | 3 | Type→edge name, relation construction, reasoning trail. |
-| Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | 2 | Freshness curve, datetime parse. |
-| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | 6 | Cosine (identical/orthogonal/opposite), combined score, rank discrimination, temporal freshness. |
-| Utils | `src/utils.rs` | 5 | Safe truncate ASCII/Cyrillic/ellipsis/mixed/shorter. |
-| Installer and stewardship | `src/installer/` | 64 | One shared detect/prepare/apply/verify service for CLI and browser adapters; fresh and idempotent managed-local/existing-local/remote backend plans, local Ollama/Nomic versus explicit remote embeddings, mandatory NLI, schema backup-before-deploy, permanent RBAC default/onboarding/Moirai coverage, command safety, rollback/resume journals, secret-safe projections, atomic config, explicit MCP-conflict consent, redacted post-install settings, bounded backup inventory, safety snapshots and schema-verified restore rollback. |
-| CLI onboarding | `src/bin/helixir/` | 14 | RBAC command parsing, deterministic local/remote onboarding flags, reuse of the persisted global-admin identity during an enabled-RBAC upgrade, recursive secret redaction, real remote embedding probe success/failure, local recovery selection, exact manifest-scoped client readiness, conflict approval, and secret-safe registration diffs. |
-| Module budget | `tests/module_budget.rs` | 1 | Recursively rejects every maintained Rust source file under `src/` that exceeds 500 lines. |
+Exact per-module counts are intentionally omitted: they drift without saying
+whether an architectural boundary is protected. The repository-wide totals
+above come from the current runner; this table maps stable contracts to their
+owners.
+
+| Area | File | Contract focus |
+|---|---|---|
+| Config | `src/core/config.rs` | Environment layering, defaults and validation. |
+| Search modes | `src/core/search_modes.rs` | Default, parsing and token-cost estimates. |
+| Levels (deploy ordering) | `src/core/levels/utils.rs` | Deployment order, dependencies and accumulated schema. |
+| Event bus | `src/core/events/bus.rs` | Handler delivery. |
+| DB client | `src/db/client.rs` | Explicit and environment-backed construction. |
+| LLM decision | `src/llm/decision/engine.rs` | Builder and scoped cross-owner decision branches. |
+| LLM extractor | `src/llm/extractor.rs` | Typed extraction-result serialization. |
+| LLM factory | `src/llm/factory.rs` | Provider/fallback construction and the Cerebras `gpt-oss-120b` pin. |
+| Helixir client | `src/core/helixir_client/` | Construction, configuration and administrative facade boundaries. |
+| Chunking manager | `src/toolkit/mind_toolbox/chunking/manager.rs` | Chunk eligibility and multilingual splitting. |
+| Ontology mapper | `src/toolkit/mind_toolbox/ontology/mapper.rs` | Fixed-type mapping and normalization. |
+| Reasoning engine | `src/toolkit/mind_toolbox/reasoning/engine.rs` | Semantic relation mapping and reasoning trails. |
+| Temporal scoring | `src/toolkit/mind_toolbox/search/onto_search/temporal.rs` | Freshness and event-time parsing. |
+| Score combiner | `src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs` | Cosine, combined rank and temporal freshness. |
+| Utils | `src/utils.rs` | Unicode-safe truncation. |
+| Installer and stewardship | `src/installer/` | Shared CLI/browser service, three backend topologies, mandatory models, transaction journal, secret-safe projections, settings and guarded backup/restore. |
+| CLI onboarding | `src/bin/helixir/` | Stable parsing, RBAC operator reuse, remote-embedding probes, registration conflicts and redaction. |
+| Module budget | `tests/module_budget.rs` | Every maintained Rust source under `src/` stays at or below 500 lines. |
 
 ### Integration / E2E
 
 - `helixir/tests/hive_memory_e2e.rs::hive_cross_user_collective_link_e2e`
   — marked `#[ignore]`. Runs only with `make test-e2e-hive` and requires:
   live HelixDB, real LLM API key, real embedding API key.
-  Asserts: adding the same fact for two user_ids yields `user_count ≥ 2` on
-  the first memory.
+  Asserts: two owners in one authorized RBAC group/federation contribute to
+  one scoped consensus family (`user_count ≥ 2`), while isolated groups do not.
 - `helixir/tests/test_hive_queries.sh` — bash script poking HelixDB queries
   directly. Not invoked from `make test`.
 
@@ -272,7 +277,8 @@ instead.
 
 Two suites over a shared golden query set (10 queries tied to the bench
 corpus), both gated by `HELIX_E2E=1` and run with a deliberately **dead LLM
-key** — passing proves the read path makes zero LLM calls:
+generation-LLM key** — passing proves the read path does not call the reasoning
+model; its embedding endpoint remains live:
 
 - `tests/read_path_e2e.rs` — library level (`HelixirClient`): hit@5 / MRR
   quality bars (baseline MRR 0.687 after PPR), cold/warm latency, causal

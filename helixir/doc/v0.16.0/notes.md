@@ -67,6 +67,23 @@ truth.
 - Persisted keys contain a SHA-256 digest of the exact input; raw memory text is
   not written to the cache.
 
+## Documentation contract
+
+- The product README, upgrade guide, glossary, engineering guides, integration
+  templates, canonical Agent Skill and embedded cognitive protocol now describe
+  the same permanent-RBAC identity/group rules.
+- Schema documentation is generated from the current 22-node, 5-vector,
+  30-edge, 180-query contract and distinguishes live producers from genuinely
+  reserved types. Removed historical edge names are no longer presented as a
+  roadmap.
+- Retrieval documentation distinguishes a reasoning-model-free read path from
+  the embedding request needed for a cold semantic query and records the
+  primary-key expansion used to contain HelixDB v2.3.5 arena growth.
+- The FastThink timeout and model-`DELETE` paths are documented as fail-closed
+  and supersession-only respectively; neither silently writes or destroys data.
+- Documentation lint now checks schema/MCP counts and rejects removed schema
+  names in evergreen engineering guides.
+
 ## Upgrade
 
 There is no HelixDB schema migration from v0.15.0. Upgrade the package or

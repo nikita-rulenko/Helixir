@@ -16,6 +16,9 @@
   bounded memory graph, Moirai, Hygieia and Stewardship surfaces.
 - Homebrew/APT distribution workflows and artifact-reuse container publishing
   are implemented locally; publication is still a release action.
+- Evergreen product/engineering docs, integration templates, the canonical
+  Agent Skill and embedded prompt are reconciled with the current schema,
+  permanent RBAC, retrieval and installer contracts.
 
 ## Local release gates completed
 
