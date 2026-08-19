@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::middleware;
 use axum::routing::{get, post};
@@ -14,7 +14,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use super::auth::require_token;
+use super::auth::{require_same_origin, require_token};
 use super::dto::ApiProblem;
 use super::graph::{MemoryFieldRequest, load_memory_field};
 use super::graph_snapshot::CategoryGraphCache;
@@ -117,6 +117,11 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         )
         .route("/install/verify", post(verify_installation))
         .route("/operations/run", post(run_host_operation))
+        .fallback(api_not_found)
+        .method_not_allowed_fallback(api_method_not_allowed)
+        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(security_header("cache-control", "no-store"))
+        .layer(middleware::from_fn(require_same_origin))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     let static_files = ServeDir::new(&assets).fallback(ServeFile::new(index));
     let app = Router::new()
@@ -131,7 +136,15 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         ))
         .layer(security_header("referrer-policy", "no-referrer"))
         .layer(security_header("x-content-type-options", "nosniff"))
-        .layer(security_header("x-frame-options", "DENY"));
+        .layer(security_header("x-frame-options", "DENY"))
+        .layer(security_header(
+            "permissions-policy",
+            "camera=(), geolocation=(), microphone=()",
+        ))
+        .layer(security_header(
+            "cross-origin-resource-policy",
+            "same-origin",
+        ));
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -284,6 +297,26 @@ async fn health(
     Ok(Json(snapshot))
 }
 
+async fn api_not_found() -> (StatusCode, Json<ApiProblem>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiProblem {
+            code: "api_route_not_found",
+            message: "the requested control-plane API route does not exist".to_string(),
+        }),
+    )
+}
+
+async fn api_method_not_allowed() -> (StatusCode, Json<ApiProblem>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ApiProblem {
+            code: "api_method_not_allowed",
+            message: "the requested method is not supported by this API route".to_string(),
+        }),
+    )
+}
+
 fn projection_unavailable() -> (StatusCode, Json<ApiProblem>) {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -319,11 +352,13 @@ async fn build_install_plan(
     crate::installer::Planner::build(&detected, &options)
         .map(Json)
         .map_err(|error| {
+            tracing::warn!(%error, "control-plane install plan rejected");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ApiProblem {
                     code: "unsafe_install_plan",
-                    message: error.to_string(),
+                    message: "the selected installation options do not form a safe plan"
+                        .to_string(),
                 }),
             )
         })

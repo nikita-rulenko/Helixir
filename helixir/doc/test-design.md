@@ -85,7 +85,10 @@ container budget below 20 minutes.
 
 The v0.15 control plane adds a separate browser contract. Every API route is
 covered by the same persistent browser-token and graph-backed global-admin
-middleware;
+middleware. Unit contracts additionally reject mismatched Origin/Host pairs and
+cross-site fetch metadata while keeping bearer-authenticated non-browser clients
+possible; the router caps JSON bodies at 1 MiB and returns stable problem codes
+without projecting internal RBAC/planner errors;
 projection parsers tolerate HelixDB's wrapped/null response shapes. Automated
 Playwright gates cover Chromium, Firefox, WebKit and a mobile Chromium viewport,
 the complete plan/apply/verify journey, fail-closed admin isolation, WCAG

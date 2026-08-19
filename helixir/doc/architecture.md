@@ -60,7 +60,11 @@ plan construction cross a narrow bearer-authenticated native supervisor; the
 container receives only its read-only token file. Browser authorization uses a
 second, persistent 64-hex-character token under `~/.helixir/run/`; it survives
 container restarts and is never reused as host-supervisor authority. A configured
-container fails closed when either secret is absent or malformed. If the host
+container fails closed when either secret is absent or malformed. The versioned
+API additionally rejects mismatched browser origins and cross-site fetch metadata,
+bounds request bodies to 1 MiB, emits typed secret-safe problems for authentication
+and routing failures, and marks every API response `no-store`; it intentionally
+publishes no CORS capability. If the host
 bridge is absent or unreachable, host operations fail closed instead of inspecting
 the container's namespace and pretending it is the host. Long-running installation
 applies are owned by that supervisor as durable operations under
