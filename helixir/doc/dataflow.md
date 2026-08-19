@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
 
 This document walks the two pipelines that matter most:
 
@@ -15,7 +15,7 @@ welded together.
 
 ## 1. `add_memory` pipeline
 
-When RBAC is enabled, the facade authorizes `(actor_id, owner_id, group_id)`
+Permanent RBAC makes the facade authorize `(actor_id, owner_id, group_id)`
 and resolves a write domain before extraction. A private group uses
 `rbac:group:<id>` and a federated group uses `rbac:dedup:<id>`. The reserved
 `default` workspace alone keeps the legacy unsalted domain. The domain filters both personal
@@ -50,7 +50,7 @@ is available to authorize a connection-level notification.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 0 — Validation & atomization                                  │
- │    LlmExtractor::extract  (src/llm/extractor.rs:101)                 │
+ │    LlmExtractor::extract  (src/llm/extractor.rs)                     │
  │      → ExtractionResult { memories, entities, relations, context }   │
  │      cap: max_facts_per_call (default 15)                            │
  │      fallback: try_parse_extraction → fallback_extraction            │
@@ -59,23 +59,23 @@ is available to authorize a connection-level notification.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 1 — Batch embed + per-memory dedup                            │
- │    prepare_memories_for_storage (add_pipeline.rs:190)                │
+ │    prepare_memories_for_storage (add_pipeline/prepare.rs)            │
  │       splits incoherent memories                                     │
  │       (is_coherent_memory / count_distinct_subjects /                │
  │        split_incoherent_memory)                                      │
- │    EmbeddingGenerator::generate_batch (llm/embeddings.rs:?)          │
+ │    EmbeddingGenerator::generate_batch (llm/embeddings/batch.rs)      │
  │       one HTTP call → N vectors                                      │
  │    for each memory i:                                                │
- │       SearchEngine::search(...)  (mind_toolbox/search/mod.rs:144)    │
+ │       SearchEngine::search(...)  (mind_toolbox/search/dispatch/)     │
  │           mode="contextual" scope="personal" k=5                     │
- │       LLMDecisionEngine::decide  (llm/decision/engine.rs:100)        │
+ │       LLMDecisionEngine::decide[_batch] (llm/decision/engine.rs)     │
  │           returns MemoryDecision { op, target_id, confidence, ... }  │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 2 — Apply decision                                            │
- │    handle_memory_operation (add_pipeline.rs:329, 13 args; see #9)    │
+ │    handle_memory_operation (add_pipeline/decide.rs)                  │
  │                                                                      │
  │      ADD            → store Memory + HAS_EMBEDDING                   │
  │      UPDATE         → mutate target Memory, write HAS_HISTORY        │
@@ -90,7 +90,7 @@ is available to authorize a connection-level notification.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 3 — Enrichment (per memory)                                   │
- │    enrich_memory_relations (add_pipeline.rs:562)                     │
+ │    add_pipeline/enrich.rs                                            │
  │       ├── EntityManager: MENTIONS / EXTRACTED_ENTITY edges           │
  │       ├── OntologyManager::map_memory_to_concepts                    │
  │       │     → INSTANCE_OF / BELONGS_TO_CATEGORY                      │
@@ -101,7 +101,7 @@ is available to authorize a connection-level notification.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 4 — Extraction-level relations                                │
- │    resolve_and_persist_extraction_relations (add_pipeline.rs:690)    │
+ │    resolve_and_persist_extraction_relations (add_pipeline/enrich.rs) │
  │       resolves "subject -> predicate -> object" triples to memory    │
  │       ids, persists Memory→Memory or Entity→Entity edges             │
  └──────────────────────────────────────────────────────────────────────┘
@@ -110,7 +110,7 @@ is available to authorize a connection-level notification.
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 5 — Raw source backup (conditional)                           │
  │    if message.len() > 100 && added > 1:                              │
- │       store_raw_source (add_pipeline.rs:932)                         │
+ │       store_raw_source (add_pipeline/store.rs)                       │
  │         persists the full original message as a Memory tagged        │
  │         memory_type="fact" so the atomized facts can be traced back  │
  └──────────────────────────────────────────────────────────────────────┘
@@ -118,10 +118,9 @@ is available to authorize a connection-level notification.
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
  │  PHASE 6 — Background fan-out (fire-and-forget)                      │
- │    link_user_to_memory_bg   (add_pipeline.rs:1171)                   │
- │    add_contradiction_bg     (add_pipeline.rs:1211)                   │
- │    link_memory_to_extracted_context (add_pipeline.rs:1081)           │
- │    persist_entity_relation (add_pipeline.rs:1013)                    │
+ │    cross-user provenance/contradiction (add_pipeline/cross_user.rs)  │
+ │    context links                  (add_pipeline/context_link.rs)      │
+ │    entity relations               (add_pipeline/entity_links.rs)     │
  │       — all spawned via tokio::spawn; failures only logged           │
  └──────────────────────────────────────────────────────────────────────┘
        │
@@ -149,10 +148,14 @@ is available to authorize a connection-level notification.
 
 ### Cross-user (Hive) phase
 
-After Phase 2, `apply_cross_user_phase` (`add_pipeline.rs:477`) re-runs the
-search with `scope="collective"`. If the same fact already exists for another
-user, `user_count` on that Memory is incremented and the new user's
-`HAS_MEMORY` edge points to the shared Memory instead of creating a duplicate.
+After Phase 2, `apply_cross_user_phase`
+(`tooling_manager/add_pipeline/cross_user.rs`) evaluates consensus only inside
+the already resolved RBAC security domain. Each author keeps a
+provenance-preserving Memory node. Equivalent author nodes share the scoped
+`content_key`; collective projection folds that fingerprint family and derives
+its holder count instead of leaking or mutating an isolated group's record.
+The reserved `default` domain preserves the legacy unsalted key. A private
+working group salts by group id, and a dedup federation salts by federation id.
 
 ### Failure modes
 
@@ -189,12 +192,13 @@ user, `user_count` on that Memory is incremented and the new user's
  ┌──────────────────────────────────────────────────────────────────────┐
  │  STEP 2 — Query embedding                                            │
  │    EmbeddingGenerator::generate  (single)                            │
- │    Cached by SHA-256(query) via moka (TTL 300 s)                     │
+ │    Process cache plus optional private persistent cache; namespace   │
+ │    includes provider/endpoint/model revision/dimension/epoch         │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
- │  STEP 3 — SearchEngine::search  (mind_toolbox/search/mod.rs:144)     │
+ │  STEP 3 — SearchEngine::search  (mind_toolbox/search/dispatch/)      │
  │                                                                      │
  │    Three sub-searches run with shared SearchEngineConfig             │
  │    (thresholds from HelixirConfig.search_thresholds):                │
@@ -253,13 +257,13 @@ user, `user_count` on that Memory is incremented and the new user's
 All re-use the same `SearchEngine` instance:
 
 - `search_by_concept` — adds an ontology filter (`INSTANCE_OF Concept(type=…)`)
-  before scoring. Lives at `tooling_manager/search.rs:150`.
+  before scoring. Lives at `tooling_manager/search/manager.rs`.
 - `search_reasoning_chain` — seeds from `search`, then traverses
   IMPLIES/BECAUSE/CONTRADICTS/SUPPORTS up to `max_depth` (default 5). Lives
   at `tooling_manager/reasoning.rs`.
 - `search_for_dedup` — internal variant used by Phase 1 of add_memory, top-k
   small (5), bypasses the moka cache to avoid stale dedup decisions.
-  `mind_toolbox/search/mod.rs:331`.
+  `mind_toolbox/search/dispatch/projection.rs`.
 - `search_by_tag` — exact match on `Memory.context_tags`. Used by
   `search_incomplete_thoughts`.
 
@@ -271,7 +275,7 @@ FastThink keeps a `petgraph::stable_graph::StableDiGraph<Thought, Relation>`
 in-process. Only `think_commit` mutates HelixDB.
 
 Each session pins the client and limits from the runtime generation in which
-it started. With RBAC enabled it also pins the authenticated `actor_id`, and
+it started. Permanent RBAC also pins the authenticated `actor_id`, and
 every lifecycle operation validates that binding before exposing or mutating
 the scratchpad. A SIGHUP publishes a new generation for future sessions
 without changing an active reasoning graph.
@@ -286,15 +290,14 @@ without changing an active reasoning graph.
         │
         ▼
  ┌──────────────────────────────────────────────────────────────┐
- │  FastThinkManager::commit (toolkit/fast_think/manager.rs)    │
- │     1. Builds a single Memory from the conclusion text.      │
- │     2. Calls HelixirClient::add (full add_memory pipeline)   │
- │        with metadata.context = "fast_think_commit".          │
- │     3. For each supporting Thought:                          │
- │        - Materializes it as a Memory.                        │
- │        - Adds SUPPORTS edge → conclusion Memory.             │
- │     4. Emits an `incomplete_thought` tag if the session      │
- │        timed out (commit_partial path).                      │
+ │  FastThinkManager::commit (fast_think/manager/persistence.rs)│
+ │     1. Collects explicit conclusions only.                   │
+ │     2. Short conclusions enter add_memory as prepared atoms; │
+ │        long text takes the normal extractor path.            │
+ │     3. Recalled persistent evidence gets SUPPORTS edges to   │
+ │        committed conclusions; scratch thoughts are not saved.│
+ │     4. Entity discovery skipped by the fast path is deferred │
+ │        after the commit acknowledgement.                     │
  └──────────────────────────────────────────────────────────────┘
 
  think_discard ─► drops the in-memory graph; nothing touches HelixDB.
@@ -325,14 +328,17 @@ observable effect:
 └────────────────────┘       └──────────────┘       └────────────────┘
 ```
 
-## 5. What the diagrams do NOT show (yet)
+## 5. What the diagrams do not show
 
 - **Hot/cold path separation.** Embedding cache hit vs miss, HelixDB retry
   loop iterations, and decision-engine LLM call cost are not annotated.
-- **Concurrency boundaries.** Several `tokio::spawn` calls inside
-  `add_pipeline.rs` run as fire-and-forget tasks; failures are visible only
-  in logs.
-- **Backpressure.** None today; concurrent `add_memory` calls all hit the
-  embedding API + LLM without queueing or rate-limiting.
-
-Candidates for the next iteration of this document. Tracked alongside #9.
+- **Concurrency boundaries.** Deferred entity linking and selected enrichment
+  work run after the caller's acknowledgement; failures are logged and do not
+  rewrite the acknowledged decision.
+- **Backpressure.** The optional ingest buffer has one process-owned worker and
+  an atomic HelixDB claim contract across processes. Direct writes still pay
+  provider concurrency immediately; provider-specific rate limiting remains an
+  external deployment concern.
+- **Browser projection cadence.** The category atlas is a separate read-only
+  control-plane cache refreshed every five minutes. It never participates in
+  MCP retrieval, dedup or authorization decisions.

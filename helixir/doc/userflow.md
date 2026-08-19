@@ -1,9 +1,11 @@
 # Userflow
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
 
-Helixir has exactly one user — an LLM agent — talking to it over MCP/stdio.
-"Userflow" therefore means **how the agent decides which tool to call when**.
+Helixir has two deliberate interaction surfaces: LLM agents use MCP/stdio (or
+the authenticated gateway), while a human global administrator uses the CLI or
+web control plane. Sections 1–6 describe **how an agent decides which tool to
+call**; section 7 describes the separate administrative flow.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
 There are 21 tools, 2 prompts, and 3 resources.
@@ -17,7 +19,7 @@ There are 21 tools, 2 prompts, and 3 resources.
 | `add_memory` | `user_id`, `message` | `actor_id`, `group_id`, `agent_id` | After a user reveals a preference, makes a decision, or completes a task. Enabled non-admin writes require the concrete access `group_id`; Helixir resolves any dedup federation. Ack is confirm-or-promise (#63): `ok:true` plus `memory_ids` (new), `updated` (changed), or `deduped` (already known), or `{ok:true, status:"accepted", pending_id}` when buffered. |
 | `get_add_status` | `pending_id` | `actor_id` | Polling a promised buffered write. Enabled RBAC permits only its owner, creator, or a global admin. |
 | `search_memory` | `user_id`, `query` | `mode`, `limit`, `scope`, `temporal_days`, `graph_depth` | Session start, before reasoning, when context is needed. |
-| `list_memories` | `user_id` | `limit`, `memory_type` | Audit / debugging. (Currently filters after limit — see issue #14.) |
+| `list_memories` | `user_id` | `limit`, `memory_type` | Bounded newest-first audit/debug view; filtering is applied by the query contract. |
 | `update_memory` | `memory_id`, `user_id`, `new_content` | — | Correcting an existing memory's content (regenerates embedding). |
 | `get_memory_graph` | `user_id` | `memory_id`, `depth` | Visualizing relationships around a node. |
 | `search_by_concept` | `user_id`, `query` | `concept_type`, `tags`, `mode`, `limit` | When the agent knows it wants skills, preferences, goals, etc. |
@@ -47,7 +49,7 @@ question; the agent decides whether to ask the human.
 | `think_discard` | `session_id` | `actor_id` | Throwing away the actor's own session. |
 | `think_status` | `session_id` | `actor_id` | Checking the actor's own session status. |
 
-When RBAC is enabled, ingest completion logging notifications are disabled:
+Under permanent RBAC, ingest completion logging notifications are disabled:
 they carry no request actor. Poll with `get_add_status`, or receive the result
 through the authorized opportunistic outbox on a later `add_memory` call.
 
@@ -145,12 +147,12 @@ agent intent                                tool to call
                                   ┌────────▼─┐ ┌─▼─────────┐
                   think_conclude  │ DECIDED  │ │  TIMED-OUT│
                                   └──┬───┬───┘ └─┬─────────┘
-                                     │   │       │
-                                think │   │ think │ auto commit_partial
-                              _commit │   │_disc..│ (incomplete_thought)
-                                     ▼   ▼       ▼
+                                     │   │       │ discard/restart
+                                think │   │ think │ (no implicit write)
+                              _commit │   │_discard
+                                     ▼   ▼
                               ┌──────────────────────┐
-                              │  PERSISTED IN STORE  │
+                              │ PERSISTED / DISCARDED│
                               └──────────────────────┘
 ```
 
@@ -182,3 +184,19 @@ all 21 registered tools. `list_resources` exposes the three resources above.
 The release smoke test must compare these advertised counts with MCP
 `tools/list`, `prompts/list`, and `resources/list` after every tool-surface
 change.
+
+## 7. Global-admin control flow
+
+The browser UI is an administration surface, not another agent role. Every API
+route after bootstrap requires the graph-backed global `admin` role; a
+`groupadmin`, moderator, worker or viewer receives `403` before counts or names
+are projected. The browser never owns a second principal, group or ACL registry.
+
+The Stewardship page is the post-install control room. It reads a redacted
+effective configuration, accepts only an allowlisted partial patch, shows the
+exact diff before apply, and treats provider credentials as write-only
+replacements. The managed backup vault accepts archive ids rather than paths.
+Restore requires the exact phrase `RESTORE <backup-id>`, creates a cold safety
+snapshot first, and rejects or rolls back a database that does not expose the
+current schema contract. Existing-local and remote databases remain observable,
+but Helixir refuses to take over their backup lifecycle.

@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.15.0` plus unreleased cache hardening. Last verified: 2026-08-18._
+> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
 
 ## 1. System context
 
@@ -16,7 +16,7 @@
    │                       helixir-mcp  (Rust binary)                 │
    │                                                                  │
    │   tools  prompts  resources                                      │
-   │   (14)   (2)      (2)                                            │
+   │   (21)   (2)      (3)                                            │
    └─────────┬────────────────────────────────────────────┬───────────┘
              │ HTTP / HQL                                 │ HTTP / JSON
              ▼                                            ▼
@@ -24,7 +24,7 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   178 HQL queries    │                │   - Ollama (local)         │
+   │   180 HQL queries    │                │   - Ollama (local)         │
    │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```
@@ -53,7 +53,7 @@ factory pins Cerebras requests to `gpt-oss-120b`, while DeepSeek and Ollama
 retain independently configured model names. The
 backend adapter snapshots the persistent Docker volume before schema changes,
 and the manifest records the selected version/models/clients atomically. The
-CLI and the v0.15 browser control plane are frontends over this module; they
+CLI and browser control plane are frontends over this module; they
 must not own Docker, model-download, or MCP-client mutation policy themselves.
 The HTML5/CSS3/Tailwind SPA and its Axum backend are packaged only in the
 `helixir-control-plane` image, beside but separate from the HelixDB container.
@@ -77,7 +77,13 @@ atomically replaced with private permissions, and an in-flight record becomes
 explicitly `interrupted` and resumable after process restart. The web backend
 proxies authenticated SSE from a cursor and never persists `InstallOptions` or
 provider secrets; resume first rebuilds the plan and requires the original
-fingerprint. The CLI root is thin;
+fingerprint. Post-installation administration uses the same bridge: `/settings`
+returns a curated effective configuration with write-only secret replacement,
+while `/backups` accepts only managed archive identifiers. Settings are
+allowlisted, validated as a complete configuration, backed up and atomically
+replaced. A restore verifies the archive, creates a fresh safety snapshot,
+restarts HelixDB, proves the current schema contract and rolls back on
+incompatibility. Browser requests never carry host filesystem paths. The CLI root is thin;
 domain modules live under
 `src/bin/helixir/`. The same 500-line budget
 applies to every maintained Rust source file under `src/`, with
@@ -104,7 +110,7 @@ should require deliberation.
                                │
 ┌──────────────────────────────▼───────────────────────────────────────────┐
 │ L3  Core facade                                                          │
-│     src/core/helixir_client.rs   (HelixirClient — single API door)       │
+│     src/core/helixir_client/     (HelixirClient — single API door)       │
 │     src/core/config.rs           (HelixirConfig + thresholds)            │
 │     src/core/events/             (EventBus: register / emit)             │
 └──────────────────────────────┬───────────────────────────────────────────┘
@@ -113,8 +119,8 @@ should require deliberation.
 │ L2  Tooling pipelines                          src/toolkit/...           │
 │                                                                          │
 │   tooling_manager/         the orchestrator (add, search, graph, CRUD)   │
-│     add_pipeline.rs        2-phase add: personal dedup -> cross-user     │
-│     search.rs              search router (dispatch by scope)             │
+│     add_pipeline/          scoped recall -> decision -> store/enrich     │
+│     search/                search router, RBAC projection, scoring        │
 │     graph.rs               edges, history, user link                     │
 │     reasoning.rs           IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS    │
 │     crud.rs                update / delete                               │
@@ -124,23 +130,19 @@ should require deliberation.
 │     entity/                EntityManager                                 │
 │     ontology/              OntologyManager (8 concept types)             │
 │     reasoning/             ReasoningEngine                               │
-│     chunking/              ChunkingManager  (duplicates services/* — #9) │
+│     chunking/              ChunkingManager (storage/reconstruction)       │
 │     memory/{deletion,remark,...}    soft-delete, supersession, evolution │
 │     memory_chain/          chain traversal                               │
 │     fast_think/            ephemeral working memory (petgraph)           │
 │                                                                          │
 │   misc_toolbox/, analytics/                                              │
-│                                                                          │
-│   NOTE: src/core/services/{chunking,linking,resolution} contains a      │
-│   parallel implementation of chunking and link-building alongside        │
-│   mind_toolbox/. Consolidation tracked in issue #9.                      │
 └──────────────────────────────┬───────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼───────────────────────────────────────────┐
 │ L1  External adapters                                                    │
 │     src/llm/extractor.rs        atomization + entity/relation extraction │
 │     src/llm/decision/engine.rs  decide(text, similar_memories)           │
-│     src/llm/embeddings.rs       generate / generate_batch / fallback     │
+│     src/llm/embeddings/         generate / batch / cache / wire fallback │
 │     src/llm/providers/          cerebras, ollama, fallback (base trait)  │
 │     src/db/client.rs            HelixDB HTTP client + retry loop         │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -155,8 +157,8 @@ bug to file — not a feature to copy.
 |---|---|---|
 | MCP server | `src/mcp/server.rs`, `src/mcp/tools/` | Tool dispatch, parameter typing, JSON responses; memory tools are split by write, read, swarm, and graph responsibility |
 | MCP process runtime | `src/mcp/server.rs` | One ingest worker, hot-reload generations, optional gateway bearer authentication |
-| `HelixirClient` | `src/core/helixir_client.rs` | Public facade; nothing else may be a public entry point |
-| `HelixirConfig` | `src/core/config.rs`, `src/core/config/` | Configuration shape + env parsing (currently partial, see #10) |
+| `HelixirClient` | `src/core/helixir_client/` | Public facade; nothing else may be a public entry point |
+| `HelixirConfig` | `src/core/config.rs`, `src/core/config/` | Layered defaults/TOML/environment configuration and runtime validation |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
 | `ToolingManager` | `src/toolkit/tooling_manager/` | Pipeline orchestration; the only struct allowed to wire all sub-managers together |
 | `ChunkingManager` | `src/toolkit/mind_toolbox/chunking/` | Long-memory chunking (storage/reconstruction only — per-chunk vectors rejected in #86) |
@@ -167,12 +169,12 @@ bug to file — not a feature to copy.
 | `FastThinkManager` | `src/toolkit/fast_think/` | Ephemeral reasoning sessions on `petgraph`; lifecycle and persistence operations are separate private modules |
 | `LlmExtractor` | `src/llm/extractor.rs` | Prompted atomization + structured JSON parsing |
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
-| `EmbeddingGenerator` | `src/llm/embeddings.rs` | Vector generation with cache + fallback |
+| `EmbeddingGenerator` | `src/llm/embeddings/` | Vector generation, provider/fallback wire paths, versioned in-memory/persistent cache and diagnostics |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
 | Installer orchestrator | `src/installer/service.rs`, `src/installer/executor/` | One detect/prepare/apply/verify service, deterministic plans, concrete native mutation adapters, ordered rollback reports and explicit embedding strategies; frontends provide presentation and consent only |
-| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, and Hygieia telemetry directly from HelixDB; never owns host mutation policy |
+| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, Hygieia telemetry, redacted settings and the managed backup vault; never owns host mutation policy |
 | Control-plane image | `Dockerfile` (`control-plane` / artifact-only `release-control-plane` targets), `docker-compose.yml` | Immutable frontend/backend packaging and the restricted runtime boundary; releases reuse native ABI-gated binaries and a shared frontend artifact rather than recompiling Rust; no host filesystem or Docker authority |
-| Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, a bounded Hygieia health/journal projection, and an allowlisted set of typed Moirai/Hygieia lifecycle operations; shares installer/health DTOs and exposes no general shell or filesystem endpoint |
+| Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/installer/{settings,backups}.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, redacted atomic settings, guarded managed-volume backup/restore, a bounded Hygieia health/journal projection, and an allowlisted set of typed lifecycle operations; exposes no general shell or filesystem endpoint |
 | RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |
 
 ## 4. Cross-cutting concerns
@@ -181,7 +183,7 @@ bug to file — not a feature to copy.
   (`HelixirError`, `HelixClientError`, `HelixirClientError`, `ToolingError`,
   `SearchError`, `OntologyError`, `FastThinkError`, `DecisionError`,
   `ExtractionError`). The MCP layer flattens them into `McpError` via
-  `HelixirMcpServer::convert_error` at `src/mcp/server.rs:50-62`. The
+  `HelixirMcpServer::convert_error` in `src/mcp/server.rs`. The
   conversion is lossy: most variants collapse to `internal_error` regardless
   of cause. Whether to unify the error vocabulary is an open design question.
 
@@ -190,18 +192,23 @@ bug to file — not a feature to copy.
   - `OntologyManager` is `parking_lot::RwLock` (sync lock inside async code).
   - `is_initialized` and `is_connected` are `AtomicBool` with `Ordering::Relaxed`.
 
-- **Configuration flow.** Env vars → `HelixirConfig::from_env` → `HelixirClient`
-  constructor → passed to every manager. Some `HelixirConfig` fields are not
-  read from env (tracked in issue #10) and remain at their struct-literal
-  defaults at runtime.
+- **Configuration flow.** Built-in defaults → the first available central
+  file (`$HELIXIR_CONFIG`, `~/.helixir/helixir.toml`, then `./helixir.toml`) →
+  `HELIX_*`/`HELIXIR_*` environment overrides → `HelixirClient` and managers.
+  CLI `config` and the global-admin Stewardship room mutate only an allowlisted
+  subset of the central file, validate cross-field invariants, replace it
+  atomically, redact secrets, and use the shared reload coordinator.
 
 - **Events.** `EventBus` is an async fan-out; handlers run via `tokio::spawn`
   so emit is fire-and-forget. There are currently no registered handlers at
   startup — the bus exists but is unused. If/when analytics are added, this
   is the seam.
 
-- **Caching.** Three caches today:
-  1. `moka` future cache inside `EmbeddingGenerator` (LRU 1000, TTL 300s).
+- **Caching.** Five bounded caches today:
+  1. `EmbeddingGenerator` keeps a process-local LRU+TTL cache. Optional
+     persistence adds a locked, byte-bounded JSONL store whose namespace covers
+     format, provider, endpoint, model revision, vector dimension and explicit
+     epoch. Only a SHA-256 text key is persisted; raw memory text is not.
   2. `lru::LruCache` inside `SearchEngine` (cache stats exposed via
      `SearchEngine::cache_stats`).
   3. `ReasoningEngine` warm-up cache (`warm_up_cache`, 500 entries).
@@ -209,9 +216,14 @@ bug to file — not a feature to copy.
      revision. Every authorization still reads that one config row, so a
      committed grant/revocation invalidates the cached atomic policy snapshot
      immediately without a TTL or second ACL source.
+  5. The browser control plane caches bounded projection snapshots and refreshes
+     them asynchronously; identity/group filters request another bounded slice
+     rather than materializing the entire graph in the browser.
 
-  Cache sizes are hardcoded at construction (`tooling_manager/mod.rs:65,70`).
-  None are configurable from env or `HelixirConfig`.
+  Embedding entry count/TTL come from `llm_runtime`, and persistent-cache path,
+  byte ceiling, revision, dimension, epoch and warm-up mode have explicit
+  environment controls. RBAC invalidation remains graph-revision driven rather
+  than time driven.
 
 - **Shared memory across users (scoped deduplicated knowledge graph).** Each
   author retains a provenance-preserving `Memory` node. Equivalent records
@@ -236,7 +248,7 @@ bug to file — not a feature to copy.
     `search_by_concept`) implicitly behave like `personal`: they return what
     the user knows, which includes shared knowledge.
 
-  With RBAC enabled, reads are additionally intersected with materialized
+  Under permanent RBAC, reads are additionally intersected with materialized
   `MEMORY_IN_RBAC_GROUP` edges. Cross-domain rows or dedup candidates are a
   correctness and confidentiality defect.
 
@@ -492,8 +504,8 @@ Active or historical membership in either reserved workspace contributes to
 the administrative principal registry. `RbacManager::principal_registry` projects User nodes,
 active and historical assignments, and matching Agent presence directly from
 HelixDB. Removing a membership deactivates assignments without deleting the
-User or audit history. The CLI's JSON projection is the contract intended for
-the future UI; no UI-owned ACL or registry is permitted.
+User or audit history. The CLI and browser projections share the same
+graph-backed managers; no UI-owned ACL or registry is permitted.
 
 MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`

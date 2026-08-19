@@ -25,6 +25,11 @@ doc/
     └── state-snapshot.md
 ```
 
+`codebase-audit.md` and `changes-2026-06-*.md` are dated engineering records,
+not descriptions of the current branch. Their old branch names, counts and
+tool totals are intentionally preserved as historical evidence. Current facts
+belong in the six evergreen design documents above or the newest version draft.
+
 ## Conventions
 
 - **Evergreen vs. snapshot.** Files at the top level describe the system as it
@@ -53,6 +58,11 @@ doc/
 5. `userflow.md` — see how an agent actually uses the system.
 6. `test-design.md` — learn which assertions guard which parts.
 7. The latest `<version>/notes.md` for the diff from the previous release.
+
+The newest directory may be an explicitly labelled **unreleased** draft while
+a release is being assembled. Frozen snapshots begin only once the matching tag
+is cut; until then the draft must describe local readiness honestly and must not
+claim that package channels or images have already been published.
 
 ## Where to file changes
 

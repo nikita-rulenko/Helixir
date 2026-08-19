@@ -12,6 +12,55 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.15.0 → v0.16.0 — distribution and stewardship
+
+v0.16.0 is a binary/control-plane upgrade. It does not change the HelixDB
+schema contract or rewrite memory/RBAC data. It adds signed Homebrew and APT
+distribution, a persistent versioned embedding cache, one installer service
+shared by CLI and browser flows, a hardened versioned admin API, redacted
+post-install settings, and a managed backup vault.
+
+Choose one package path:
+
+```bash
+# macOS or Linuxbrew
+brew update
+brew upgrade helixir
+
+# Debian 12 / Ubuntu 22.04+ after adding the repository from README.md
+sudo apt update
+sudo apt install --only-upgrade helixir
+```
+
+The package manager owns immutable binaries and packaged runtime resources
+only. It does not remove or replace `~/.helixir`, HelixDB volumes, models,
+backups, central configuration, or MCP registrations. Run the shared
+orchestrator after the package transaction:
+
+```bash
+helixir onboard
+helixir doctor --json
+helixir control-plane status
+```
+
+Existing-local and remote HelixDB installations remain observe-only in the
+web backup vault. Only a Helixir-managed local database can create, verify, or
+restore managed archives. Restore always requires the exact phrase
+`RESTORE <archive-id>`, creates a safety snapshot first, and automatically
+restores that snapshot if the recovered database fails the live schema probe.
+
+The persistent embedding cache is opt-in through
+`HELIXIR_EMBED_CACHE_PATH`. Its namespace includes the format version,
+provider, normalized endpoint, model, artifact revision, vector dimension and
+`HELIXIR_EMBED_CACHE_EPOCH`; a changed identity misses safely rather than
+reusing an incompatible vector. Increment the epoch when an opaque remote
+provider changes model weights without exposing a revision.
+
+Restart every MCP client after replacing the binaries. MCP clients cache the
+server process, tool schemas, prompts and installed skill at session start.
+The control-plane supervisor reloads supported settings automatically and
+reports which deeper services still need a restart.
+
 ## v0.14.3 → v0.15.0 — the memory observatory
 
 v0.15.0 adds the containerized global-admin control plane and its native typed
@@ -118,6 +167,8 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.16.0** | Distribution and stewardship | Signed Homebrew/APT channels, shared CLI/browser onboarding, versioned persistent embedding-cache invalidation, hardened admin API, redacted settings, and guarded managed-volume backup/restore. No schema migration; upgrade binaries, run onboard/doctor, then restart MCP clients. |
+| **v0.15.0** | The memory observatory | Global-admin-only web control plane and typed native supervisor. The container has no Docker socket or host-home mount; graph RBAC stays the authorization source. Run doctor, verify `helixir control-plane status`, then restart MCP clients. |
 | **v0.14.1** | The compatible judge | Binary-only patch: NLI now targets ONNX Runtime API 23, matching the universal macOS runtime in release archives. No schema or data migration; replace binaries, run doctor, and restart MCP clients. |
 | **v0.14.0** | The governed hive | Permanent graph-backed RBAC introduces reserved `default` and `onboarding`, group roles, dedup federations, actor-bound MCP/FastThink, administrative CLI, transactional onboarding, mandatory NLI plus verified embeddings, and bounded HelixDB v2.3.5 memory. **Cold-backup and deploy schema v3 before replacing binaries; then run doctor and restart every MCP client.** |
 | **v0.13.2** | The guarded reload | Hot reload now publishes one coherent runtime generation while one process-owned ingest worker follows the active client; an atomic `claimPendingInput` query prevents duplicate queue work across processes. **Back up the data volume and redeploy the schema** before replacing the binary, then restart MCP clients/gateways. Gateway bearer auth is optional and off by default; enable it with `gateway.auth_token`, `HELIXIR_GATEWAY_TOKEN`, or `helixir config`, and use `helixir gateway --require-auth` when startup must fail closed. |

@@ -16,7 +16,22 @@ quality.
 Both are self-contained and use the same use-case model — pick whichever fits
 your agent stack (or both).
 
-## Prerequisite: wire the Helixir MCP server
+## Prerequisite: install and wire Helixir
+
+From v0.16.0 onward, install the release through Homebrew or the signed APT
+repository, then run the same guided orchestrator on every platform:
+
+```bash
+brew install nikita-rulenko/tap/helixir  # macOS / Linuxbrew
+# or: sudo apt install helixir           # after adding the repository from README.md
+
+helixir onboard
+```
+
+`onboard` discovers supported clients, provisions mandatory NLI plus a verified
+embedding path, converges permanent RBAC and installs the canonical memory
+skill. The release-archive and source-build paths in the root README call the
+same orchestrator.
 
 These specs assume your agent can reach the Helixir MCP tools
 (`mcp__helixir-local__*` / `helixir-local__*`). Set it up once:
@@ -25,6 +40,9 @@ These specs assume your agent can reach the Helixir MCP tools
 helixir setup     # interactive: writes the `helixir-local` MCP entry into
                   # Claude Code / Claude Desktop / Cursor / Gemini CLI configs
 ```
+
+`setup` is the lightweight MCP-registration-only path; prefer `onboard` for a
+new machine.
 
 Or add it manually to your client's MCP config (stdio transport, the
 `helixir-mcp` binary). See the repo README → **Integration**.

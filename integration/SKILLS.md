@@ -84,7 +84,7 @@ get cut off; a capture postponed to "the end" is a capture lost.
 | Everything for a user (audit/count) | `list_memories` | no relevance ranking |
 | The graph around a memory | `get_memory_graph` | nodes + typed edges |
 | Unfinished reasoning to resume | `search_incomplete_thoughts` | check when re-entering a topic |
-| Outcome of a buffered write | `get_add_status` | pass `pending_id` + your `actor_id` when RBAC is enabled |
+| Outcome of a buffered write | `get_add_status` | pass `pending_id` + your `actor_id` under permanent RBAC |
 
 To correct or annotate a stored fact, use `update_memory(memory_id, ...)` —
 it amends without deleting; history is preserved.
@@ -109,7 +109,7 @@ think_recall(session_id, query="<known facts>", parent_idx=<idx>, actor_id="clau
 think_conclude(session_id, conclusion="<the answer>", supporting_idx=[...], actor_id="claude")
 think_commit(session_id, user_id="claude", actor_id="claude", group_id="<concrete group>")
 ```
-Reuse one `session_id` and, with RBAC enabled, the same `actor_id` on every
+Reuse one `session_id` and, under permanent RBAC, the same `actor_id` on every
 lifecycle call. A session id is not a credential. `think_discard` is likewise
 actor-bound. Historical pre-RBAC timeouts could auto-save incomplete work;
 permanent RBAC timeouts fail closed because no owner/group was supplied for a

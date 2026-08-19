@@ -33,7 +33,7 @@
 - [Access control (RBAC)](#access-control-rbac)
 - [**Quick Start**](#quick-start)
   - [One-command install](#one-command-install)
-  - [Package managers (planned)](#package-managers-planned)
+  - [Homebrew and APT](#homebrew-and-apt)
   - [Prerequisites](#prerequisites)
 - [How It Works](#how-it-works)
   - [Architecture](#architecture)
@@ -47,7 +47,7 @@
 - [Integration](#integration) — Cursor, Claude Desktop
 - [Configuration](#configuration)
 - [Development](#development)
-- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.14)
+- [Upgrading](UPGRADING.md) — version-by-version migration notes (v0.4 → v0.16)
 
 ---
 
@@ -196,6 +196,13 @@ model.
 
 ## Quick Start
 
+> **v0.16.0 and newer:** prefer
+> `brew install nikita-rulenko/tap/helixir` on macOS/Linuxbrew or
+> `sudo apt install helixir` on Debian/Ubuntu, then run `helixir onboard`.
+> The signed-repository setup and lifecycle guarantees are documented in
+> [Homebrew and APT](#homebrew-and-apt). The script below remains the portable
+> release-archive fallback.
+
 ### One-command install
 
 ```bash
@@ -211,6 +218,12 @@ container; the native install tree contains no Node.js or frontend assets. A
 token-authenticated typed supervisor performs the small set of approved host
 operations and both processes recover automatically after login/reboot on
 macOS and Linux. Use `install.sh --no-web` for a fully headless CLI install.
+The UI is intentionally global-admin-only: it covers live memory/agent/group
+counters, graph and category exploration, RBAC users/groups/roles and dedup
+federations, Moirai evidence, Hygieia health, guided installation, redacted
+settings and a guarded backup vault. It delegates policy and mutations to the
+same HelixDB-backed services and typed host supervisor as the CLI; it is not a
+second source of truth.
 The recommended flow installs and starts Ollama on macOS or Linux and provisions
 `nomic-embed-text`. A user may instead explicitly configure an OpenAI-compatible
 remote embedding provider, model, endpoint, and key. The flow also recommends an
@@ -254,17 +267,14 @@ remote path is missing or broken, it reports the failure, installs/starts Ollama
 pulls Nomic, atomically switches the central config, and verifies the repair.
 `--no-local-llm` skips only the optional fallback LLM.
 
-### Package managers (planned)
+### Homebrew and APT
 
-Homebrew and APT are the next supported distribution channels. They are tracked
-in [#151](https://github.com/nikita-rulenko/Helixir/issues/151) and
-[#152](https://github.com/nikita-rulenko/Helixir/issues/152), respectively, and
-are **not published yet**. Until those issues close, use the one-command release
-installer above rather than the preview commands below.
+Starting with v0.16.0, every signed release is published through both the
+`nikita-rulenko/tap` Homebrew tap and the Helixir APT repository. Package
+managers install immutable Helixir binaries and runtime resources; the same
+guided `helixir onboard` orchestrator then configures the machine.
 
-Once the Homebrew tap is published, macOS users and Linux hosts on the supported
-Debian 12 / Ubuntu 22.04-or-newer ABI baseline will install the released native
-package and start the same guided onboarding flow with:
+On macOS or Linuxbrew:
 
 ```bash
 brew install nikita-rulenko/tap/helixir
@@ -280,8 +290,8 @@ brew unpin helixir
 brew uninstall helixir  # preserves ~/.helixir and external services/data
 ```
 
-Once the signed Helixir APT repository is published and configured, Debian and
-Ubuntu users will use:
+On Debian 12, Ubuntu 22.04 or newer (`amd64` and `arm64`), add the dedicated
+signed repository once, then install normally:
 
 ```bash
 curl -fsSL https://nikita-rulenko.github.io/Helixir/helixir-archive-keyring.gpg \
@@ -305,18 +315,19 @@ sudo apt-mark unhold helixir
 sudo apt remove helixir  # preserves ~/.helixir and external services/data
 ```
 
-Package managers will own only immutable Helixir binaries and packaged runtime
+Package managers own only immutable Helixir binaries and packaged runtime
 resources. `helixir onboard` remains the single orchestrator for HelixDB topology,
 mandatory NLI, local Ollama/Nomic or explicit remote embeddings, MCP client
 registration, permanent RBAC bootstrap, doctor verification, and the optional
-web control plane. Upgrades and removals will preserve `~/.helixir`, database
+web control plane. Upgrades and removals preserve `~/.helixir`, database
 volumes, models, configuration, backups, and MCP client entries unless the user
 explicitly removes them.
 
 For unattended hosts, append `--non-interactive` to `helixir onboard` after
 providing every required choice and secret through the protected central config
 or environment. The release-archive fallback remains available independently of
-either package channel:
+either package channel. Hosts pinned to v0.15.0 or older must use this fallback,
+because the first package-manager publication is v0.16.0:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nikita-rulenko/Helixir/main/install.sh \
@@ -820,28 +831,36 @@ Add to **Cursor Settings > Rules** so the agent actually uses its memory:
 
 ## Configuration
 
-All settings are passed as environment variables.
+Effective configuration is layered in this order: built-in defaults →
+`~/.helixir/helixir.toml` (or `$HELIXIR_CONFIG`) → environment variables.
+Environment variables win. Use `helixir config get` for the redacted effective
+view, `helixir config set <key> <value>` for one field, and `helixir config
+apply` to validate and reload supported long-running processes. Global admins
+can perform the same curated, secret-safe operation from the web control
+plane's **Stewardship** room; secrets are write-only there and never returned
+to the browser.
 
-### Required
+### Environment overrides
 
-| Variable | Description |
-|:---------|:------------|
-| `HELIX_HOST` | HelixDB address (default: `localhost`) |
-| `HELIX_PORT` | HelixDB port (default: `6969`) |
-| `HELIX_LLM_API_KEY` | API key for the LLM provider |
-| `HELIX_EMBEDDING_API_KEY` | API key for the embedding provider |
-
-### Optional
+There is no globally required environment-variable set after successful
+onboarding. Credentials are conditional: `HELIX_LLM_API_KEY` is required for a
+remote primary LLM, `HELIX_EMBEDDING_API_KEY` is required only for a remote
+embedding service that authenticates requests, and local Ollama/Nomic needs
+neither. Prefer the private central config for persistent secrets.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
+| `HELIX_HOST` | `localhost` | HelixDB address |
+| `HELIX_PORT` | `6969` | HelixDB port; a detected existing endpoint is preserved |
 | `HELIXIR_MODE` | `solo` | Privilege tier: `solo` (private, no cross-user), `collective` (shared consensus), `insights` (+ generative Moirai) |
 | `HELIX_LLM_PROVIDER` | `cerebras` | `cerebras`, `deepseek`, `ollama` |
 | `HELIX_LLM_MODEL` | `gpt-oss-120b` | Model name; Cerebras is pinned to `gpt-oss-120b` |
+| `HELIX_LLM_API_KEY` | — | Credential for a remote primary LLM |
 | `HELIX_LLM_BASE_URL` | — | Custom endpoint (for Ollama or a self-hosted OpenAI-compatible API) |
-| `HELIX_EMBEDDING_PROVIDER` | `openai` | `openai`, `ollama` |
-| `HELIX_EMBEDDING_URL` | `https://openrouter.ai/api/v1` | Embedding API URL |
-| `HELIX_EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
+| `HELIX_EMBEDDING_PROVIDER` | `ollama` | `ollama` or `openai` for an OpenAI-compatible remote endpoint |
+| `HELIX_EMBEDDING_URL` | `http://localhost:11434` | Embedding API URL |
+| `HELIX_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
+| `HELIX_EMBEDDING_API_KEY` | — | Credential for an authenticated remote embedding endpoint |
 | `HELIXIR_EMBED_CACHE_PATH` | — | Enable the private persistent embedding cache at this path |
 | `HELIXIR_EMBED_CACHE_MAX_BYTES` | `134217728` | Hard byte ceiling applied during atomic cache compaction |
 | `HELIXIR_EMBED_CACHE_EPOCH` | — | Explicitly invalidate cached vectors after an opaque remote-model update |
@@ -976,7 +995,7 @@ helixir-rs/
         fast_think/             # Working memory (petgraph-based)
     schema/
       schema.hx                 # Node/edge definitions (22 nodes + 5 vectors, 30 edges)
-      queries.hx                # HQL queries (178)
+      queries.hx                # HQL queries (180)
     tests/                      # E2E suites: read_path (library) + mcp_read (stdio transport)
     memory-charter.md           # Write-path constitution: what may never be decided silently
     doc/                        # Engineering docs (architecture, dataflow, design rationale)

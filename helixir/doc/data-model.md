@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.15.0`. Last verified: 2026-08-17._
+> _Reflects code as of `v0.15.0` plus unreleased v0.16 readiness work. Last verified: 2026-08-19._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (178 HQL queries that materialize the
+and `helixir/schema/queries.hx` (180 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -17,13 +17,15 @@ contract). Anything below disagreeing with those files is the bug.
                   │   30 edge types             │
                   │     ├── active in code      │
                   │     └── reserved (see §3)   │
-                  │   178 named HQL queries     │
+                  │   180 named HQL queries     │
                   │   vector dim: 768 (default) │
                   └─────────────────────────────┘
 ```
 
-There is no relational database, no Redis, no filesystem state. Everything the
-service persists lives in HelixDB.
+There is no relational database or Redis. Every durable memory, reasoning,
+identity and RBAC fact lives in HelixDB. Host-local configuration, operation
+journals, model files and recovery archives are operational state, not a second
+knowledge or authorization store.
 
 ## 2. Node taxonomy
 
@@ -144,7 +146,7 @@ with HQL ready, but no Rust producer uses them — the arsenal rides
 
 | Edge | From → To | Properties | Created in |
 |---|---|---|---|
-| `HAS_MEMORY` | User → Memory | `context`, `access_count` | `add_pipeline.rs::link_user_to_memory_bg`; consensus `user_count` derives from these (#54) |
+| `HAS_MEMORY` | User → Memory | `context`, `access_count` | `tooling_manager/add_pipeline/cross_user.rs`; consensus `user_count` derives from these (#54) |
 | `INSTANCE_OF` | Memory → Concept | `confidence` | ontology mapping in add pipeline |
 | `BELONGS_TO_CATEGORY` | Memory → Concept | `relevance` | ontology mapping |
 | `MENTIONS` | Memory → Entity | `salience`, `sentiment` | entity manager |

@@ -330,8 +330,10 @@ via `search_incomplete_thoughts`.
 ## Infrastructure
 
 **HelixDB.** The single storage engine — graph and vector index in one
-database (LMDB-backed), queried in HQL. There is no relational DB, no
-Redis, no filesystem state; everything Helixir persists lives here.
+database (LMDB-backed), queried in HQL. There is no relational DB or Redis;
+all durable memory, reasoning, identity and RBAC truth lives here. Host-local
+configuration, operation journals, model files and recovery archives are
+operational state rather than a competing knowledge/policy store.
 
 **HQL.** HelixDB's query language. Schema (`schema.hx`) and named queries
 (`queries.hx`) are *compiled into the server* — deploying a query change
@@ -357,7 +359,20 @@ with a few lines of config; `helixir setup` writes them for you.
 **Layered config.** Effective settings = built-in defaults ←
 `~/.helixir/helixir.toml` ← environment variables, later layers winning.
 Gotcha: one invalid field rejects the whole TOML layer, and enum values are
-capitalized (`mode = "Insights"`).
+capitalized (`mode = "Insights"`). CLI `config` and the web Stewardship room
+share the same validation/reload path; browser-visible secrets are write-only.
+
+**Backend ownership.** The installer distinguishes a Helixir-managed local
+HelixDB, an already existing local instance and an explicit remote endpoint.
+Only the first gives Helixir lifecycle and volume-recovery authority. The other
+two are observed and configured without pretending that Helixir owns their
+process or storage.
+
+**Stewardship room.** The global-admin-only post-install web surface for
+redacted operational settings and the managed backup vault. It is a typed
+frontend over the native supervisor, not a filesystem browser or a second RBAC
+authority. Restore uses opaque archive ids, exact confirmation, a safety
+snapshot and live schema verification.
 
 **Fallback chain.** The LLM resilience strategy: on *any* primary-provider
 error (outage, exhausted quota) the same prompt cascades down an ordered
