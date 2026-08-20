@@ -63,6 +63,9 @@ jobs:
             --output homebrew-tap/Formula/helixir.rb
           ruby -c homebrew-tap/Formula/helixir.rb
           brew tap nikita-rulenko/tap "$GITHUB_WORKSPACE/homebrew-tap"
+          tap_dir=$(brew --repository nikita-rulenko/tap)
+          mkdir -p "$tap_dir/Formula"
+          cp homebrew-tap/Formula/helixir.rb "$tap_dir/Formula/helixir.rb"
           brew audit --formula --strict nikita-rulenko/tap/helixir
 
       - name: Install and remove the rendered formula
