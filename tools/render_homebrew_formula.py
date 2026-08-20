@@ -88,8 +88,8 @@ def render(tag: str, repository: str, checksums: dict[str, str]) -> str:
   test do
     assert_match version.to_s, shell_output("#{{bin}}/helixir --version")
     assert_match "onboard", shell_output("#{{bin}}/helixir onboard --help")
-    assert_predicate libexec/"schema/schema.hx", :exist?
-    assert_predicate libexec/"skills/helixir-memory/SKILL.md", :exist?
+    assert_path_exists libexec/"schema/schema.hx"
+    assert_path_exists libexec/"skills/helixir-memory/SKILL.md"
   end
 end
 '''
