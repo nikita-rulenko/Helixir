@@ -62,11 +62,11 @@ jobs:
             --checksums distribution/SHA256SUMS \
             --output homebrew-tap/Formula/helixir.rb
           ruby -c homebrew-tap/Formula/helixir.rb
-          brew audit --formula --strict homebrew-tap/Formula/helixir.rb
+          brew tap nikita-rulenko/tap "$GITHUB_WORKSPACE/homebrew-tap"
+          brew audit --formula --strict nikita-rulenko/tap/helixir
 
       - name: Install and remove the rendered formula
         run: |
-          brew tap nikita-rulenko/tap "$GITHUB_WORKSPACE/homebrew-tap"
           brew install nikita-rulenko/tap/helixir
           prefix=$(brew --prefix helixir)
           test "$("$prefix/bin/helixir" --version)" = "helixir ${INPUT_TAG#v}"
