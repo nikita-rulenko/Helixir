@@ -21,9 +21,27 @@ pub struct RegistrationConflict {
 pub fn registration_conflicts(
     clients: &BTreeSet<helixir::installer::ClientKind>,
 ) -> std::result::Result<Vec<RegistrationConflict>, String> {
+    registration_conflicts_for(clients, &desired_stdio_server)
+}
+
+/// Inspect gateway registration conflicts without mutating client state.
+pub fn gateway_registration_conflicts(
+    clients: &BTreeSet<helixir::installer::ClientKind>,
+    url: &str,
+) -> std::result::Result<Vec<RegistrationConflict>, String> {
+    let server = helixir::installer::clients::McpServer::Http(
+        helixir::installer::clients::HttpServer::new(url),
+    );
+    registration_conflicts_for(clients, &|_| server.clone())
+}
+
+fn registration_conflicts_for(
+    clients: &BTreeSet<helixir::installer::ClientKind>,
+    desired: &impl Fn(helixir::installer::ClientKind) -> helixir::installer::clients::McpServer,
+) -> std::result::Result<Vec<RegistrationConflict>, String> {
     let mut conflicts = Vec::new();
     for client in clients {
-        let server = desired_server(*client);
+        let server = desired(*client);
         let existing = if *client == helixir::installer::ClientKind::Cursor {
             let home = PathBuf::from(
                 std::env::var("HOME").map_err(|_| "HOME is required for MCP config".to_string())?,
@@ -78,7 +96,29 @@ pub(crate) fn register_onboard_client(
     client: helixir::installer::ClientKind,
     replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
-    let server = desired_server(client);
+    register_client(client, desired_stdio_server(client), replace_conflicting)
+}
+
+/// Register one client against a shared HTTP gateway.
+pub fn register_gateway_client(
+    client: helixir::installer::ClientKind,
+    url: &str,
+    replace_conflicting: bool,
+) -> std::result::Result<(), String> {
+    register_client(
+        client,
+        helixir::installer::clients::McpServer::Http(helixir::installer::clients::HttpServer::new(
+            url,
+        )),
+        replace_conflicting,
+    )
+}
+
+fn register_client(
+    client: helixir::installer::ClientKind,
+    server: helixir::installer::clients::McpServer,
+    replace_conflicting: bool,
+) -> std::result::Result<(), String> {
     if client == helixir::installer::ClientKind::Cursor {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
         let path = helixir::installer::clients::default_json_config_path(client, &home)
@@ -86,7 +126,7 @@ pub(crate) fn register_onboard_client(
         let existing = existing_json_registration(&path, "helixir-local")?;
         approve_registration_change(client, existing.as_ref(), &server, replace_conflicting)?;
         let registration =
-            helixir::installer::clients::register_json_client(&path, "helixir-local", &server)
+            helixir::installer::clients::register_json_server(&path, "helixir-local", &server)
                 .map_err(|error| error.to_string())?;
         if existing_json_registration(&path, "helixir-local")?
             .as_ref()
@@ -125,8 +165,11 @@ pub(crate) fn register_onboard_client(
                 return Err(format!("{} registration removal failed", client.label()));
             }
         }
-        let command =
-            helixir::installer::clients::native_add_command(client, "helixir-local", &server);
+        let command = helixir::installer::clients::native_add_server_command(
+            client,
+            "helixir-local",
+            &server,
+        );
         let status = Command::new(&executable)
             .args(command.args)
             .status()
@@ -165,15 +208,54 @@ pub fn client_registration_matches(
     server_name: &str,
     server: &helixir::installer::clients::StdioServer,
 ) -> bool {
-    let existing = if client == helixir::installer::ClientKind::Cursor {
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .map(|home| home.join(".cursor/mcp.json"))
-            .map_err(|error| error.to_string())
-            .and_then(|path| existing_json_registration(&path, server_name))
-    } else {
-        existing_native_registration(client, server_name)
-    };
+    client_registration_matches_server(
+        client,
+        server_name,
+        &helixir::installer::clients::McpServer::Stdio(server.clone()),
+    )
+}
+
+/// Verify that a client points at the expected HTTP gateway.
+pub fn client_gateway_registration_matches(
+    client: helixir::installer::ClientKind,
+    server_name: &str,
+    url: &str,
+) -> bool {
+    client_registration_matches_server(
+        client,
+        server_name,
+        &helixir::installer::clients::McpServer::Http(
+            helixir::installer::clients::HttpServer::new(url),
+        ),
+    )
+}
+
+/// Verify that a client has either the installed stdio server or a structurally
+/// valid Helixir HTTP endpoint. This keeps `doctor` transport-aware even for a
+/// separately managed remote gateway whose URL is not stored in the installer
+/// manifest.
+pub fn client_has_valid_helixir_registration(
+    client: helixir::installer::ClientKind,
+    server_name: &str,
+    stdio_server: &helixir::installer::clients::StdioServer,
+) -> bool {
+    let existing = existing_client_registration(client, server_name);
+    existing.is_ok_and(|entry| {
+        entry.as_ref().is_some_and(|entry| {
+            registrations_match(
+                entry,
+                &helixir::installer::clients::McpServer::Stdio(stdio_server.clone()).json_entry(),
+            ) || valid_http_registration(entry)
+        })
+    })
+}
+
+fn client_registration_matches_server(
+    client: helixir::installer::ClientKind,
+    server_name: &str,
+    server: &helixir::installer::clients::McpServer,
+) -> bool {
+    let existing = existing_client_registration(client, server_name);
     existing.is_ok_and(|entry| {
         entry
             .as_ref()
@@ -181,16 +263,35 @@ pub fn client_registration_matches(
     })
 }
 
-fn desired_server(
+fn existing_client_registration(
     client: helixir::installer::ClientKind,
-) -> helixir::installer::clients::StdioServer {
-    helixir::installer::clients::StdioServer::new(
-        current_sibling("helixir-mcp").display().to_string(),
+    server_name: &str,
+) -> std::result::Result<Option<serde_json::Value>, String> {
+    if client == helixir::installer::ClientKind::Cursor {
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(".cursor/mcp.json"))
+            .map_err(|error| error.to_string())
+            .and_then(|path| existing_json_registration(&path, server_name))
+    } else {
+        existing_native_registration(client, server_name)
+    }
+}
+
+fn desired_stdio_server(
+    client: helixir::installer::ClientKind,
+) -> helixir::installer::clients::McpServer {
+    helixir::installer::clients::McpServer::Stdio(
+        helixir::installer::clients::StdioServer::new(
+            current_sibling("helixir-mcp").display().to_string(),
+        )
+        .with_env("HELIXIR_RBAC_ACTOR", client.principal_id()),
     )
-    .with_env("HELIXIR_RBAC_ACTOR", client.principal_id())
 }
 
 fn registrations_match(existing: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    let existing = normalized_registration(existing);
+    let expected = normalized_registration(expected);
     if existing == expected {
         return true;
     }
@@ -210,8 +311,8 @@ fn registrations_match(existing: &serde_json::Value, expected: &serde_json::Valu
         return false;
     }
 
-    let mut existing = existing.clone();
-    let mut expected = expected.clone();
+    let mut existing = existing;
+    let mut expected = expected;
     existing["command"] = serde_json::Value::Null;
     expected["command"] = serde_json::Value::Null;
     existing == expected
@@ -272,6 +373,14 @@ fn existing_json_registration(
 
 fn normalized_registration(entry: &serde_json::Value) -> serde_json::Value {
     let mut normalized = serde_json::Map::new();
+    if let Some(url) = entry.get("url") {
+        normalized.insert(
+            "type".to_string(),
+            serde_json::Value::String("http".to_string()),
+        );
+        normalized.insert("url".to_string(), url.clone());
+        return serde_json::Value::Object(normalized);
+    }
     if let Some(command) = entry.get("command") {
         normalized.insert("command".to_string(), command.clone());
     }
@@ -295,7 +404,7 @@ fn normalized_registration(entry: &serde_json::Value) -> serde_json::Value {
 fn approve_registration_change(
     client: helixir::installer::ClientKind,
     existing: Option<&serde_json::Value>,
-    server: &helixir::installer::clients::StdioServer,
+    server: &helixir::installer::clients::McpServer,
     replace_conflicting: bool,
 ) -> std::result::Result<(), String> {
     let Some(existing) = existing else {
@@ -315,7 +424,7 @@ fn approve_registration_change(
 
 fn safe_registration_summary(entry: &serde_json::Value) -> serde_json::Value {
     let mut summary = serde_json::Map::new();
-    for key in ["command", "args"] {
+    for key in ["type", "url", "command", "args"] {
         if let Some(value) = entry.get(key) {
             summary.insert(key.to_string(), value.clone());
         }
@@ -327,6 +436,17 @@ fn safe_registration_summary(entry: &serde_json::Value) -> serde_json::Value {
         );
     }
     serde_json::Value::Object(summary)
+}
+
+fn valid_http_registration(entry: &serde_json::Value) -> bool {
+    let normalized = normalized_registration(entry);
+    normalized
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|url| {
+            (url.starts_with("http://") || url.starts_with("https://"))
+                && url.trim_end_matches('/').ends_with("/mcp")
+        })
 }
 
 fn backup_native_client_config(
@@ -354,85 +474,5 @@ fn backup_native_client_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_registration_comparison_ignores_client_owned_fields() {
-        let normalized = normalized_registration(&serde_json::json!({
-            "command": "/stable/helixir-mcp",
-            "args": [],
-            "env": {"HELIXIR_RBAC_ACTOR": "codex"},
-            "enabled": true,
-            "startup_timeout_sec": 15
-        }));
-        assert_eq!(
-            normalized,
-            helixir::installer::clients::StdioServer::new("/stable/helixir-mcp")
-                .with_env("HELIXIR_RBAC_ACTOR", "codex")
-                .json_entry()
-        );
-    }
-
-    #[test]
-    fn conflict_summary_never_prints_environment_values() {
-        let summary = safe_registration_summary(&serde_json::json!({
-            "command": "helixir-mcp",
-            "env": {"HELIX_LLM_API_KEY": "must-not-leak"}
-        }));
-        assert!(!summary.to_string().contains("must-not-leak"));
-        assert_eq!(
-            summary["env_keys"],
-            serde_json::json!(["HELIX_LLM_API_KEY"])
-        );
-    }
-
-    #[test]
-    fn non_interactive_conflict_fails_before_mutation() {
-        let error = approve_registration_change(
-            helixir::installer::ClientKind::Codex,
-            Some(&serde_json::json!({"command": "old"})),
-            &helixir::installer::clients::StdioServer::new("new"),
-            false,
-        )
-        .expect_err("conflict must require approval");
-        assert!(error.contains("explicit replacement approval"));
-    }
-
-    #[test]
-    fn reviewed_non_interactive_conflict_is_approved() {
-        approve_registration_change(
-            helixir::installer::ClientKind::Codex,
-            Some(&serde_json::json!({"command": "old"})),
-            &helixir::installer::clients::StdioServer::new("new"),
-            true,
-        )
-        .expect("typed control-plane consent should approve replacement");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn registration_comparison_accepts_equivalent_symlink_commands() {
-        use std::os::unix::fs::symlink;
-
-        let temp = std::env::temp_dir().join(format!(
-            "helixir-registration-match-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir_all(&temp).expect("temporary directory");
-        let binary = temp.join("helixir-mcp-v3");
-        let stable = temp.join("helixir-mcp");
-        std::fs::write(&binary, b"test binary").expect("binary fixture");
-        symlink(&binary, &stable).expect("stable symlink");
-        let existing = serde_json::json!({
-            "command": stable,
-            "env": {"HELIXIR_RBAC_ACTOR": "codex"}
-        });
-        let expected = serde_json::json!({
-            "command": binary,
-            "env": {"HELIXIR_RBAC_ACTOR": "codex"}
-        });
-        assert!(registrations_match(&existing, &expected));
-        std::fs::remove_dir_all(&temp).expect("remove temporary directory");
-    }
-}
+#[path = "client_registration_tests.rs"]
+mod tests;

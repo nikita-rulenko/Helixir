@@ -13,6 +13,21 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.16.0 → v0.16.1 — one host, one gateway
+
+v0.16.1 is a binary and MCP-client-registration patch. It does not change the
+HelixDB schema or memory/RBAC data. Upgrade the binaries, start the host-local
+gateway, migrate supported clients, run doctor, and restart them:
+
+```bash
+helixir gateway start --bind 127.0.0.1:8765
+helixir setup --gateway 127.0.0.1:8765
+helixir doctor --json
+```
+
+The setup command backs up and verifies conflicting Codex and Claude Code
+registrations. Stdio remains available for clients without streamable HTTP.
+
 ## v0.15.0 → v0.16.0 — distribution and stewardship
 
 v0.16.0 is a binary/control-plane upgrade. It does not change the HelixDB
@@ -177,6 +192,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.16.1** | One host, one gateway | HTTP-capable MCP clients share one managed gateway instead of accumulating children behind retained stdio pipes. No schema migration; start the gateway, run `setup --gateway`, doctor, then restart clients. |
 | **v0.16.0** | Distribution and stewardship | Signed Homebrew/APT channels, shared CLI/browser onboarding, versioned persistent embedding-cache invalidation, hardened admin API, redacted settings, and guarded managed-volume backup/restore. No schema migration; upgrade binaries, run onboard/doctor, then restart MCP clients. |
 | **v0.15.0** | The memory observatory | Global-admin-only web control plane and typed native supervisor. The container has no Docker socket or host-home mount; graph RBAC stays the authorization source. Run doctor, verify `helixir control-plane status`, then restart MCP clients. |
 | **v0.14.1** | The compatible judge | Binary-only patch: NLI now targets ONNX Runtime API 23, matching the universal macOS runtime in release archives. No schema or data migration; replace binaries, run doctor, and restart MCP clients. |

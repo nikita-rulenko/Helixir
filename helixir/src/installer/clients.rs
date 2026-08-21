@@ -27,6 +27,62 @@ pub struct StdioServer {
     pub env: BTreeMap<String, String>,
 }
 
+/// Streamable-HTTP MCP endpoint owned by one long-lived gateway process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpServer {
+    /// Full MCP endpoint URL, normally `http://127.0.0.1:8765/mcp`.
+    pub url: String,
+}
+
+impl HttpServer {
+    /// Construct an HTTP server description.
+    #[must_use]
+    pub fn new(url: impl Into<String>) -> Self {
+        Self { url: url.into() }
+    }
+
+    /// Render the portable entry used by JSON-configured MCP clients.
+    #[must_use]
+    pub fn json_entry(&self) -> Value {
+        serde_json::json!({
+            "type": "http",
+            "url": self.url,
+        })
+    }
+}
+
+/// Transport-aware MCP registration requested from a client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpServer {
+    /// A child process connected through stdin/stdout.
+    Stdio(StdioServer),
+    /// A shared streamable-HTTP gateway.
+    Http(HttpServer),
+}
+
+impl McpServer {
+    /// Render the canonical portable registration shape.
+    #[must_use]
+    pub fn json_entry(&self) -> Value {
+        match self {
+            Self::Stdio(server) => server.json_entry(),
+            Self::Http(server) => server.json_entry(),
+        }
+    }
+}
+
+impl From<StdioServer> for McpServer {
+    fn from(value: StdioServer) -> Self {
+        Self::Stdio(value)
+    }
+}
+
+impl From<HttpServer> for McpServer {
+    fn from(value: HttpServer) -> Self {
+        Self::Http(value)
+    }
+}
+
 impl StdioServer {
     /// Construct a server entry with no environment variables.
     #[must_use]
@@ -131,6 +187,60 @@ pub fn native_add_command(
     }
 }
 
+/// Build a native HTTP registration command for Claude Code or Codex.
+///
+/// HTTP registration prevents clients that retain abandoned stdio pipes from
+/// accumulating sleeping `helixir-mcp` children: every client talks to the
+/// same explicitly managed gateway process instead.
+#[must_use]
+pub fn native_add_http_command(
+    client: ClientKind,
+    server_name: &str,
+    server: &HttpServer,
+) -> NativeCommand {
+    let args = match client {
+        ClientKind::ClaudeCode => vec![
+            "mcp".to_string(),
+            "add".to_string(),
+            "--transport".to_string(),
+            "http".to_string(),
+            "--scope".to_string(),
+            "user".to_string(),
+            server_name.to_string(),
+            server.url.clone(),
+        ],
+        ClientKind::Codex => vec![
+            "mcp".to_string(),
+            "add".to_string(),
+            server_name.to_string(),
+            "--url".to_string(),
+            server.url.clone(),
+        ],
+        ClientKind::Cursor => vec!["unsupported-json-client".to_string()],
+    };
+    NativeCommand {
+        executable: match client {
+            ClientKind::ClaudeCode => "claude".to_string(),
+            ClientKind::Codex => "codex".to_string(),
+            ClientKind::Cursor => "cursor".to_string(),
+        },
+        args,
+    }
+}
+
+/// Build the client-owned CLI command for either supported transport.
+#[must_use]
+pub fn native_add_server_command(
+    client: ClientKind,
+    server_name: &str,
+    server: &McpServer,
+) -> NativeCommand {
+    match server {
+        McpServer::Stdio(server) => native_add_command(client, server_name, server),
+        McpServer::Http(server) => native_add_http_command(client, server_name, server),
+    }
+}
+
 /// Errors produced before a client config is mutated.
 #[derive(Debug, Error)]
 pub enum ClientAdapterError {
@@ -165,6 +275,15 @@ pub fn register_json_client(
     path: &Path,
     server_name: &str,
     server: &StdioServer,
+) -> Result<JsonRegistration, ClientAdapterError> {
+    register_json_server(path, server_name, &McpServer::Stdio(server.clone()))
+}
+
+/// Merge and atomically write one transport-aware MCP server entry.
+pub fn register_json_server(
+    path: &Path,
+    server_name: &str,
+    server: &McpServer,
 ) -> Result<JsonRegistration, ClientAdapterError> {
     let existing = if path.exists() {
         Some(fs::read_to_string(path)?)
@@ -257,117 +376,5 @@ pub fn env_is_empty(entry: &Value) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn unique_temp_path(name: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock before epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "helixir-{name}-{}-{stamp}.json",
-            std::process::id()
-        ))
-    }
-
-    #[test]
-    fn native_commands_use_client_owned_cli_and_no_env() {
-        let server = StdioServer::new("/stable/helixir-mcp");
-        let claude = native_add_command(ClientKind::ClaudeCode, "helixir-local", &server);
-        assert_eq!(
-            claude.argv(),
-            vec![
-                "claude",
-                "mcp",
-                "add",
-                "--scope",
-                "user",
-                "helixir-local",
-                "--",
-                "/stable/helixir-mcp"
-            ]
-        );
-        let codex = native_add_command(ClientKind::Codex, "helixir-local", &server);
-        assert_eq!(
-            codex.argv(),
-            vec![
-                "codex",
-                "mcp",
-                "add",
-                "helixir-local",
-                "--",
-                "/stable/helixir-mcp"
-            ]
-        );
-    }
-
-    #[test]
-    fn actor_environment_is_rendered_without_provider_secrets() {
-        let server =
-            StdioServer::new("/stable/helixir-mcp").with_env("HELIXIR_RBAC_ACTOR", "codex");
-        let codex = native_add_command(ClientKind::Codex, "helixir-local", &server);
-        assert_eq!(
-            codex.argv(),
-            vec![
-                "codex",
-                "mcp",
-                "add",
-                "helixir-local",
-                "--env",
-                "HELIXIR_RBAC_ACTOR=codex",
-                "--",
-                "/stable/helixir-mcp"
-            ]
-        );
-        assert_eq!(server.json_entry()["env"]["HELIXIR_RBAC_ACTOR"], "codex");
-        assert!(!server.json_entry().to_string().contains("API_KEY"));
-    }
-
-    #[test]
-    fn json_registration_is_idempotent_and_backed_up() {
-        let path = unique_temp_path("cursor");
-        fs::write(
-            &path,
-            r#"{"theme":"dark","mcpServers":{"other":{"command":"x"}}}"#,
-        )
-        .unwrap();
-        let server = StdioServer::new("/stable/helixir-mcp");
-        let first = register_json_client(&path, "helixir-local", &server).unwrap();
-        assert!(first.changed);
-        assert!(first.backup.is_some());
-        assert_eq!(first.document["theme"], "dark");
-        let second = register_json_client(&path, "helixir-local", &server).unwrap();
-        assert!(!second.changed);
-        let _ = fs::remove_file(path);
-        if let Some(backup) = first.backup {
-            let _ = fs::remove_file(backup);
-        }
-    }
-
-    #[test]
-    fn malformed_json_is_never_replaced() {
-        let path = unique_temp_path("malformed");
-        fs::write(&path, "{broken").unwrap();
-        let before = fs::read(&path).unwrap();
-        let error = register_json_client(&path, "helixir-local", &StdioServer::new("x"))
-            .expect_err("malformed config must abort");
-        assert!(matches!(error, ClientAdapterError::Config(_)));
-        assert_eq!(fs::read(&path).unwrap(), before);
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn minimal_entry_drops_provider_environment() {
-        let entry = serde_json::json!({
-            "command": "/stable/helixir-mcp",
-            "args": ["--stdio"],
-            "env": {"HELIX_LLM_API_KEY": "secret"}
-        });
-        let minimal = minimal_entry(&entry);
-        assert!(minimal.get("env").is_none());
-        assert!(env_is_empty(&minimal));
-        assert_eq!(minimal["command"], "/stable/helixir-mcp");
-    }
-}
+#[path = "clients_tests.rs"]
+mod tests;

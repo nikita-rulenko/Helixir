@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.16.0"><img src="https://img.shields.io/badge/release-v0.16.0-2ea44f" alt="Release v0.16.0" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.16.1"><img src="https://img.shields.io/badge/release-v0.16.1-2ea44f" alt="Release v0.16.1" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -66,6 +66,18 @@ Then converge the database, models, MCP clients, RBAC, and optional admin UI:
 helixir onboard
 helixir doctor --json
 ```
+
+For Codex, Claude Code, and Cursor, use one managed MCP gateway per host instead
+of allowing every retained tool session to own a separate stdio process:
+
+```bash
+helixir gateway start --bind 127.0.0.1:8765
+helixir setup --gateway 127.0.0.1:8765
+```
+
+The setup command backs up conflicting client configuration, replaces the
+`helixir-local` entry only after explicit gateway selection, and verifies the
+result. Stdio remains available as a compatibility transport.
 
 Onboarding detects Codex, Claude Code, and Cursor, registers `helixir-local`,
 installs the canonical Agent Skill, and verifies a real embedding request. The
@@ -268,7 +280,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.16.0 notes](helixir/doc/v0.16.0/notes.md) | What changed in this release |
+| [v0.16.1 notes](helixir/doc/v0.16.1/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.

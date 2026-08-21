@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 ## 1. System context
 
@@ -10,10 +10,11 @@
                      │   (Cursor, Claude Desktop, │
                      │    Codex, any MCP client)  │
                      └─────────────┬──────────────┘
-                                   │  MCP over stdio
+                                   │  streamable HTTP (preferred)
+                                   │  or stdio fallback
                                    ▼
    ┌──────────────────────────────────────────────────────────────────┐
-   │                       helixir-mcp  (Rust binary)                 │
+   │        helixir gateway (one per host) / helixir-mcp fallback    │
    │                                                                  │
    │   tools  prompts  resources                                      │
    │   (21)   (2)      (3)                                            │
