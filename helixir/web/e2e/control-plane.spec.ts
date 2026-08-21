@@ -33,7 +33,7 @@ async function mockAdminApi(page: Page) {
   await page.route("**/api/v1/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace("/api/v1", "");
-    if (path === "/meta") return json(route, { product: "helixir", version: "0.16.0", api_version: "v1", phase: "admin", transport: "http", runtime: "control-plane-container", host_operations_available: true });
+    if (path === "/meta") return json(route, { product: "helixir", version: "0.16.1", api_version: "v1", phase: "admin", transport: "http", runtime: "control-plane-container", host_operations_available: true });
     if (path === "/overview") return json(route, overview);
     if (path === "/discovery") return json(route, discovery);
     if (path === "/install/plan") return json(route, plan);

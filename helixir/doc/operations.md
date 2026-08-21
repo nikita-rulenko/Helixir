@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -297,14 +297,27 @@ touching HelixDB.
 
 ## MCP gateway
 
-The native stdio MCP process is the default local integration. The optional
-gateway exposes the same tools through streamable HTTP:
+The gateway exposes the same tools through streamable HTTP from one long-lived
+Helixir process per host. Prefer it for clients such as Codex whose isolated
+tool sessions may retain abandoned stdio pipes: otherwise every retained pipe
+keeps its `helixir-mcp` child alive even though the server correctly waits for
+transport EOF.
 
 ```bash
-helixir gateway start
+helixir gateway start --bind 127.0.0.1:8765
+helixir setup --gateway 127.0.0.1:8765
 helixir gateway status
 helixir gateway stop
 ```
+
+`setup --gateway` uses the native Codex and Claude Code CLIs, backs up a
+conflicting registration, replaces it with HTTP, verifies the result, and
+restores the backup on failure. File-configured clients receive the equivalent
+`type = http` / `url = .../mcp` entry. Restart each client after migration.
+
+Stdio remains available for clients that cannot speak streamable HTTP. A stdio
+server exits when its owning client closes stdin; an idle timeout is
+intentionally not used because an otherwise quiet MCP session is still valid.
 
 The default gateway bind is `0.0.0.0:8765` and assumes a trusted network. Enable
 bearer authentication before exposing it beyond that boundary:
