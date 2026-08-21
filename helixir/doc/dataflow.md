@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 This document walks the two pipelines that matter most:
 
@@ -252,13 +252,58 @@ the time bound, not the RBAC bound.
        │
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
- │  STEP 6 — Apply min_combined_score (0.3) and limit                   │
- │    SearchResult vec; sorted by score desc                            │
+ │  STEP 6 — Curate and project                                         │
+ │    demote superseded rows; collapse raw/atom families; preserve      │
+ │    provenance; keep `limit` in-window rows plus a separate bounded   │
+ │    flashback allowance                                               │
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
  Vec<SearchResult> { id, content, score, metadata, created_at }
 ```
+
+### Event-time windows and flashback projection
+
+`time_from`/`time_to` create an inclusive event-time `TimeWindow`; either side
+may be open. RFC3339 values are used directly and a bare `YYYY-MM-DD` expands
+to the start of day for the lower bound or end of day for the upper bound. An
+explicit window overrides `temporal_days`; malformed bounds and an inverted
+window fail at the MCP boundary.
+
+The contract deliberately separates attention from reachability:
+
+1. vector/BM25 seeds are hard-filtered to the window;
+2. event time is `valid_from` when present and otherwise `created_at`;
+3. RBAC visibility is intersected before and after expansion exactly as for an
+   unbounded query;
+4. graph expansion may cross the temporal boundary;
+5. every out-of-window expansion row is labelled
+   `metadata.flashback=true` with its real `metadata.event_date`;
+6. final projection keeps up to `limit` in-window rows and then appends at most
+   `retrieval.flashback_max` flashbacks (default 3), so linked history cannot
+   crowd out the requested period.
+
+This is why a search for “what happened in June” may honestly return June
+events plus a dated May causal predecessor. The caller must describe the latter
+as related older context, not rewrite the timeline. Reasoning-chain tools walk
+their authorized graph by definition and are not converted into period-event
+queries.
+
+### Result-family and history projection
+
+Two other projections keep recall useful without erasing graph history:
+
+- raw long-form source memories and their extracted atoms form a `PART_OF`
+  family. Only the best-ranked representative appears in one result window;
+  folded ids remain in `metadata.collapsed` and are still addressable;
+- a row with an incoming `SUPERSEDES` edge remains reachable but receives the
+  `retrieval.superseded_penalty` (default 0.6) and is labelled
+  `superseded=true` plus `superseded_by`. Consumers must follow the successor
+  for current truth.
+
+Collective projection then folds equivalent scoped fingerprints and annotates
+holder/controversy information only across owners already visible to the actor.
+None of these projections widens RBAC access or deletes physical history.
 
 ### Specialized search variants
 
@@ -269,6 +314,13 @@ All re-use the same `SearchEngine` instance:
 - `search_reasoning_chain` — seeds from `search`, then traverses
   IMPLIES/BECAUSE/CONTRADICTS/SUPPORTS up to `max_depth` (default 5). Lives
   at `tooling_manager/reasoning.rs`.
+- `connect_memories` — resolves two semantic anchors, then returns one
+  authorized typed path (plus confidence) between them. It is the bridge tool
+  for “how are A and B related?”, not an exhaustive graph export.
+- `get_memory_graph` — projects a bounded authorized neighborhood around a
+  memory, or a bounded owner view when no memory id is supplied.
+- `list_memories` — bounded newest-first audit view without semantic ranking;
+  it is for inspection, not the default recall path.
 - `search_for_dedup` — internal variant used by Phase 1 of add_memory, top-k
   small (5), bypasses the moka cache to avoid stale dedup decisions.
   `mind_toolbox/search/dispatch/projection.rs`.

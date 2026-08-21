@@ -31,7 +31,7 @@ doc/
 `moira.private.md` are dated engineering/design records,
 not descriptions of the current branch. Their old branch names, counts and
 tool totals are intentionally preserved as historical evidence. Current facts
-belong in the six evergreen design documents above or the newest version draft.
+belong in the evergreen references above or the newest version draft.
 
 ## Conventions
 
@@ -72,6 +72,27 @@ The newest directory may be an explicitly labelled **unreleased** draft while
 a release is being assembled. Frozen snapshots begin only once the matching tag
 is cut; until then the draft must describe local readiness honestly and must not
 claim that package channels or images have already been published.
+
+## Capability map
+
+Use this table as the maintained index of shipped product surfaces. It points
+to the contract that owns each capability rather than duplicating the contract
+in this README.
+
+| Capability | Primary reference |
+|---|---|
+| Product identity, non-goals, decision matrix, fixed ontology | [design-rationale.md](design-rationale.md) |
+| Native packages, release installer, source build, three database topologies, models and MCP client registration | [installation.md](installation.md) |
+| Every public CLI family, configuration, RBAC, gateway, Moirai, Hygieia, control plane and backup vault | [operations.md](operations.md) |
+| MCP tools, prompts, resources, identities, result interpretation, flashbacks, outbox notices and agent lifecycle | [userflow.md](userflow.md) |
+| Atomic writes, scoped dedup, hybrid retrieval, result projection and FastThink persistence | [dataflow.md](dataflow.md) |
+| Rust layers, component ownership, caches, background agents and policy boundaries | [architecture.md](architecture.md) |
+| Nodes, vectors, typed edges, ontology, RBAC graph and migration rules | [data-model.md](data-model.md) |
+| Unit, live HelixDB, MCP, browser, installer, package and recovery evidence | [test-design.md](test-design.md) |
+| Terms such as Hive, flashback, family collapse, Moirai, Hygieia and presence TTL | [../../GLOSSARY.md](../../GLOSSARY.md) |
+
+Release directories answer only “what changed in that release”. They are not
+the place to discover current behavior.
 
 ## Where to file changes
 

@@ -5,8 +5,8 @@
 <h1 align="center">Helixir</h1>
 
 <p align="center">
-  <strong>Persistent, governed, reasoning-aware memory for AI agents.</strong><br />
-  One graph for Codex, Claude Code, Cursor, and every MCP-compatible client.
+  <strong>A governed, cross-harness memory control plane for AI agents.</strong><br />
+  One persistent reasoning graph for Codex, Claude Code, Cursor, and every MCP-compatible client.
 </p>
 
 <p align="center">
@@ -26,10 +26,16 @@
 
 ---
 
-Helixir is the memory layer an agent keeps when the model, editor, and session
-change. It extracts durable facts from conversations, preserves authorship,
-connects facts with typed reasoning edges, and recalls both an answer and the
-path that supports it.
+Helixir is the persistent epistemic layer an agent keeps when the model,
+editor, session, or entire agent harness changes. It extracts durable facts
+from conversations, preserves authorship, connects facts with typed reasoning
+edges, and recalls both an answer and the path that supports it.
+
+An agent harness such as Codex or Claude Code owns the execution loop, tools,
+workspace and model interaction. Helixir does not replace that runtime. It
+provides a shared **memory data plane** and **governance control plane** that
+multiple harnesses can use without surrendering provenance, access boundaries
+or history.
 
 It is built for teams as well as individual agents. Permanent graph-backed RBAC
 keeps memories inside their groups, while explicit dedup federations let trusted
@@ -82,6 +88,7 @@ memory. Global administrators can open the control plane at
 | A curated write path that can add, update, supersede, contradict, or link | An append-only vector bucket |
 | Hybrid recall: dense vectors + BM25 + graph traversal + PPR | A generic RAG framework |
 | Persistent memory plus an isolated FastThink scratchpad | A place where every intermediate thought is saved |
+| A cross-harness memory data plane and governance control plane | A replacement for the agent's execution loop, tools, or sandbox |
 | Shared memory governed by HelixDB-backed RBAC | A per-user silo or a local JSON ACL |
 | A fixed eight-type user-facing ontology | A runtime-extensible RDF/OWL taxonomy |
 | A memory and operations control plane for cooperative agents | An identity provider for an untrusted public network |
@@ -185,7 +192,7 @@ See the [data model](helixir/doc/data-model.md) for the complete contract.
 |:--------|:-----------------|
 | Persistent memory | Atomic extraction, dedup, supersession, contradictions, entities, ontology, raw-source preservation |
 | Reasoning graph | `BECAUSE`, `IMPLIES`, `SUPPORTS`, `CONTRADICTS`, `RELATES_TO`, `PART_OF`, `IS_A` |
-| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, event-time windows, flagged flashbacks |
+| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, [event-time windows and dated flashbacks](helixir/doc/userflow.md#event-time-windows-and-flashbacks) |
 | FastThink | Branching in-memory scratchpad; only an explicit conclusion enters long-term memory |
 | Hive consensus | Independent authorship collapsed inside one RBAC group or explicit dedup federation |
 | Moirai | Clotho categories, Lachesis routes, Atropos hypotheses with admin-only witness provenance |
@@ -265,6 +272,8 @@ The root README is the product tour. Maintained reference material lives under
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.
+The [capability map](helixir/doc/README.md#capability-map) is the shortest route
+from a product feature to its maintained contract.
 
 ## Development
 

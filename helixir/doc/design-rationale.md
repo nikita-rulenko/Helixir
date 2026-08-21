@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -332,10 +332,12 @@ For an exhaustive list of what the system provides today, see
 `architecture.md §7 "Capability surface"`. The short version:
 
 ```
-write:                      add_memory
+write:                      add_memory / get_add_status
 read (semantic):            search_memory  (modes: recent/contextual/deep/full)
+                            explicit event-time windows + dated flashbacks
                             search_by_concept (8 types)
                             search_reasoning_chain (4 reasoning edges, BFS)
+read (path):                connect_memories
 read (exhaustive):          list_memories
 read (graph view):          get_memory_graph
 read (recovery):            search_incomplete_thoughts
@@ -349,8 +351,15 @@ collective layer:           scope = personal | collective | all
                             agent_farewell
 audit & history:            HAS_HISTORY edges, HistoryEvent nodes
 versioning:                 SUPERSEDES edges
+write governance:           memory charter, needs_clarification,
+                            authorized pending_outcomes and learned rules
+generative layer:           Clotho / Lachesis / Atropos + evidence journal
+operations:                 Hygieia, gateway, config hot-reload,
+                            transactional installer and doctor
 administration:             graph-backed RBAC CLI + global-admin web control
                             plane, settings and managed backup vault
+distribution:               signed release archives, Homebrew, APT and
+                            multi-architecture containers
 ```
 
 ---

@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -38,6 +38,49 @@ helixir insights                      # Moirai insight journal with provenance
 Modes are capability tiers, not access-control profiles. Permanent RBAC applies
 in `solo`, `collective`, and `insights`.
 
+### Public CLI capability map
+
+This is the canonical index of public top-level commands. Run `helixir <command>
+--help` for flags. Hidden supervisor/apply bridges are implementation details
+and are intentionally omitted.
+
+| Command | Subcommands or main arguments | Capability |
+|:--------|:------------------------------|:-----------|
+| `config` | `get`, `set`, `edit`, `apply` | Inspect, mutate, validate and hot-apply layered configuration. |
+| `setup` | `--target`, `--gateway`, `--mode`, `--dry-run` | Register MCP clients and install the canonical skill without full provisioning. |
+| `onboard` | topology/model/RBAC choices, `--dry-run`, `--non-interactive` | Run the shared detect → prepare → apply → verify installation transaction. |
+| `doctor` | `--json` | Prove database, NLI, embedding and runtime readiness; repair a broken embedding path through Ollama/Nomic with operator visibility. |
+| `mode` | — | Explain the active `solo`, `collective`, or `insights` capability tier. |
+| `rbac` | `bootstrap`, `status`, `migrate-teamleads`, `group`, `user`, `dedup`, `grant`, `revoke`, `show`, `check` | Administer graph-backed identity, roles, groups, federated dedup and permission checks. |
+| `charter` | — | Show adopted learned rules and contradiction-precedent counts. |
+| `swarm` | `--window` | Project the graph-backed agent roster and TTL-derived online state. |
+| `heartbeat` | agent, role, host, status | Publish one explicit presence lease for a non-MCP worker or diagnostic. |
+| `prune-agent` | agent id, `--yes` | Delete a genuinely junk Agent presence row; stale legitimate agents normally remain as provenance. |
+| `categories` | `--limit` | Inspect the controlled category dictionary and member counts. |
+| `clotho` | `seed`, `tag`, `grow` | Seed, apply and expand category tagging. |
+| `lachesis` | `pmi`, `route` | Measure category overlap and route witness-backed cross-domain threads. |
+| `chain` | user, topic, max hops | Reconstruct the longest coherent reasoning chain through a topic. |
+| `atropos` | limits/route shape | Curate routed threads into ranked provenance-bearing hypotheses. |
+| `pipeline` | user, thresholds/caps | Run Clotho → Lachesis → Atropos once. |
+| `daemon` | `run`, `start`, `stop`, `status` | Schedule Moirai, merge and contradiction-reconciliation passes. |
+| `journal` | `--tail` | Read recent agent/Moirai activity. |
+| `insights` | `--tail` | Read the persisted Moirai hypothesis journal and witnesses. |
+| `debt` | user, `--reconcile` | Inspect cross-owner contradiction debt and retire disputes that policy can settle. |
+| `backfill` | `--limit` | Idempotently add missing scoped content fingerprints to older memories. |
+| `merge` | `--limit`, `--threshold` | NLI-gated paraphrase convergence; contradictions are never merged. |
+| `model` | `download`, `status`, `check`, `which` | Install and prove the mandatory host-specific local NLI judge. |
+| `gateway` | `run`, `start`, `stop`, `status` | Share the MCP surface over streamable HTTP, optionally behind bearer auth. |
+| `watch` | `run`, `start`, `stop`, `status`, `install`, `uninstall` | Run Hygieia once, detached, or as a login service. |
+| `health` | `--tail` | Read Hygieia's bounded health and recovery journal. |
+| `web` | bind/assets/token options | Launch the loopback browser surface directly for local operation or development. |
+| `control-plane` | `install`, `status`, `uninstall` | Manage the hardened container plus reboot-safe native supervisor. |
+
+Commands that mutate memory quality (`backfill`, `merge`, `debt --reconcile`),
+policy, installation or recovery require the same global-admin authority as
+their underlying Rust facade. `heartbeat` is not a background liveness claim:
+normal MCP activity refreshes presence automatically and one-shot agents use
+`agent_farewell` through MCP when they finish.
+
 ## RBAC administration
 
 The authenticated CLI principal comes from `HELIXIR_RBAC_ACTOR`. There is no
@@ -71,6 +114,7 @@ shared data plane without granting global control-plane privileges.
 ```bash
 helixir rbac user list --json
 helixir rbac user show --user alice --json
+helixir rbac show --user alice --json
 
 helixir rbac group list --json
 helixir rbac group create --id development --name "Development"
@@ -85,6 +129,10 @@ helixir rbac group remove-user \
   --group development \
   --user alice \
   --json
+
+helixir rbac grant --user alice --role moderator --group development
+helixir rbac revoke --user alice --role moderator --group development
+helixir rbac group delete --id retired-project --yes
 ```
 
 Removing a user deactivates assignments but preserves the User node and role
@@ -117,6 +165,8 @@ helixir rbac dedup create \
   --id engineering \
   --name "Engineering federation"
 
+helixir rbac dedup list --json
+
 helixir rbac dedup attach \
   --group development \
   --dedup-group engineering
@@ -127,6 +177,8 @@ helixir rbac dedup attach \
 
 helixir rbac dedup detach \
   --group platform
+
+helixir rbac dedup delete --id empty-federation --yes
 ```
 
 Joining exposes existing federation history to the group. Detaching preserves
@@ -144,6 +196,41 @@ helixir rbac check --user alice --action write --owner alice
 Normal MCP writes pass a stable `actor_id`, the memory owner as `user_id`, and
 the concrete working `group_id`. Authorization fails closed when the principal,
 group, or deployed policy query cannot be resolved.
+
+## Memory stewardship and agent presence
+
+The CLI exposes bounded maintenance views and explicit repair operations. They
+operate on the same graph contracts as MCP; none bypasses RBAC or creates a
+second registry.
+
+```bash
+helixir charter                         # learned rules + precedent counts
+helixir swarm                           # TTL-filtered agent roster
+helixir heartbeat --agent worker-1 \
+  --role developer --status working     # one explicit lease
+helixir chain --user Codex \
+  --topic "release recovery"            # longest coherent path
+helixir debt --user Codex               # unresolved contradiction debt
+```
+
+`swarm` reports terminal farewell states as offline immediately and hides
+non-terminal agents after `swarm.presence_ttl_secs`. The Agent node remains
+because it anchors `AGENT_CREATED` provenance. Use
+`prune-agent --agent-id <id> --yes` only for true junk such as a renamed test
+identity, not routine staleness.
+
+Three global-admin repair commands are intentionally explicit:
+
+```bash
+helixir backfill --limit 100000          # add missing scoped fingerprints
+helixir merge --limit 500 --threshold .85 # NLI-gated paraphrase convergence
+helixir debt --user Codex --reconcile    # retire policy-settled disputes
+```
+
+`backfill` is idempotent. `merge` requires the mandatory local NLI judge and
+never unifies contradictions. Reconciliation preserves preference diversity
+and live factual disputes; it drains only debt that the current policy can
+settle.
 
 ## Configuration
 

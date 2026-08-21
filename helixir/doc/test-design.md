@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 ## 1. Stance
 
@@ -148,6 +148,8 @@ owners.
 |---|---|---|
 | Config | `src/core/config.rs` | Environment layering, defaults and validation. |
 | Search modes | `src/core/search_modes.rs` | Default, parsing and token-cost estimates. |
+| Event-time windows | `src/core/time_window.rs` | Inclusive RFC3339/date bounds, open sides and malformed-input behavior. |
+| Search result projection | `src/toolkit/mind_toolbox/search/dispatch*` | Separate flashback allowance, raw/atom family collapse and superseded-history labelling. |
 | Levels (deploy ordering) | `src/core/levels/utils.rs` | Deployment order, dependencies and accumulated schema. |
 | Event bus | `src/core/events/bus.rs` | Handler delivery. |
 | DB client | `src/db/client.rs` | Explicit and environment-backed construction. |

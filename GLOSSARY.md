@@ -26,10 +26,11 @@ time; the read path makes zero generative/reasoning-LLM calls and is ~15–30 ms
 warm. A cold semantic query still uses the configured embedding endpoint.
 
 **Dogfooding.** The maintainers (human and agents) use Helixir as their own
-long-term memory while building it. The project's decisions, gotchas and
-vision are stored *in* the project, under `user_id=claude` (the working
-agent) and `user_id=helixir` (the system's manual about itself). If it
-doesn't work for us, it doesn't ship.
+long-term memory while building it. Project decisions, gotchas and outcomes
+are stored under each agent's stable owner id (`Codex`, `claude`, and other
+onboarded principals); `user_id=helixir` is used for system-authored
+knowledge and hypotheses. RBAC groups decide visibility while `user_id`
+preserves provenance. If it doesn't work for us, it doesn't ship.
 
 **Self-documentation.** The extension of dogfooding to docs: the operating
 manual, integration recipes and this glossary are seeded into Helixir's own
@@ -155,7 +156,8 @@ hidden, never disguised: flagged `flashback: true` with its `event_date`,
 and capped by a separate allowance (`retrieval.flashback_max`, default 3)
 so associations never crowd the period's own rows. The recall analogue of a
 human flashback — thinking about last week surfaces last year, and you know
-it's old.
+it's old. See
+[Agent userflow](helixir/doc/userflow.md#event-time-windows-and-flashbacks).
 
 **Charter precedent.** One settled contradiction review, remembered: an
 episode memory under `user_id=helixir` tagged with the dispute's shape
@@ -210,9 +212,10 @@ black".
 **Edge arsenal.** The seven typed memory→memory relations: causal/logical
 `IMPLIES`, `BECAUSE`, `CONTRADICTS`, `SUPPORTS` (what
 `search_reasoning_chain` walks) and associative/structural `RELATES_TO`,
-`PART_OF`, `IS_A` (relatedness without a causal claim). All persist as one
-`MEMORY_RELATION` edge whose `relation_type` property names the type — new
-types need no schema change. (`src/toolkit/mind_toolbox/reasoning/`)
+`PART_OF`, `IS_A` (relatedness without a causal claim). `IMPLIES`, `BECAUSE`
+and `CONTRADICTS` use dedicated physical edges; `SUPPORTS`, `RELATES_TO`,
+`PART_OF` and `IS_A` share `MEMORY_RELATION`, whose `relation_type` property
+names the semantic relation. (`src/toolkit/mind_toolbox/reasoning/`)
 
 **NLI — Natural Language Inference.** The local ONNX judge (entail /
 contradict / neutral) used as the paraphrase-merge backstop: two memories
@@ -363,8 +366,9 @@ the body, not the status code.
 
 **MCP — Model Context Protocol.** The interface agents speak to Helixir:
 a stdio (or streamable-HTTP via the gateway) server exposing the 21 tools.
-Any MCP client — Codex, Claude Code, Claude Desktop, Cursor, zeroclaw — connects
-with a few lines of config; `helixir setup` writes them for you.
+Any MCP client can connect with a few lines of config. Guided onboarding detects
+Codex, Claude Code and Cursor; `helixir setup` additionally knows Claude
+Desktop and Gemini CLI and can target a custom client config explicitly.
 
 **Layered config.** Effective settings = built-in defaults ←
 `~/.helixir/helixir.toml` ← environment variables, later layers winning.
