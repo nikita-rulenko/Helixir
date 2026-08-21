@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 ## 1. Stance
 
@@ -28,7 +28,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.16.0`):** 333 library unit tests plus CLI tests
+**Current (`v0.16.1`):** 336 library unit tests plus CLI tests
 (`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -148,6 +148,8 @@ owners.
 |---|---|---|
 | Config | `src/core/config.rs` | Environment layering, defaults and validation. |
 | Search modes | `src/core/search_modes.rs` | Default, parsing and token-cost estimates. |
+| Event-time windows | `src/core/time_window.rs` | Inclusive RFC3339/date bounds, open sides and malformed-input behavior. |
+| Search result projection | `src/toolkit/mind_toolbox/search/dispatch*` | Separate flashback allowance, raw/atom family collapse and superseded-history labelling. |
 | Levels (deploy ordering) | `src/core/levels/utils.rs` | Deployment order, dependencies and accumulated schema. |
 | Event bus | `src/core/events/bus.rs` | Handler delivery. |
 | DB client | `src/db/client.rs` | Explicit and environment-backed construction. |

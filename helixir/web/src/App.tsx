@@ -205,7 +205,7 @@ function App() {
             </button>
             <span className="micro-label">Graph link</span>
             <span className="live-pill"><StatusDot ok={status.backend} pulse />{status.backend ? "Live" : "Awaiting"}</span>
-            <span className="version">v{meta?.version ?? "0.16.0-dev"}</span>
+            <span className="version">v{meta?.version ?? "0.16.1-dev"}</span>
           </div>
         </header>
 

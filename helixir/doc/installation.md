@@ -1,6 +1,6 @@
 # Installation
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 This is the maintained installation reference. The root README intentionally
 keeps only the shortest working path; topology choices, package trust,
@@ -12,12 +12,18 @@ headless operation, and lifecycle guarantees live here.
 |:-----|:---------|:-----------------|
 | Homebrew | macOS and Linuxbrew | Signed native package and runtime resources |
 | Helixir APT repository | Debian 12 and Ubuntu 22.04+ | Signed `amd64`/`arm64` Debian package and runtime resources |
-| Release installer | Other supported hosts and scripted bootstrap | Matching immutable GitHub release archive |
+| Release installer | macOS/Linux scripted bootstrap without a package manager | Matching immutable GitHub release archive |
 | Source build | Contributors and unreleased branches | Locally compiled native binaries |
 
 Every path ends at the same `helixir onboard` orchestrator. Package managers
 do not provision Docker, HelixDB, models, MCP clients, RBAC, or the web control
 plane from lifecycle hooks.
+
+The native release matrix also publishes Windows binaries, but the Bash
+release installer and transactional host onboarding currently target macOS and
+Linux. Windows users can inspect the archive, but should not treat it as a
+supported one-command installation until the native Windows bootstrap is
+implemented.
 
 ## Homebrew
 
@@ -220,9 +226,19 @@ verifies the repaired path.
 
 Onboarding detects and configures Codex, Claude Code, and Cursor. `helixir
 setup` is the lightweight registration-only path and additionally supports
-Claude Desktop and Gemini CLI.
+Claude Desktop and Gemini CLI. For HTTP-capable clients, prefer one managed
+gateway per host so abandoned client sessions cannot retain separate stdio
+children:
 
-Each client receives:
+```bash
+helixir gateway start --bind 127.0.0.1:8765
+helixir setup --gateway 127.0.0.1:8765
+```
+
+The gateway setup path safely backs up, replaces and verifies existing native
+Codex/Claude registrations; it rolls the client config back on failure.
+
+Stdio clients receive:
 
 - the `helixir-local` MCP server entry;
 - a stable lower-case `HELIXIR_RBAC_ACTOR`;
@@ -231,6 +247,9 @@ Each client receives:
 
 Reasoning-provider and embedding credentials remain in the private central
 configuration, not copied into every editor's JSON.
+
+HTTP clients receive only the gateway URL. Their MCP calls carry the stable
+`actor_id`; the gateway owns backend and model configuration for the host.
 
 For a custom stdio MCP client:
 

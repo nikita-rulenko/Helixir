@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 ## 1. System context
 
@@ -10,10 +10,11 @@
                      │   (Cursor, Claude Desktop, │
                      │    Codex, any MCP client)  │
                      └─────────────┬──────────────┘
-                                   │  MCP over stdio
+                                   │  streamable HTTP (preferred)
+                                   │  or stdio fallback
                                    ▼
    ┌──────────────────────────────────────────────────────────────────┐
-   │                       helixir-mcp  (Rust binary)                 │
+   │        helixir gateway (one per host) / helixir-mcp fallback    │
    │                                                                  │
    │   tools  prompts  resources                                      │
    │   (21)   (2)      (3)                                            │
@@ -303,12 +304,18 @@ plus the root `README.md`.
 - **Coherence guard.** `is_coherent_memory` + `split_incoherent_memory`
   detect contradictory clauses across distinct subjects within one candidate
   memory and split at contradiction markers before embedding (v0.3.1).
-- **Reasoning edges.** Memory→Memory edges
-  `IMPLIES / BECAUSE / CONTRADICTS / SUPPORTS` are inferred during the enrich
-  phase of `add_memory` for every operation except `NOOP` / `DELETE`
-  (v0.3.1-fix).
+- **Reasoning edges.** Seven typed Memory→Memory semantics are available.
+  `IMPLIES / BECAUSE / CONTRADICTS` use dedicated physical edges;
+  `SUPPORTS / RELATES_TO / PART_OF / IS_A` use the generic
+  `MEMORY_RELATION` shape. The four logical/causal relations are inferred
+  during the enrich phase of `add_memory` for every operation except
+  `NOOP` / `DELETE` (v0.3.1-fix).
 - **Audit trail.** Every `UPDATE` / `SUPERSEDE` / `DELETE` writes a
   `HAS_HISTORY` edge to a `HistoryEvent` node.
+- **Confirm-or-promise ingestion.** `add_memory` returns a completed
+  `memory_ids`/`updated`/`deduped` result or an accepted `pending_id`. Atomic
+  HelixDB claims prevent multiple stdio/gateway workers from processing the
+  same pending write; status and outbox reads retain owner/admin boundaries.
 
 ### 7.2 Retrieval
 
@@ -351,6 +358,13 @@ plus the root `README.md`.
     when the contextual window is empty (mature corpora).
 - **Modes.** `recent` (~4 h) · `contextual` (~30 d, default) · `deep`
   (~90 d) · `full` (unbounded). Defined in `src/core/search_modes.rs`.
+- **Explicit event-time windows and flashbacks.** `time_from`/`time_to`
+  constrain seed attention by `valid_from` (falling back to `created_at`).
+  Authorized graph neighbors outside the window remain reachable as dated,
+  flagged flashbacks under a separate bounded allowance; they never displace
+  the requested period's rows. See
+  [dataflow](dataflow.md#event-time-windows-and-flashback-projection) and
+  [agent userflow](userflow.md#event-time-windows-and-flashbacks).
 - **Scopes.** After RBAC has removed every unauthorized row, `personal`
   anchors on the requested owner's `HAS_MEMORY` provenance; `collective` and
   `all` fan out across authorized owners with consensus ranking and controversy
@@ -361,12 +375,18 @@ plus the root `README.md`.
   reasoning edges; chain modes `forward / causal / both / deep`. Coverage
   was raised from 40 % to ~95 % when traversal grew from 3 to 8 edge
   directions (v0.3.1).
-- **`list_memories`** — full-scan tool for exhaustive queries, no scoring
-  (v0.3.0).
+- **`connect_memories`** — semantic anchors plus an authorized typed path
+  answer “how are A and B related?” without exporting the whole graph.
+- **`list_memories`** — bounded newest-first audit view with no semantic
+  scoring (v0.3.0).
 - **`get_memory_graph`** — return a graph view (nodes + edges) around a
   memory or for a user.
 - **`search_incomplete_thoughts`** — locate historical pre-RBAC FastThink
   sessions that were persisted as `context_tags=incomplete_thought`.
+- **Curated result projection.** Raw sources and extracted atoms are collapsed
+  into one representative with `metadata.collapsed`; superseded nodes remain
+  reachable but are penalized and labelled with `superseded_by`. Collective
+  holder/controversy projection runs only after RBAC filtering.
 
 ### 7.3 FastThink (ephemeral working memory)
 

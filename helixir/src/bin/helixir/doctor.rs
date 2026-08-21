@@ -190,7 +190,7 @@ pub(crate) fn doctor_clients_ready() -> bool {
     selected.into_iter().all(|client| {
         let server = helixir::installer::clients::StdioServer::new(&mcp_binary)
             .with_env("HELIXIR_RBAC_ACTOR", client.principal_id());
-        helixir::installer::client_registration::client_registration_matches(
+        helixir::installer::client_registration::client_has_valid_helixir_registration(
             client,
             "helixir-local",
             &server,

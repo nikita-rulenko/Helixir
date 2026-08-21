@@ -153,6 +153,9 @@ pub(crate) async fn setup_run(
         println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
         println!("  The memory mode lives on the GATEWAY process — start it with");
         println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
+        if target.is_none() {
+            wire_native_gateway_clients(&url, interactive, dry_run)?;
+        }
         let entry = mcp_entry_gateway(&url);
         return wire_entry_to_clients(
             entry,

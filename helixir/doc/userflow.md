@@ -1,11 +1,12 @@
 # Userflow
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 Helixir has two deliberate interaction surfaces: LLM agents use MCP/stdio (or
 the authenticated gateway), while a human global administrator uses the CLI or
-web control plane. Sections 1–6 describe **how an agent decides which tool to
-call**; section 7 describes the separate administrative flow.
+web control plane. Sections 1–7 describe **how an agent decides which tool to
+call and reads its result**; section 8 describes the separate administrative
+flow.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
 There are 21 tools, 2 prompts, and 3 resources.
@@ -77,6 +78,8 @@ agent intent                                tool to call
 ─────────────────────────────────────────────────────────────────────
 "What does the user usually prefer?"        search_by_concept(preference)
 "Why did we choose X last week?"            search_reasoning_chain(causal)
+"How are A and B connected?"                connect_memories(A, B)
+"What happened during period X?"            search_memory(time_from/time_to)
 "What's true about the user as of today?"   search_memory(mode=contextual)
 "Resume yesterday's research"               search_incomplete_thoughts
                                             → think_start with recalled
@@ -92,7 +95,74 @@ agent intent                                tool to call
 "Other users' shared knowledge on Z"        search_memory(scope=collective)
 ```
 
-## 3. Typical session shape
+## 3. Reading curated results
+
+Search responses are not raw nearest-neighbour dumps. Ranking, RBAC filtering,
+graph expansion, family collapse and historical annotation have already run.
+Read the metadata before presenting a row as current truth.
+
+| Metadata | Meaning | Agent rule |
+|:---------|:--------|:-----------|
+| `origin`, `edge`, `parent`, `ppr`, `cosine` | Why the row entered the result and how it ranked | Preserve provenance when a conclusion depends on the graph path. |
+| `collapsed: [ids]` | Same-story raw/atomic family members folded under this representative | Do not claim the content was deleted; fetch a folded id only when exact wording matters. |
+| `superseded: true`, `superseded_by` | Reachable historical state replaced by a newer memory | Never act on it as current truth; follow the successor. |
+| `flashback: true`, `event_date` | Graph-linked context from outside an explicit time window | Present it separately and dated, never as an event inside the requested period. |
+| `collapsed_holders`, controversy metadata | Scoped Hive consensus or disagreement among authorized owners | Describe consensus only inside the actor's visible RBAC domain. |
+
+### Event-time windows and flashbacks
+
+Use `time_from` and/or `time_to` for a named period. Values accept RFC3339 or
+`YYYY-MM-DD`; bare dates expand to the inclusive start/end of that day. An
+explicit bound overrides `temporal_days`, either side may be open, and a lower
+bound after the upper bound is rejected.
+
+```text
+search_memory(
+  actor_id="codex",
+  user_id="Codex",
+  query="rollout failures",
+  time_from="2026-06-01",
+  time_to="2026-06-30"
+)
+```
+
+The window constrains direct seed attention by event time (`valid_from` when
+present, otherwise `created_at`). Authorized graph expansion remains free to
+bring back older or newer context. Those rows carry
+`metadata.flashback=true` plus their true `event_date` and use a separate
+allowance (`retrieval.flashback_max`, default 3), so they do not displace the
+requested period's rows.
+
+Correct presentation:
+
+```text
+During June: <in-window findings>.
+Related, from 2026-05-12: <flashback context>.
+```
+
+Without an explicit window, `mode=full` removes the mode-derived temporal
+cutoff but never an RBAC bound. Explicit windows also never widen group
+visibility.
+
+### Write acknowledgements and delayed outcomes
+
+Every `add_memory` result must be interpreted by contract:
+
+- `ok:true` is success and must not be retried;
+- `memory_ids`, `updated`, or non-empty `deduped` describe a completed outcome;
+- `status="accepted"` plus `pending_id` is a promised buffered outcome, not a
+  failure; poll `get_add_status` only when immediate confirmation matters;
+- `needs_clarification` means the charter requires the human question supplied
+  by the response;
+- `pending_outcomes` delivers earlier authorized notices. Surface `ops_alert`
+  to the operator and settle `contradiction_review` with
+  `resolve_contradiction(confirm|retract|preference)` rather than guessing.
+
+Repeated identical contradiction verdicts may produce a `rule_proposal`. Adopt
+only the exact proposed `add_memory` call (or ask the operator); active charter
+and learned rules are readable through `memory://rules`.
+
+## 4. Typical session shape
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -137,7 +207,7 @@ agent intent                                tool to call
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 4. State machine: FastThink session
+## 5. State machine: FastThink session
 
 ```
                   think_start
@@ -169,7 +239,7 @@ Wall-clock & thought-count limits come from `FastThinkConfig` (default
 the actor must discard and restart the timed-out session. Historical
 `incomplete_thought` memories remain searchable.
 
-## 5. Anti-patterns the agent should refuse
+## 6. Anti-patterns the agent should refuse
 
 The cognitive protocol prompt (`mcp/prompts.rs`) encodes these. Mirroring
 them here so they live in the engineering doc too:
@@ -184,7 +254,7 @@ them here so they live in the engineering doc too:
   Memory will trigger UPDATE / SUPERSEDE through the decision engine — let
   the engine decide.
 
-## 6. Release contract checks
+## 7. Release contract checks
 
 `config://helixir` derives its version from `CARGO_PKG_VERSION` and enumerates
 all 21 registered tools. `list_resources` exposes the three resources above.
@@ -192,7 +262,7 @@ The release smoke test must compare these advertised counts with MCP
 `tools/list`, `prompts/list`, and `resources/list` after every tool-surface
 change.
 
-## 7. Global-admin control flow
+## 8. Global-admin control flow
 
 The browser UI is an administration surface, not another agent role. Every API
 route after bootstrap requires the graph-backed global `admin` role; a

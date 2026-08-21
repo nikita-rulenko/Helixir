@@ -29,7 +29,7 @@ test("waits for discovery before choosing installation defaults", async () => {
     if (path.endsWith("/meta")) {
       return Promise.resolve(jsonResponse({
         product: "helixir",
-        version: "0.16.0",
+        version: "0.16.1",
         api_version: "v1",
         phase: "admin",
         transport: "http",

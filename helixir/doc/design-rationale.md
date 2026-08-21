@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -94,6 +94,7 @@ Releases as evidence of the project's direction. Source:
 
 | Tag | Date | Theme | Key additions / fixes |
 |---|---|---|---|
+| v0.16.1 | 2026-08-21 | One host, one gateway | HTTP-capable MCP clients share one managed gateway process because retained client-owned stdio pipes cannot provide a reliable server-side lifecycle signal. Registration is transport-aware, backup-verified and rollback-safe. |
 | `Rust` (v0.1.0) | 2025-11-29 | Initial Rust port | `HelixirClient`, `ToolingManager`, `mind_toolbox`, MCP server, base node/edge schema, vector search. |
 | `Think_fast` (v0.1.1 / v2.0 internal) | 2025-12-01 | Working memory + protocol | FastThink (7 MCP tools: `think_start/add/recall/conclude/commit/discard/status`). Cognitive Protocol (built-in recall triggers + importance filters). Cognitive Seeds (agent personality / role). Incomplete-thoughts recovery on timeout. Server split into `params.rs` / `prompts.rs`. `HELIX_*` env prefix. |
 | v0.2.0 | 2026-03-23 | Knowledge-graph foundation | Hive Memory Layer (cross-user dedup, collective search, controversy detection). Ontology System (8 types, `search_by_concept`). 33 edge / 15 node schema (24 active + 9 reserved). SmartTraversalV2. Atomic-fact extraction. Reasoning edges (IMPLIES/BECAUSE/CONTRADICTS/SUPPORTS). Embedding batching. `install.sh` + Makefile. EventBus (6 event types). |
@@ -332,10 +333,12 @@ For an exhaustive list of what the system provides today, see
 `architecture.md §7 "Capability surface"`. The short version:
 
 ```
-write:                      add_memory
+write:                      add_memory / get_add_status
 read (semantic):            search_memory  (modes: recent/contextual/deep/full)
+                            explicit event-time windows + dated flashbacks
                             search_by_concept (8 types)
                             search_reasoning_chain (4 reasoning edges, BFS)
+read (path):                connect_memories
 read (exhaustive):          list_memories
 read (graph view):          get_memory_graph
 read (recovery):            search_incomplete_thoughts
@@ -349,8 +352,15 @@ collective layer:           scope = personal | collective | all
                             agent_farewell
 audit & history:            HAS_HISTORY edges, HistoryEvent nodes
 versioning:                 SUPERSEDES edges
+write governance:           memory charter, needs_clarification,
+                            authorized pending_outcomes and learned rules
+generative layer:           Clotho / Lachesis / Atropos + evidence journal
+operations:                 Hygieia, gateway, config hot-reload,
+                            transactional installer and doctor
 administration:             graph-backed RBAC CLI + global-admin web control
                             plane, settings and managed backup vault
+distribution:               signed release archives, Homebrew, APT and
+                            multi-architecture containers
 ```
 
 ---

@@ -1,6 +1,6 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-19._
+> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
 and `helixir/schema/queries.hx` (180 HQL queries that materialize the

@@ -257,6 +257,69 @@ pub(crate) fn wire_native_clients(
     Ok(())
 }
 
+/// Register native clients against one long-lived HTTP gateway.
+///
+/// Supplying `--gateway` is the operator's explicit request to replace an
+/// existing stdio registration. The rollback-safe installer adapter backs up
+/// the client-owned config, removes the old entry, verifies the new one, and
+/// restores the backup if either mutation or verification fails.
+pub(crate) fn wire_native_gateway_clients(
+    url: &str,
+    interactive: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let available = native_client_targets();
+    if available.is_empty() {
+        return Ok(());
+    }
+    let selected = if interactive {
+        let labels: Vec<_> = available.iter().map(|client| client.label()).collect();
+        let picks = MultiSelect::new()
+            .with_prompt("Register Helixir gateway through native client CLIs?")
+            .items(&labels)
+            .defaults(&vec![true; available.len()])
+            .interact()?;
+        picks
+            .into_iter()
+            .map(|idx| available[idx])
+            .collect::<Vec<_>>()
+    } else {
+        available
+    };
+
+    let server = helixir::installer::clients::HttpServer::new(url);
+    for client in selected {
+        if helixir::installer::client_registration::client_gateway_registration_matches(
+            client,
+            "helixir-local",
+            url,
+        ) {
+            println!(
+                "  ✓ {}: helixir-local already uses the gateway",
+                client.label()
+            );
+            continue;
+        }
+        let command =
+            helixir::installer::clients::native_add_http_command(client, "helixir-local", &server);
+        if dry_run {
+            println!(
+                "  [dry-run] {}: replace with {}",
+                client.label(),
+                command.argv().join(" ")
+            );
+            continue;
+        }
+        helixir::installer::client_registration::register_gateway_client(client, url, true)
+            .map_err(anyhow::Error::msg)?;
+        println!(
+            "  ✓ {}: helixir-local now uses the shared gateway",
+            client.label()
+        );
+    }
+    Ok(())
+}
+
 /// Merge the `helixir-local` MCP entry into a client's config JSON (creating
 /// `mcpServers` if absent), backing the file up first. Non-destructive: other
 /// servers and keys are preserved.
