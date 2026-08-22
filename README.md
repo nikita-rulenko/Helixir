@@ -10,14 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="#deployment-topologies">Topologies</a> ·
-  <a href="#what-helixir-is">What it is</a> ·
-  <a href="#how-the-memory-works">How it works</a> ·
-  <a href="#documentation">Documentation</a>
-</p>
-
-<p align="center">
   <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.0"><img src="https://img.shields.io/badge/release-v0.17.0-2ea44f" alt="Release v0.17.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
@@ -26,6 +18,24 @@
 </p>
 
 ---
+
+## Contents
+
+- [Quick Start](#quick-start)
+  - [Full Helixir host](#full-helixir-host)
+  - [Remote agent host](#remote-agent-host)
+- [Deployment topologies](#deployment-topologies)
+- [What Helixir is](#what-helixir-is)
+  - [Why it exists](#why-it-exists)
+- [How the memory works](#how-the-memory-works)
+  - [What is actually in the graph](#what-is-actually-in-the-graph)
+- [Capabilities](#capabilities)
+- [Governed collaboration](#governed-collaboration)
+- [Admin control plane](#admin-control-plane)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
+- [Links](#links)
 
 Helixir is the persistent epistemic layer an agent keeps when the model,
 editor, session, or entire agent harness changes. It extracts durable facts
