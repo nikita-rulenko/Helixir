@@ -78,6 +78,10 @@ jobs:
 
       - name: Install and remove the rendered formulae
         run: |
+          tap_dir=$(brew --repository nikita-rulenko/tap)
+          cmp homebrew-tap/Formula/helixir.rb "$tap_dir/Formula/helixir.rb"
+          cmp homebrew-tap/Formula/helixir-client.rb \
+            "$tap_dir/Formula/helixir-client.rb"
           brew install nikita-rulenko/tap/helixir nikita-rulenko/tap/helixir-client
           server_prefix=$(brew --prefix nikita-rulenko/tap/helixir)
           client_prefix=$(brew --prefix nikita-rulenko/tap/helixir-client)
@@ -100,6 +104,10 @@ jobs:
           brew uninstall nikita-rulenko/tap/helixir
           brew untap nikita-rulenko/tap
         env:
+          # The rendered candidate is intentionally newer than the remote tap.
+          # Auto-update would reset it to the preceding release before the
+          # install proof, making a correct formula appear stale.
+          HOMEBREW_NO_AUTO_UPDATE: "1"
           INPUT_TAG: ${{ inputs.tag }}
 
       - name: Publish changed formula
