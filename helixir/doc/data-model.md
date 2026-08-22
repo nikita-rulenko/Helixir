@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (182 HQL queries that materialize the
+and `helixir/schema/queries.hx` (185 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -32,7 +32,7 @@ flowchart LR
 ```
 
 The physical contract declares **22 node types**, **5 vector-index types**, **30
-edge types**, and **182 named HQL queries**. Declaration is not the same as
+edge types**, and **185 named HQL queries**. Declaration is not the same as
 runtime use. The tables below label every surface as **active**, **optional**,
 or **reserved**; reserved entries have no live producer and are not product
 capabilities. The default embedding dimension is 768.
@@ -53,7 +53,7 @@ categories, buffering, and a reserved document pipeline.
 | **Agent** | active | Physical presence/provenance row for one execution instance, with explicit owning RBAC `principal_id` and a bounded lease. The durable logical-agent registry is the distinct principal-family projection; child rows (`agent_id != principal_id`) are counted separately as sub-agents. |
 | **Memory** | active | Atomic fact and the core retrieval unit. The eight user-facing ontology types are values of `memory_type`, not eight physical node kinds. |
 | **RbacGroup** | active | Concrete access workspace. |
-| **RbacDedupGroup** | optional | Created only when an administrator configures a dedup federation. |
+| **RbacDedupGroup** | active (optional instance) | Created only when an administrator configures a dedup federation. |
 | **RbacAssignment** | active | Auditable global/group role grant. |
 | **RbacConfig** | active | Permanent RBAC bootstrap and schema-policy state. |
 | **MemoryChunk** | active | Oversized raw-source reconstruction; chunks are not retrieval units (#86). |
@@ -66,7 +66,7 @@ categories, buffering, and a reserved document pipeline.
 | **Category** | active | Clotho controlled vocabulary and Moirai routing substrate. |
 | **Session** | reserved | Declared, but no live code path creates Session nodes. Helixir is not a chat-history store. |
 | **Constraint** | reserved | No live producer or consumer; contextual validity already uses `VALID_IN`. |
-| **Reasoning** | reserved / unresolved | No HQL query creates this node. Live justifications are first-class memory edges; #157 decides whether this duplicate shape is wired or retired. |
+| **Reasoning** | deprecated | No HQL query creates this node. Live justifications are first-class memory edges; the backup-first retirement procedure below replaces this duplicate shape. |
 | **DocPage**, **DocChunk**, **CodeExample**, **ErrorCode** | reserved | No Rust producer; not a shipped documentation-ingest feature. |
 
 Vector indexes are a separate physical family:
@@ -79,7 +79,85 @@ Vector indexes are a separate physical family:
 | **ConceptEmbedding** | reserved | No live producer; concept classification uses the fixed ontology/cache path. |
 | **CategoryEmbedding** | reserved | Clotho computes category similarity in process and does not persist these vectors. |
 
-### 2.1 Category subgraph (Clotho, 2026-06)
+### 2.1 Machine-checked physical lifecycle ledger
+
+`src/schema_inventory/` is the versioned product-lifecycle contract layered on
+top of `schema.hx`. CI parses the HQL declarations and requires an exact match:
+an active declaration names producer, consumer and DB-backed E2E evidence; a
+reserved declaration names an owner and milestone; a deprecated declaration
+names its migration. The control plane reads this same Rust inventory and
+combines it with the three server-side aggregate census queries. The table
+below is a checked documentation projection, not a second source of truth.
+
+| Physical declaration | Lifecycle | Owner |
+|---|---|---|
+| `N::User` | `active` | `core/rbac` |
+| `N::RbacGroup` | `active` | `core/rbac` |
+| `N::RbacDedupGroup` | `active` | `core/rbac` |
+| `N::RbacAssignment` | `active` | `core/rbac` |
+| `N::RbacConfig` | `active` | `core/rbac` |
+| `N::Session` | `reserved` | `core/session` |
+| `N::Agent` | `active` | `tooling_manager/swarm` |
+| `N::Memory` | `active` | `tooling_manager/add_pipeline` |
+| `N::Entity` | `active` | `tooling_manager/add_pipeline` |
+| `N::Concept` | `active` | `mind_toolbox/ontology` |
+| `N::Context` | `active` | `tooling_manager/add_pipeline` |
+| `N::Constraint` | `reserved` | `core/charter` |
+| `N::Reasoning` | `deprecated` | `mind_toolbox/reasoning` |
+| `N::HistoryEvent` | `active` | `tooling_manager/add_pipeline` |
+| `N::MemoryChunk` | `active` | `mind_toolbox/chunking` |
+| `N::DocPage` | `reserved` | `reserved/document-ingest` |
+| `N::DocChunk` | `reserved` | `reserved/document-ingest` |
+| `N::CodeExample` | `reserved` | `reserved/document-ingest` |
+| `N::ErrorCode` | `reserved` | `reserved/document-ingest` |
+| `N::PendingInput` | `active` | `tooling_manager/ingest` |
+| `N::MemoryNotice` | `active` | `tooling_manager/ingest` |
+| `N::Category` | `active` | `agents/clotho` |
+| `V::MemoryEmbedding` | `active` | `mind_toolbox/memory` |
+| `V::EntityEmbedding` | `reserved` | `mind_toolbox/entity` |
+| `V::ChunkEmbedding` | `reserved` | `reserved/document-ingest` |
+| `V::ConceptEmbedding` | `reserved` | `mind_toolbox/ontology` |
+| `V::CategoryEmbedding` | `reserved` | `agents/clotho` |
+| `E::RBAC_MEMBER_OF` | `active` | `core/rbac` |
+| `E::MEMORY_IN_RBAC_GROUP` | `active` | `core/rbac` |
+| `E::RBAC_GROUP_IN_DEDUP_GROUP` | `active` | `core/rbac` |
+| `E::MEMORY_IN_RBAC_DEDUP_GROUP` | `active` | `core/rbac` |
+| `E::HAS_MEMORY` | `active` | `tooling_manager/add_pipeline` |
+| `E::INSTANCE_OF` | `active` | `mind_toolbox/ontology` |
+| `E::MENTIONS` | `active` | `mind_toolbox/entity` |
+| `E::EXTRACTED_ENTITY` | `active` | `mind_toolbox/entity` |
+| `E::IS_A` | `reserved` | `mind_toolbox/ontology` |
+| `E::HAS_SUBTYPE` | `active` | `mind_toolbox/ontology` |
+| `E::RELATES_TO` | `active` | `mind_toolbox/entity` |
+| `E::PART_OF` | `reserved` | `mind_toolbox/entity` |
+| `E::VALID_IN` | `active` | `tooling_manager/add_pipeline` |
+| `E::CREATED_IN` | `reserved` | `core/session` |
+| `E::AGENT_CREATED` | `active` | `tooling_manager/add_pipeline` |
+| `E::HAS_HISTORY` | `active` | `tooling_manager/add_pipeline` |
+| `E::HAS_CHUNK` | `active` | `mind_toolbox/chunking` |
+| `E::MEMORY_RELATION` | `active` | `mind_toolbox/reasoning` |
+| `E::IMPLIES` | `active` | `mind_toolbox/reasoning` |
+| `E::BECAUSE` | `active` | `mind_toolbox/reasoning` |
+| `E::CONTRADICTS` | `active` | `tooling_manager/contradictions` |
+| `E::SUPERSEDES` | `active` | `tooling_manager/add_pipeline` |
+| `E::HAS_EMBEDDING` | `active` | `mind_toolbox/memory` |
+| `E::ENTITY_HAS_EMBEDDING` | `reserved` | `mind_toolbox/entity` |
+| `E::CHUNK_TO_EMBEDDING` | `reserved` | `reserved/document-ingest` |
+| `E::CONCEPT_RELATED_TO` | `reserved` | `mind_toolbox/ontology` |
+| `E::SUBCATEGORY_OF` | `active` | `agents/clotho` |
+| `E::ALIAS_OF` | `active` | `agents/clotho` |
+| `E::TAGGED_AS` | `active` | `agents/clotho` |
+| `E::MOIRAI_DERIVED_FROM` | `active` | `core/rbac_moirai` |
+
+The deprecated `Reasoning` node remains declared and read-only until a
+dedicated HelixDB v2.3.5 migration proves `reasoning_count=0`. Its removal
+requires a verified cold volume backup, stopped writers, `helix check` with the
+pinned CLI, rebuild/recreate against the same volume, and read-only post-deploy
+census verification. If the census is non-zero, removal stops and the rows are
+first projected into the authoritative first-class edge model. There is no
+in-place destructive shortcut.
+
+### 2.2 Category subgraph (Clotho, 2026-06)
 
 The controlled-vocabulary substrate the Moirai route over (`d8edc85`). A
 deliberate **third axis** over the flat memory graph: a memory's category

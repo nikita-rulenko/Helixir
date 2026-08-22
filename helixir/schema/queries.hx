@@ -779,6 +779,75 @@ QUERY countAllConcepts() =>
   count <- N<Concept>::COUNT
   RETURN count
 
+// Bounded schema census (#157): aggregation stays inside HelixDB and only
+// named scalar counts cross the wire. Keep variable names aligned with the
+// Rust lifecycle inventory in src/schema_inventory/.
+QUERY getSchemaNodeCensus() =>
+  user_count <- N<User>::COUNT
+  rbac_group_count <- N<RbacGroup>::COUNT
+  rbac_dedup_group_count <- N<RbacDedupGroup>::COUNT
+  rbac_assignment_count <- N<RbacAssignment>::COUNT
+  rbac_config_count <- N<RbacConfig>::COUNT
+  session_count <- N<Session>::COUNT
+  agent_count <- N<Agent>::COUNT
+  memory_count <- N<Memory>::COUNT
+  entity_count <- N<Entity>::COUNT
+  concept_count <- N<Concept>::COUNT
+  context_count <- N<Context>::COUNT
+  constraint_count <- N<Constraint>::COUNT
+  reasoning_count <- N<Reasoning>::COUNT
+  history_event_count <- N<HistoryEvent>::COUNT
+  memory_chunk_count <- N<MemoryChunk>::COUNT
+  doc_page_count <- N<DocPage>::COUNT
+  doc_chunk_count <- N<DocChunk>::COUNT
+  code_example_count <- N<CodeExample>::COUNT
+  error_code_count <- N<ErrorCode>::COUNT
+  pending_input_count <- N<PendingInput>::COUNT
+  memory_notice_count <- N<MemoryNotice>::COUNT
+  category_count <- N<Category>::COUNT
+  RETURN user_count, rbac_group_count, rbac_dedup_group_count, rbac_assignment_count, rbac_config_count, session_count, agent_count, memory_count, entity_count, concept_count, context_count, constraint_count, reasoning_count, history_event_count, memory_chunk_count, doc_page_count, doc_chunk_count, code_example_count, error_code_count, pending_input_count, memory_notice_count, category_count
+
+QUERY getSchemaVectorCensus() =>
+  memory_embedding_count <- V<MemoryEmbedding>::COUNT
+  entity_embedding_count <- V<EntityEmbedding>::COUNT
+  chunk_embedding_count <- V<ChunkEmbedding>::COUNT
+  concept_embedding_count <- V<ConceptEmbedding>::COUNT
+  category_embedding_count <- V<CategoryEmbedding>::COUNT
+  RETURN memory_embedding_count, entity_embedding_count, chunk_embedding_count, concept_embedding_count, category_embedding_count
+
+QUERY getSchemaEdgeCensus() =>
+  rbac_member_of_count <- E<RBAC_MEMBER_OF>::COUNT
+  memory_in_rbac_group_count <- E<MEMORY_IN_RBAC_GROUP>::COUNT
+  rbac_group_in_dedup_group_count <- E<RBAC_GROUP_IN_DEDUP_GROUP>::COUNT
+  memory_in_rbac_dedup_group_count <- E<MEMORY_IN_RBAC_DEDUP_GROUP>::COUNT
+  has_memory_count <- E<HAS_MEMORY>::COUNT
+  instance_of_count <- E<INSTANCE_OF>::COUNT
+  mentions_count <- E<MENTIONS>::COUNT
+  extracted_entity_count <- E<EXTRACTED_ENTITY>::COUNT
+  is_a_count <- E<IS_A>::COUNT
+  has_subtype_count <- E<HAS_SUBTYPE>::COUNT
+  relates_to_count <- E<RELATES_TO>::COUNT
+  part_of_count <- E<PART_OF>::COUNT
+  valid_in_count <- E<VALID_IN>::COUNT
+  created_in_count <- E<CREATED_IN>::COUNT
+  agent_created_count <- E<AGENT_CREATED>::COUNT
+  has_history_count <- E<HAS_HISTORY>::COUNT
+  has_chunk_count <- E<HAS_CHUNK>::COUNT
+  memory_relation_count <- E<MEMORY_RELATION>::COUNT
+  implies_count <- E<IMPLIES>::COUNT
+  because_count <- E<BECAUSE>::COUNT
+  contradicts_count <- E<CONTRADICTS>::COUNT
+  supersedes_count <- E<SUPERSEDES>::COUNT
+  has_embedding_count <- E<HAS_EMBEDDING>::COUNT
+  entity_has_embedding_count <- E<ENTITY_HAS_EMBEDDING>::COUNT
+  chunk_to_embedding_count <- E<CHUNK_TO_EMBEDDING>::COUNT
+  concept_related_to_count <- E<CONCEPT_RELATED_TO>::COUNT
+  subcategory_of_count <- E<SUBCATEGORY_OF>::COUNT
+  alias_of_count <- E<ALIAS_OF>::COUNT
+  tagged_as_count <- E<TAGGED_AS>::COUNT
+  moirai_derived_from_count <- E<MOIRAI_DERIVED_FROM>::COUNT
+  RETURN rbac_member_of_count, memory_in_rbac_group_count, rbac_group_in_dedup_group_count, memory_in_rbac_dedup_group_count, has_memory_count, instance_of_count, mentions_count, extracted_entity_count, is_a_count, has_subtype_count, relates_to_count, part_of_count, valid_in_count, created_in_count, agent_created_count, has_history_count, has_chunk_count, memory_relation_count, implies_count, because_count, contradicts_count, supersedes_count, has_embedding_count, entity_has_embedding_count, chunk_to_embedding_count, concept_related_to_count, subcategory_of_count, alias_of_count, tagged_as_count, moirai_derived_from_count
+
 QUERY countUserMemories(user_id: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
   count <- user::Out<HAS_MEMORY>::COUNT

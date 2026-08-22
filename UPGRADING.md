@@ -13,6 +13,40 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.17.0 → v0.17.1 — governed schema ledger and client placement
+
+v0.17.1 adds three bounded read-only HQL queries used by the physical-schema
+census. It does not add, remove or rewrite a HelixDB node, vector or edge
+declaration, and the deprecated `Reasoning` node remains readable. Full hosts
+must still use the normal backup-first query deployment because a v0.17.1
+binary expects all 185 compiled queries:
+
+1. stop memory writers and create a verified cold backup of the persistent
+   HelixDB volume;
+2. run `helix check` with CLI v2.3.5, rebuild/redeploy the v0.17.1 query bundle,
+   and recreate the database container against the same persistent volume;
+3. restart the gateway and control plane, then run `helixir doctor --json`;
+4. open the global-admin Schema Ledger and verify that all 57 declarations
+   report a count or an explicit query error.
+
+The server operator can then place a previously enrolled remote client into a
+working group with one resumable command:
+
+```bash
+helixir rbac user onboard \
+  --user codex-laptop \
+  --group development \
+  --group-name "Development" \
+  --role worker \
+  --json
+```
+
+The command verifies onboarding history, creates only an explicitly named
+non-reserved group when needed, grants the requested graph-backed role, removes
+temporary onboarding membership by default, and safely converges on rerun.
+Agent-only `helixir-client` hosts require only the binary/package update; they
+do not deploy HelixDB queries or local models.
+
 ## v0.16.1 → v0.17.0 — thin clients and logical agent families
 
 v0.17.0 adds an independent `helixir-client` package for agent-only hosts and
@@ -223,6 +257,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.17.1** | The governed ledger | Adds three bounded schema-census queries, a machine-checked 57-declaration lifecycle ledger, global-admin control-plane visibility, and resumable server-side client placement. **Back up and redeploy the current queries before replacing full-host services; this patch does not remove or rewrite any stored node or edge.** |
 | **v0.17.0** | The distributed family | Independent Homebrew/APT `helixir-client`, bounded onboarding enrollment, direct gateway diagnostics, explicit principal/instance presence, logical Agent families and Subagent drill-down. **Back up and redeploy the current schema before replacing full-host services.** |
 | **v0.16.1** | One host, one gateway | HTTP-capable MCP clients share one managed gateway instead of accumulating children behind retained stdio pipes. No schema migration; start the gateway, run `setup --gateway`, doctor, then restart clients. |
 | **v0.16.0** | Distribution and stewardship | Signed Homebrew/APT channels, shared CLI/browser onboarding, versioned persistent embedding-cache invalidation, hardened admin API, redacted settings, and guarded managed-volume backup/restore. No schema migration; upgrade binaries, run onboard/doctor, then restart MCP clients. |

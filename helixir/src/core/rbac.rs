@@ -20,12 +20,14 @@ mod manager_admin;
 mod manager_authorization;
 mod manager_cache;
 mod manager_memory;
+mod manager_onboarding;
 mod policy;
 mod storage_types;
 mod types;
 
 pub use manager_admin::RbacManager;
 use manager_cache::*;
+pub use manager_onboarding::{ClientWorkspaceOnboarding, ClientWorkspaceOnboardingReport};
 use storage_types::*;
 pub use types::*;
 

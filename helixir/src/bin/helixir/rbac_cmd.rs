@@ -222,10 +222,15 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
         },
         RbacCmd::User { cmd } => {
             let actor = rbac_actor();
-            require_rbac_admin(&current, &actor, "user registry inspection")?;
-            let users = manager.principal_registry(&actor).await?;
+            let action = if matches!(&cmd, RbacUserCmd::Onboard { .. }) {
+                "client workspace onboarding"
+            } else {
+                "user registry inspection"
+            };
+            require_rbac_admin(&current, &actor, action)?;
             match cmd {
                 RbacUserCmd::List { json } => {
+                    let users = manager.principal_registry(&actor).await?;
                     if json {
                         println!(
                             "{}",
@@ -258,6 +263,7 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                     }
                 }
                 RbacUserCmd::Show { user, json } => {
+                    let users = manager.principal_registry(&actor).await?;
                     let record = users
                         .into_iter()
                         .find(|record| record.user_id == user)
@@ -273,6 +279,39 @@ pub(crate) async fn rbac_run(client: &HelixirClient, cmd: RbacCmd) -> Result<()>
                                 role.role
                             );
                         }
+                    }
+                }
+                RbacUserCmd::Onboard {
+                    user,
+                    group,
+                    group_name,
+                    description,
+                    role,
+                    keep_onboarding,
+                    json,
+                } => {
+                    let request = ClientWorkspaceOnboarding {
+                        principal_id: user,
+                        group_id: group,
+                        group_name,
+                        group_description: description,
+                        role: parse_rbac_role(&role)?,
+                        keep_onboarding,
+                    };
+                    let report = manager
+                        .onboard_client_to_workspace_as(&request, &actor)
+                        .await?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!(
+                            "onboarded '{}' into '{}' as {} (scope={}, onboarding_active={})",
+                            report.principal_id,
+                            report.group_id,
+                            report.requested_role,
+                            report.memory_scope,
+                            report.onboarding_active,
+                        );
                     }
                 }
             }

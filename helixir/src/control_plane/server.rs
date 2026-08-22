@@ -99,6 +99,7 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         .route("/memory-field", get(memory_field))
         .route("/moirai", get(moirai))
         .route("/system", get(system))
+        .route("/schema", get(schema_inventory))
         .route("/health", get(health))
         .route("/install/plan", post(build_install_plan))
         .route("/install/apply", post(apply_install_plan))
@@ -293,6 +294,15 @@ async fn system(
         .await
         .map(Json)
         .ok_or_else(projection_unavailable)
+}
+
+async fn schema_inventory(
+    State(state): State<AppState>,
+) -> Result<Json<crate::schema_inventory::SchemaInventoryReport>, (StatusCode, Json<ApiProblem>)> {
+    super::stats::admin_policy(&state.db, &state.actor_id)
+        .await
+        .map_err(|()| projection_unavailable())?;
+    Ok(Json(crate::schema_inventory::census(&state.db).await))
 }
 
 async fn health(

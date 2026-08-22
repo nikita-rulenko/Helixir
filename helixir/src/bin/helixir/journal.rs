@@ -110,6 +110,24 @@ mod rbac_cli_tests {
         .expect("valid rbac grant syntax");
         assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
 
+        let cli = Cli::try_parse_from([
+            "helixir",
+            "rbac",
+            "user",
+            "onboard",
+            "--user",
+            "alice-laptop",
+            "--group",
+            "development",
+            "--group-name",
+            "Development",
+            "--role",
+            "worker",
+            "--json",
+        ])
+        .expect("valid client workspace onboarding syntax");
+        assert!(matches!(cli.cmd, Cmd::Rbac { .. }));
+
         let cli = Cli::try_parse_from(["helixir", "rbac", "migrate-teamleads", "--yes", "--json"])
             .expect("valid legacy role migration syntax");
         assert!(matches!(cli.cmd, Cmd::Rbac { .. }));

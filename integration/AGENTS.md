@@ -210,6 +210,10 @@ the graph-backed principal registry. Use `helixir rbac user` and
 `helixir rbac group add-user/remove-user`;
 new principals must enter `onboarding` before an administrator assigns other
 groups, and removal preserves the User node and assignment history.
+Complete remote-client placement from the full Helixir host with `helixir rbac
+user onboard --user <id> --group <group> [--group-name <name>] --role <role>
+--json`; the resumable command grants working access before removing the
+temporary onboarding role and reports the verified memory scope.
 `helixir rbac dedup` creates and manages optional group federations: current
 members share dedup and visibility, leaving keeps historical edges but isolates
 future writes. Agents do not resolve this mapping themselves. Use `helixir rbac`

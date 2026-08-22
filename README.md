@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.0"><img src="https://img.shields.io/badge/release-v0.17.0-2ea44f" alt="Release v0.17.0" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.1"><img src="https://img.shields.io/badge/release-v0.17.1-2ea44f" alt="Release v0.17.1" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -137,6 +137,19 @@ The client performs a real MCP handshake, admits a new principal only as
 Codex/Claude Code/Cursor clients, and installs both the canonical memory skill
 and a managed, backup-safe `AGENTS.md` block. Reconnecting is idempotent and
 never downgrades roles assigned later by an administrator.
+
+The global administrator then completes placement on the Helixir host. This
+single resumable command creates the workspace when needed, grants the working
+role, removes temporary `onboarding` access, and prints the verified scope:
+
+```bash
+HELIXIR_RBAC_ACTOR=root helixir rbac user onboard \
+  --user codex-laptop \
+  --group development \
+  --group-name "Development" \
+  --role worker \
+  --json
+```
 
 The endpoint is the Helixir **MCP gateway** (`8765/mcp` by default), never the
 HelixDB database port (`6970` in this deployment). The gateway must already be
@@ -284,7 +297,7 @@ flowchart LR
 ```
 
 The deployed v0.17 storage contract declares **22 node types**, **30 edge types**,
-**5 vector indexes**, and **182 HQL queries**. These numbers describe
+**5 vector indexes**, and **185 HQL queries**. These numbers describe
 the complete physical schema, not 57 runtime-active capabilities: some entries
 are explicitly reserved and have no live producer. `HAS_MEMORY` records provenance;
 `MEMORY_IN_RBAC_GROUP` controls visibility. Equivalent author memories share a
@@ -415,7 +428,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.17.0 notes](helixir/doc/v0.17.0/notes.md) | What changed in this release |
+| [v0.17.1 notes](helixir/doc/v0.17.1/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.

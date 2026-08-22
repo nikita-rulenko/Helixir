@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -94,6 +94,7 @@ Releases as evidence of the project's direction. Source:
 
 | Tag | Date | Theme | Key additions / fixes |
 |---|---|---|---|
+| v0.17.1 | 2026-08-23 | Governed schema ledger | The physical HelixDB contract is now machine-classified as active, reserved, or deprecated and exposed through a bounded global-admin census. Server operators also get one resumable graph-backed command that moves an enrolled remote client from reserved onboarding into its working group without weakening RBAC. |
 | v0.17.0 | 2026-08-22 | Distributed agent family | Agent-only hosts get an independent `helixir-client` package that connects only to the MCP gateway. Presence now models stable authenticated principals separately from transient root/child execution instances, so one logical agent family stays online while any member lease is active without inventing memory writes. |
 | v0.16.1 | 2026-08-21 | One host, one gateway | HTTP-capable MCP clients share one managed gateway process because retained client-owned stdio pipes cannot provide a reliable server-side lifecycle signal. Registration is transport-aware, backup-verified and rollback-safe. |
 | `Rust` (v0.1.0) | 2025-11-29 | Initial Rust port | `HelixirClient`, `ToolingManager`, `mind_toolbox`, MCP server, base node/edge schema, vector search. |

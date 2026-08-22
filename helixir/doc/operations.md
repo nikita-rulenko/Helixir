@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -136,6 +136,44 @@ helixir rbac grant --user alice --role moderator --group development
 helixir rbac revoke --user alice --role moderator --group development
 helixir rbac group delete --id retired-project --yes
 ```
+
+### Remote-client workspace onboarding playbook
+
+`helixir-client connect` intentionally stops at the least-privileged
+`onboarding/worker` grant. A global administrator completes placement on the
+full Helixir host:
+
+```bash
+export HELIXIR_RBAC_ACTOR=root
+
+helixir rbac user onboard \
+  --user alice-laptop \
+  --group development \
+  --group-name "Development" \
+  --description "Primary development workspace" \
+  --role worker \
+  --json
+```
+
+The command is a convergent server-side playbook:
+
+1. require active permanent RBAC and a global-admin operator;
+2. prove the principal has active or historical `onboarding`/`default`
+   registration in HelixDB;
+3. use the existing target group, or create a missing non-reserved group when
+   `--group-name` is supplied;
+4. grant `groupadmin`, `moderator`, `worker`, or `viewer` in that group;
+5. remove active temporary `onboarding` roles unless `--keep-onboarding` is
+   explicit;
+6. reload policy and return the exact active roles, readable groups, own-write
+   capability, and isolated/federated memory scope.
+
+This ordering is interruption-safe: the working grant exists before temporary
+access is removed, and a retry completes the same graph state without deleting
+the User node or assignment history. `--group-name` is optional for an existing
+group. The target may be reserved `default`, but never `onboarding` or `moirai`.
+Use repeated runs for principals that intentionally belong to several working
+groups; add `--keep-onboarding` only to the staged first run.
 
 Removing a user deactivates assignments but preserves the User node and role
 history. Reserved workspaces cannot be deleted. The last global administrator

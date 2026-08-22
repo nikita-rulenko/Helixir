@@ -158,6 +158,34 @@ export interface SystemProjection {
   llm_provider: string; llm_model: string; nli_required: boolean; rbac_permanent: boolean;
 }
 
+export type SchemaKind = "node" | "vector" | "edge";
+export type SchemaLifecycle = "active" | "reserved" | "deprecated";
+
+export interface SchemaCensusItem {
+  kind: SchemaKind;
+  name: string;
+  lifecycle: SchemaLifecycle;
+  owner: string;
+  milestone: string | null;
+  producer: string | null;
+  consumer: string | null;
+  e2e: string | null;
+  migration: string | null;
+  purpose: string;
+  count_key: string;
+  count: number | null;
+}
+
+export interface SchemaInventoryReport {
+  inventory_version: number;
+  items: SchemaCensusItem[];
+  active: number;
+  reserved: number;
+  deprecated: number;
+  counted: number;
+  failed_queries: string[];
+}
+
 export interface HealthSnapshot {
   enabled: boolean; container_name: string; memory_used_mib: number | null;
   memory_limit_mib: number | null; memory_percent: number | null; alert_percent: number;
