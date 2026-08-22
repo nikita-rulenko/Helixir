@@ -119,7 +119,7 @@ done
 }
 
 printf '%s\n' '[1/7] Compile the current HQL contract and build an isolated HelixDB image'
-(cd "$repo_root/helixir" && helix check)
+(cd "$repo_root/helixir" && helix check && helix build -i dev --quiet)
 test -f "$repo_root/helixir/.helix/dev/Dockerfile"
 docker build --tag "$db_image" "$repo_root/helixir/.helix/dev"
 
