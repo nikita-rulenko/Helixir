@@ -135,6 +135,10 @@ can grant only `worker` in reserved `onboarding`; it exposes no role or group
 choice. Do not call it as a normal memory operation, do not use it to restore a
 revoked role, and never point the client at the HelixDB port—the endpoint is the
 Helixir MCP gateway. Administrators move admitted principals with `helixir rbac`.
+The canonical server-side workflow is `helixir rbac user onboard --user <id>
+--group <group> [--group-name <name>] --role <role> --json`: it creates a
+missing workspace when explicitly named, grants the working role, removes the
+temporary onboarding grant by default, and verifies the resulting scope.
 
 When writing to any working group, pass its concrete `group_id` on
 `add_memory` and `think_commit`. Never pass a dedup federation id. An omitted
@@ -190,6 +194,7 @@ Manage policy only through `helixir rbac`. Useful commands:
 helixir rbac bootstrap --operator <id> --principal codex --principal claude
 helixir rbac status --json
 helixir rbac user list --json
+helixir rbac user onboard --user <id> --group <group> --group-name <name> --role <role> --json
 helixir rbac group create --id <id> --name <name>
 helixir rbac group add-user --group onboarding --user <id> --role worker
 helixir rbac group add-user --group <group> --user <id> --role <role>

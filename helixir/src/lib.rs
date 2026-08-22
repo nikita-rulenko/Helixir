@@ -5,6 +5,7 @@ pub mod db;
 pub mod installer;
 pub mod llm;
 pub mod mcp;
+pub mod schema_inventory;
 pub mod toolkit;
 pub mod utils;
 

@@ -1,6 +1,6 @@
 # Installation
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 This is the maintained installation reference. The root README intentionally
 keeps only the shortest working path; topology choices, package trust,
@@ -334,6 +334,28 @@ before changing local files. A new principal can self-admit only as `worker`
 in reserved `onboarding`; it cannot choose a role or group. Historical
 admission is remembered, so reconnecting does not recreate revoked onboarding
 access or downgrade roles an administrator assigned later.
+
+Complete the principal's placement from the full Helixir host, never from the
+agent-only machine:
+
+```bash
+export HELIXIR_RBAC_ACTOR=root
+helixir rbac user onboard \
+  --user claude-laptop \
+  --group development \
+  --group-name "Development" \
+  --description "Product engineering workspace" \
+  --role worker \
+  --json
+```
+
+If `development` already exists, omit `--group-name` and `--description`. The
+workflow verifies historical onboarding admission, creates a missing
+non-reserved group, grants the requested role, removes the active temporary
+`onboarding` grant, then reloads HelixDB policy and reports `readable_groups`,
+write capability, and the effective group/dedup scope. It is safe to rerun
+after interruption. Use `--keep-onboarding` only when the principal genuinely
+needs both workspaces during a staged transition.
 
 For every selected Codex, Claude Code, or Cursor client, the bootstrapper:
 

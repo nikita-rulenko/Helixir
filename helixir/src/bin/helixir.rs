@@ -25,7 +25,7 @@ use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 use helixir::core::config::MemoryMode;
-use helixir::core::rbac::Role;
+use helixir::core::rbac::{ClientWorkspaceOnboarding, Role};
 use tracing_subscriber::EnvFilter;
 
 #[path = "helixir/cli.rs"]

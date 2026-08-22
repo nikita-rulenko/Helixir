@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 This document walks the two pipelines that matter most:
 
