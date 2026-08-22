@@ -67,6 +67,10 @@ impl ToolingManager {
             }
             let reg = serde_json::json!({
                 "agent_id": agent_id,
+                // Compatibility fallback only. The normal add_memory path
+                // registers the instance with its resolved actor before this
+                // provenance edge is attempted.
+                "principal_id": agent_id,
                 "name": agent_id,
                 "role": "agent",
                 "capabilities": "[]",

@@ -24,6 +24,12 @@ operator; `list_users` is global-admin-only under permanent RBAC. Never silently
 adopt another principal. A principal must be enrolled in `onboarding` or an
 assigned working group before normal use.
 
+An agent-only machine is connected with `helixir-client connect`. Its bounded
+`enroll_client(actor_id=...)` bootstrap can admit only that principal as
+`worker` in reserved `onboarding`; it cannot select a group or stronger role.
+Do not call enrollment during ordinary sessions or point a client directly at
+the HelixDB port. Administrators assign working groups through `helixir rbac`.
+
 Helixir stores typed facts in a knowledge graph with causal edges, so it returns
 *why* things are true — not just similar text. The read path makes no
 generative/reasoning-LLM calls and is fast; a cold semantic query still uses
@@ -72,14 +78,21 @@ think_conclude (required) → think_commit` (once). Reuse one `session_id`;
 `think_discard` if it led nowhere.
 
 ### 5. You are part of a swarm
-Pass your stable `agent_id` on every `add_memory` — presence in the shared
-roster comes free with the write. `swarm_status` shows who else is working
+Every execution instance — the root agent as well as a delegated worker or
+sub-agent — calls
+`agent_heartbeat(actor_id=<logical principal>, agent_id=<execution instance>)`
+immediately on start and at meaningful progress boundaries; do not write a fake
+memory just to appear online. Pass that same `agent_id` on real `add_memory`
+writes to refresh the lease. `swarm_status` groups concurrent instances under
+their logical principal and shows who else is working
 this memory right now (and exposes forgotten daemons); global-admin
 `list_users(actor_id=...)` orients registered identities. Watch
 `pending_outcomes`: `contradiction_review` means a dispute
 touches YOUR memory — settle it with `resolve_contradiction`
 (confirm/retract/preference, all non-destructive); `ops_alert` is the
 memory's own health watchdog speaking — relay it to your human.
+Call `agent_farewell(actor_id=..., agent_id=...)` exactly once when a one-shot
+execution instance exits.
 
 ### Pick the right retrieval tool
 - WHY / rationale → `search_reasoning_chain` (`chain_mode="causal"`).
@@ -136,7 +149,7 @@ facts, not trivia.
 - **Superseded results are history**: a result with `superseded: true` was
   replaced (`superseded_by` names the current version). Never act on it as
   current truth — prefer the successor.
-- **Say goodbye**: one-shot agents call `agent_farewell(agent_id=...)` on
+- **Say goodbye**: one-shot agents call `agent_farewell(actor_id=..., agent_id=...)` on
   exit — otherwise the roster shows a stale "working" forever (it will be
   flagged `derived_status: stale`, but a clean `done` is better).
 - **Time windows and flashbacks**: to recall a period, pass `time_from` /

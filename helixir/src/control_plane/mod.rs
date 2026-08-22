@@ -19,9 +19,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub use dto::{
-    AccessProjection, AgentProjection, CategoryBreadcrumbProjection, CategoryEdgeProjection,
-    CategoryNodeProjection, ContributorProjection, ControlPlaneMeta, DiscoveryResponse,
-    GraphEdgeProjection, GroupMutation, GroupProjection, GroupRoleProjection,
+    AccessProjection, AgentFamilyProjection, AgentProjection, CategoryBreadcrumbProjection,
+    CategoryEdgeProjection, CategoryNodeProjection, ContributorProjection, ControlPlaneMeta,
+    DiscoveryResponse, GraphEdgeProjection, GroupMutation, GroupProjection, GroupRoleProjection,
     MemoryFieldProjection, MemoryGroupProjection, MemoryProjection, MoiraiInsightProjection,
     MoiraiProjection, MoiraiStageProjection, MutationReceipt, OverviewStats, PrincipalProjection,
     RoleMutation, SystemProjection,

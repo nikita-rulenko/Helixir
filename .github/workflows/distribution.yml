@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Download immutable checksums
         run: gh release download "${{ inputs.tag }}" --pattern SHA256SUMS --dir distribution
@@ -55,28 +55,49 @@ jobs:
           ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           path: homebrew-tap
 
-      - name: Render and validate formula
+      - name: Render and validate formulae
         run: |
           python3 tools/render_homebrew_formula.py \
             --tag "${{ inputs.tag }}" \
             --checksums distribution/SHA256SUMS \
             --output homebrew-tap/Formula/helixir.rb
+          python3 tools/render_homebrew_formula.py \
+            --tag "${{ inputs.tag }}" \
+            --checksums distribution/SHA256SUMS \
+            --package helixir-client \
+            --output homebrew-tap/Formula/helixir-client.rb
           ruby -c homebrew-tap/Formula/helixir.rb
+          ruby -c homebrew-tap/Formula/helixir-client.rb
           brew tap nikita-rulenko/tap "$GITHUB_WORKSPACE/homebrew-tap"
           tap_dir=$(brew --repository nikita-rulenko/tap)
           mkdir -p "$tap_dir/Formula"
           cp homebrew-tap/Formula/helixir.rb "$tap_dir/Formula/helixir.rb"
+          cp homebrew-tap/Formula/helixir-client.rb "$tap_dir/Formula/helixir-client.rb"
           brew audit --formula --strict nikita-rulenko/tap/helixir
+          brew audit --formula --strict nikita-rulenko/tap/helixir-client
 
-      - name: Install and remove the rendered formula
+      - name: Install and remove the rendered formulae
         run: |
-          brew install nikita-rulenko/tap/helixir
-          prefix=$(brew --prefix helixir)
-          test "$("$prefix/bin/helixir" --version)" = "helixir ${INPUT_TAG#v}"
-          "$prefix/bin/helixir" onboard --help >/dev/null
-          test -f "$prefix/libexec/schema/schema.hx"
-          test -f "$prefix/libexec/skills/helixir-memory/SKILL.md"
-          brew uninstall helixir
+          brew install nikita-rulenko/tap/helixir nikita-rulenko/tap/helixir-client
+          server_prefix=$(brew --prefix nikita-rulenko/tap/helixir)
+          client_prefix=$(brew --prefix nikita-rulenko/tap/helixir-client)
+          test "$("$server_prefix/bin/helixir" --version)" = "helixir ${INPUT_TAG#v}"
+          "$server_prefix/bin/helixir" onboard --help >/dev/null
+          test ! -e "$server_prefix/bin/helixir-client"
+          test -f "$server_prefix/libexec/schema/schema.hx"
+          test -f "$server_prefix/libexec/skills/helixir-memory/SKILL.md"
+          test -f "$server_prefix/libexec/integration/AGENTS.md"
+          test -f "$server_prefix/libexec/integration/SKILLS.md"
+          test "$("$client_prefix/bin/helixir-client" --version)" = \
+            "helixir-client ${INPUT_TAG#v}"
+          "$client_prefix/bin/helixir-client" connect --help >/dev/null
+          "$client_prefix/bin/helixir-client" doctor --help >/dev/null
+          test ! -e "$client_prefix/libexec/helixir"
+          test ! -e "$client_prefix/libexec/schema"
+          brew test nikita-rulenko/tap/helixir
+          brew test nikita-rulenko/tap/helixir-client
+          brew uninstall nikita-rulenko/tap/helixir-client
+          brew uninstall nikita-rulenko/tap/helixir
           brew untap nikita-rulenko/tap
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -85,7 +106,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          git -C homebrew-tap add Formula/helixir.rb
+          git -C homebrew-tap add Formula/helixir.rb Formula/helixir-client.rb
           if git -C homebrew-tap diff --cached --quiet; then
             exit 0
           fi
@@ -103,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Install package tooling
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev
@@ -117,7 +138,9 @@ jobs:
         run: |
           mkdir -p distribution archives packages
           gh release download "${{ inputs.tag }}" \
-            --pattern 'helixir-linux-*.tar.gz' --pattern SHA256SUMS --dir archives
+            --pattern 'helixir-linux-*.tar.gz' \
+            --pattern 'helixir-client-linux-*.tar.gz' \
+            --pattern SHA256SUMS --dir archives
           (cd archives && sha256sum --ignore-missing -c SHA256SUMS)
 
       - name: Build deterministic packages
@@ -131,21 +154,35 @@ jobs:
             --version "$version" --arch amd64 --output packages
           tools/build_deb.sh --archive archives/helixir-linux-arm64.tar.gz \
             --version "$version" --arch arm64 --output packages
-          dpkg-deb --info packages/helixir_*_amd64.deb
-          dpkg-deb --info packages/helixir_*_arm64.deb
+          tools/build_client_deb.sh --archive archives/helixir-client-linux-x86_64.tar.gz \
+            --version "$version" --arch amd64 --output packages
+          tools/build_client_deb.sh --archive archives/helixir-client-linux-arm64.tar.gz \
+            --version "$version" --arch arm64 --output packages
+          dpkg-deb --info packages/helixir_[0-9]*_amd64.deb
+          dpkg-deb --info packages/helixir_[0-9]*_arm64.deb
+          dpkg-deb --info packages/helixir-client_*_amd64.deb
+          dpkg-deb --info packages/helixir-client_*_arm64.deb
 
       - name: Clean-install packages on Debian and Ubuntu baselines
         run: |
           for arch in amd64 arm64; do
-            package=$(realpath packages/helixir_*_${arch}.deb)
+            package=$(realpath packages/helixir_[0-9]*_${arch}.deb)
+            client_package=$(realpath packages/helixir-client_*_${arch}.deb)
             for image in debian:12-slim ubuntu:22.04; do
               docker run --rm --platform "linux/$arch" \
-                -v "$package:/packages/helixir.deb:ro" "$image" sh -ec '
+                -v "$package:/packages/helixir.deb:ro" \
+                -v "$client_package:/packages/helixir-client.deb:ro" "$image" sh -ec '
                 apt-get update >/dev/null
                 DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/helixir.deb >/dev/null
                 helixir --version
                 helixir onboard --help >/dev/null
+                DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/helixir-client.deb >/dev/null
+                helixir-client --version
+                helixir-client connect --help >/dev/null
+                test ! -e /usr/lib/helixir-client/helixir-mcp
+                test ! -e /usr/lib/helixir-client/schema
                 mkdir -p /root/.helixir && touch /root/.helixir/preserve-me
+                DEBIAN_FRONTEND=noninteractive apt-get purge -y helixir-client >/dev/null
                 DEBIAN_FRONTEND=noninteractive apt-get purge -y helixir >/dev/null
                 test -f /root/.helixir/preserve-me
               '
@@ -167,7 +204,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Install repository tooling
         run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev gnupg
@@ -181,11 +218,12 @@ jobs:
         run: |
           mkdir -p packages
           while IFS= read -r tag; do
-            gh release download "$tag" --pattern 'helixir_*.deb' \
+            gh release download "$tag" --pattern 'helixir*.deb' \
               --dir packages --clobber 2>/dev/null || true
           done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
           test -n "$(find packages -maxdepth 1 -name 'helixir_*.deb' -print -quit)"
+          test -n "$(find packages -maxdepth 1 -name 'helixir-client_*.deb' -print -quit)"
 
       - name: Build and sign repository metadata
         run: |
@@ -195,6 +233,11 @@ jobs:
           tools/build_apt_repository.sh --packages packages --output apt-site --signing-key "$key"
           test "$(tr -d '[:space:]' < apt-site/KEY-FINGERPRINT)" = \
             "$HELIXIR_APT_SIGNING_FINGERPRINT"
+          for arch in amd64 arm64; do
+            index="apt-site/dists/stable/main/binary-$arch/Packages"
+            grep -qx 'Package: helixir' "$index"
+            grep -qx 'Package: helixir-client' "$index"
+          done
 
       - uses: actions/upload-pages-artifact@v3
         with:

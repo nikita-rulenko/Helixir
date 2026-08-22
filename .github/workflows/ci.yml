@@ -23,8 +23,9 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt --check
-        working-directory: helixir
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --manifest-path helixir/Cargo.toml --all -- --check
+          cargo fmt --manifest-path helixir-client/Cargo.toml --all -- --check
 
   docs-lint:
     name: docs freshness
@@ -46,15 +47,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y apt-utils binutils dpkg-dev gnupg ruby
       - name: Build deterministic fixture archive
         run: |
-          mkdir -p fixture/schema fixture/skills/helixir-memory \
-            packages-a packages-b packages-arm packages-old packages-index
+          mkdir -p fixture/schema fixture/skills/helixir-memory fixture/integration \
+            client-fixture/skills/helixir-memory client-fixture/integration \
+            packages-a packages-b packages-arm packages-old packages-index \
+            client-a client-b client-arm
           printf '#!/bin/sh\nprintf "helixir 9.9.9\\n"\n' > fixture/helixir
           printf '#!/bin/sh\nprintf "helixir-mcp 9.9.9\\n"\n' > fixture/helixir-mcp
           printf '#!/bin/sh\nprintf "helixir-deploy 9.9.9\\n"\n' > fixture/helixir-deploy
-          chmod 0755 fixture/helixir fixture/helixir-mcp fixture/helixir-deploy
+          printf '#!/bin/sh\nprintf "helixir-client 9.9.9\\n"\n' > fixture/helixir-client
+          chmod 0755 fixture/helixir fixture/helixir-mcp fixture/helixir-deploy fixture/helixir-client
           touch fixture/schema/schema.hx fixture/schema/queries.hx fixture/helix.toml
           touch fixture/skills/helixir-memory/SKILL.md
+          touch fixture/integration/AGENTS.md fixture/integration/SKILLS.md
           tar -C fixture -czf helixir-fixture.tar.gz .
+          cp fixture/helixir-client client-fixture/
+          cp fixture/skills/helixir-memory/SKILL.md client-fixture/skills/helixir-memory/
+          cp fixture/integration/AGENTS.md fixture/integration/SKILLS.md client-fixture/integration/
+          tar -C client-fixture -czf helixir-client-fixture.tar.gz .
+          touch client-fixture/skills/helixir-memory/._SKILL.md client-fixture/integration/.DS_Store
+          tar -C client-fixture -czf helixir-client-macos-fixture.tar.gz .
+          rm client-fixture/skills/helixir-memory/._SKILL.md client-fixture/integration/.DS_Store
           printf '#!/bin/sh\nprintf "helixir 9.9.8\\n"\n' > fixture/helixir
           tar -C fixture -czf helixir-fixture-old.tar.gz .
           sha=$(sha256sum helixir-fixture.tar.gz | awk '{print $1}')
@@ -62,11 +74,39 @@ jobs:
             helixir-linux-arm64.tar.gz helixir-linux-x86_64.tar.gz; do
             printf '%s  %s\n' "$sha" "$asset" >> SHA256SUMS
           done
+          client_sha=$(sha256sum helixir-client-fixture.tar.gz | awk '{print $1}')
+          for asset in helixir-client-macos-arm64.tar.gz helixir-client-macos-x86_64.tar.gz \
+            helixir-client-linux-arm64.tar.gz helixir-client-linux-x86_64.tar.gz; do
+            printf '%s  %s\n' "$client_sha" "$asset" >> SHA256SUMS
+          done
       - name: Validate Homebrew rendering
         run: |
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
             --output Formula/helixir.rb
           ruby -c Formula/helixir.rb
+          ! grep -q '^  version ' Formula/helixir.rb
+          ! grep -q 'bin.install_symlink libexec/"helixir-client"' Formula/helixir.rb
+          tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
+            --package helixir-client --output Formula/helixir-client.rb
+          ruby -c Formula/helixir-client.rb
+          ! grep -q '^  version ' Formula/helixir-client.rb
+          grep -q 'class HelixirClient < Formula' Formula/helixir-client.rb
+          grep -q 'helixir-client-macos-arm64.tar.gz' Formula/helixir-client.rb
+          tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
+            --base-url file:///tmp/helixir-assets --output Formula/helixir-local.rb
+          grep -q 'file:///tmp/helixir-assets/helixir-macos-arm64.tar.gz' \
+            Formula/helixir-local.rb
+          grep -q '^  version "9.9.9"' Formula/helixir-local.rb
+          tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
+            --package helixir-client --base-url file:///tmp/helixir-assets \
+            --output Formula/helixir-client-local.rb
+          grep -q 'file:///tmp/helixir-assets/helixir-client-macos-arm64.tar.gz' \
+            Formula/helixir-client-local.rb
+          grep -q '^  version "9.9.9"' Formula/helixir-client-local.rb
+          if tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
+            --base-url http://insecure.invalid --output Formula/insecure.rb; then
+            exit 1
+          fi
           tools/check_glibc_baseline.sh --max 99.99 /bin/sh
       - name: Validate deterministic Debian packages
         env:
@@ -80,13 +120,30 @@ jobs:
             --arch arm64 --output packages-arm
           tools/build_deb.sh --archive helixir-fixture-old.tar.gz --version 9.9.8 \
             --arch amd64 --output packages-old
+          tools/build_client_deb.sh --archive helixir-client-fixture.tar.gz --version 9.9.9 \
+            --arch amd64 --output client-a
+          tools/build_client_deb.sh --archive helixir-client-fixture.tar.gz --version 9.9.9 \
+            --arch amd64 --output client-b
+          tools/build_client_deb.sh --archive helixir-client-macos-fixture.tar.gz --version 9.9.9 \
+            --arch arm64 --output client-arm
           test "$(sha256sum packages-a/*.deb | awk '{print $1}')" = \
             "$(sha256sum packages-b/*.deb | awk '{print $1}')"
           dpkg-deb --info packages-a/*.deb
           test "$(dpkg-deb --field packages-a/*.deb Architecture)" = amd64
           test "$(dpkg-deb --field packages-arm/*.deb Architecture)" = arm64
+          test "$(sha256sum client-a/*.deb | awk '{print $1}')" = \
+            "$(sha256sum client-b/*.deb | awk '{print $1}')"
+          test "$(dpkg-deb --field client-a/*.deb Package)" = helixir-client
+          test "$(dpkg-deb --field client-arm/*.deb Architecture)" = arm64
           dpkg-deb --extract packages-a/*.deb extracted
           test "$(extracted/usr/bin/helixir --version)" = 'helixir 9.9.9'
+          dpkg-deb --extract client-a/*.deb extracted-client
+          test "$(extracted-client/usr/bin/helixir-client --version)" = 'helixir-client 9.9.9'
+          test ! -e extracted-client/usr/lib/helixir-client/helixir-mcp
+          test ! -e extracted-client/usr/lib/helixir-client/schema
+          dpkg-deb --extract client-arm/*.deb extracted-client-arm
+          test -z "$(find extracted-client-arm -type f \
+            \( -name '._*' -o -name '.DS_Store' \) -print -quit)"
       - name: Validate signed APT repository
         run: |
           export GNUPGHOME=$RUNNER_TEMP/helixir-package-test-gpg
@@ -95,7 +152,8 @@ jobs:
             'Helixir CI package fixture <ci@example.invalid>' rsa2048 sign 1d
           key=$(gpg --batch --with-colons --list-secret-keys \
             | awk -F: '$1 == "sec" {print $5; exit}')
-          cp packages-a/*.deb packages-arm/*.deb packages-old/*.deb packages-index/
+          cp packages-a/*.deb packages-arm/*.deb packages-old/*.deb \
+            client-a/*.deb client-arm/*.deb packages-index/
           tools/build_apt_repository.sh --packages packages-index \
             --output apt-site --signing-key "$key"
           gpgv --keyring apt-site/helixir-archive-keyring.gpg \
@@ -119,6 +177,10 @@ jobs:
           test "$(dpkg-query -W -f='${Version}' helixir)" = '9.9.9'
           test "$(helixir --version)" = 'helixir 9.9.9'
           test -f "$HOME/.helixir/preserve-me"
+          sudo apt-get install -y helixir-client >/dev/null
+          test "$(helixir-client --version)" = 'helixir-client 9.9.9'
+          helixir-client connect --help >/dev/null
+          sudo apt-get purge -y helixir-client >/dev/null
           sudo apt-get purge -y helixir >/dev/null
           test -f "$HOME/.helixir/preserve-me"
 
@@ -155,13 +217,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixir-client
           key: rustdoc
       - name: cargo doc
-        working-directory: helixir
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --document-private-items
+        run: |
+          cargo doc --manifest-path helixir/Cargo.toml --no-deps --document-private-items
+          cargo doc --manifest-path helixir-client/Cargo.toml --no-deps --document-private-items
 
   clippy:
     name: clippy
@@ -173,13 +238,16 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixir-client
           key: clippy
       # #117: the warning backlog is zero. New rustc or Clippy warnings fail
       # before they can become an accepted baseline.
       - name: cargo clippy
-        working-directory: helixir
-        run: cargo clippy --all-targets -- -D warnings
+        run: |
+          cargo clippy --manifest-path helixir/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path helixir-client/Cargo.toml --all-targets -- -D warnings
 
   test:
     name: unit tests
@@ -198,7 +266,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixir-client
           key: test-${{ matrix.os }}
       - name: Fetch ONNX Runtime (macOS)
         if: matrix.ort_url
@@ -219,6 +289,9 @@ jobs:
       - name: cargo test --lib
         working-directory: helixir
         run: cargo test --lib --locked || cargo test --lib
+      - name: helixir-client tests
+        working-directory: helixir-client
+        run: cargo test --locked
 
   msrv:
     name: MSRV (1.88)
@@ -229,8 +302,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixir-client
           key: msrv
       - name: cargo check
-        working-directory: helixir
-        run: cargo check --all-targets
+        run: |
+          cargo check --manifest-path helixir/Cargo.toml --all-targets
+          cargo check --manifest-path helixir-client/Cargo.toml --all-targets

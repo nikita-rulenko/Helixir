@@ -50,12 +50,14 @@ Interpret write results exactly:
   suggested question or apply an established standing rule.
 - Only `ok:false` or `status:"failed"` is failure.
 
-An initialized MCP session configured with `HELIXIR_RBAC_ACTOR` receives one
-bounded presence lease; real MCP tool activity refreshes it, but an idle process
-does not. Pass `agent_id` on writes when a distinct worker or sub-agent produced
-the memory. One-shot agents call `agent_farewell` when done; that terminal status
-remains inactive until later real activity, while the heartbeat window is the
-crash and idle fallback.
+Presence is explicit: transport initialization and ordinary reads never create
+or refresh a lease. A root agent, worker, or sub-agent calls `agent_heartbeat`
+immediately on start and at meaningful progress boundaries, using its stable
+logical `actor_id` plus a concrete `agent_id`; writes carrying that `agent_id`
+refresh the same lease. One-shot agents call
+`agent_farewell(actor_id, agent_id)` when done; that terminal status remains
+inactive until another explicit heartbeat or attributed write, while the
+heartbeat window is the crash and idle fallback.
 
 ## Select the right tool
 
@@ -70,8 +72,10 @@ crash and idle fallback.
 | Correct one known row | `update_memory` |
 | Find historical pre-RBAC partial reasoning | `search_incomplete_thoughts` |
 | Check an accepted async write | `get_add_status` with its `pending_id` |
+| Announce a sub-agent without writing memory | `agent_heartbeat` |
 | See active agents | `swarm_status` |
 | Administer/orient registered identities | `list_users` with admin `actor_id` |
+| Bootstrap this remote client once | `enroll_client` with its own `actor_id` |
 | Settle a charter dispute | `resolve_contradiction` |
 
 Results are curated. `metadata.collapsed` lists folded same-story ids.
@@ -125,6 +129,13 @@ before an admin assigns other groups. Removing a principal from a group
 deactivates its grants but keeps the User node and assignment history; never
 maintain a second local user list.
 
+On an agent-only host, `helixir-client connect` performs the one-time
+`enroll_client` call. That tool accepts only the caller's stable `actor_id` and
+can grant only `worker` in reserved `onboarding`; it exposes no role or group
+choice. Do not call it as a normal memory operation, do not use it to restore a
+revoked role, and never point the client at the HelixDB port—the endpoint is the
+Helixir MCP gateway. Administrators move admitted principals with `helixir rbac`.
+
 When writing to any working group, pass its concrete `group_id` on
 `add_memory` and `think_commit`. Never pass a dedup federation id. An omitted
 group is accepted only when Helixir can infer exactly one reserved workspace.
@@ -164,8 +175,11 @@ buffered work:
   readable through `memory://rules`.
 
 Use `swarm_status` before parallel work or unexplained load. The MCP session
-heartbeats its configured actor automatically; pass `agent_id` on writes for a
-distinct worker identity, and call `agent_farewell` when a one-shot agent exits.
+does not infer presence from transport initialization or ordinary reads. A
+root or distinct worker calls `agent_heartbeat(actor_id, agent_id, status)` at
+start and progress boundaries;
+passing that `agent_id` on a real write refreshes the lease but fake memory is
+never required. Call `agent_farewell(actor_id, agent_id)` when a one-shot agent exits.
 `agent_farewell` is authoritative immediately; never keep treating a terminal
 `done`, `failed`, `offline`, `stopped`, `disconnected`, or `farewell` status as
 online merely because its timestamp is fresh.

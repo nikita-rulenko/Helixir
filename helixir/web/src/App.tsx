@@ -205,7 +205,7 @@ function App() {
             </button>
             <span className="micro-label">Graph link</span>
             <span className="live-pill"><StatusDot ok={status.backend} pulse />{status.backend ? "Live" : "Awaiting"}</span>
-            <span className="version">v{meta?.version ?? "0.16.1-dev"}</span>
+            <span className="version">v{meta?.version ?? "0.17.0-dev"}</span>
           </div>
         </header>
 
@@ -278,7 +278,7 @@ function Overview({ discovery, overview, error, status, onSetup, onMemory, onAcc
       <section className="metrics-grid" aria-label="System overview">
         <Metric eyebrow="Memories" value={overview?.memories?.toLocaleString() ?? "—"} detail={overview?.access_scope === "global" ? "Global bounded count" : "Hidden outside global scope"} action="Explore memory" onActivate={onMemory} />
         <Metric eyebrow="Graph nodes" value={overview?.graph_nodes?.toLocaleString() ?? "—"} detail={`${overview?.entities ?? "—"} entities · ${overview?.concepts ?? "—"} concepts`} action="Inspect graph" onActivate={onMemory} />
-        <Metric eyebrow="Agents online" value={`${overview?.active_agents ?? "—"} / ${overview?.agents ?? "—"}`} detail="Live swarm heartbeat" action="Open live roster" onActivate={() => onAccess("agents", true)} />
+        <Metric eyebrow="Agents online" value={`${overview?.active_agents ?? "—"} / ${overview?.agents ?? "—"}`} detail={`${overview?.active_subagents ?? "—"} / ${overview?.subagents ?? "—"} subagents online`} action="Open live roster" onActivate={() => onAccess("agents", true)} />
         <Metric eyebrow="Memory mode" value={<span className="readiness-value mode-value">{overview?.mode ?? "—"}</span>} detail={`${overview?.principals ?? "—"} principals · ${overview?.workspaces ?? "—"} groups`} action="Govern access" onActivate={() => onAccess("groups")} />
       </section>
 

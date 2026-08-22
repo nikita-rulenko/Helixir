@@ -259,6 +259,42 @@ pub(super) async fn prune_agent(
         .authorize_admin_surface(&state.actor_id)
         .await
         .map_err(mutation_error)?;
+    let current = state
+        .db
+        .execute_query::<serde_json::Value, _>(
+            "getAgent",
+            &serde_json::json!({"agent_id": agent_id}),
+        )
+        .await
+        .map_err(|error| mutation_error(error.into()))?;
+    let status = current
+        .get("agent")
+        .unwrap_or(&current)
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if crate::toolkit::tooling_manager::swarm::status_allows_activity(status) {
+        return Err(problem(
+            StatusCode::CONFLICT,
+            "agent_not_terminal",
+            "only an execution instance with a terminal status may be pruned",
+        ));
+    }
+    let authored = state
+        .db
+        .execute_query::<serde_json::Value, _>(
+            "countAgentMemories",
+            &serde_json::json!({"agent_id": agent_id}),
+        )
+        .await
+        .map_err(|error| mutation_error(error.into()))?;
+    if first_unsigned(&authored).unwrap_or_default() > 0 {
+        return Err(problem(
+            StatusCode::CONFLICT,
+            "agent_has_provenance",
+            "an execution instance with memory authorship provenance cannot be pruned",
+        ));
+    }
     state
         .db
         .execute_query::<serde_json::Value, _>(
@@ -274,6 +310,15 @@ pub(super) async fn prune_agent(
 
 fn receipt(message: String) -> MutationReceipt {
     MutationReceipt { ok: true, message }
+}
+
+fn first_unsigned(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::Array(values) => values.iter().find_map(first_unsigned),
+        serde_json::Value::Object(values) => values.values().find_map(first_unsigned),
+        _ => None,
+    }
 }
 
 fn required<'a>(value: &'a str, message: &str) -> Result<&'a str, (StatusCode, Json<ApiProblem>)> {
@@ -357,5 +402,30 @@ mod tests {
         assert!(validate_scope(Role::Admin, Some("default")).is_err());
         assert!(validate_scope(Role::Moderator, Some("dev")).is_ok());
         assert!(validate_scope(Role::Viewer, None).is_err());
+    }
+
+    #[test]
+    fn active_statuses_are_never_prunable() {
+        use crate::toolkit::tooling_manager::swarm::status_allows_activity;
+
+        for status in ["", "working", "reviewing", "stale"] {
+            assert!(status_allows_activity(status), "status={status}");
+        }
+        for status in [
+            "done",
+            "failed",
+            "offline",
+            "stopped",
+            "disconnected",
+            "farewell",
+        ] {
+            assert!(!status_allows_activity(status), "status={status}");
+        }
+    }
+
+    #[test]
+    fn nested_authorship_count_is_projected_before_prune() {
+        assert_eq!(first_unsigned(&serde_json::json!({"count": [3]})), Some(3));
+        assert_eq!(first_unsigned(&serde_json::json!({"count": 0})), Some(0));
     }
 }

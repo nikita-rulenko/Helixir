@@ -122,7 +122,11 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 - RBAC is graph-backed HelixDB state and the single source of truth; never invent or cache local ACLs.
 - RBAC is permanent. Bootstrap creates `default` for pre-RBAC memories and trusted peers (equal `groupadmin` access), `onboarding` for newly discovered principals, and membership-free `moirai` for generated hypotheses visible only to global admins. Only the operator receives global admin. The transition resumes from HelixDB checkpoints and is never rolled back to disabled mode. Authorization is deny-by-default and fail-closed.
 - Active or historical membership in `default` or `onboarding` defines the graph-backed principal registry. New principals enter `onboarding` before assignment to working groups; removal preserves the User node and role history. Never create a second local registry.
+- A remote agent host is bootstrapped once through `helixir-client connect`. Its `enroll_client` tool accepts only its own stable `actor_id` and can grant only `worker` in reserved `onboarding`; it is not an ordinary-session tool and never accepts a target role/group. Point it at the Helixir MCP gateway, not HelixDB.
 - `actor_id` is the authenticated principal; `user_id` is the memory owner or target. Every tool whose schema exposes `actor_id` must receive it under permanent RBAC; never bypass checks by changing `user_id`.
+- Use the stable principal configured by onboarding in `HELIXIR_RBAC_ACTOR` as
+  `actor_id`; do not derive a new principal from a transient process or
+  sub-agent name.
 - FastThink session ids and pending ids are not credentials. Pass the same `actor_id` on every `think_*` lifecycle call and on `get_add_status`; cross-principal use is denied. Pending results are visible only to their owner, creator, or a global admin, and outbox payloads only to their owner or a global admin.
 - Roles are `admin` (global read/write and policy), `groupadmin` (read/write plus membership/role management in one or more assigned non-reserved groups), `moderator` (read/write assigned groups), `worker` (read group and write own authored memories), and `viewer` (read-only assigned groups). `teamlead` is a retired legacy grant; never request it.
 - An omitted `group_id` is inferred only when exactly one reserved workspace is writable; ambiguous membership fails closed. Every working-group write must name its concrete `group_id`. Never pass a dedup federation id as `group_id`.
@@ -335,12 +339,14 @@ Before add_memory, ask:
 This store is shared by a COLLECTIVE of agents (when the collective tier is
 on). Three habits make you a good citizen:
 
-1. **Stay visible while active**: an initialized MCP session configured with
-   `HELIXIR_RBAC_ACTOR` gets one bounded lease, and real MCP tool activity
-   refreshes it. An idle transport does not remain online forever. Pass
-   `agent_id` on `add_memory` when a distinct worker or sub-agent is doing the
-   write; that write also refreshes its presence (host, status, last-seen).
-2. **See who else is here**: `swarm_status` returns the live roster —
+1. **Stay visible while active**: presence is explicit; transport initialization
+   and ordinary reads never create or refresh a lease. A root agent, worker, or
+   sub-agent calls `agent_heartbeat(actor_id=..., agent_id=...,
+   status=...)` immediately on start and at meaningful progress boundaries;
+   it never writes fake memory for presence. Passing the same `agent_id` on a
+   real `add_memory` refreshes that instance lease.
+2. **See who else is here**: `swarm_status` returns logical-principal families
+   plus the underlying execution-instance roster —
    check it when collaborating, when work seems duplicated, or when
    hunting an unexplained load (a forgotten daemon shows up here).
 3. **Orient identities (global admin only)**: `list_users(actor_id=...)`
@@ -350,9 +356,10 @@ on). Three habits make you a good citizen:
    `list_memories(user_id=..., actor_id=...)`; search authorized owners with
    `scope="collective"`.
 4. **Say goodbye**: when your job is done — especially as a one-shot
-   agent — call `agent_farewell(agent_id=...)`. The terminal status removes
-   you from the active roster immediately and stays terminal until later real
-   tool activity; the heartbeat window is the crash/idle fallback and your
+   agent — call `agent_farewell(actor_id=..., agent_id=...)`. The terminal status removes
+   you from the active roster immediately and stays terminal until another
+   explicit heartbeat or attributed write; the heartbeat window is the
+   crash/idle fallback and your
    durable authorship provenance remains intact.
 
 Your outbox (`pending_outcomes` on any add_memory) may carry:

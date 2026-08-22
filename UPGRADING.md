@@ -13,6 +13,37 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
+## v0.16.1 → v0.17.0 — thin clients and logical agent families
+
+v0.17.0 adds an independent `helixir-client` package for agent-only hosts and
+separates stable logical principals from transient execution instances. The
+server schema gains additive `Agent.principal_id` storage plus the bounded
+client-enrollment query, so a full Helixir host must use the normal
+backup-first schema transition before replacing long-lived services:
+
+1. stop memory writers and create a verified cold backup of the persistent
+   HelixDB volume;
+2. run `helix check` with CLI v2.3.5 and deploy the v0.17.0 schema/queries;
+3. restart the database on the same persistent volume, then restart the single
+   MCP gateway and run `helixir doctor --json`;
+4. restart agent clients so they load the 23-tool surface and current skill.
+
+Historical Agent rows with a missing or null `principal_id` remain readable;
+the admin projection uses conservative legacy grouping without rewriting
+authorship provenance. New rows always persist the authenticated principal.
+
+Agent-only machines do not run this database transition. Install
+`helixir-client`, connect it to the existing MCP gateway, and run its scoped
+doctor:
+
+```bash
+brew install nikita-rulenko/tap/helixir-client
+# or: sudo apt install helixir-client
+helixir-client connect --gateway helixir-host:8765 \
+  --principal codex-laptop --owner codex --project "$PWD"
+helixir-client doctor
+```
+
 ## v0.16.0 → v0.16.1 — one host, one gateway
 
 v0.16.1 is a binary and MCP-client-registration patch. It does not change the
@@ -192,6 +223,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
+| **v0.17.0** | The distributed family | Independent Homebrew/APT `helixir-client`, bounded onboarding enrollment, direct gateway diagnostics, explicit principal/instance presence, logical Agent families and Subagent drill-down. **Back up and redeploy the current schema before replacing full-host services.** |
 | **v0.16.1** | One host, one gateway | HTTP-capable MCP clients share one managed gateway instead of accumulating children behind retained stdio pipes. No schema migration; start the gateway, run `setup --gateway`, doctor, then restart clients. |
 | **v0.16.0** | Distribution and stewardship | Signed Homebrew/APT channels, shared CLI/browser onboarding, versioned persistent embedding-cache invalidation, hardened admin API, redacted settings, and guarded managed-volume backup/restore. No schema migration; upgrade binaries, run onboard/doctor, then restart MCP clients. |
 | **v0.15.0** | The memory observatory | Global-admin-only web control plane and typed native supervisor. The container has no Docker socket or host-home mount; graph RBAC stays the authorization source. Run doctor, verify `helixir control-plane status`, then restart MCP clients. |

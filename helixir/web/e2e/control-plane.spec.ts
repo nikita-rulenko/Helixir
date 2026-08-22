@@ -3,8 +3,36 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const overview = {
   actor_id: "operator", access_scope: "global", mode: "collective+insights",
-  memories: 42, graph_nodes: 91, principals: 3, agents: 2, active_agents: 1,
+  memories: 42, graph_nodes: 91, principals: 3, agents: 1, active_agents: 1,
+  agent_instances: 4, active_agent_instances: 3,
+  subagents: 3, active_subagents: 3,
   workspaces: 3, entities: 31, concepts: 7,
+};
+const access = {
+  active_window_secs: 600,
+  agents: [
+    { agent_id: "codex", principal_id: "codex", name: "Codex", role: "coordinator", host: "studio", status: "idle", last_seen: "2026-08-22T08:00:00Z", age_seconds: 7200, active: false },
+    { agent_id: "codex/client-gate", principal_id: "codex", name: "Client gate", role: "tester", host: "runner-01", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 12, active: true },
+    { agent_id: "codex/remote-smoke", principal_id: "codex", name: "Remote smoke", role: "tester", host: "runner-02", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 14, active: true },
+    { agent_id: "codex/ui-audit", principal_id: "codex", name: "UI audit", role: "designer", host: "studio", status: "working", last_seen: "2026-08-22T09:59:00Z", age_seconds: 18, active: true },
+  ],
+  agent_families: [
+    { principal_id: "codex", active: true, instance_count: 4, active_instances: 3, hosts: ["runner-01", "runner-02", "studio"], instances: [
+      { agent_id: "codex", principal_id: "codex", name: "Codex", role: "coordinator", host: "studio", status: "idle", last_seen: "2026-08-22T08:00:00Z", age_seconds: 7200, active: false },
+      { agent_id: "codex/client-gate", principal_id: "codex", name: "Client gate", role: "tester", host: "runner-01", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 12, active: true },
+      { agent_id: "codex/remote-smoke", principal_id: "codex", name: "Remote smoke", role: "tester", host: "runner-02", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 14, active: true },
+      { agent_id: "codex/ui-audit", principal_id: "codex", name: "UI audit", role: "designer", host: "studio", status: "working", last_seen: "2026-08-22T09:59:00Z", age_seconds: 18, active: true },
+    ] },
+  ],
+  subagents: [
+    { agent_id: "codex/client-gate", principal_id: "codex", name: "Client gate", role: "tester", host: "runner-01", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 12, active: true },
+    { agent_id: "codex/remote-smoke", principal_id: "codex", name: "Remote smoke", role: "tester", host: "runner-02", status: "working", last_seen: "2026-08-22T10:00:00Z", age_seconds: 14, active: true },
+    { agent_id: "codex/ui-audit", principal_id: "codex", name: "UI audit", role: "designer", host: "studio", status: "working", last_seen: "2026-08-22T09:59:00Z", age_seconds: 18, active: true },
+  ],
+  principals: [
+    { subject_id: "codex", global_roles: ["admin"], groups: [] },
+  ],
+  groups: [], dedup_groups: [], contributors: [], contributor_sample_size: 0,
 };
 const discovery = {
   phase: "ready",
@@ -33,8 +61,9 @@ async function mockAdminApi(page: Page) {
   await page.route("**/api/v1/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace("/api/v1", "");
-    if (path === "/meta") return json(route, { product: "helixir", version: "0.16.1", api_version: "v1", phase: "admin", transport: "http", runtime: "control-plane-container", host_operations_available: true });
+    if (path === "/meta") return json(route, { product: "helixir", version: "0.17.0", api_version: "v1", phase: "admin", transport: "http", runtime: "control-plane-container", host_operations_available: true });
     if (path === "/overview") return json(route, overview);
+    if (path === "/access") return json(route, access);
     if (path === "/discovery") return json(route, discovery);
     if (path === "/install/plan") return json(route, plan);
     if (path === "/install/operations" || path.endsWith("/resume")) return json(route, operation);
@@ -83,6 +112,21 @@ test("overview is accessible and usable at desktop and mobile widths", async ({ 
   if (testInfo.project.name === "mobile") {
     await expect(page.getByRole("button", { name: /Memory field 04/ })).toBeVisible();
   }
+});
+
+test("agent roster keeps a stale root family online through three subagent leases", async ({ page }) => {
+  await mockAdminApi(page);
+  await page.goto("/#token=" + "d".repeat(64));
+  await page.getByRole("button", { name: /Access graph 03/ }).click();
+  await page.getByRole("button", { name: "agents", exact: true }).click();
+  await expect(page.getByText("Logical agents", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 agents online · 3 subagents online", { exact: true })).toBeVisible();
+  await expect(page.getByText("3 subagents", { exact: false }).first()).toBeVisible();
+  await page.locator(".agent-family-accordion details", { hasText: "codex" }).locator("summary").click();
+  await expect(page.getByText("codex/client-gate", { exact: true })).toBeVisible();
+  await expect(page.getByText("Root agent", { exact: true })).toBeVisible();
+  await expect(page.locator(".instance-kind:not(.is-root)")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Prune instance" })).toHaveCount(0);
 });
 
 test("polling soak keeps request fan-out and DOM bounded", async ({ page }) => {

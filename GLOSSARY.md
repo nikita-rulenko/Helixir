@@ -70,13 +70,17 @@ authorship edges (idempotent per user). `HAS_MEMORY` is provenance, while
 `MEMORY_IN_RBAC_GROUP` is the read boundary.
 
 **Rendezvous.** Agents discovering each other *through the database
-itself*, with no side channel: `add_memory(agent_id=...)` auto-heartbeats
-the agent's presence (host, status, last-seen), and `swarm_status` returns
-the live roster. (#39; `heartbeatAgent` in `schema/queries.hx`)
+itself*, with no side channel: `agent_heartbeat(actor_id, agent_id)` publishes
+an execution-instance lease without a memory write, `add_memory(agent_id=...)`
+refreshes that same lease as a convenience, and `swarm_status` returns both
+the logical-principal families, child sub-agent roster, and full diagnostic
+instance roster. Logical agent counts never equal raw process counts. (#39; `heartbeatAgent` in
+`schema/queries.hx`)
 
 **Heartbeat.** The presence stamp behind rendezvous:
-`register_or_heartbeat` upserts an `Agent` node with `last_seen`, host and
-status. Fired implicitly by writes that carry `agent_id`.
+`register_or_heartbeat_as` upserts an `Agent` execution instance with its
+explicit owning `principal_id`, `last_seen`, host and status. Fired directly by
+`agent_heartbeat` and refreshed implicitly by writes that carry `agent_id`.
 
 **Confirm-or-promise.** The `add_memory` ack contract (#63). With the
 ingest buffer on, the call *waits briefly* for the pipeline: if done in
@@ -365,7 +369,7 @@ client surfaces these as real errors (#53); any raw probe script must check
 the body, not the status code.
 
 **MCP — Model Context Protocol.** The interface agents speak to Helixir:
-a stdio (or streamable-HTTP via the gateway) server exposing the 21 tools.
+a stdio (or streamable-HTTP via the gateway) server exposing the 23 tools.
 Any MCP client can connect with a few lines of config. Guided onboarding detects
 Codex, Claude Code and Cursor; `helixir setup` additionally knows Claude
 Desktop and Gemini CLI and can target a custom client config explicitly.

@@ -29,6 +29,10 @@ use manager_cache::*;
 use storage_types::*;
 pub use types::*;
 
+pub(crate) fn rbac_assignment_id(subject: &str, group: &str, role: Role) -> String {
+    storage_types::assignment_id(subject, group, role)
+}
+
 #[cfg(test)]
 #[path = "rbac_tests.rs"]
 mod tests;

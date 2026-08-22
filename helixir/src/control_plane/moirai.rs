@@ -14,9 +14,10 @@ use super::stats::{MemoryRow, RecentResponse, admin_policy, load_agents};
 const INSIGHT_LIMIT: i64 = 80;
 
 pub(super) async fn load_moirai(db: &Arc<HelixClient>, actor: &str) -> Option<MoiraiProjection> {
-    admin_policy(db, actor).await.ok()?;
+    let policy = admin_policy(db, actor).await.ok()?;
     let config = crate::core::HelixirConfig::from_env();
-    let agents = load_agents(db, config.swarm.active_window_secs).await;
+    let known_principals = policy.users.keys().cloned().collect::<BTreeSet<_>>();
+    let agents = load_agents(db, config.swarm.active_window_secs, &known_principals).await;
     let daemon = agents.iter().find(|agent| agent.role == "daemon");
     let categories: CategoryResponse = db
         .execute_query_no_retry("getAllCategories", &serde_json::json!({"limit": 1_000}))

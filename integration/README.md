@@ -45,8 +45,30 @@ helixir setup     # interactive: writes the `helixir-local` MCP entry into
 `setup` is the lightweight MCP-registration-only path; prefer `onboard` for a
 new machine.
 
+For an agent on another host, install only the thin package and point it at an
+already running Helixir gateway:
+
+```bash
+# macOS / Linuxbrew
+brew install nikita-rulenko/tap/helixir-client
+
+# or Debian / Ubuntu after adding the signed repository
+sudo apt install helixir-client
+
+helixir-client connect --gateway helixir-host:8765 \
+  --principal codex-laptop --owner codex --project "$PWD"
+helixir-client doctor
+```
+
+This path installs the canonical skill and a managed `AGENTS.md` block, but no
+database, NLI, Ollama/Nomic, daemon, Moirai, Hygieia, backup service or UI. A
+new principal is admitted only as `worker` in reserved `onboarding`; an admin
+assigns normal working groups later. The endpoint is `/mcp` on the gateway,
+never the HelixDB database port.
+
 Or add it manually to your client's MCP config (stdio transport, the
-`helixir-mcp` binary). See the repo README → **Integration**.
+`helixir-mcp` binary). See [Installation and onboarding](../helixir/doc/installation.md)
+for the full standalone and remote-client flows.
 
 ## Customize identity and access
 

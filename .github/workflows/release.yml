@@ -91,6 +91,17 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Require the tag to match every shipped manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          server_version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
+          client_version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir-client/Cargo.toml)
+          web_version=$(awk -F '"' '/"version"[[:space:]]*:/ {print $4; exit}' helixir/web/package.json)
+          test "$GITHUB_REF_NAME" = "v$server_version"
+          test "$client_version" = "$server_version"
+          test "$web_version" = "$server_version"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -99,7 +110,9 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixir-client
           key: ${{ matrix.target }}
 
       - name: Fetch ONNX Runtime (NLI link target, #80)
@@ -137,22 +150,30 @@ jobs:
         run: Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 cdn.pyke.io"
 
       - name: Build release binaries
+        shell: bash
         working-directory: helixir
         env:
           RUSTFLAGS: ${{ matrix.rustflags || '' }}
-        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+          cargo build --release --locked --manifest-path ../helixir-client/Cargo.toml \
+            --target ${{ matrix.target }}
 
       - name: Package artifacts
         shell: bash
         working-directory: helixir
         run: |
-          mkdir -p dist
+          mkdir -p dist client-dist
           cp target/${{ matrix.target }}/release/helixir${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-mcp${{ matrix.ext || '' }} dist/
           cp target/${{ matrix.target }}/release/helixir-deploy${{ matrix.ext || '' }} dist/
           cp -r schema dist/
           cp helix.toml dist/
           cp -r skills dist/
+          cp -r ../integration dist/
+          cp ../helixir-client/target/${{ matrix.target }}/release/helixir-client${{ matrix.ext || '' }} client-dist/
+          cp -r skills client-dist/
+          cp -r ../integration client-dist/
           # #80: full-feature artifacts carry the ONNX Runtime next to the
           # binaries (linux links with rpath $ORIGIN; windows finds the DLL
           # in the exe directory). Keep them together when relocating.
@@ -161,17 +182,19 @@ jobs:
             cp -a "$ORT_LIB_LOCATION"/libonnxruntime*.dylib dist/ 2>/dev/null || true
             cp "$ORT_LIB_LOCATION"/onnxruntime.dll dist/ 2>/dev/null || true
           fi
-          cd dist
-          tar -czvf ../${{ matrix.artifact }}.tar.gz *
+          tar -C dist -czvf ${{ matrix.artifact }}.tar.gz .
+          client_artifact=${{ matrix.artifact }}
+          client_artifact=${client_artifact/#helixir-/helixir-client-}
+          tar -C client-dist -czvf "$client_artifact.tar.gz" .
 
       - name: Enforce Debian-compatible glibc baseline
         if: runner.os == 'Linux'
         shell: bash
         working-directory: helixir
         run: |
-          mapfile -t elf_objects < <(find dist -maxdepth 1 -type f \
+          mapfile -t elf_objects < <(find dist client-dist -maxdepth 1 -type f \
             \( -name 'helixir*' -o -name 'libonnxruntime*.so*' \) -print)
-          test "${#elf_objects[@]}" -ge 4
+          test "${#elf_objects[@]}" -ge 5
           ../tools/check_glibc_baseline.sh --max 2.35 "${elf_objects[@]}"
 
       - name: Prepare architecture-native NLI model for containers
@@ -195,7 +218,135 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: helixir/${{ matrix.artifact }}.tar.gz
+          path: helixir/*.tar.gz
+
+  client-quality-gate:
+    name: APT, concurrent clients and RBAC visibility
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixir
+          key: pre-release-client-gate
+
+      - name: Install pinned HelixDB CLI
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 \
+            -o /tmp/helix https://github.com/nikita-rulenko/helix-db/releases/download/v2.3.5/helix-x86_64-unknown-linux-gnu
+          echo '8a0d39c0955fb091a459882fecbaa352cfd36b968b73cc91ae35cbdd641a14de  /tmp/helix' \
+            | sha256sum -c -
+          sudo install -m 0755 /tmp/helix /usr/local/bin/helix
+          test "$(helix --version)" = 'Helix CLI 2.3.5'
+
+      - name: Download Linux release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: helixir-linux-x86_64
+          path: release
+
+      - name: Run the disposable remote-client gate
+        run: |
+          version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
+          tools/pre_release_client_gate.sh \
+            --archive release/helixir-linux-x86_64.tar.gz \
+            --client-archive release/helixir-client-linux-x86_64.tar.gz \
+            --version "$version" --arch amd64
+
+  homebrew-preflight:
+    name: Homebrew native install (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            os: macos-15
+          - name: Intel
+            os: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download unpublished release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: helixir-*
+          path: downloaded
+
+      - name: Render formula against local immutable artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/helixir-assets" "$RUNNER_TEMP/Formula"
+          for asset in \
+            helixir-macos-arm64.tar.gz helixir-macos-x86_64.tar.gz \
+            helixir-linux-arm64.tar.gz helixir-linux-x86_64.tar.gz \
+            helixir-client-macos-arm64.tar.gz helixir-client-macos-x86_64.tar.gz \
+            helixir-client-linux-arm64.tar.gz helixir-client-linux-x86_64.tar.gz; do
+            source=$(find downloaded -type f -name "$asset" -print -quit)
+            test -n "$source"
+            cp "$source" "$RUNNER_TEMP/helixir-assets/$asset"
+          done
+          test "$(find "$RUNNER_TEMP/helixir-assets" -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = 8
+          (cd "$RUNNER_TEMP/helixir-assets" && shasum -a 256 *.tar.gz >SHA256SUMS)
+          version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
+          python3 tools/render_homebrew_formula.py \
+            --tag "v$version" \
+            --base-url "file://$RUNNER_TEMP/helixir-assets" \
+            --checksums "$RUNNER_TEMP/helixir-assets/SHA256SUMS" \
+            --output "$RUNNER_TEMP/Formula/helixir.rb"
+          python3 tools/render_homebrew_formula.py \
+            --tag "v$version" \
+            --base-url "file://$RUNNER_TEMP/helixir-assets" \
+            --checksums "$RUNNER_TEMP/helixir-assets/SHA256SUMS" \
+            --package helixir-client \
+            --output "$RUNNER_TEMP/Formula/helixir-client.rb"
+          ruby -c "$RUNNER_TEMP/Formula/helixir.rb"
+          ruby -c "$RUNNER_TEMP/Formula/helixir-client.rb"
+
+      - name: Install, test, reinstall and remove through Homebrew
+        run: |
+          cleanup() {
+            brew uninstall --force helixir/pre-release/helixir-client >/dev/null 2>&1 || true
+            brew uninstall --force helixir/pre-release/helixir >/dev/null 2>&1 || true
+            brew untap helixir/pre-release >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          brew tap-new helixir/pre-release
+          tap_dir=$(brew --repository helixir/pre-release)
+          cp "$RUNNER_TEMP/Formula/helixir.rb" "$tap_dir/Formula/helixir.rb"
+          cp "$RUNNER_TEMP/Formula/helixir-client.rb" "$tap_dir/Formula/helixir-client.rb"
+          brew install helixir/pre-release/helixir helixir/pre-release/helixir-client
+          server_prefix=$(brew --prefix helixir/pre-release/helixir)
+          client_prefix=$(brew --prefix helixir/pre-release/helixir-client)
+          version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
+          test "$("$server_prefix/bin/helixir" --version)" = "helixir $version"
+          "$server_prefix/bin/helixir" onboard --help >/dev/null
+          test ! -e "$server_prefix/bin/helixir-client"
+          test -f "$server_prefix/libexec/schema/schema.hx"
+          test -f "$server_prefix/libexec/skills/helixir-memory/SKILL.md"
+          test -f "$server_prefix/libexec/integration/AGENTS.md"
+          test -f "$server_prefix/libexec/integration/SKILLS.md"
+          test "$("$client_prefix/bin/helixir-client" --version)" = "helixir-client $version"
+          "$client_prefix/bin/helixir-client" connect --help >/dev/null
+          "$client_prefix/bin/helixir-client" doctor --help >/dev/null
+          test ! -e "$client_prefix/libexec/helixir"
+          test ! -e "$client_prefix/libexec/schema"
+          mkdir -p "$HOME/.helixir"
+          touch "$HOME/.helixir/pre-release-preserve"
+          brew test helixir/pre-release/helixir
+          brew test helixir/pre-release/helixir-client
+          brew reinstall helixir/pre-release/helixir
+          brew reinstall helixir/pre-release/helixir-client
+          test -f "$HOME/.helixir/pre-release-preserve"
+          brew uninstall helixir/pre-release/helixir-client
+          brew uninstall helixir/pre-release/helixir
+          brew untap helixir/pre-release
+          test -f "$HOME/.helixir/pre-release-preserve"
+          trap - EXIT
 
   web-assets:
     name: Build control-plane web assets
@@ -221,7 +372,7 @@ jobs:
     name: Package Docker images (${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
-    needs: [build, web-assets]
+    needs: [build, web-assets, client-quality-gate, homebrew-preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -342,6 +493,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -355,13 +508,26 @@ jobs:
             sha256sum "$file" | sed "s#  .*#  $(basename "$file")#" >> artifacts/SHA256SUMS
           done < <(find artifacts -type f -name '*.tar.gz' -print0)
 
+      - name: Load curated release metadata
+        id: metadata
+        shell: bash
+        run: |
+          notes="helixir/doc/${GITHUB_REF_NAME}/notes.md"
+          test -f "$notes"
+          title=$(sed -n '1s/^# //p' "$notes")
+          test -n "$title"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/**/*.tar.gz
             artifacts/SHA256SUMS
-          generate_release_notes: true
+          name: ${{ steps.metadata.outputs.title }}
+          body_path: ${{ steps.metadata.outputs.notes }}
+          make_latest: true
 
   distribution:
     name: Publish package-manager channels

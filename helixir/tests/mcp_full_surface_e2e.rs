@@ -1,13 +1,14 @@
 //! Liveness oracle: exercise EVERY MCP Helixir tool end-to-end (#42 audit).
 //!
 //! "Compiles" does not prove a code path is live — only the running product
-//! does. This drives all 20 MCP tools through the real stdio transport and
+//! does. This drives all 23 MCP tools through the real stdio transport and
 //! proves write→read-back persistence, so it can serve as the gate for the
 //! dead-code deletion stages: after removing a suspected-dead module, this
 //! must stay green (not just `cargo check`).
 //!
 //! Runs the synchronous write path (buffer OFF) for determinism. Tools covered:
-//!   add_memory, search_memory, list_memories, list_users, swarm_status,
+//!   add_memory, search_memory, list_memories, list_users, enroll_client,
+//!   agent_heartbeat, swarm_status, agent_farewell,
 //!   update_memory, get_memory_graph,
 //!   search_by_concept, search_reasoning_chain, connect_memories,
 //!   search_incomplete_thoughts, get_add_status,
@@ -56,6 +57,12 @@ fn mcp_full_surface_liveness() {
     let run = token();
     let user = format!("oracle_{run}");
     let mut exercised: Vec<&str> = Vec::new();
+
+    let client_principal = format!("oracle-client-{run}");
+    let (enrollment, _) = mcp.call_tool("enroll_client", json!({"actor_id": client_principal}));
+    exercised.push("enroll_client");
+    assert_eq!(enrollment["group_id"], "onboarding");
+    assert_eq!(enrollment["roles"][0], "worker");
 
     // ---- write + persistence read-back -------------------------------------
     let fact =
@@ -111,6 +118,22 @@ fn mcp_full_surface_liveness() {
         Some(false),
         "swarm_status must be gated off in Solo mode: {swarm}"
     );
+
+    let heartbeat_agent = format!("oracle-heartbeat-{run}");
+    let (heartbeat, _) = mcp.call_tool(
+        "agent_heartbeat",
+        json!({"agent_id": heartbeat_agent, "status": "testing"}),
+    );
+    exercised.push("agent_heartbeat");
+    assert_eq!(heartbeat["available"], false);
+
+    let farewell_agent = format!("oracle-farewell-{run}");
+    let (farewell, _) = mcp.call_tool(
+        "agent_farewell",
+        json!({"actor_id": user, "agent_id": farewell_agent}),
+    );
+    exercised.push("agent_farewell");
+    assert_eq!(farewell["available"], false);
 
     // Contradiction review: resolving a dispute that does not exist must be
     // graceful (resolved:false), never an error — the end state was reached.
@@ -323,12 +346,15 @@ fn mcp_full_surface_liveness() {
     );
 
     // ---- report -------------------------------------------------------------
-    const ALL: [&str; 20] = [
+    const ALL: [&str; 23] = [
         "add_memory",
         "search_memory",
         "list_memories",
         "list_users",
+        "enroll_client",
+        "agent_heartbeat",
         "swarm_status",
+        "agent_farewell",
         "resolve_contradiction",
         "update_memory",
         "get_memory_graph",

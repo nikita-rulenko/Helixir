@@ -35,7 +35,7 @@ MAINTAINED_DOCS = [
     ROOT / "helixir/skills/helixir-memory/SKILL.md",
     ROOT / "helixir/src/mcp/prompts/cognitive_protocol.md",
     *sorted((ROOT / "helixir/doc").glob("*.md")),
-    *sorted((ROOT / "helixir/doc/v0.16.1").glob("*.md")),
+    *sorted((ROOT / "helixir/doc/v0.17.0").glob("*.md")),
 ]
 
 
