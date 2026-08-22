@@ -1,6 +1,6 @@
 # Installation
 
-> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 This is the maintained installation reference. The root README intentionally
 keeps only the shortest working path; topology choices, package trust,
@@ -15,9 +15,12 @@ headless operation, and lifecycle guarantees live here.
 | Release installer | macOS/Linux scripted bootstrap without a package manager | Matching immutable GitHub release archive |
 | Source build | Contributors and unreleased branches | Locally compiled native binaries |
 
-Every path ends at the same `helixir onboard` orchestrator. Package managers
-do not provision Docker, HelixDB, models, MCP clients, RBAC, or the web control
-plane from lifecycle hooks.
+Helixir has two explicit installation profiles. The full `helixir` package
+ends at the `helixir onboard` orchestrator and may own the database, models,
+gateway and control plane. The `helixir-client` package is a separate thin
+remote-agent bootstrapper: it owns no server runtime and connects only to an
+already configured MCP gateway. Package-manager lifecycle hooks are
+non-interactive in both profiles.
 
 The native release matrix also publishes Windows binaries, but the Bash
 release installer and transactional host onboarding currently target macOS and
@@ -36,16 +39,45 @@ helixir doctor --json
 The fully-qualified formula automatically adds the maintained tap. It selects
 an immutable release archive for macOS or Linux and the current architecture.
 
+For an agent-only host, install the independent thin formula instead:
+
+```bash
+brew install nikita-rulenko/tap/helixir-client
+helixir-client connect \
+  --gateway helixir-host.example:8765 \
+  --principal codex-laptop \
+  --owner codex \
+  --project "$PWD"
+helixir-client doctor
+```
+
+The `helixir` and `helixir-client` formulae own disjoint executables and may be
+installed together. The full formula remains an all-in-one local-agent host via
+`helixir onboard`; it does not depend on the thin bootstrapper. The client
+formula carries only `helixir-client`, the canonical skill, and integration
+instructions, and depends on no server package.
+
 ```bash
 brew upgrade helixir
+brew upgrade helixir-client
 brew pin helixir
 brew unpin helixir
 brew uninstall helixir
+brew uninstall helixir-client
 ```
 
 Upgrade and uninstall affect package-owned files only. They preserve
 `~/.helixir`, database volumes, models, configuration, backups, and MCP client
 entries.
+
+Release qualification uses native Apple Silicon and Intel macOS virtual
+machines. A "macOS Docker container" is not a valid substitute because Docker
+Desktop hosts Linux containers in a Linux VM; it cannot exercise the Mach-O
+binary, Homebrew prefix, or macOS filesystem lifecycle. Before a tag can be
+published, both formulae install together from separate unpublished release
+artifacts, pass `brew test`, reinstall, uninstall, and prove `~/.helixir` state
+survives. The gate also proves that neither formula owns the other's binaries
+or server-only runtime resources.
 
 ## Debian and Ubuntu
 
@@ -66,6 +98,30 @@ sudo apt install helixir
 helixir onboard
 helixir doctor --json
 ```
+
+For an agent-only host, install the client package from the same repository:
+
+```bash
+sudo apt install helixir-client
+helixir-client connect \
+  --gateway helixir-host.example:8765 \
+  --principal codex-laptop \
+  --owner codex \
+  --project "$PWD"
+helixir-client doctor
+```
+
+`helixir-client` installs no HelixDB, Docker integration, NLI, Ollama, Nomic,
+reasoning provider, Moirai, Hygieia, backup service, or admin UI. Those remain
+server responsibilities. Its post-install hook only prints the next command.
+
+The release gate also builds an isolated APT index and starts two clean Debian
+client containers against one disposable gateway. Both clients connect at the
+same time with different principal/owner identities; they then race the same
+principal enrollment to prove it remains idempotent. A fresh HelixDB contract
+separately proves group-scoped writes and reads for different owners and for
+one owner assigned to two isolated groups. This gate makes client packaging,
+admission, and memory visibility one release-blocking contract.
 
 The archive-key fingerprint is:
 
@@ -123,6 +179,10 @@ cd Helixir
 make build
 make install
 make doctor
+
+# Or build/install only the remote-agent client
+make build-client
+make install-client CLIENT_ARGS='--gateway 10.0.0.12:8765 --principal codex-laptop'
 ```
 
 `make build` compiles release binaries for the host. `make install` uses the
@@ -251,6 +311,44 @@ configuration, not copied into every editor's JSON.
 HTTP clients receive only the gateway URL. Their MCP calls carry the stable
 `actor_id`; the gateway owns backend and model configuration for the host.
 
+### A remote agent on another host
+
+Run a reachable gateway on the full Helixir host, then use the thin package on
+each agent host:
+
+```bash
+# Helixir host (trusted subnet; add --require-auth outside it)
+helixir gateway start --bind 0.0.0.0:8765
+
+# Agent host (choose one package manager)
+brew install nikita-rulenko/tap/helixir-client
+# or, on Debian / Ubuntu:
+sudo apt install helixir-client
+helixir-client connect --gateway 10.0.0.12:8765 \
+  --principal claude-laptop --owner claude --project /work/project
+```
+
+The endpoint is streamable HTTP at `/mcp`. It is not the HelixDB port. Connect
+performs the MCP initialization handshake and refuses an incompatible gateway
+before changing local files. A new principal can self-admit only as `worker`
+in reserved `onboarding`; it cannot choose a role or group. Historical
+admission is remembered, so reconnecting does not recreate revoked onboarding
+access or downgrade roles an administrator assigned later.
+
+For every selected Codex, Claude Code, or Cursor client, the bootstrapper:
+
+1. backs up and verifies the `helixir-local` HTTP registration;
+2. installs the canonical `helixir-memory/SKILL.md` under the client-owned
+   skill directory;
+3. merges one marker-delimited block into the project `AGENTS.md`, preserving
+   unrelated project rules;
+4. stores a non-secret profile at `~/.helixir/client.json` with mode `0600`;
+5. runs `helixir-client doctor` against gateway tools, RBAC admission,
+   registrations and instruction freshness.
+
+An optional bearer value is read from `HELIXIR_GATEWAY_TOKEN` by default and
+is never written to the profile, MCP configuration, skill, or `AGENTS.md`.
+
 For a custom stdio MCP client:
 
 ```json
@@ -325,6 +423,10 @@ only. They preserve:
 - managed backup archives;
 - MCP client registrations;
 - graph-backed RBAC, memories, and provenance.
+
+Removing `helixir-client` likewise leaves `~/.helixir/client.json`, project
+instructions, skill copies and agent-owned MCP configuration untouched; this
+avoids a package purge silently mutating user workspaces.
 
 After replacing binaries:
 

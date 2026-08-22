@@ -32,8 +32,18 @@ pub struct OverviewStats {
     pub memories: Option<u64>,
     pub graph_nodes: Option<u64>,
     pub principals: usize,
+    /// Number of logical agent families represented by presence rows.
     pub agents: usize,
+    /// Number of logical principals with at least one active instance.
     pub active_agents: usize,
+    /// Total execution-instance rows (sub-agents/processes included).
+    pub agent_instances: usize,
+    /// Execution instances with a live, non-terminal presence lease.
+    pub active_agent_instances: usize,
+    /// Child execution instances (`agent_id != principal_id`).
+    pub subagents: usize,
+    /// Child instances with a live, non-terminal presence lease.
+    pub active_subagents: usize,
     pub workspaces: usize,
     pub entities: Option<u64>,
     pub concepts: Option<u64>,
@@ -42,12 +52,23 @@ pub struct OverviewStats {
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentProjection {
     pub agent_id: String,
+    pub principal_id: String,
     pub name: String,
     pub role: String,
     pub host: String,
     pub status: String,
     pub last_seen: String,
     pub age_seconds: Option<i64>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentFamilyProjection {
+    pub principal_id: String,
+    pub instance_count: usize,
+    pub active_instances: usize,
+    pub hosts: Vec<String>,
+    pub instances: Vec<AgentProjection>,
     pub active: bool,
 }
 
@@ -77,7 +98,12 @@ pub struct GroupProjection {
 #[derive(Debug, Clone, Serialize)]
 pub struct AccessProjection {
     pub active_window_secs: u64,
+    /// Execution-level roster retained for diagnostics and farewell state.
     pub agents: Vec<AgentProjection>,
+    /// Human-facing logical agents, grouped by stable RBAC principal.
+    pub agent_families: Vec<AgentFamilyProjection>,
+    /// Execution instances that are children of a logical principal.
+    pub subagents: Vec<AgentProjection>,
     pub principals: Vec<PrincipalProjection>,
     pub groups: Vec<GroupProjection>,
     pub dedup_groups: Vec<DedupGroupProjection>,

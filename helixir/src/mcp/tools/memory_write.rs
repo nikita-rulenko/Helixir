@@ -9,7 +9,7 @@ use rmcp::{
     ErrorData as McpError, handler::server::wrapper::Parameters, model::*, tool, tool_router,
 };
 use serde_json::json;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::mcp::params::*;
 use crate::mcp::server::HelixirMcpServer;
@@ -39,21 +39,23 @@ impl HelixirMcpServer {
             .actor_id(params.actor_id.as_deref(), &params.user_id)
             .await?;
 
-        // Rendezvous (#39): a writing agent announces its presence for free —
-        // any agent that passes agent_id shows up in swarm_status with host +
-        // "working" without a separate heartbeat call. Best-effort by design.
-        if let Some(agent_id) = params.agent_id.as_deref()
-            && self.client().config().mode.collective_enabled()
-        {
+        // Bind provenance before accepting the write. An execution instance
+        // belongs to exactly one logical principal; continuing after a
+        // conflict could attach AGENT_CREATED to another actor's Agent node.
+        // Database uncertainty also fails closed instead of silently dropping
+        // the ownership guarantee.
+        if let Some(agent_id) = params.agent_id.as_deref() {
             let role = self.client().config().swarm.default_role.clone();
-            if let Err(e) = self
-                .client()
+            self.client()
                 .tooling()
-                .register_or_heartbeat(agent_id, &role, machine_hostname(), "working")
+                .register_or_heartbeat_as(agent_id, &actor_id, &role, machine_hostname(), "working")
                 .await
-            {
-                debug!("swarm heartbeat for {agent_id} failed (non-fatal): {e}");
-            }
+                .map_err(|error| match error {
+                    crate::toolkit::tooling_manager::types::ToolingError::Memory(message) => {
+                        McpError::invalid_request(message, None)
+                    }
+                    other => McpError::internal_error(other.to_string(), None),
+                })?;
         }
 
         // Ingest buffer (#25): when HELIXIR_INGEST_BUFFER=1, the raw input is

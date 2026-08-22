@@ -26,6 +26,7 @@ fn orphan_policy_flags_lone_fresh_daemon() {
     let now = chrono::Utc::now();
     let mk = |id: &str, role: &str, ago_secs: i64| AgentPresence {
         agent_id: id.into(),
+        principal_id: id.into(),
         name: id.into(),
         role: role.into(),
         host: "h".into(),

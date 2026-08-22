@@ -148,14 +148,42 @@ pub(crate) async fn swarm_prune(client: &HelixirClient, agent_id: &str, yes: boo
     if !yes {
         println!(
             "Refusing to prune '{agent_id}' without --yes.\n\
-             This deletes the presence row AND its AGENT_CREATED provenance \
-             edges — meant for true junk (test agents, renamed identities). \
+             Pruning is only allowed for terminal junk with no AGENT_CREATED \
+             provenance. A real author remains durable even after farewell. \
              A merely-stale agent is already flagged in swarm_status."
         );
         return Ok(());
     }
-    privileged(client)
-        .await?
+    let admin = privileged(client).await?;
+    let current = admin
+        .db()
+        .execute_query::<serde_json::Value, _>(
+            "getAgent",
+            &serde_json::json!({"agent_id": agent_id}),
+        )
+        .await?;
+    let status = current
+        .get("agent")
+        .unwrap_or(&current)
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if helixir::toolkit::tooling_manager::swarm::status_allows_activity(status) {
+        anyhow::bail!("refusing to prune active agent instance '{agent_id}' (status={status})");
+    }
+    let authored = admin
+        .db()
+        .execute_query::<serde_json::Value, _>(
+            "countAgentMemories",
+            &serde_json::json!({"agent_id": agent_id}),
+        )
+        .await?;
+    if first_unsigned(&authored).unwrap_or_default() > 0 {
+        anyhow::bail!(
+            "refusing to prune '{agent_id}': its AGENT_CREATED authorship provenance is durable"
+        );
+    }
+    admin
         .db()
         .execute_query::<serde_json::Value, _>(
             "dropPresenceByAgentId",
@@ -164,6 +192,15 @@ pub(crate) async fn swarm_prune(client: &HelixirClient, agent_id: &str, yes: boo
         .await?;
     println!("Pruned presence row for '{agent_id}'.");
     Ok(())
+}
+
+fn first_unsigned(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::Array(values) => values.iter().find_map(first_unsigned),
+        serde_json::Value::Object(values) => values.values().find_map(first_unsigned),
+        _ => None,
+    }
 }
 
 pub(crate) async fn charter_review(client: &HelixirClient) -> Result<()> {

@@ -182,6 +182,10 @@ pub struct SearchMemoryParams {
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct AgentFarewellParams {
+    #[schemars(
+        description = "Authenticated logical principal that owns this execution instance. Required under permanent RBAC."
+    )]
+    pub actor_id: Option<String>,
     #[schemars(description = "Your agent identity — the same agent_id you passed to add_memory.")]
     pub agent_id: String,
 }
@@ -410,6 +414,30 @@ pub struct SwarmStatusParams {
         description = "Heartbeats within this many seconds count as ACTIVE. Omit to use the server's configured window (default 90)."
     )]
     pub active_window_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct AgentHeartbeatParams {
+    #[schemars(
+        description = "Authenticated logical RBAC principal that owns this execution instance. Required when RBAC is enabled."
+    )]
+    pub actor_id: Option<String>,
+    #[schemars(
+        description = "Stable id of this concrete execution instance or sub-agent. It remains distinct for concurrent presence and farewell, but is grouped under actor_id."
+    )]
+    pub agent_id: String,
+    #[schemars(
+        description = "Optional non-terminal progress label, at most 64 characters. Defaults to 'working'; use agent_farewell rather than a terminal status."
+    )]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct EnrollClientParams {
+    #[schemars(
+        description = "Stable lower-case principal id for this remote agent host. The operation can enroll only this exact id as worker in reserved onboarding; it accepts no target group or role."
+    )]
+    pub actor_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

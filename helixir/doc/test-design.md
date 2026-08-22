@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 ## 1. Stance
 
@@ -28,7 +28,7 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.16.1`):** 336 library unit tests plus CLI tests
+**Current (`v0.17.0`):** 345 library unit tests plus CLI tests
 (`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
@@ -41,6 +41,15 @@ The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+Swarm lifecycle coverage separates logical principals from execution
+instances: principal-aware heartbeat is idempotent, cannot silently re-parent
+an existing instance, accepts only bounded non-terminal progress labels, and
+requires no memory write. Family projection counts concurrent instances
+separately, while farewell of one instance leaves active siblings and their
+logical principal online. Legacy rows with no `principal_id` use longest known
+principal-prefix matching only in presentation projections (MCP swarm status
+and the administrator control plane), never in authorization or persistence.
 
 The issue #89 resource regression is additionally guarded by live, disposable
 HelixDB soaks over a cold backup. Primary-key graph/RBAC projections must avoid
@@ -77,6 +86,34 @@ user state. Release Linux binaries use an Ubuntu 22.04 build container and a
 symbol-version gate so the native archive and derived packages keep a Debian
 12/Ubuntu LTS-compatible glibc baseline; release validation clean-installs both
 architectures on both supported distribution families before publication.
+The same fixture builds `helixir-client` independently for `amd64` and `arm64`,
+compares deterministic package hashes, installs it from the signed APT index,
+and asserts that the thin package contains its binary plus canonical
+instructions but no `helixir-mcp`, schema, ONNX runtime, database or model
+assets. The client crate covers URL normalization, non-secret profiles,
+identity validation, instruction merge preservation and JSON registration;
+the pre-release client gate compiles a fresh HelixDB image, creates a local APT
+index, installs the package with `apt install helixir-client` inside two clean
+Debian containers, and connects both containers concurrently through one real
+gateway. It proves distinct principal/owner profiles, idempotent concurrent
+enrollment of one shared principal, canonical skill/`AGENTS.md` installation,
+and repeatable client doctor results. From a separate client container and
+network namespace, a deterministic MCP wire smoke uses the gateway's explicit
+host and port for initialize, tool discovery, bounded onboarding, a FastThink
+write and search read-back; the same probe must reject the HelixDB port as an
+MCP gateway. A model-free live graph contract then
+assigns one principal to two isolated groups and proves wrong-group write
+denial, distinct dedup fingerprints, and exact memory visibility for both
+different owners and one owner writing into different groups.
+
+Homebrew cannot be qualified in a Linux container: Docker Desktop on macOS
+runs Linux containers in a VM. The release workflow therefore installs the
+unpublished `helixir` and `helixir-client` formulae together on native Apple
+Silicon and Intel macOS runners. It proves disjoint executable ownership,
+server-resource absence from the thin client, canonical client instructions,
+and both formulae's test/reinstall/uninstall lifecycle while preserving user state. Docker image
+publication and release creation depend on both the APT/RBAC gate and these
+native Homebrew jobs; a failed package lifecycle cannot produce a release.
 Container publication reuses those same ABI-gated Linux archives. A native
 runner for each architecture packages both runtime images without compiling
 Rust in Docker or under QEMU; the architecture-specific NLI model and the
@@ -165,6 +202,7 @@ owners.
 | Utils | `src/utils.rs` | Unicode-safe truncation. |
 | Installer and stewardship | `src/installer/` | Shared CLI/browser service, three backend topologies, mandatory models, transaction journal, secret-safe projections, settings and guarded backup/restore. |
 | CLI onboarding | `src/bin/helixir/` | Stable parsing, RBAC operator reuse, remote-embedding probes, registration conflicts and redaction. |
+| Thin remote client | `../helixir-client/` | MCP handshake/tool compatibility, bounded onboarding admission, non-secret profile, backup-safe client registration, canonical instructions and client-scoped doctor. |
 | Module budget | `tests/module_budget.rs` | Every maintained Rust source under `src/` stays at or below 500 lines. |
 
 ### Integration / E2E
@@ -176,6 +214,14 @@ owners.
   one scoped consensus family (`user_count ≥ 2`), while isolated groups do not.
 - `helixir/tests/test_hive_queries.sh` — bash script poking HelixDB queries
   directly. Not invoked from `make test`.
+- `helixir/tests/client_rbac_scope_e2e.rs` — deterministic disposable-DB
+  contract with no LLM, NLI or embedding calls. It is invoked by
+  `tools/pre_release_client_gate.sh` after the direct-network MCP smoke in
+  `tools/mcp_gateway_visibility_smoke.py`; locally use `make
+  test-pre-release-client CLIENT_GATE_ARCHIVE=<linux-server.tar.gz>
+  CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>`. The two archives are
+  required separately so the gate also proves package ownership does not
+  overlap.
 
 ## 3. Contract map: what is guarded vs. what isn't
 
@@ -191,7 +237,7 @@ of evidence rather than an invented coverage percentage:
 | External model adapters | mandatory local NLI readiness is deterministic; real LLM/embedding behavior remains opt-in behind `HELIX_E2E=1`. |
 | Installer and host mutations | typed-plan unit tests, failure injection, durable-operation replay, command-boundary tests and manual disposable-host smoke. |
 | Browser control plane | API authorization/unit contracts, frontend component tests, Playwright release gates, container hardening checks and live browser smoke. |
-| Distribution | reproducible package construction, ABI/symbol gates, signed ephemeral APT metadata and clean-install/upgrade matrices. |
+| Distribution | reproducible full/thin package construction, ABI/symbol gates, signed ephemeral APT metadata, two-container concurrent admission, live RBAC visibility, native Intel/Apple Silicon Homebrew lifecycle, and clean-install/upgrade matrices. |
 
 ### Remaining data-integrity risks
 

@@ -50,6 +50,10 @@ export interface OverviewStats {
   principals: number;
   agents: number;
   active_agents: number;
+  agent_instances: number;
+  active_agent_instances: number;
+  subagents: number;
+  active_subagents: number;
   workspaces: number;
   entities: number | null;
   concepts: number | null;
@@ -57,7 +61,16 @@ export interface OverviewStats {
 
 export interface AgentProjection {
   agent_id: string; name: string; role: string; host: string; status: string;
-  last_seen: string; age_seconds: number | null; active: boolean;
+  last_seen: string; age_seconds: number | null; active: boolean; principal_id: string;
+}
+
+export interface AgentFamilyProjection {
+  principal_id: string;
+  active: boolean;
+  instance_count: number;
+  active_instances: number;
+  hosts: string[];
+  instances: AgentProjection[];
 }
 
 export interface PrincipalProjection {
@@ -78,6 +91,8 @@ export interface DedupGroupProjection {
 export interface AccessProjection {
   active_window_secs: number;
   agents: AgentProjection[];
+  agent_families: AgentFamilyProjection[];
+  subagents: AgentProjection[];
   principals: PrincipalProjection[];
   groups: GroupProjection[];
   dedup_groups: DedupGroupProjection[];

@@ -91,6 +91,7 @@ N::Session {
 }
 N::Agent {
   agent_id: String,
+  principal_id: String DEFAULT "",
   name: String,
   role: String,
   capabilities: String,

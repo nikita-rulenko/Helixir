@@ -23,6 +23,7 @@ pub fn get_server_instructions() -> String {
      working-group writes; user_id is provenance, not a credential, and a dedup federation id is never a write target. \
      (8) Read pending_outcomes on writes: surface ops_alert notices and settle contradiction_review notices with \
      resolve_contradiction instead of silently choosing a winner. \
+     (9) Presence is explicit: every root or delegated worker calls agent_heartbeat with its logical actor_id and concrete agent_id immediately on start and at progress boundaries, then agent_farewell with both ids on exit; transport initialization and ordinary reads never create a lease, and fake memory is never used merely for presence. \
      Your memory is your identity.".to_string()
 }
 
@@ -52,7 +53,12 @@ mod tests {
     fn cognitive_protocol_explains_session_and_worker_presence() {
         let protocol = get_cognitive_protocol();
 
-        for required in ["HELIXIR_RBAC_ACTOR", "distinct worker", "agent_farewell"] {
+        for required in [
+            "HELIXIR_RBAC_ACTOR",
+            "sub-agent",
+            "agent_heartbeat",
+            "agent_farewell",
+        ] {
             assert!(
                 protocol.contains(required),
                 "cognitive protocol must mention {required}"

@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (180 HQL queries that materialize the
+and `helixir/schema/queries.hx` (182 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -31,9 +31,11 @@ flowchart LR
     Moirai["Moirai hypothesis<br/>reserved moirai"] -->|MOIRAI_DERIVED_FROM| Memory
 ```
 
-The complete store contains **22 node types**, **5 vector-index types**, **30
-edge types**, and **180 named HQL queries**. The default embedding dimension is
-768.
+The physical contract declares **22 node types**, **5 vector-index types**, **30
+edge types**, and **182 named HQL queries**. Declaration is not the same as
+runtime use. The tables below label every surface as **active**, **optional**,
+or **reserved**; reserved entries have no live producer and are not product
+capabilities. The default embedding dimension is 768.
 
 There is no relational database or Redis. Every durable memory, reasoning,
 identity and RBAC fact lives in HelixDB. Host-local configuration, operation
@@ -42,30 +44,40 @@ knowledge or authorization store.
 
 ## 2. Node taxonomy
 
-Nodes group into identity, content, semantics, reasoning, vector-index,
-authorization, category, and reserved document-pipeline purposes.
+Nodes group into identity, content, semantics, reasoning, authorization,
+categories, buffering, and a reserved document pipeline.
 
-| Node | Key fields | Notes |
+| Physical node | Status | Runtime truth |
 |---|---|---|
-| **User** | `user_id`, `name`, `email`, `created_at`, `metadata` | One per identity. |
-| **Agent** | `agent_id`, `role`, `capabilities`, `agent_version`, `host`, `last_seen`, `status` | Tracks writers and doubles as the swarm presence record: MCP initialization grants the configured `HELIXIR_RBAC_ACTOR` one bounded lease, real tool activity refreshes it, `add_memory(agent_id=…)` refreshes a distinct worker identity, and `swarm_status` reads the roster. |
-| **Session** | `session_id`, `started_at`, `ended_at`, `status`, `session_type` | Reserved — no code path creates Sessions yet. |
-| **Memory** | `memory_id`, `content_key`, `rbac_scope`, `user_id`, `content`, `memory_type`, `certainty`, `importance`, `created_at/updated_at`, `valid_from/until`, `immutable`, `verified`, `context_tags`, `source`, `metadata`, `is_deleted/deleted_at/deleted_by`, `user_count` | Core unit. `content_key` and `rbac_scope` keep Hive consensus inside its security domain. |
-| **RbacGroup** | `group_id`, `name`, `description`, `active` | Concrete access group. |
-| **RbacDedupGroup** | `dedup_group_id`, `name`, `description`, `active` | Optional federation whose current groups share dedup and new-memory visibility. |
-| **RbacAssignment / RbacConfig** | subject/role/group audit fields; enabled flag | HelixDB-backed authorization source of truth. |
-| **MemoryChunk** | `chunk_id`, `position`, `parent_memory_id`, `content`, `token_count` | Oversized-source storage and reconstruction only. Extracted atomic memories, not chunks, are retrieval units (#86). |
-| **Entity** | `entity_id`, `name`, `entity_type`, `properties`, `aliases` | LLM-extracted, deduplicated by name/aliases. |
-| **Concept** | `concept_id`, `name`, `level`, `description`, `parent_id`, `properties` | Ontology node. `parent_id` denormalizes the `IS_A` edge — see §6. |
-| **Context** | `context_id`, `name`, `context_type`, `properties`, `parent_context` | "work", "personal", custom scopes. |
-| **Constraint** | `constraint_id`, `rule`, `constraint_type`, `priority`, `active` | Reserved (planned for VALID_IN gating). |
-| **Reasoning** | `reasoning_id`, `reasoning_type`, `description`, `confidence` | Reified reasoning step. |
-| **HistoryEvent** | `event_id`, `memory_id`, `action`, `old_value`, `new_value`, `timestamp`, `actor` | Audit trail. |
-| **MemoryEmbedding** | `content` (proj.), `created_at` | Vector index for memories. |
-| **EntityEmbedding** | `name` | Vector index for entities. |
-| **ChunkEmbedding** | `embedding: [F64]` | Vector for `DocChunk` (reserved doc pipeline; memory chunks are deliberately NOT embedded — #86). |
-| **ConceptEmbedding** | `embedding: [F64]` | Vector for concept search (reserved). |
-| **DocPage / DocChunk / CodeExample / ErrorCode** | — | Reserved doc-ingest pipeline. Schema present, no Rust producer. |
+| **User** | active | Identity and memory provenance. |
+| **Agent** | active | Physical presence/provenance row for one execution instance, with explicit owning RBAC `principal_id` and a bounded lease. The durable logical-agent registry is the distinct principal-family projection; child rows (`agent_id != principal_id`) are counted separately as sub-agents. |
+| **Memory** | active | Atomic fact and the core retrieval unit. The eight user-facing ontology types are values of `memory_type`, not eight physical node kinds. |
+| **RbacGroup** | active | Concrete access workspace. |
+| **RbacDedupGroup** | optional | Created only when an administrator configures a dedup federation. |
+| **RbacAssignment** | active | Auditable global/group role grant. |
+| **RbacConfig** | active | Permanent RBAC bootstrap and schema-policy state. |
+| **MemoryChunk** | active | Oversized raw-source reconstruction; chunks are not retrieval units (#86). |
+| **Entity** | active | Extracted and deduplicated named entity. |
+| **Concept** | active | Fixed ontology hierarchy and memory classification target. |
+| **Context** | active | Situational validity such as `work` or `project:name`. |
+| **HistoryEvent** | active | UPDATE/SUPERSEDE/DELETE audit trail. |
+| **PendingInput** | active, transient | Buffered write queue; successful entries are drained. |
+| **MemoryNotice** | active, transient | Deferred write outcomes delivered back to the owner. |
+| **Category** | active | Clotho controlled vocabulary and Moirai routing substrate. |
+| **Session** | reserved | Declared, but no live code path creates Session nodes. Helixir is not a chat-history store. |
+| **Constraint** | reserved | No live producer or consumer; contextual validity already uses `VALID_IN`. |
+| **Reasoning** | reserved / unresolved | No HQL query creates this node. Live justifications are first-class memory edges; #157 decides whether this duplicate shape is wired or retired. |
+| **DocPage**, **DocChunk**, **CodeExample**, **ErrorCode** | reserved | No Rust producer; not a shipped documentation-ingest feature. |
+
+Vector indexes are a separate physical family:
+
+| Vector type | Status | Runtime truth |
+|---|---|---|
+| **MemoryEmbedding** | active | Main vector projection used by hybrid retrieval. |
+| **EntityEmbedding** | reserved | HQL helper exists, but no live Rust producer persists it. |
+| **ChunkEmbedding** | reserved | Belongs to the inactive `DocChunk` pipeline; `MemoryChunk` is deliberately not embedded. |
+| **ConceptEmbedding** | reserved | No live producer; concept classification uses the fixed ontology/cache path. |
+| **CategoryEmbedding** | reserved | Clotho computes category similarity in process and does not persist these vectors. |
 
 ### 2.1 Category subgraph (Clotho, 2026-06)
 

@@ -10,6 +10,7 @@ pub mod rbac;
 pub mod rbac_compat;
 mod rbac_moirai;
 pub mod rbac_registry;
+mod rbac_registry_presence;
 pub mod retrieval_profile;
 pub mod search_modes;
 pub mod time_window;

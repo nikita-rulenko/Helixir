@@ -1,13 +1,17 @@
-.PHONY: build web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-hive test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build build-client install-client web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-hive test-pre-release-client test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
+CLIENT_BINARY := helixir-client/target/release/helixir-client
 MCP_BIN    := $(BINARY_DIR)/helixir-mcp
 DEPLOY_BIN := $(BINARY_DIR)/helixir-deploy
 SCHEMA_DIR := helixir/schema
 SKILLS_DIR := helixir/skills
 WEB_DIR    := helixir/web
 VERSION    ?= $(shell awk -F '"' '/^version[[:space:]]*=/ {print $$2; exit}' helixir/Cargo.toml)
+CLIENT_GATE_ARCHIVE ?=
+CLIENT_GATE_CLIENT_ARCHIVE ?=
+CLIENT_GATE_ARCH ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 CONTROL_PLANE_IMAGE ?= helixir-control-plane:$(VERSION)
 CONTROL_PLANE_TOKEN_FILE ?= $(HOME)/.helixir/run/control-plane-browser.token
 INSTALL_ROOT ?= $(HOME)/.helixir
@@ -45,6 +49,14 @@ web-build: ## Build the HTML5/Tailwind control plane
 
 build: ## Build native release binaries for this host
 	cd helixir && RUSTFLAGS="$(RUSTFLAGS) $(RUNTIME_RPATH)" $(CARGO) build --release
+
+build-client: ## Build the thin remote-agent client only
+	cd helixir-client && $(CARGO) build --release --locked
+
+install-client: build-client ## Install the thin client binary and start guided connection
+	@mkdir -p "$(INSTALL_ROOT)/bin"
+	install -m755 "$(CLIENT_BINARY)" "$(INSTALL_ROOT)/bin/helixir-client"
+	"$(INSTALL_ROOT)/bin/helixir-client" connect $(CLIENT_ARGS)
 
 control-plane-image: ## Build the isolated web frontend/backend image
 	docker build --target control-plane --tag "$(CONTROL_PLANE_IMAGE)" helixir
@@ -102,15 +114,28 @@ doctor: ## Run the read-only installation doctor
 
 test: ## Run all tests
 	cd helixir && $(CARGO) test
+	cd helixir-client && $(CARGO) test --locked
 
 test-e2e-hive: ## Hive cross-user E2E (needs live HelixDB + LLM + embeddings; same env as MCP)
 	cd helixir && HELIX_E2E=1 $(CARGO) test hive_cross_user_collective_link_e2e --test hive_memory_e2e -- --ignored --nocapture
+
+test-pre-release-client: ## Disposable APT, two-client and RBAC visibility release gate
+	@test -f "$(CLIENT_GATE_ARCHIVE)" || { \
+		echo 'set CLIENT_GATE_ARCHIVE to a Linux release archive' >&2; exit 2; \
+	}
+	@test -f "$(CLIENT_GATE_CLIENT_ARCHIVE)" || { \
+		echo 'set CLIENT_GATE_CLIENT_ARCHIVE to a Linux client release archive' >&2; exit 2; \
+	}
+	tools/pre_release_client_gate.sh --archive "$(CLIENT_GATE_ARCHIVE)" \
+		--client-archive "$(CLIENT_GATE_CLIENT_ARCHIVE)" \
+		--version "$(VERSION)" --arch "$(CLIENT_GATE_ARCH)"
 
 test-control-plane-soak: ## Bounded live polling soak (requires running control-plane)
 	python3 tools/control_plane_soak.py
 
 check: ## Run cargo check + clippy
 	cd helixir && $(CARGO) check && $(CARGO) clippy
+	cd helixir-client && $(CARGO) check --locked && $(CARGO) clippy --all-targets -- -D warnings
 
 run: ## Run MCP server (debug mode)
 	cd helixir && RUST_LOG=helixir=debug $(CARGO) run --bin helixir-mcp
@@ -217,3 +242,4 @@ docker-compose-down: stack-down ## Compatibility alias for stopping the managed 
 
 clean: ## Remove build artifacts
 	cd helixir && $(CARGO) clean
+	cd helixir-client && $(CARGO) clean
