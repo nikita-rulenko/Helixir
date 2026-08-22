@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
 
       - name: Download immutable checksums
         run: gh release download "${{ inputs.tag }}" --pattern SHA256SUMS --dir distribution
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
 
       - name: Install package tooling
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev
@@ -212,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
 
       - name: Install repository tooling
         run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev gnupg
