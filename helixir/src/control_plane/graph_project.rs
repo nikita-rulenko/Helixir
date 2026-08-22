@@ -19,6 +19,7 @@ pub(super) fn project(
     snapshot: &CategorySnapshot,
     groups: Vec<MemoryGroupProjection>,
     identities: Vec<MemoryIdentityProjection>,
+    agent_principals: &HashMap<String, String>,
     selected_group: Option<&str>,
     selected_identity: Option<&str>,
     identity: Option<&SelectedIdentity<'_>>,
@@ -26,7 +27,7 @@ pub(super) fn project(
     query: Option<&str>,
     page: usize,
 ) -> Option<MemoryFieldProjection> {
-    let allowed = allowed_memories(snapshot, selected_group, identity);
+    let allowed = allowed_memories(snapshot, selected_group, identity, agent_principals);
     if focus.is_some_and(|id| id != UNCATEGORIZED_ID && !snapshot.categories.contains_key(id)) {
         return None;
     }
@@ -96,6 +97,7 @@ fn allowed_memories(
     snapshot: &CategorySnapshot,
     selected_group: Option<&str>,
     identity: Option<&SelectedIdentity<'_>>,
+    agent_principals: &HashMap<String, String>,
 ) -> HashSet<String> {
     snapshot
         .memories
@@ -108,10 +110,15 @@ fn allowed_memories(
                     .is_some_and(|values| values.iter().any(|value| value == group))
             }) && identity.is_none_or(|selected| match selected.kind {
                 "user" => row.user_id == selected.value,
-                "agent" => snapshot
-                    .memory_agents
-                    .get(*internal)
-                    .is_some_and(|values| values.iter().any(|value| value == selected.value)),
+                "agent" => snapshot.memory_agents.get(*internal).is_some_and(|values| {
+                    values.iter().any(|agent_id| {
+                        agent_principals
+                            .get(agent_id)
+                            .map(String::as_str)
+                            .unwrap_or(agent_id)
+                            == selected.value
+                    })
+                }),
                 _ => false,
             })
         })

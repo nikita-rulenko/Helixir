@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -20,6 +20,7 @@ The main native binaries are:
 | `helixir` | Installation, RBAC, operations, Moirai, Hygieia, gateway, and configuration CLI |
 | `helixir-mcp` | Native stdio MCP server used by agent clients |
 | `helixir-deploy` | Version-pinned schema deployment helper |
+| `helixir-client` | Thin remote-host bootstrapper; MCP gateway connection, onboarding admission, client registration and instruction doctor |
 
 ## Daily commands
 
@@ -77,9 +78,10 @@ and are intentionally omitted.
 
 Commands that mutate memory quality (`backfill`, `merge`, `debt --reconcile`),
 policy, installation or recovery require the same global-admin authority as
-their underlying Rust facade. `heartbeat` is not a background liveness claim:
-normal MCP activity refreshes presence automatically and one-shot agents use
-`agent_farewell` through MCP when they finish.
+their underlying Rust facade. CLI `heartbeat` is not a background liveness
+claim. MCP sub-agents call `agent_heartbeat(actor_id, agent_id, status)` on start
+and at progress boundaries without writing fake memory; one-shot instances use
+`agent_farewell` when they finish.
 
 ## RBAC administration
 
@@ -213,7 +215,10 @@ helixir chain --user Codex \
 helixir debt --user Codex               # unresolved contradiction debt
 ```
 
-`swarm` reports terminal farewell states as offline immediately and hides
+Each presence row is an execution instance owned by an explicit logical
+`principal_id`. `swarm`/`swarm_status` preserve the instance roster for
+diagnostics while aggregating online-agent counts by principal. `swarm` reports
+terminal farewell states as offline immediately and hides
 non-terminal agents after `swarm.presence_ttl_secs`. The Agent node remains
 because it anchors `AGENT_CREATED` provenance. Use
 `prune-agent --agent-id <id> --yes` only for true junk such as a renamed test
@@ -331,6 +336,45 @@ helixir gateway start --require-auth
 `--require-auth` fails closed with `503` until a token is configured. Do not use
 Helixir RBAC as a substitute for transport authentication against malicious
 clients that can submit arbitrary `actor_id` values.
+
+### Thin remote clients
+
+`helixir-client connect` is intentionally not a second operations CLI. It can
+normalize and validate one gateway URL, request its own bounded onboarding
+admission, configure local agent clients, install canonical instructions and
+write a non-secret profile. It cannot start HelixDB, install models, run the
+Moirai or Hygieia, mutate group policy, manage backups, or open the admin UI.
+
+```bash
+helixir-client connect --gateway helixir-host:8765 \
+  --principal cursor-workstation --owner cursor --project /work/project
+helixir-client status
+helixir-client doctor
+```
+
+For headless provisioning, keep the global profile flag before the subcommand
+and make every mutation explicit:
+
+```bash
+helixir-client --profile /etc/helixir/client.json connect \
+  --gateway https://helixir.example/mcp \
+  --principal build-agent-01 --owner build-agent-01 \
+  --project /work/repository \
+  --client codex --client cursor \
+  --token-env HELIXIR_GATEWAY_TOKEN \
+  --yes --replace
+```
+
+`--client` is repeatable. `--token-env` stores only the environment-variable
+name in the profile, never the bearer token itself. Omit `--replace` unless the
+existing `helixir-local` registration is intentionally being superseded.
+
+`connect` refuses to replace an existing conflicting `helixir-local` entry
+unless `--replace` is explicit. Native Codex/Claude configuration and Cursor
+JSON are backed up before replacement and verified afterwards. `doctor` is
+client-scoped: it checks the MCP handshake/tool set, active graph-backed role,
+local registrations, skill copy and managed `AGENTS.md`; it never probes or
+repairs server-side NLI or embeddings.
 
 ## Moirai
 

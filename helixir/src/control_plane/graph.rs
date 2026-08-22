@@ -1,6 +1,6 @@
 //! Cached category atlas access and shared memory/group projections.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -36,7 +36,12 @@ pub(super) async fn load_memory_field(
         .execute_query_no_retry("listAgents", &serde_json::json!({}))
         .await
         .unwrap_or_default();
-    let identities = identity_catalog(policy.users.keys().map(String::as_str), &agent_rows.agents);
+    let known_principals = policy.users.keys().cloned().collect::<BTreeSet<_>>();
+    let agent_principals = agent_principal_catalog(&known_principals, &agent_rows.agents);
+    let identities = identity_catalog(
+        policy.users.keys().map(String::as_str),
+        agent_principals.values().map(String::as_str),
+    );
     let selected_identity = normalized(request.identity);
     let identity_filter = selected_identity
         .map(SelectedIdentity::parse)
@@ -63,6 +68,7 @@ pub(super) async fn load_memory_field(
         &snapshot,
         groups,
         identities,
+        &agent_principals,
         selected_group,
         selected_identity,
         identity_filter.as_ref(),
@@ -178,11 +184,31 @@ struct AgentCatalogResponse {
 struct AgentCatalogRow {
     #[serde(default, deserialize_with = "nullable_string")]
     agent_id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    principal_id: String,
+}
+
+fn agent_principal_catalog(
+    known_principals: &BTreeSet<String>,
+    agents: &[AgentCatalogRow],
+) -> HashMap<String, String> {
+    agents
+        .iter()
+        .filter(|agent| !agent.agent_id.trim().is_empty())
+        .map(|agent| {
+            let principal_id = super::stats::resolve_agent_principal(
+                &agent.principal_id,
+                &agent.agent_id,
+                known_principals,
+            );
+            (agent.agent_id.clone(), principal_id)
+        })
+        .collect()
 }
 
 fn identity_catalog<'a>(
     users: impl Iterator<Item = &'a str>,
-    agents: &[AgentCatalogRow],
+    agent_principals: impl Iterator<Item = &'a str>,
 ) -> Vec<MemoryIdentityProjection> {
     let mut identities = users
         .filter(|value| !value.trim().is_empty())
@@ -191,11 +217,10 @@ fn identity_catalog<'a>(
             kind: "user",
         })
         .chain(
-            agents
-                .iter()
-                .filter(|agent| !agent.agent_id.trim().is_empty())
-                .map(|agent| MemoryIdentityProjection {
-                    identity: agent.agent_id.clone(),
+            agent_principals
+                .filter(|principal| !principal.trim().is_empty())
+                .map(|principal| MemoryIdentityProjection {
+                    identity: principal.to_string(),
                     kind: "agent",
                 }),
         )
@@ -203,5 +228,55 @@ fn identity_catalog<'a>(
     identities.sort_by(|left, right| {
         (left.kind, left.identity.as_str()).cmp(&(right.kind, right.identity.as_str()))
     });
+    identities.dedup_by(|left, right| left.kind == right.kind && left.identity == right.identity);
     identities
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_identity_catalog_collapses_instances_to_logical_principals() {
+        let known = ["codex".to_string(), "claude".to_string()]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let agents = vec![
+            AgentCatalogRow {
+                agent_id: "codex-build".to_string(),
+                principal_id: "codex".to_string(),
+            },
+            AgentCatalogRow {
+                agent_id: "codex-review".to_string(),
+                principal_id: "codex".to_string(),
+            },
+            AgentCatalogRow {
+                agent_id: "claude-research".to_string(),
+                principal_id: String::new(),
+            },
+        ];
+        let principals = agent_principal_catalog(&known, &agents);
+        let identities = identity_catalog(
+            known.iter().map(String::as_str),
+            principals.values().map(String::as_str),
+        );
+
+        assert_eq!(
+            identities
+                .iter()
+                .filter(|identity| identity.kind == "agent" && identity.identity == "codex")
+                .count(),
+            1
+        );
+        assert!(
+            identities
+                .iter()
+                .any(|identity| { identity.kind == "agent" && identity.identity == "claude" })
+        );
+        assert!(
+            !identities
+                .iter()
+                .any(|identity| { identity.kind == "agent" && identity.identity == "codex-build" })
+        );
+    }
 }

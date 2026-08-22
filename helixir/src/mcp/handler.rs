@@ -102,19 +102,11 @@ impl ServerHandler for HelixirMcpServer {
         }
     }
 
-    /// Start a bounded graph-backed presence lease once the client is ready and, when
-    /// the ingest buffer is on, forward worker completion events as
+    /// When the ingest buffer is on, forward worker completion events as
     /// best-effort logging notifications (#25 phase 2). Authoritative delivery
     /// is still the opportunistic outbox — this just pushes a heads-up sooner
     /// for clients that surface notifications.
     async fn on_initialized(&self, context: rmcp::service::NotificationContext<RoleServer>) {
-        if let Some(actor_id) = std::env::var("HELIXIR_RBAC_ACTOR")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            && self.client().config().mode.collective_enabled()
-        {
-            self.touch_presence(&actor_id, "connected").await;
-        }
         if !crate::toolkit::tooling_manager::ingest_buffer::buffer_enabled() {
             return;
         }
@@ -215,6 +207,8 @@ impl ServerHandler for HelixirMcpServer {
                         "update_memory",
                         "list_memories",
                         "list_users",
+                        "enroll_client",
+                        "agent_heartbeat",
                         "swarm_status",
                         "resolve_contradiction",
                         "agent_farewell",

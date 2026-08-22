@@ -29,7 +29,7 @@ test("waits for discovery before choosing installation defaults", async () => {
     if (path.endsWith("/meta")) {
       return Promise.resolve(jsonResponse({
         product: "helixir",
-        version: "0.16.1",
+        version: "0.17.0",
         api_version: "v1",
         phase: "admin",
         transport: "http",
@@ -86,6 +86,10 @@ test("waits for discovery before choosing installation defaults", async () => {
       principals: 1,
       agents: 1,
       active_agents: 1,
+      agent_instances: 4,
+      active_agent_instances: 3,
+      subagents: 3,
+      active_subagents: 2,
       workspaces: 3,
       entities: 1,
       concepts: 1,

@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.16.1"><img src="https://img.shields.io/badge/release-v0.16.1-2ea44f" alt="Release v0.16.1" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.0"><img src="https://img.shields.io/badge/release-v0.17.0-2ea44f" alt="Release v0.17.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -42,6 +42,15 @@ keeps memories inside their groups, while explicit dedup federations let trusted
 groups share consensus without leaking knowledge across boundaries.
 
 ## Quick Start
+
+Choose the package by what this machine owns:
+
+| This host | Install | Result |
+|:----------|:--------|:-------|
+| Runs Helixir itself | `helixir` | HelixDB topology, mandatory NLI and embeddings, gateway, RBAC, operations, and optional admin UI |
+| Runs only an AI agent | `helixir-client` | One small bootstrapper pointed at an existing Helixir MCP gateway; no database, models, daemon, or UI |
+
+### Full Helixir host
 
 The portable installer selects the signed artifact for the current machine and
 opens the guided onboarding flow:
@@ -88,9 +97,40 @@ After onboarding, restart the agent client once and ask it to recall Helixir
 memory. Global administrators can open the control plane at
 `http://127.0.0.1:6971`.
 
-> The APT repository setup, signing-key fingerprint, headless flags, three
-> HelixDB topology choices, source builds, upgrades, and uninstall guarantees
-> live in the [installation guide](helixir/doc/installation.md).
+### Remote agent host
+
+Install only the thin client. The Homebrew and APT packages contain the same
+independent client payload:
+
+```bash
+# macOS or Linuxbrew
+brew install nikita-rulenko/tap/helixir-client
+
+# or Debian 12 / Ubuntu 22.04+ after adding the signed Helixir repository
+sudo apt install helixir-client
+
+helixir-client connect \
+  --gateway helixir-host.example:8765 \
+  --principal codex-laptop \
+  --owner codex \
+  --project "$PWD"
+helixir-client doctor
+```
+
+The client performs a real MCP handshake, admits a new principal only as
+`worker` in reserved `onboarding`, registers `helixir-local` in selected
+Codex/Claude Code/Cursor clients, and installs both the canonical memory skill
+and a managed, backup-safe `AGENTS.md` block. Reconnecting is idempotent and
+never downgrades roles assigned later by an administrator.
+
+The endpoint is the Helixir **MCP gateway** (`8765/mcp` by default), never the
+HelixDB database port (`6970` in this deployment). The gateway must already be
+running on the Helixir host and reachable through the trusted network; set
+`HELIXIR_GATEWAY_TOKEN` on the client when the server requires bearer auth.
+
+> The Homebrew lifecycle, APT repository setup, signing-key fingerprint,
+> headless flags, three HelixDB topology choices, source builds, upgrades, and
+> uninstall guarantees live in the [installation guide](helixir/doc/installation.md).
 
 ## What Helixir is
 
@@ -140,7 +180,7 @@ flowchart LR
     end
 
     subgraph Helixir["Helixir"]
-        MCP["MCP server<br/>21 tools"]
+        MCP["MCP server<br/>23 tools"]
         Write["Curated write path<br/>extract · decide · relate"]
         Read["Hybrid recall<br/>vector · BM25 · graph · PPR"]
         Think["FastThink<br/>ephemeral reasoning"]
@@ -192,11 +232,13 @@ flowchart LR
     M1 & M2 --> Consensus["Collective projection<br/>2 independent knowers"]
 ```
 
-The real v0.16 schema contains **22 node types**, **30 edge types**, **5 vector
-indexes**, and **180 HQL queries**. `HAS_MEMORY` records provenance;
+The deployed v0.17 storage contract declares **22 node types**, **30 edge types**,
+**5 vector indexes**, and **182 HQL queries**. These numbers describe
+the complete physical schema, not 57 runtime-active capabilities: some entries
+are explicitly reserved and have no live producer. `HAS_MEMORY` records provenance;
 `MEMORY_IN_RBAC_GROUP` controls visibility. Equivalent author memories share a
 security-scoped fingerprint rather than becoming one globally mutable node.
-See the [data model](helixir/doc/data-model.md) for the complete contract.
+See the [data model](helixir/doc/data-model.md) for the active/reserved inventory.
 
 ## Capabilities
 
@@ -212,7 +254,7 @@ See the [data model](helixir/doc/data-model.md) for the complete contract.
 | Administration | Users, agents, groups, roles, dedup federations, graph explorer, settings, operations, backup vault |
 | Distribution | Signed native archives, Homebrew tap, signed APT repository, and multi-architecture containers |
 
-The MCP server exposes 21 tools, two prompts, and three resources. Start with
+The MCP server exposes 23 tools, two prompts, and three resources. Start with
 `search_memory` for recall, `add_memory` for durable knowledge,
 `search_reasoning_chain` for “why”, `connect_memories` for paths, and the seven
 `think_*` tools for complex working reasoning. The complete selection guide is
@@ -280,7 +322,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.16.1 notes](helixir/doc/v0.16.1/notes.md) | What changed in this release |
+| [v0.17.0 notes](helixir/doc/v0.17.0/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.

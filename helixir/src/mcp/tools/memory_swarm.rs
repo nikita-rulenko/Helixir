@@ -5,6 +5,8 @@
 //! reasoning chain), list, update, graph, and the helper that finds
 //! previously-timed-out FastThink commits.
 
+use std::collections::BTreeSet;
+
 use rmcp::{
     ErrorData as McpError, handler::server::wrapper::Parameters, model::*, tool, tool_router,
 };
@@ -19,7 +21,58 @@ use super::memory_support::machine_hostname;
 #[tool_router(router = memory_swarm_router, vis = "pub(super)")]
 impl HelixirMcpServer {
     #[tool(
-        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. Returns the roster of agents known to this collective (live ones first): {agent_id, role, host, status, age_seconds, active}. An agent is ACTIVE only when its status is non-terminal and its last heartbeat is within active_window_secs (default from config, ~90s). agent_farewell makes it inactive immediately; the time window is the crash fallback. Agents silent past presence_ttl_secs (default 30 min) are presumed gone and hidden from the roster (hidden_stale counts them); their authorship provenance on memories is untouched. Presence is stamped automatically when an agent passes agent_id to add_memory, so writing agents appear here without any extra call. Use it to see who else is working, from which host, and what they last reported as their status; read what an agent DID via list_memories/search_memory over its user_id. GATED by the collective tier: Solo returns {available:false} (a private memory has no swarm)."
+        description = "Register this remote agent principal through the reserved onboarding workspace. This deliberately narrow operation accepts only actor_id and can grant only worker in onboarding; it cannot choose another user, role, or group. Repeated calls are idempotent, and an existing default/onboarding assignment is preserved without downgrade. Returns {principal_id, group_id, roles, created}."
+    )]
+    async fn enroll_client(
+        &self,
+        Parameters(params): Parameters<EnrollClientParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let enrollment = self
+            .client()
+            .rbac()
+            .self_enroll_client(&params.actor_id)
+            .await
+            .map_err(|error| McpError::invalid_request(error.to_string(), None))?;
+        let payload = Self::result_to_json(enrollment)?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    #[tool(
+        description = "Announce or refresh one concrete execution instance without writing a memory. actor_id resolves the authenticated logical principal; agent_id identifies this sub-agent/process and is grouped under that principal. status is an optional non-terminal progress label (default 'working', max 64 characters). The operation is cheap, idempotent, changes no RBAC grants, and returns {available, principal_id, agent_id, status}. Call it when a sub-agent starts and at meaningful progress boundaries; call agent_farewell for the same agent_id when it finishes."
+    )]
+    async fn agent_heartbeat(
+        &self,
+        Parameters(params): Parameters<AgentHeartbeatParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.client().config().mode.collective_enabled() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                json!({"available": false, "reason": "solo mode has no swarm"}).to_string(),
+            )]));
+        }
+        let agent_id = validate_presence_value("agent_id", &params.agent_id, 128)?;
+        let status = validate_heartbeat_status(params.status.as_deref().unwrap_or("working"))?;
+        let actor_id = self
+            .resolve_actor_id_without_presence(params.actor_id.as_deref(), agent_id)
+            .await?;
+        let role = self.client().config().swarm.default_role.clone();
+        self.client()
+            .tooling()
+            .register_or_heartbeat_as(agent_id, &actor_id, &role, machine_hostname(), status)
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            json!({
+                "available": true,
+                "principal_id": actor_id,
+                "agent_id": agent_id,
+                "status": status,
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[tool(
+        description = "Who is in the swarm RIGHT NOW — the agent rendezvous. `families` is the logical-agent registry grouped by explicitly stored RBAC principal; `subagents` contains only child execution instances where agent_id differs from principal_id; `agents` preserves the complete instance roster as a compatibility/diagnostic view. `active`/`total` and `active_principals`/`total_principals` count logical families, never raw processes. Separate instance and subagent counters expose concurrency. A family is online when its root or any child has a live non-terminal lease. agent_farewell ends only that instance; siblings keep the family live. Presence is published explicitly by agent_heartbeat and refreshed by add_memory(agent_id). GATED by the collective tier: Solo returns {available:false}."
     )]
     async fn swarm_status(
         &self,
@@ -29,14 +82,17 @@ impl HelixirMcpServer {
             let payload = json!({
                 "available": false,
                 "agents": [],
+                "families": [],
+                "active_principals": 0,
+                "active_instances": 0,
+                "active_subagents": 0,
+                "subagents": [],
                 "note": "The swarm roster requires the collective tier; this Helixir runs in Solo mode (private memory). Set mode=Collective or Insights to join a swarm.",
             });
             return Ok(CallToolResult::success(vec![Content::text(
                 payload.to_string(),
             )]));
         }
-
-        self.touch_configured_presence("working").await;
 
         let window = params
             .active_window_secs
@@ -47,6 +103,19 @@ impl HelixirMcpServer {
             .list_swarm()
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let known_principals = self
+            .client()
+            .rbac()
+            .snapshot()
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?
+            .users
+            .into_keys()
+            .collect::<BTreeSet<_>>();
+        crate::toolkit::tooling_manager::swarm::normalize_legacy_agent_principals(
+            &mut agents,
+            &known_principals,
+        );
 
         let now = chrono::Utc::now();
         // #84: roster hygiene — an agent silent past the TTL is presumed gone
@@ -65,6 +134,8 @@ impl HelixirMcpServer {
             let age = a.age_seconds(now).unwrap_or(i64::MAX);
             (!a.is_active(now, window), age)
         });
+        let families =
+            crate::toolkit::tooling_manager::swarm::aggregate_agent_families(&agents, now, window);
         let roster: Vec<serde_json::Value> = agents
             .iter()
             .map(|a| {
@@ -82,6 +153,7 @@ impl HelixirMcpServer {
                     };
                     json!({
                         "agent_id": a.agent_id,
+                        "principal_id": if a.principal_id.is_empty() { &a.agent_id } else { &a.principal_id },
                         "role": a.role,
                         "host": a.host,
                         "status": a.status,
@@ -92,19 +164,55 @@ impl HelixirMcpServer {
                 }
             })
             .collect();
-        let active = roster
+        let active_instances = roster
             .iter()
             .filter(|a| a["active"].as_bool() == Some(true))
             .count();
-        info!("Swarm roster: {} agents, {} active", roster.len(), active);
+        let active_principals = families.iter().filter(|family| family.active).count();
+        let subagent_roster = roster
+            .iter()
+            .filter(|instance| instance["agent_id"] != instance["principal_id"])
+            .cloned()
+            .collect::<Vec<_>>();
+        let active_subagents = subagent_roster
+            .iter()
+            .filter(|instance| instance["active"].as_bool() == Some(true))
+            .count();
+        let family_roster = families
+            .iter()
+            .map(|family| {
+                json!({
+                    "principal_id": family.principal_id,
+                    "active": family.active,
+                    "active_instances": family.active_instances,
+                    "total_instances": family.total_instances,
+                    "instance_ids": family.instance_ids,
+                })
+            })
+            .collect::<Vec<_>>();
+        info!(
+            "Swarm roster: {} logical principals ({} active), {} instances ({} active)",
+            families.len(),
+            active_principals,
+            roster.len(),
+            active_instances
+        );
         let payload = json!({
             "available": true,
             "active_window_secs": window,
             "presence_ttl_secs": ttl,
-            "active": active,
-            "total": roster.len(),
+            "active": active_principals,
+            "total": families.len(),
+            "active_principals": active_principals,
+            "total_principals": families.len(),
+            "active_instances": active_instances,
+            "total_instances": roster.len(),
+            "active_subagents": active_subagents,
+            "total_subagents": subagent_roster.len(),
             "hidden_stale": hidden_stale,
             "agents": roster,
+            "families": family_roster,
+            "subagents": subagent_roster,
         });
         Ok(CallToolResult::success(vec![Content::text(
             payload.to_string(),
@@ -195,7 +303,7 @@ impl HelixirMcpServer {
     }
 
     #[tool(
-        description = "Say goodbye to the swarm: stamp your presence status 'done' and become inactive immediately when your job is finished. Pass the same agent_id you used on add_memory. Cheap and idempotent; your durable Agent node and authorship provenance remain intact. GATED by the collective tier: Solo returns {available:false}."
+        description = "Say goodbye to the swarm: stamp one existing execution instance 'done' and make it inactive immediately without affecting active siblings in the same logical-principal family. Pass the owning actor_id and the same agent_id used on agent_heartbeat and any add_memory calls. Permanent RBAC rejects cross-principal termination. Cheap and idempotent; the durable Agent node and authorship provenance remain intact, while an unknown id returns found=false and creates no registry row. GATED by the collective tier: Solo returns {available:false}."
     )]
     async fn agent_farewell(
         &self,
@@ -206,15 +314,84 @@ impl HelixirMcpServer {
                 json!({"available": false, "reason": "solo mode has no swarm"}).to_string(),
             )]));
         }
+        let actor_id = self
+            .resolve_actor_id_without_presence(params.actor_id.as_deref(), &params.agent_id)
+            .await?;
         let role = self.client().config().swarm.default_role.clone();
-        self.client()
+        let found = self
+            .client()
             .tooling()
-            .register_or_heartbeat(&params.agent_id, &role, machine_hostname(), "done")
+            .farewell_existing(&params.agent_id, &actor_id, &role, machine_hostname())
             .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        info!("Farewell stamped for {}", params.agent_id);
+            .map_err(|error| match error {
+                crate::toolkit::tooling_manager::types::ToolingError::Memory(message) => {
+                    McpError::invalid_request(message, None)
+                }
+                other => McpError::internal_error(other.to_string(), None),
+            })?;
+        if found {
+            info!("Farewell stamped for {}", params.agent_id);
+        }
         Ok(CallToolResult::success(vec![Content::text(
-            json!({"available": true, "agent_id": params.agent_id, "status": "done"}).to_string(),
+            json!({
+                "available": true,
+                "principal_id": actor_id,
+                "agent_id": params.agent_id,
+                "found": found,
+                "status": if found { "done" } else { "not_found" },
+            })
+            .to_string(),
         )]))
+    }
+}
+
+fn validate_presence_value<'a>(
+    field: &str,
+    value: &'a str,
+    max_chars: usize,
+) -> Result<&'a str, McpError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > max_chars {
+        return Err(McpError::invalid_params(
+            format!("{field} must contain 1..={max_chars} characters"),
+            None,
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(McpError::invalid_params(
+            format!("{field} must not contain control characters"),
+            None,
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_heartbeat_status(value: &str) -> Result<&str, McpError> {
+    let status = validate_presence_value("status", value, 64)?;
+    if !crate::toolkit::tooling_manager::swarm::status_allows_activity(status) {
+        return Err(McpError::invalid_params(
+            "agent_heartbeat accepts only non-terminal status; use agent_farewell to finish",
+            None,
+        ));
+    }
+    Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_heartbeat_status, validate_presence_value};
+
+    #[test]
+    fn presence_values_are_bounded_and_control_safe() {
+        assert_eq!(
+            validate_presence_value("status", " reviewing ", 64).unwrap(),
+            "reviewing"
+        );
+        assert!(validate_presence_value("agent_id", "", 128).is_err());
+        assert!(validate_presence_value("agent_id", "bad\nvalue", 128).is_err());
+        assert!(validate_presence_value("status", &"x".repeat(65), 64).is_err());
+        assert!(validate_heartbeat_status("working").is_ok());
+        assert!(validate_heartbeat_status("done").is_err());
+        assert!(validate_heartbeat_status("farewell").is_err());
     }
 }

@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -94,6 +94,7 @@ Releases as evidence of the project's direction. Source:
 
 | Tag | Date | Theme | Key additions / fixes |
 |---|---|---|---|
+| v0.17.0 | 2026-08-22 | Distributed agent family | Agent-only hosts get an independent `helixir-client` package that connects only to the MCP gateway. Presence now models stable authenticated principals separately from transient root/child execution instances, so one logical agent family stays online while any member lease is active without inventing memory writes. |
 | v0.16.1 | 2026-08-21 | One host, one gateway | HTTP-capable MCP clients share one managed gateway process because retained client-owned stdio pipes cannot provide a reliable server-side lifecycle signal. Registration is transport-aware, backup-verified and rollback-safe. |
 | `Rust` (v0.1.0) | 2025-11-29 | Initial Rust port | `HelixirClient`, `ToolingManager`, `mind_toolbox`, MCP server, base node/edge schema, vector search. |
 | `Think_fast` (v0.1.1 / v2.0 internal) | 2025-12-01 | Working memory + protocol | FastThink (7 MCP tools: `think_start/add/recall/conclude/commit/discard/status`). Cognitive Protocol (built-in recall triggers + importance filters). Cognitive Seeds (agent personality / role). Incomplete-thoughts recovery on timeout. Server split into `params.rs` / `prompts.rs`. `HELIX_*` env prefix. |
@@ -348,8 +349,8 @@ working memory (FastThink): think_start / think_add / think_recall /
                             think_status
 collective layer:           scope = personal | collective | all
                             user_count, controversy detection,
-                            CROSS_CONTRADICT, list_users, swarm_status,
-                            agent_farewell
+                            CROSS_CONTRADICT, list_users, agent_heartbeat,
+                            swarm_status, agent_farewell
 audit & history:            HAS_HISTORY edges, HistoryEvent nodes
 versioning:                 SUPERSEDES edges
 write governance:           memory charter, needs_clarification,

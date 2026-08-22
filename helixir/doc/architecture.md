@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.16.1`. Last verified: 2026-08-21._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 ## 1. System context
 
@@ -9,6 +9,7 @@
                      │   IDE / Agent host         │
                      │   (Cursor, Claude Desktop, │
                      │    Codex, any MCP client)  │
+                     │   helixir-client bootstrap │
                      └─────────────┬──────────────┘
                                    │  streamable HTTP (preferred)
                                    │  or stdio fallback
@@ -17,7 +18,7 @@
    │        helixir gateway (one per host) / helixir-mcp fallback    │
    │                                                                  │
    │   tools  prompts  resources                                      │
-   │   (21)   (2)      (3)                                            │
+   │   (23)   (2)      (3)                                            │
    └─────────┬────────────────────────────────────────────┬───────────┘
              │ HTTP / HQL                                 │ HTTP / JSON
              ▼                                            ▼
@@ -25,7 +26,7 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   180 HQL queries    │                │   - Ollama (local)         │
+   │   182 HQL queries    │                │   - Ollama (local)         │
    │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```
@@ -33,6 +34,15 @@
 There is also a second binary `helixir-deploy` (used by `install.sh` and `make
 setup`) which pushes `schema.hx` and `queries.hx` to HelixDB over HTTP. It does
 not participate at runtime.
+
+`helixir-client/` is a separate Rust crate, release archive, Homebrew formula,
+and Debian package for an agent-only host. It depends on neither the `helixir`
+crate nor ONNX/model/database code, and its package owns no server executable.
+It speaks streamable HTTP to an existing gateway, requests only bounded
+onboarding admission, installs verified MCP registrations plus canonical
+instructions, and persists only a non-secret local profile. Keeping it in the
+same repository preserves one protocol/version/CI contract without turning the
+full server crate into a client dependency.
 
 Installation is a control plane outside the runtime dependency stack:
 `src/installer/` exposes one `InstallerService` that detects machine state,
@@ -158,6 +168,7 @@ bug to file — not a feature to copy.
 |---|---|---|
 | MCP server | `src/mcp/server.rs`, `src/mcp/tools/` | Tool dispatch, parameter typing, JSON responses; memory tools are split by write, read, swarm, and graph responsibility |
 | MCP process runtime | `src/mcp/server.rs` | One ingest worker, hot-reload generations, optional gateway bearer authentication |
+| Thin remote client | `../helixir-client/` | Gateway handshake, bounded self-enrollment, backup-verified Codex/Claude/Cursor registration, canonical skill/AGENTS installation and client-scoped doctor; owns no server services |
 | `HelixirClient` | `src/core/helixir_client/` | Public facade; nothing else may be a public entry point |
 | `HelixirConfig` | `src/core/config.rs`, `src/core/config/` | Layered defaults/TOML/environment configuration and runtime validation |
 | `EventBus` | `src/core/events/bus.rs` | Side-channel for analytics; nothing on the hot path depends on it |
@@ -436,8 +447,11 @@ Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
 
 ### 7.6 Reserved capability surface (schema present, no Rust producer)
 
-These are surfaces the schema is ready for but no caller wires today.
-They function as the roadmap-by-construction:
+These declarations exist in HelixDB but no live Rust product flow writes them.
+They are **not current capabilities** and must not be presented as such. Issue
+[#157](https://github.com/nikita-rulenko/Helixir/issues/157) tracks the explicit
+decision for each entry: wire it end-to-end, keep it reserved with an owner and
+milestone, or retire it through a safe migration.
 
 | Surface | Schema artifacts | Implication |
 |---|---|---|
@@ -458,9 +472,9 @@ the parent link currently denormalized into `Concept.parent_id`, and
 between the existing concepts. Neither is intended as a hook for
 agent-driven ontology learning.
 
-These are intentional schema surface decisions made in earlier releases
-(v0.2.0 for most) and are not dead code in the schema sense — the HQL
-queries that materialize them already exist. They are awaiting Rust callers.
+Most were speculative schema decisions made in earlier releases. An HQL helper
+alone does not make a feature active: a declaration needs a live producer, a
+consumer, and a DB-verified test before documentation may call it implemented.
 
 ### 7.7 Generative-memory agents — `src/agents/` (the Moirai)
 
@@ -534,13 +548,19 @@ MCP requests may provide `actor_id` separately from `user_id`. `actor_id` is
 the authenticated principal whose grants are evaluated, while `user_id`
 remains the memory owner/target. Agents must provide a stable `actor_id`; an
 authenticated gateway should populate it explicitly before accepting remote
-requests. Once the MCP handshake completes, a server configured with
-`HELIXIR_RBAC_ACTOR` grants that principal one bounded graph-backed presence
-lease. Real MCP tool activity refreshes the lease; an idle transport performs no
-background heartbeats. Explicit `agent_id` writes continue to heartbeat distinct
-worker and sub-agent identities. Terminal presence states make an agent inactive
-immediately and remain terminal until later real activity; the heartbeat window
-is the crash/idle fallback. The global-admin web graph may project
+requests. Transport initialization and ordinary MCP reads never create or
+refresh presence. Each root agent or delegated execution announces itself
+explicitly through `agent_heartbeat`; each `Agent` row is a concrete execution instance with
+an explicit owning `principal_id`; `agent_heartbeat(actor_id, agent_id)` announces
+or refreshes it without writing memory, while `add_memory(agent_id=...)` refreshes
+the same lease as a convenience. Concurrent sub-agents remain distinct for
+farewell and diagnostics but `swarm_status` and the control plane aggregate them
+into logical-principal families. Prefix inference applies only to legacy rows in
+the MCP and administrator presentation projections and is never an authorization
+source. Terminal presence states make one instance inactive immediately and
+remain terminal until another explicit heartbeat or attributed write; sibling
+instances stay live and the heartbeat window is the
+crash/idle fallback. The global-admin web graph may project
 `MOIRAI_DERIVED_FROM` edges and their witness memories for audit, but ordinary
 agent traversal still omits them and every zero-witness hypothesis is reported
 as an integrity violation.

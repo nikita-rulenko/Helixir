@@ -29,7 +29,15 @@ fi
 pool="$output/pool/main/h/helixir"
 mkdir -p "$pool" "$output/dists/stable/main/binary-amd64" \
   "$output/dists/stable/main/binary-arm64"
-find "$packages" -maxdepth 1 -type f -name 'helixir_*.deb' -exec cp -p {} "$pool/" \;
+find "$packages" -maxdepth 1 -type f \
+  \( -name 'helixir_[0-9]*.deb' -o -name 'helixir-client_[0-9]*.deb' \) \
+  -exec cp -p {} "$pool/" \;
+for package in helixir helixir-client; do
+  [[ -n "$(find "$pool" -maxdepth 1 -type f -name "${package}_[0-9]*.deb" -print -quit)" ]] || {
+    printf 'missing %s Debian packages in %s\n' "$package" "$packages" >&2
+    exit 2
+  }
+done
 
 for arch in amd64 arm64; do
   index="$output/dists/stable/main/binary-$arch/Packages"
@@ -37,6 +45,8 @@ for arch in amd64 arm64; do
   # pinning and rollback-to-an-older-package possible without changing the
   # repository URL; apt still selects the newest version by default.
   (cd "$output" && dpkg-scanpackages --multiversion -a "$arch" pool /dev/null) >"$index"
+  grep -qx 'Package: helixir' "$index"
+  grep -qx 'Package: helixir-client' "$index"
   gzip -9 -n -c "$index" >"$index.gz"
 done
 

@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 Helixir has two deliberate interaction surfaces: LLM agents use MCP/stdio (or
 the authenticated gateway), while a human global administrator uses the CLI or
@@ -9,7 +9,7 @@ call and reads its result**; section 8 describes the separate administrative
 flow.
 
 The MCP surface is defined in `helixir/src/mcp/` (`server.rs` + `tools/`).
-There are 21 tools, 2 prompts, and 3 resources.
+There are 23 tools, 2 prompts, and 3 resources.
 
 ## 1. Tool catalog
 
@@ -28,9 +28,11 @@ There are 21 tools, 2 prompts, and 3 resources.
 | `connect_memories` | `actor_id`, `user_id`, `query_a`, `query_b` | `max_depth` | "How is A related to B?" — authorized path between two concepts with edge types and confidence. |
 | `search_incomplete_thoughts` | `actor_id` | `user_id`, `limit` | Locate historical pre-RBAC incomplete FastThink memories; current RBAC timeouts do not auto-persist. |
 | `list_users` | `actor_id` | `limit` | Global-admin registry orientation: which identities exist. Also collective-tier gated; returns only ids/names/timestamps. |
-| `swarm_status` | — | `active_window_secs` | Rendezvous (#39): the live agent roster — role, host, status, seconds since last heartbeat. Collective-gated. |
+| `enroll_client` | `actor_id` | — | One narrow trusted-network admission call for a remote client. It can create only this principal as `worker` in reserved `onboarding`; existing or historical admission is returned without changing later admin-assigned roles. |
+| `agent_heartbeat` | `actor_id`, `agent_id` | `status` | Publish or refresh a concrete root or delegated execution instance without writing memory. The instance is grouped under the resolved logical principal; status must be non-terminal and bounded. Call on start and meaningful progress boundaries. |
+| `swarm_status` | — | `active_window_secs` | Rendezvous (#39): logical `families`, child `subagents`, and the complete diagnostic instance roster. `active`/`total` count logical principals; instance/subagent counters expose concurrency. Collective-gated. |
 | `resolve_contradiction` | `from_id`, `to_id`, `resolution` | — | Answering a `contradiction_review` notice: `confirm` / `retract` (supersedes, history kept) / `preference`. Retired disputes stop re-surfacing. |
-| `agent_farewell` | `agent_id` | — | Marking a one-shot agent as done in the swarm roster without changing authorship provenance. |
+| `agent_farewell` | `actor_id`, `agent_id` | — | Marking one owned execution instance as done without changing authorship provenance; cross-principal termination is rejected. |
 
 Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 `needs_clarification` array — write-path conflicts the memory charter
@@ -52,9 +54,11 @@ question; the agent decides whether to ask the human.
 
 `actor_id` remains `Option` in applicable wire structs only for the internal
 pre-bootstrap compatibility path. In normal permanent-RBAC operation it is
-mandatory whenever the tool schema exposes it. Three trusted-endpoint support
-tools have narrower identity contracts: `swarm_status` takes only its time
-window, `agent_farewell` takes the exact `agent_id`, and
+mandatory whenever the tool schema exposes it. Five trusted-endpoint support
+tools have narrower identity contracts: `enroll_client` takes only its own
+principal and exposes no target role/group, `agent_heartbeat` binds its concrete
+`agent_id` to the resolved `actor_id`, `swarm_status` takes only its time window,
+`agent_farewell` takes the owning `actor_id` plus exact `agent_id`, and
 `resolve_contradiction` takes the exact ids from a delivered notice.
 
 Under permanent RBAC, ingest completion logging notifications are disabled:
@@ -257,7 +261,7 @@ them here so they live in the engineering doc too:
 ## 7. Release contract checks
 
 `config://helixir` derives its version from `CARGO_PKG_VERSION` and enumerates
-all 21 registered tools. `list_resources` exposes the three resources above.
+all 23 registered tools. `list_resources` exposes the three resources above.
 The release smoke test must compare these advertised counts with MCP
 `tools/list`, `prompts/list`, and `resources/list` after every tool-surface
 change.

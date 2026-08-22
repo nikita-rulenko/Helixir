@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.16.0`. Last verified: 2026-08-20._
+> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
 
 This document walks the two pipelines that matter most:
 
@@ -23,6 +23,12 @@ recall and Phase-2 collective candidates, and is stored as `Memory.rbac_scope`.
 After the decision, group visibility is materialized with
 `MEMORY_IN_RBAC_GROUP`; federation provenance uses
 `MEMORY_IN_RBAC_DEDUP_GROUP`.
+
+When `add_memory` carries an execution `agent_id`, the MCP layer records or
+refreshes that concrete presence instance under the already resolved
+`actor_id`. The memory owner never determines the agent family. Presence-only
+workers use `agent_heartbeat` instead, so lifecycle signalling does not create
+synthetic durable memory.
 
 An omitted `group_id` is resolved server-side only when the actor can write to
 exactly one reserved workspace in the same policy snapshot used for

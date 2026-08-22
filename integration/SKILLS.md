@@ -38,6 +38,11 @@ this order:
 Choose one stable `user_id` for authored memory. It may equal the actor. Replace
 every `claude` below with the identities you established.
 
+For a separate agent host, run `helixir-client connect` once. The
+`enroll_client` tool accepts only that host's stable `actor_id` and can grant
+only `worker` in reserved `onboarding`; it is bootstrap machinery, not a normal
+session tool. The client connects to the Helixir MCP gateway, never HelixDB.
+
 ## The core loop: recall → work → capture
 
 ### 1. Recall first (start of any non-trivial request — and after a summary)
@@ -125,14 +130,18 @@ one memory whose SUPPORTS edges point at the recalled evidence.
 
 ## The swarm (collective tier)
 
-Pass your stable `agent_id` on every `add_memory` — it heartbeats your
-presence into the shared roster for free. `swarm_status` = who else is
-here right now; global-admin `list_users(actor_id=...)` = which identities exist. In
+Every execution instance (root or delegated) calls
+`agent_heartbeat(actor_id=<logical principal>, agent_id=<execution instance>)`
+immediately on start and at meaningful progress boundaries; it never writes
+fake memory for presence. Passing the same
+`agent_id` on a real `add_memory` refreshes its lease. `swarm_status` groups
+instances under logical principals; global-admin `list_users(actor_id=...)` =
+which identities exist. In
 `pending_outcomes`: `contradiction_review` → settle with
 `resolve_contradiction(from_id, to_id, confirm|retract|preference)`;
 `ops_alert` → the memory's health watchdog (Hygieia) — tell your human.
 
-- **Say goodbye**: one-shot agents call `agent_farewell(agent_id=...)` on
+- **Say goodbye**: one-shot agents call `agent_farewell(actor_id=..., agent_id=...)` on
   exit — otherwise the roster shows a stale "working" forever (it will be
   flagged `derived_status: stale`, but a clean `done` is better).
 

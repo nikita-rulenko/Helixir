@@ -159,7 +159,7 @@ of these.
 
 ### 1bis.4 Capability surface (one paragraph)
 
-The MCP surface contains 21 tools. Its core tools are `add_memory` (returns charter escalations in
+The MCP surface contains 23 tools. Its core tools are `add_memory` (returns charter escalations in
 `needs_clarification` under `algo_opt`), `search_memory` (modes `recent /
 contextual / deep / full`; scopes `personal / collective / all`; explicit
 event-time windows via `time_from`/`time_to`, out-of-window graph rows come
@@ -243,6 +243,19 @@ This is the Anthropic-recommended loop. Follow it for every non-trivial task,
    new ones. Do not create Markdown docs unless the user explicitly asked.
 4. **Verify.** Run `cargo check` / `cargo clippy` / `cargo test --lib`, read linter
    output, and review your own diff before announcing completion.
+
+### Keep the primary chat responsive during long-running work
+
+Delegate bounded linear operations that are expected to run for a long time
+(release builds, full E2E gates, soak tests, benchmarks, package/VM matrices,
+and passive monitoring) to a sub-agent whenever a concurrency slot is
+available. The primary agent remains the coordinator and keeps the chat
+available for discussion or other useful work while the delegated operation
+runs. Give the sub-agent exact inputs, success criteria, cleanup ownership, and
+the required verification/reporting format. Do not run a duplicate copy in the
+primary session; stop or hand off an already-running process cleanly first.
+Use the primary agent directly only when the operation is short, inherently
+interactive, cannot be safely delegated, or no sub-agent slot is available.
 
 Hard rules:
 
@@ -592,3 +605,5 @@ this repo. They cost ~10 minutes per issue.
 - Before schema/query changes, read `helixir/doc/data-model.md` and `helixir/doc/architecture.md`, keep migrations additive, avoid non-nullable fields on populated nodes, and run `helix check`.
 - Before a live schema transition, create a recoverable backup of the persistent volume, stop/rebuild/recreate against that same volume, deploy, and perform read-only health/query verification. Never deploy an unbacked live volume.
 - RBAC is permanently enabled and graph-backed in HelixDB, the single source of truth for Rust, MCP, and CLI. The one-way resumable bootstrap puts pre-RBAC memories and trusted peers in reserved `default` with equal group-admin access, reserved `onboarding` admits new principals before normal group assignment, and membership-free reserved `moirai` stores global-admin-only generated hypotheses; only the operator receives global admin. `groupadmin` is the multi-group team-lead role and manages memberships/roles only in assigned non-reserved groups; `teamlead` is retired legacy state. The Moirai may analyze all groups, but only global admins invoke them or read their system layer. Authorization is deny-by-default and fail-closed. Omitted `group_id` is inferred only when exactly one reserved workspace is writable; working-group writes require a concrete group. `actor_id` is the authenticated principal and `user_id` is the memory owner/target. Use `helixir rbac`; do not introduce local ACLs, a second registry, or a disabled-mode rollback.
+- Agent-only hosts use the independent `helixir-client` binary and the Helixir MCP gateway, never the HelixDB port. Its one-time `enroll_client` operation accepts only the caller's stable lower-case `actor_id` and can grant only `worker` in reserved `onboarding`; ordinary agents never use it to choose or restore a role/group. The full `helixir` package remains the sole owner of database, NLI, embeddings, Moirai, Hygieia, backups and UI.
+- Every root or delegated execution instance belongs to its stable logical `actor_id`; a sub-agent is not a new principal. Each instance calls `agent_heartbeat(actor_id, agent_id, status)` immediately after starting and at meaningful progress boundaries without writing fake memory; one-shot instances call `agent_farewell(actor_id, agent_id)` exactly once when they exit. Ordinary reads and transport initialization never create or refresh presence. Concurrent instance ids remain distinct for presence and diagnostics; `swarm_status` and the control plane group them by the explicitly stored principal. Prefix inference is legacy display fallback only, never authorization truth.

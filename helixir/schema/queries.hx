@@ -1,6 +1,10 @@
 QUERY addUser(user_id: String, name: String) =>
   user <- AddN<User>({ user_id: user_id, name: name })
   RETURN user
+QUERY ensureUser(user_id: String, name: String) =>
+  existing <- N<User>::WHERE(_::{user_id}::EQ(user_id))
+  user <- existing::UpsertN({ user_id: user_id, name: name })
+  RETURN user
 QUERY getUser(user_id: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
   RETURN user
@@ -826,8 +830,9 @@ QUERY getMemorySession(memory_id: String) =>
   session <- memory::Out<CREATED_IN>
   RETURN session
 
-QUERY addAgent(agent_id: String, name: String, role: String, capabilities: String, agent_version: String, created_at: String) =>
-  agent <- AddN<Agent>({ agent_id: agent_id, name: name, role: role, capabilities: capabilities, agent_version: agent_version, created_at: created_at })
+QUERY addAgent(agent_id: String, principal_id: String, name: String, role: String, capabilities: String, agent_version: String, created_at: String) =>
+  existing <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))
+  agent <- existing::UpsertN({ agent_id: agent_id, principal_id: principal_id, name: name, role: role, capabilities: capabilities, agent_version: agent_version, created_at: created_at })
   RETURN agent
 
 QUERY getAgent(agent_id: String) =>
@@ -845,6 +850,11 @@ QUERY getAgentMemories(agent_id: String) =>
   memories <- agent::Out<AGENT_CREATED>
   RETURN memories
 
+QUERY countAgentMemories(agent_id: String) =>
+  agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
+  count <- agent::Out<AGENT_CREATED>::COUNT
+  RETURN count
+
 QUERY getMemoryAgent(memory_id: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   agent <- memory::In<AGENT_CREATED>
@@ -855,9 +865,9 @@ QUERY getMemoryAgent(memory_id: String) =>
 QUERY dropPresenceByAgentId(agent_id: String) =>
   DROP N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))
   RETURN "deleted"
-QUERY heartbeatAgent(agent_id: String, host: String, last_seen: String, status: String) =>
+QUERY heartbeatAgent(agent_id: String, principal_id: String, host: String, last_seen: String, status: String) =>
   agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
-  updated <- agent::UPDATE({ host: host, last_seen: last_seen, status: status })
+  updated <- agent::UPDATE({ principal_id: principal_id, host: host, last_seen: last_seen, status: status })
   RETURN updated
 
 QUERY listAgents() =>

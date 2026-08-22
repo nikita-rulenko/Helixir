@@ -225,7 +225,7 @@ const SEEDS: &[(i32, &str)] = &[
     ),
     (
         85,
-        "Glossary — rendezvous: agents discover each other through the database itself — MCP initialization grants HELIXIR_RBAC_ACTOR one bounded lease, real tool activity refreshes it, add_memory with agent_id refreshes a distinct worker identity, and swarm_status returns the live roster; no side channel exists or is needed.",
+        "Glossary — rendezvous: agents discover each other through the database itself — MCP initialization grants HELIXIR_RBAC_ACTOR one bounded lease, a distinct worker calls agent_heartbeat with its logical actor_id and concrete agent_id without writing fake memory, add_memory with that agent_id refreshes the lease, and swarm_status returns logical families plus the instance roster; no side channel exists or is needed.",
     ),
     (
         85,
