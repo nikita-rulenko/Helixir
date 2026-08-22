@@ -154,6 +154,11 @@ def main() -> None:
                 "status": "remote-smoke",
             },
         )
+        if heartbeat.get("available") is not True:
+            raise RuntimeError(
+                "gateway swarm is unavailable; release gate requires "
+                "HELIXIR_MODE=collective"
+            )
         if heartbeat.get("principal_id") != args.principal:
             raise RuntimeError("heartbeat was attached to a different principal")
         swarm = gateway.call_tool(

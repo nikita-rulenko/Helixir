@@ -42,10 +42,9 @@
   Compose, version, secret and diff scans: passed (80 changed files, zero
   secret matches)
 
-The final frozen local diff fingerprint was
-`e887dcd4dcb1d501473ffe8206893b52f6beffcf1046de791523d53fedc1b68c`.
 The immutable tag workflow independently rebuilds all native archives and
-reruns archive-backed APT, Homebrew and Docker publication gates.
+reruns archive-backed APT, Homebrew and Docker publication gates, so the
+published commit and its artifacts remain the release's reproducible identity.
 
 ## Known open work
 

@@ -67,6 +67,10 @@ cleanup() {
     >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   docker image rm "$db_image" >/dev/null 2>&1 || true
+  if docker image inspect debian:12-slim >/dev/null 2>&1; then
+    docker run --rm -v "$work:/work" debian:12-slim \
+      chown -R "$(id -u):$(id -g)" /work >/dev/null 2>&1 || true
+  fi
   rm -rf -- "$work"
 }
 trap cleanup EXIT INT TERM
@@ -172,6 +176,7 @@ docker run --rm --name "$bootstrap_container" --network "$network" \
   -v "$work/runtime:/runtime:ro" \
   -e HELIX_HOST="$db_container" -e HELIX_PORT=6969 \
   -e HELIXIR_RBAC_ACTOR=pre-release-admin \
+  -e HELIXIR_MODE=collective \
   -e HELIXIR_RETRIEVAL_PROFILE=algo_opt \
   -e HELIX_EMBEDDING_PROVIDER=ollama \
   -e HELIX_EMBEDDING_MODEL=nomic-embed-text \
@@ -193,6 +198,7 @@ docker run -d --name "$gateway_container" --network "$network" \
   -p 127.0.0.1::8765 -v "$work/runtime:/runtime:ro" \
   -e HELIX_HOST="$db_container" -e HELIX_PORT=6969 \
   -e HELIXIR_RBAC_ACTOR=pre-release-admin \
+  -e HELIXIR_MODE=collective \
   -e HELIXIR_RETRIEVAL_PROFILE=algo_opt \
   -e HELIX_EMBEDDING_PROVIDER=ollama \
   -e HELIX_EMBEDDING_MODEL=nomic-embed-text \
