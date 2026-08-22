@@ -66,11 +66,11 @@ def render(
     base = validate_base_url(
         base_url or f"https://github.com/{repository}/releases/download/{tag}"
     )
-    # Homebrew derives the stable version from the standard GitHub release URL.
-    # Repeating it makes `brew audit --strict` reject the public formula as
-    # redundant. Local/custom preflight URLs do not carry the tag, so keep the
-    # explicit version only when the caller overrides the asset base.
-    version_line = f'  version "{version}"\n' if base_url is not None else ""
+    # Platform-specific archive names end in arm64/x86_64, so Homebrew may
+    # otherwise infer "64" as the formula version even though the release URL
+    # contains the semantic tag. Keep the release version explicit for both
+    # public and local preflight formulae.
+    version_line = f'  version "{version}"\n'
     assets = CLIENT_ASSETS if package == "helixir-client" else SERVER_ASSETS
 
     def source(asset_key: str, indent: str = "    ") -> str:

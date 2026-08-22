@@ -84,12 +84,12 @@ jobs:
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
             --output Formula/helixir.rb
           ruby -c Formula/helixir.rb
-          ! grep -q '^  version ' Formula/helixir.rb
+          grep -q '^  version "9.9.9"' Formula/helixir.rb
           ! grep -q 'bin.install_symlink libexec/"helixir-client"' Formula/helixir.rb
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
             --package helixir-client --output Formula/helixir-client.rb
           ruby -c Formula/helixir-client.rb
-          ! grep -q '^  version ' Formula/helixir-client.rb
+          grep -q '^  version "9.9.9"' Formula/helixir-client.rb
           grep -q 'class HelixirClient < Formula' Formula/helixir-client.rb
           grep -q 'helixir-client-macos-arm64.tar.gz' Formula/helixir-client.rb
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
