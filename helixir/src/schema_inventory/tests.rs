@@ -12,10 +12,8 @@ fn declared_in_hql() -> BTreeSet<(SchemaKind, String)> {
                 (SchemaKind::Node, rest)
             } else if let Some(rest) = line.strip_prefix("V::") {
                 (SchemaKind::Vector, rest)
-            } else if let Some(rest) = line.strip_prefix("E::") {
-                (SchemaKind::Edge, rest)
             } else {
-                return None;
+                (SchemaKind::Edge, line.strip_prefix("E::")?)
             };
             let name = rest.split_whitespace().next()?.trim_end_matches('{');
             Some((kind, name.to_string()))
