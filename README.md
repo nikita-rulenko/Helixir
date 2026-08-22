@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="#quick-start"><strong>Quick Start</strong></a> ·
+  <a href="#deployment-topologies">Topologies</a> ·
   <a href="#what-helixir-is">What it is</a> ·
   <a href="#how-the-memory-works">How it works</a> ·
   <a href="#documentation">Documentation</a>
@@ -131,6 +132,42 @@ running on the Helixir host and reachable through the trusted network; set
 > The Homebrew lifecycle, APT repository setup, signing-key fingerprint,
 > headless flags, three HelixDB topology choices, source builds, upgrades, and
 > uninstall guarantees live in the [installation guide](helixir/doc/installation.md).
+
+## Deployment topologies
+
+One full `helixir` host can serve a local agent or many remote agent-only hosts
+bootstrapped by the independent `helixir-client` package.
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff3d6","primaryTextColor":"#17130d","primaryBorderColor":"#c88613","lineColor":"#6f675b","secondaryColor":"#eee9ff","tertiaryColor":"#e7f7ef","fontFamily":"Inter, ui-sans-serif, system-ui"}}}%%
+flowchart LR
+    subgraph AgentPaths["Agent entry paths"]
+        direction TB
+        Local["Standalone<br/>local agent on the Helixir host"]
+        Remote["Distributed<br/>remote agent hosts + <b>helixir-client</b>"]
+    end
+
+    subgraph ServerHost["Full Helixir runtime"]
+        direction TB
+        Gateway["MCP gateway<br/>:8765/mcp"]
+        Core["Governed memory server<br/>RBAC · Moirai · Hygieia"]
+        DB[("Private HelixDB<br/>graph + vector")]
+        Services["Server-owned services<br/>NLI · embeddings · reasoning LLM"]
+        UI["Admin control plane<br/>:6971"]
+
+        Gateway --> Core
+        UI -->|"admin API"| Core
+        Core --> DB & Services
+    end
+
+    Local -->|"local MCP"| Gateway
+    Remote -->|"trusted network<br/>streamable HTTP"| Gateway
+```
+
+`helixir` owns the database, models, RBAC, gateway, operations, backups and UI.
+`helixir-client` only installs the remote host's MCP registration, canonical
+skill and managed instructions. Remote agents use the gateway over the trusted
+network and never connect directly to HelixDB.
 
 ## What Helixir is
 
