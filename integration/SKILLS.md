@@ -279,6 +279,11 @@ onboarding --user <id>`, then may assign other groups. `helixir rbac user list`
 projects users, active roles, assignment history, and Agent presence directly
 from HelixDB. Removing a group membership deactivates the grants but retains the
 User node and audit history; never maintain a second registry in local files.
+For a remote client, prefer the complete server-side playbook: `helixir rbac
+user onboard --user <id> --group <group> [--group-name <name>] --role <role>
+--json`. It creates a missing workspace when requested, grants target access,
+removes temporary onboarding membership by default, and verifies the effective
+scope. Use `--keep-onboarding` only for a deliberate staged transition.
 
 An optional dedup federation deliberately gives several groups one fingerprint
 domain and common visibility. Agents always address their concrete group;

@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 ## 1. Stance
 
@@ -28,8 +28,8 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.17.0`):** 345 library unit tests plus CLI tests
-(`cargo test --all-targets`) and **43 HELIX_E2E-gated test files** in
+**Current (`v0.17.1`):** 358 library unit tests plus CLI tests
+(`cargo test --all-targets`) and **45 HELIX_E2E-gated test files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
@@ -204,6 +204,7 @@ owners.
 | CLI onboarding | `src/bin/helixir/` | Stable parsing, RBAC operator reuse, remote-embedding probes, registration conflicts and redaction. |
 | Thin remote client | `../helixir-client/` | MCP handshake/tool compatibility, bounded onboarding admission, non-secret profile, backup-safe client registration, canonical instructions and client-scoped doctor. |
 | Module budget | `tests/module_budget.rs` | Every maintained Rust source under `src/` stays at or below 500 lines. |
+| Physical schema lifecycle | `src/schema_inventory/tests.rs` | Exact HQL declaration parity, lifecycle evidence, real E2E references, census-query coverage and checked documentation projection. |
 
 ### Integration / E2E
 
@@ -222,6 +223,9 @@ owners.
   CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>`. The two archives are
   required separately so the gate also proves package ownership does not
   overlap.
+- `helixir/tests/schema_inventory_e2e.rs` — model-free, read-only live proof
+  that all 22 nodes, 5 vectors and 30 edges return server-side aggregate counts
+  through the deployed census queries; deprecated declarations must be empty.
 
 ## 3. Contract map: what is guarded vs. what isn't
 
@@ -358,6 +362,7 @@ binding, private outbox reads, and global-admin-only low-level tooling. The CLI
 parser and pure policy matrix separately cover all roles, deny-by-default, and
 stable management syntax. `rbac_compat_e2e.rs` bootstraps twice, verifies full
 legacy-memory coverage, denies pre-onboarding group admission, projects and
-retains registry history, validates fresh/legacy convergence, and leaves
-enforcement enabled. `HELIXIR_RBAC_ACTOR` is the CLI management identity;
+retains registry history, creates and replays the server-side client workspace
+onboarding playbook, validates fresh/legacy convergence, and leaves enforcement
+enabled. `HELIXIR_RBAC_ACTOR` is the CLI management identity;
 caller-supplied `--actor` impersonation is rejected.

@@ -10,14 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="#what-helixir-is">What it is</a> ·
-  <a href="#how-the-memory-works">How it works</a> ·
-  <a href="#documentation">Documentation</a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.0"><img src="https://img.shields.io/badge/release-v0.17.0-2ea44f" alt="Release v0.17.0" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.1"><img src="https://img.shields.io/badge/release-v0.17.1-2ea44f" alt="Release v0.17.1" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -26,10 +19,32 @@
 
 ---
 
+## Contents
+
+- [Quick Start](#quick-start)
+  - [Full Helixir host](#full-helixir-host)
+  - [Remote agent host](#remote-agent-host)
+- [Deployment topologies](#deployment-topologies)
+- [What Helixir is](#what-helixir-is)
+  - [Why it exists](#why-it-exists)
+- [How the memory works](#how-the-memory-works)
+  - [What is actually in the graph](#what-is-actually-in-the-graph)
+- [Flashbacks: graph memory across time](#flashbacks-graph-memory-across-time)
+- [Capabilities](#capabilities)
+- [Governed collaboration](#governed-collaboration)
+- [Admin control plane](#admin-control-plane)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
+- [Links](#links)
+
 Helixir is the persistent epistemic layer an agent keeps when the model,
 editor, session, or entire agent harness changes. It extracts durable facts
 from conversations, preserves authorship, connects facts with typed reasoning
-edges, and recalls both an answer and the path that supports it.
+edges, and recalls both an answer and the path that supports it. When a dated
+search touches older or newer connected knowledge, Helixir brings that context
+back as an explicitly dated **flashback** instead of losing the connection or
+silently corrupting the requested timeline.
 
 An agent harness such as Codex or Claude Code owns the execution loop, tools,
 workspace and model interaction. Helixir does not replace that runtime. It
@@ -123,6 +138,19 @@ Codex/Claude Code/Cursor clients, and installs both the canonical memory skill
 and a managed, backup-safe `AGENTS.md` block. Reconnecting is idempotent and
 never downgrades roles assigned later by an administrator.
 
+The global administrator then completes placement on the Helixir host. This
+single resumable command creates the workspace when needed, grants the working
+role, removes temporary `onboarding` access, and prints the verified scope:
+
+```bash
+HELIXIR_RBAC_ACTOR=root helixir rbac user onboard \
+  --user codex-laptop \
+  --group development \
+  --group-name "Development" \
+  --role worker \
+  --json
+```
+
 The endpoint is the Helixir **MCP gateway** (`8765/mcp` by default), never the
 HelixDB database port (`6970` in this deployment). The gateway must already be
 running on the Helixir host and reachable through the trusted network; set
@@ -131,6 +159,42 @@ running on the Helixir host and reachable through the trusted network; set
 > The Homebrew lifecycle, APT repository setup, signing-key fingerprint,
 > headless flags, three HelixDB topology choices, source builds, upgrades, and
 > uninstall guarantees live in the [installation guide](helixir/doc/installation.md).
+
+## Deployment topologies
+
+One full `helixir` host can serve a local agent or many remote agent-only hosts
+bootstrapped by the independent `helixir-client` package.
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#fff3d6","primaryTextColor":"#17130d","primaryBorderColor":"#c88613","lineColor":"#6f675b","secondaryColor":"#eee9ff","tertiaryColor":"#e7f7ef","fontFamily":"Inter, ui-sans-serif, system-ui"}}}%%
+flowchart LR
+    subgraph AgentPaths["Agent entry paths"]
+        direction TB
+        Local["Standalone<br/>local agent on the Helixir host"]
+        Remote["Distributed<br/>remote agent hosts + <b>helixir-client</b>"]
+    end
+
+    subgraph ServerHost["Full Helixir runtime"]
+        direction TB
+        Gateway["MCP gateway<br/>:8765/mcp"]
+        Core["Governed memory server<br/>RBAC · Moirai · Hygieia"]
+        DB[("Private HelixDB<br/>graph + vector")]
+        Services["Server-owned services<br/>NLI · embeddings · reasoning LLM"]
+        UI["Admin control plane<br/>:6971"]
+
+        Gateway --> Core
+        UI -->|"admin API"| Core
+        Core --> DB & Services
+    end
+
+    Local -->|"local MCP"| Gateway
+    Remote -->|"trusted network<br/>streamable HTTP"| Gateway
+```
+
+`helixir` owns the database, models, RBAC, gateway, operations, backups and UI.
+`helixir-client` only installs the remote host's MCP registration, canonical
+skill and managed instructions. Remote agents use the gateway over the trusted
+network and never connect directly to HelixDB.
 
 ## What Helixir is
 
@@ -233,12 +297,54 @@ flowchart LR
 ```
 
 The deployed v0.17 storage contract declares **22 node types**, **30 edge types**,
-**5 vector indexes**, and **182 HQL queries**. These numbers describe
+**5 vector indexes**, and **185 HQL queries**. These numbers describe
 the complete physical schema, not 57 runtime-active capabilities: some entries
 are explicitly reserved and have no live producer. `HAS_MEMORY` records provenance;
 `MEMORY_IN_RBAC_GROUP` controls visibility. Equivalent author memories share a
 security-scoped fingerprint rather than becoming one globally mutable node.
 See the [data model](helixir/doc/data-model.md) for the active/reserved inventory.
+
+## Flashbacks: graph memory across time
+
+Most memory systems make an awkward choice: either a time filter hides every
+useful fact outside the requested period, or retrieval ignores the filter and
+mixes unrelated dates into one answer. Helixir keeps the timeline strict
+without cutting the reasoning graph.
+
+When an agent asks, for example, “what happened with rollouts in June?”, it can
+pass an inclusive `time_from`/`time_to` event-time window to `search_memory`:
+
+```text
+search_memory(
+  actor_id="codex",
+  user_id="Codex",
+  query="rollout failures",
+  time_from="2026-06-01",
+  time_to="2026-06-30"
+)
+```
+
+The window uses event time (`valid_from` when present, otherwise the stored
+creation time), not the moment the search runs. Direct seed results must come
+from June. Authorized graph traversal may still discover a connected cause,
+consequence, contradiction, or supporting fact from outside June. Helixir
+returns that row separately as a flashback with `metadata.flashback=true` and
+its real `metadata.event_date`.
+
+| Result | Example | How the agent presents it |
+|:-------|:--------|:--------------------------|
+| In-window memory | June 18: rollout failed | “During June, the rollout failed.” |
+| Graph-linked flashback | May 12: token rotation policy changed | “Related context from May 12: the token policy changed.” |
+
+Flashbacks use their own bounded allowance (`retrieval.flashback_max`, default
+`3`), so they never displace the requested period's direct results. RBAC still
+applies before and after traversal, and the flashback is recovered from stored
+graph relations without a generative/reasoning-LLM call on the read path. It is
+an association across time—not a claim that the linked event happened inside
+the requested window.
+
+The exact caller and projection contract is documented in
+[Event-time windows and flashbacks](helixir/doc/userflow.md#event-time-windows-and-flashbacks).
 
 ## Capabilities
 
@@ -246,7 +352,7 @@ See the [data model](helixir/doc/data-model.md) for the active/reserved inventor
 |:--------|:-----------------|
 | Persistent memory | Atomic extraction, dedup, supersession, contradictions, entities, ontology, raw-source preservation |
 | Reasoning graph | `BECAUSE`, `IMPLIES`, `SUPPORTS`, `CONTRADICTS`, `RELATES_TO`, `PART_OF`, `IS_A` |
-| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, [event-time windows and dated flashbacks](helixir/doc/userflow.md#event-time-windows-and-flashbacks) |
+| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, [event-time windows and dated flashbacks](#flashbacks-graph-memory-across-time) |
 | FastThink | Branching in-memory scratchpad; only an explicit conclusion enters long-term memory |
 | Hive consensus | Independent authorship collapsed inside one RBAC group or explicit dedup federation |
 | Moirai | Clotho categories, Lachesis routes, Atropos hypotheses with admin-only witness provenance |
@@ -322,7 +428,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.17.0 notes](helixir/doc/v0.17.0/notes.md) | What changed in this release |
+| [v0.17.1 notes](helixir/doc/v0.17.1/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.

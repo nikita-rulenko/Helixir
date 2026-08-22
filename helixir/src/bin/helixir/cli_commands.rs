@@ -150,6 +150,29 @@ pub(crate) enum RbacUserCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Complete a remote client's placement into a working workspace.
+    Onboard {
+        /// Principal previously admitted through reserved onboarding.
+        #[arg(long)]
+        user: String,
+        /// Existing target group, or a new id when --group-name is supplied.
+        #[arg(long)]
+        group: String,
+        /// Human-readable name used only when the target group is missing.
+        #[arg(long)]
+        group_name: Option<String>,
+        /// Description used only when creating the target group.
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Group-scoped role: groupadmin, moderator, worker, or viewer.
+        #[arg(long, default_value = "worker")]
+        role: String,
+        /// Retain the temporary onboarding membership after assignment.
+        #[arg(long)]
+        keep_onboarding: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

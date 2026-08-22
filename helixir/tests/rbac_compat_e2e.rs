@@ -1,5 +1,6 @@
 //! Live compatibility-profile bootstrap and implicit-routing contract.
 
+use helixir::core::rbac::ClientWorkspaceOnboarding;
 use helixir::core::{HelixirClient, ONBOARDING_GROUP_ID, Role};
 use helixir::llm::extractor::ExtractedMemory;
 
@@ -19,6 +20,8 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
     let agent = format!("compat-agent-{suffix}");
     let registry_user = format!("registry-user-{suffix}");
     let project_group = format!("registry-project-{suffix}");
+    let playbook_user = format!("playbook-user-{suffix}");
+    let playbook_group = format!("playbook-project-{suffix}");
     let principals = vec![agent.clone()];
     let first = rbac
         .bootstrap_compatibility(&admin, &principals)
@@ -87,6 +90,37 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
         rbac.compatibility_user_coverage_complete().await.unwrap(),
         "intentional offboarding keeps historical migration coverage"
     );
+
+    rbac.add_user_to_group(&playbook_user, ONBOARDING_GROUP_ID, Role::Worker, &admin)
+        .await
+        .expect("admit playbook user");
+    let playbook = ClientWorkspaceOnboarding {
+        principal_id: playbook_user.clone(),
+        group_id: playbook_group.clone(),
+        group_name: Some("Playbook Project".to_string()),
+        group_description: "temporary client onboarding fixture".to_string(),
+        role: Role::Worker,
+        keep_onboarding: false,
+    };
+    let placed = rbac
+        .onboard_client_to_workspace_as(&playbook, &admin)
+        .await
+        .expect("complete client workspace onboarding");
+    assert!(placed.group_created);
+    assert!(!placed.onboarding_active);
+    assert_eq!(placed.memory_scope, format!("group:{playbook_group}"));
+    assert_eq!(placed.readable_groups, [playbook_group.clone()].into());
+    assert!(placed.can_write_own_memories);
+
+    let replayed = rbac
+        .onboard_client_to_workspace_as(&playbook, &admin)
+        .await
+        .expect("idempotent client workspace onboarding replay");
+    assert!(!replayed.group_created);
+    assert!(!replayed.onboarding_active);
+    assert!(replayed.onboarding_roles_revoked.is_empty());
+    assert_eq!(replayed.readable_groups, placed.readable_groups);
+
     rbac.bootstrap_compatibility(&admin, &principals)
         .await
         .expect("bootstrap after offboarding");
@@ -175,5 +209,11 @@ async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
     rbac.deactivate_group_as(&project_group, &admin)
         .await
         .expect("deactivate project fixture");
+    rbac.remove_user_from_group(&playbook_user, &playbook_group, &admin)
+        .await
+        .expect("remove playbook project membership");
+    rbac.deactivate_group_as(&playbook_group, &admin)
+        .await
+        .expect("deactivate playbook project fixture");
     assert!(rbac.snapshot().await.expect("final policy").enabled);
 }

@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.17.0`. Last verified: 2026-08-22._
+> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
 
 ## 1. System context
 
@@ -26,7 +26,7 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   182 HQL queries    │                │   - Ollama (local)         │
+   │   185 HQL queries    │                │   - Ollama (local)         │
    │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```
@@ -184,7 +184,7 @@ bug to file — not a feature to copy.
 | `EmbeddingGenerator` | `src/llm/embeddings/` | Vector generation, provider/fallback wire paths, versioned in-memory/persistent cache and diagnostics |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
 | Installer orchestrator | `src/installer/service.rs`, `src/installer/executor/` | One detect/prepare/apply/verify service, deterministic plans, concrete native mutation adapters, ordered rollback reports and explicit embedding strategies; frontends provide presentation and consent only |
-| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, Hygieia telemetry, redacted settings and the managed backup vault; never owns host mutation policy |
+| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, Hygieia telemetry, the machine-checked physical schema ledger/census, redacted settings and the managed backup vault; never owns host mutation policy |
 | Control-plane image | `Dockerfile` (`control-plane` / artifact-only `release-control-plane` targets), `docker-compose.yml` | Immutable frontend/backend packaging and the restricted runtime boundary; releases reuse native ABI-gated binaries and a shared frontend artifact rather than recompiling Rust; no host filesystem or Docker authority |
 | Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/installer/{settings,backups}.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, redacted atomic settings, guarded managed-volume backup/restore, a bounded Hygieia health/journal projection, and an allowlisted set of typed lifecycle operations; exposes no general shell or filesystem endpoint |
 | RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |
@@ -448,10 +448,10 @@ Architectural invariant introduced in v0.2.0 and fixed in v0.2.1:
 ### 7.6 Reserved capability surface (schema present, no Rust producer)
 
 These declarations exist in HelixDB but no live Rust product flow writes them.
-They are **not current capabilities** and must not be presented as such. Issue
-[#157](https://github.com/nikita-rulenko/Helixir/issues/157) tracks the explicit
-decision for each entry: wire it end-to-end, keep it reserved with an owner and
-milestone, or retire it through a safe migration.
+They are **not current capabilities** and must not be presented as such.
+`src/schema_inventory/` now records the explicit status, owner and milestone;
+CI rejects any unclassified `N::`, `V::` or `E::` declaration. The admin
+control plane renders that same inventory and its bounded live census.
 
 | Surface | Schema artifacts | Implication |
 |---|---|---|
@@ -460,6 +460,11 @@ milestone, or retire it through a safe migration.
 | Session tracking | `Session` node; `CREATED_IN` edge | Reserved conversation-scope link; session creation is not wired. |
 | Internal concept-graph edges | `IS_A`, `CONCEPT_RELATED_TO` edges | Normalized representation of the **fixed** ontology hierarchy and explicit horizontal links between concepts. See note below. |
 | Hierarchical entities | `PART_OF` edge | Entity composition (`engine` PART_OF `car`). |
+
+The separate `Reasoning` node is **deprecated**, not reserved: first-class
+`IMPLIES`, `BECAUSE`, `CONTRADICTS` and typed `MEMORY_RELATION` edges are the
+authoritative persisted justification model. It stays declared and read-only
+until the v2.3.5 backup-first zero-row migration in `data-model.md §2.1`.
 
 **Note on the ontology surface.** The 8 user-facing ontology types
 (`fact / preference / skill / goal / opinion / experience / achievement /

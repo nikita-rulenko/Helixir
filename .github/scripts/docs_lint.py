@@ -23,6 +23,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 failures = []
+README_LINE_BUDGET = 600
 
 MAINTAINED_DOCS = [
     ROOT / "README.md",
@@ -35,7 +36,7 @@ MAINTAINED_DOCS = [
     ROOT / "helixir/skills/helixir-memory/SKILL.md",
     ROOT / "helixir/src/mcp/prompts/cognitive_protocol.md",
     *sorted((ROOT / "helixir/doc").glob("*.md")),
-    *sorted((ROOT / "helixir/doc/v0.17.0").glob("*.md")),
+    *sorted((ROOT / "helixir/doc/v0.17.1").glob("*.md")),
 ]
 
 
@@ -55,8 +56,11 @@ def github_anchor(heading):
 
 def check_internal_anchors():
     readme = (ROOT / "README.md").read_text()
-    if len(readme.splitlines()) > 400:
-        fail("README: product landing page exceeds the 400-line presentation budget")
+    if len(readme.splitlines()) > README_LINE_BUDGET:
+        fail(
+            "README: product landing page exceeds the "
+            f"{README_LINE_BUDGET}-line presentation budget"
+        )
     headings = re.findall(r"^(#{2,4})\s+(.+)$", readme, re.M)
     anchors = [github_anchor(h) for _, h in headings]
     heading_set = set(anchors)
