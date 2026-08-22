@@ -29,6 +29,7 @@
   - [Why it exists](#why-it-exists)
 - [How the memory works](#how-the-memory-works)
   - [What is actually in the graph](#what-is-actually-in-the-graph)
+- [Flashbacks: graph memory across time](#flashbacks-graph-memory-across-time)
 - [Capabilities](#capabilities)
 - [Governed collaboration](#governed-collaboration)
 - [Admin control plane](#admin-control-plane)
@@ -40,7 +41,10 @@
 Helixir is the persistent epistemic layer an agent keeps when the model,
 editor, session, or entire agent harness changes. It extracts durable facts
 from conversations, preserves authorship, connects facts with typed reasoning
-edges, and recalls both an answer and the path that supports it.
+edges, and recalls both an answer and the path that supports it. When a dated
+search touches older or newer connected knowledge, Helixir brings that context
+back as an explicitly dated **flashback** instead of losing the connection or
+silently corrupting the requested timeline.
 
 An agent harness such as Codex or Claude Code owns the execution loop, tools,
 workspace and model interaction. Helixir does not replace that runtime. It
@@ -287,13 +291,55 @@ are explicitly reserved and have no live producer. `HAS_MEMORY` records provenan
 security-scoped fingerprint rather than becoming one globally mutable node.
 See the [data model](helixir/doc/data-model.md) for the active/reserved inventory.
 
+## Flashbacks: graph memory across time
+
+Most memory systems make an awkward choice: either a time filter hides every
+useful fact outside the requested period, or retrieval ignores the filter and
+mixes unrelated dates into one answer. Helixir keeps the timeline strict
+without cutting the reasoning graph.
+
+When an agent asks, for example, “what happened with rollouts in June?”, it can
+pass an inclusive `time_from`/`time_to` event-time window to `search_memory`:
+
+```text
+search_memory(
+  actor_id="codex",
+  user_id="Codex",
+  query="rollout failures",
+  time_from="2026-06-01",
+  time_to="2026-06-30"
+)
+```
+
+The window uses event time (`valid_from` when present, otherwise the stored
+creation time), not the moment the search runs. Direct seed results must come
+from June. Authorized graph traversal may still discover a connected cause,
+consequence, contradiction, or supporting fact from outside June. Helixir
+returns that row separately as a flashback with `metadata.flashback=true` and
+its real `metadata.event_date`.
+
+| Result | Example | How the agent presents it |
+|:-------|:--------|:--------------------------|
+| In-window memory | June 18: rollout failed | “During June, the rollout failed.” |
+| Graph-linked flashback | May 12: token rotation policy changed | “Related context from May 12: the token policy changed.” |
+
+Flashbacks use their own bounded allowance (`retrieval.flashback_max`, default
+`3`), so they never displace the requested period's direct results. RBAC still
+applies before and after traversal, and the flashback is recovered from stored
+graph relations without a generative/reasoning-LLM call on the read path. It is
+an association across time—not a claim that the linked event happened inside
+the requested window.
+
+The exact caller and projection contract is documented in
+[Event-time windows and flashbacks](helixir/doc/userflow.md#event-time-windows-and-flashbacks).
+
 ## Capabilities
 
 | Surface | What it provides |
 |:--------|:-----------------|
 | Persistent memory | Atomic extraction, dedup, supersession, contradictions, entities, ontology, raw-source preservation |
 | Reasoning graph | `BECAUSE`, `IMPLIES`, `SUPPORTS`, `CONTRADICTS`, `RELATES_TO`, `PART_OF`, `IS_A` |
-| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, [event-time windows and dated flashbacks](helixir/doc/userflow.md#event-time-windows-and-flashbacks) |
+| Retrieval | Recent/contextual/deep/full modes, personal/collective scopes, [event-time windows and dated flashbacks](#flashbacks-graph-memory-across-time) |
 | FastThink | Branching in-memory scratchpad; only an explicit conclusion enters long-term memory |
 | Hive consensus | Independent authorship collapsed inside one RBAC group or explicit dedup federation |
 | Moirai | Clotho categories, Lachesis routes, Atropos hypotheses with admin-only witness provenance |
