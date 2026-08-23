@@ -1211,6 +1211,13 @@ QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limi
   category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
   memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
   RETURN memories
+// PMI routing needs only stable ids. Keeping this projection separate preserves
+// the content-bearing bridge query while avoiding full Memory row materialization
+// in every daemon category pass.
+QUERY getMemoryIdsByCategory(category_id: String, exclude_memory_id: String, limit: I64) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories::{memory_id}
 QUERY dropConceptByInternalId(concept_internal_id: ID) =>
   DROP N<Concept>(concept_internal_id)
   RETURN "deleted"

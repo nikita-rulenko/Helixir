@@ -97,7 +97,10 @@ HelixDB soaks over a cold backup. Primary-key graph/RBAC projections must avoid
 the multi-MiB-per-call scan amplification; the remaining upstream v2.3.5
 `SearchV` high-water retention must stay inside the managed 3 GiB envelope and
 Hygieia must restart the disposable container before OOM without losing the
-volume. The one-way RBAC migration may perform only two projected memory-ID
+volume. The canonical on-call daemon test must also complete every due stage in
+one pass inside that envelope: corpus size is a scalar `COUNT`, PMI membership
+uses ID-only projections, and one bounded category topology is reused for every
+seed. The one-way RBAC migration may perform only two projected memory-ID
 passes. `tools/memprobe.py --dump-to` captures private checksummed arena dumps
 and `--analyze-dump` reports structural repetition without emitting recovered
 data. The live RBAC cache suite performs 1,000 revision checks and then proves

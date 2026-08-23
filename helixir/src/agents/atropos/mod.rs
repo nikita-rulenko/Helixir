@@ -70,10 +70,11 @@ impl<'a> Atropos<'a> {
         max_hops: usize,
     ) -> Result<Vec<Insight>, ToolingError> {
         let lachesis = Lachesis::new(self.tooling);
+        let topology = lachesis.load_subset_topology(candidates, universe).await?;
         let mut hyps: Vec<SubsetHypothesis> = Vec::new();
         for (sid, _) in seeds {
             if let Some(h) = lachesis
-                .route_subsets(sid, candidates, universe, max_hops)
+                .route_subsets_in_topology(sid, &topology, max_hops)
                 .await?
             {
                 hyps.push(h);

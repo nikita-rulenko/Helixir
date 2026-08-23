@@ -58,12 +58,16 @@ control plane without reconstructing CLI state by hand.
   swap assertions, constrains the generated HelixDB and control-plane builds
   to one Cargo job, compiles the control plane from the exact commit archive
   and exports checksummed candidates.
+- One complete on-call daemon pass now stays inside the managed 3 GiB HelixDB
+  envelope: corpus size uses a server-side scalar count, category routing reads
+  ID-only projections and one bounded PMI topology is reused across every seed
+  instead of repeating the same graph traversals.
 
 ## Upgrade
 
 The physical node/vector/edge declarations remain unchanged. The compiled HQL
-surface grows from 185 to **189 queries** to enforce protected mutations and
-resumable immutable seed state. Full hosts must create and verify a cold backup,
+surface grows from 185 to **190 queries** to enforce protected mutations,
+resumable immutable seed state and bounded category-ID routing. Full hosts must create and verify a cold backup,
 rebuild the HelixDB v2.3.5 image from this exact release, rehearse the restored
 volume, then swap the database, binaries, gateway and control plane together.
 Run `helixir doctor --json`, verify the schema census and perform a protected

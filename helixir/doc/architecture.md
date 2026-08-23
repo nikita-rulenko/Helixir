@@ -26,7 +26,7 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   189 HQL queries    │                │   - Ollama (local)         │
+   │   190 HQL queries    │                │   - Ollama (local)         │
    │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```

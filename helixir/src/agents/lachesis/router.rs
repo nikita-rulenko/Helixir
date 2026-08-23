@@ -9,6 +9,15 @@ pub struct GatedHypothesis {
     pub verdict: CoherenceVerdict,
 }
 
+/// One bounded category snapshot reused by every seed in an Atropos pass.
+/// Loading it once prevents `seed_count × category_count` repetitions of the
+/// same HelixDB edge traversals.
+pub(crate) struct SubsetTopology {
+    name_of: HashMap<String, String>,
+    members: HashMap<String, HashSet<String>>,
+    adj: HashMap<String, Vec<(String, f64)>>,
+}
+
 /// Lachesis the Measurer. Borrows the toolkit it routes over (mirrors Clotho).
 pub struct Lachesis<'a> {
     tooling: &'a ToolingManager,
@@ -84,17 +93,24 @@ impl<'a> Lachesis<'a> {
         universe: usize,
         max_hops: usize,
     ) -> Result<Option<SubsetHypothesis>, ToolingError> {
-        let lc = self.tooling.config.moira.lachesis.clone();
+        let topology = self.load_subset_topology(candidates, universe).await?;
+        self.route_subsets_in_topology(seed_category_id, &topology, max_hops)
+            .await
+    }
+
+    pub(crate) async fn load_subset_topology(
+        &self,
+        candidates: &[(String, String)],
+        universe: usize,
+    ) -> Result<SubsetTopology, ToolingError> {
+        let lc = &self.tooling.config.moira.lachesis;
         // Unique candidate ids (+ names), seed included.
         let mut name_of: HashMap<String, String> = HashMap::new();
         for (id, name) in candidates {
             name_of.entry(id.clone()).or_insert_with(|| name.clone());
         }
-        if !name_of.contains_key(seed_category_id) {
-            return Ok(None);
-        }
 
-        // Member set per category (cached).
+        // Member set per category, loaded exactly once per full pass.
         let mut members: HashMap<String, HashSet<String>> = HashMap::new();
         for id in name_of.keys() {
             members.insert(id.clone(), self.tooling.category_member_ids(id).await?);
@@ -117,6 +133,24 @@ impl<'a> Lachesis<'a> {
             }
         }
 
+        Ok(SubsetTopology {
+            name_of,
+            members,
+            adj,
+        })
+    }
+
+    pub(crate) async fn route_subsets_in_topology(
+        &self,
+        seed_category_id: &str,
+        topology: &SubsetTopology,
+        max_hops: usize,
+    ) -> Result<Option<SubsetHypothesis>, ToolingError> {
+        let lc = &self.tooling.config.moira.lachesis;
+        if !topology.name_of.contains_key(seed_category_id) {
+            return Ok(None);
+        }
+
         // Longest high-PMI simple path from the seed.
         let mut scratch = SubsetDfsScratch {
             on_path: HashSet::from([seed_category_id.to_string()]),
@@ -125,7 +159,7 @@ impl<'a> Lachesis<'a> {
             best_key: (0usize, f64::INFINITY),
             budget: lc.dfs_budget as u64,
         };
-        subset_dfs(seed_category_id, &adj, f64::INFINITY, &mut scratch);
+        subset_dfs(seed_category_id, &topology.adj, f64::INFINITY, &mut scratch);
         let mut best = scratch.best;
         // Respect max_hops by truncating an over-long thread.
         if best.len() > max_hops + 1 {
@@ -137,9 +171,10 @@ impl<'a> Lachesis<'a> {
         // software-benchmarking fused into one category) — keep the coherent
         // prefix up to the pivot, drop the cross-domain jump.
         if lc.polysemy_guard {
-            let comm = communities(&adj);
-            if let Some(pivot_idx) = polysemous_bridge(&best, &adj, &comm) {
-                let pivot_name = name_of
+            let comm = communities(&topology.adj);
+            if let Some(pivot_idx) = polysemous_bridge(&best, &topology.adj, &comm) {
+                let pivot_name = topology
+                    .name_of
                     .get(&best[pivot_idx].0)
                     .cloned()
                     .unwrap_or_else(|| best[pivot_idx].0.clone());
@@ -169,7 +204,8 @@ impl<'a> Lachesis<'a> {
             let mut witnesses = Vec::new();
             if i > 0 {
                 let prev = &best[i - 1].0;
-                if let (Some(ma), Some(mb)) = (members.get(prev), members.get(id)) {
+                if let (Some(ma), Some(mb)) = (topology.members.get(prev), topology.members.get(id))
+                {
                     let overlap: Vec<String> = ma
                         .iter()
                         .filter(|m| mb.contains(*m))
@@ -191,7 +227,7 @@ impl<'a> Lachesis<'a> {
                 }
             }
             steps.push(SubsetStep {
-                category_name: name_of.get(id).cloned().unwrap_or_default(),
+                category_name: topology.name_of.get(id).cloned().unwrap_or_default(),
                 category_id: id.clone(),
                 pmi_from_prev: *p,
                 witnesses,
