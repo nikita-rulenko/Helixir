@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.1"><img src="https://img.shields.io/badge/release-v0.17.1-2ea44f" alt="Release v0.17.1" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.2"><img src="https://img.shields.io/badge/release-v0.17.2-2ea44f" alt="Release v0.17.2" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -155,6 +155,10 @@ The endpoint is the Helixir **MCP gateway** (`8765/mcp` by default), never the
 HelixDB database port (`6970` in this deployment). The gateway must already be
 running on the Helixir host and reachable through the trusted network; set
 `HELIXIR_GATEWAY_TOKEN` on the client when the server requires bearer auth.
+Set `gateway.public_url` (or `HELIXIR_GATEWAY_PUBLIC_URL`) to the externally
+reachable `/mcp` URL. The admin control plane then presents a copy-ready
+endpoint and `helixir-client connect` command instead of making the operator
+translate a wildcard listener address by hand.
 
 > The Homebrew lifecycle, APT repository setup, signing-key fingerprint,
 > headless flags, three HelixDB topology choices, source builds, upgrades, and
@@ -297,7 +301,7 @@ flowchart LR
 ```
 
 The deployed v0.17 storage contract declares **22 node types**, **30 edge types**,
-**5 vector indexes**, and **185 HQL queries**. These numbers describe
+**5 vector indexes**, and **189 HQL queries**. These numbers describe
 the complete physical schema, not 57 runtime-active capabilities: some entries
 are explicitly reserved and have no live producer. `HAS_MEMORY` records provenance;
 `MEMORY_IN_RBAC_GROUP` controls visibility. Equivalent author memories share a
@@ -403,7 +407,10 @@ operations.
 From one surface an administrator can inspect live memory/node/agent counts,
 explore the category-first graph, manage RBAC and dedup federations, follow the
 Moirai evidence journal, inspect Hygieia health, change redacted settings, and
-create or restore guarded managed-database backups.
+create or restore guarded managed-database backups. The Access graph also
+contains an admission inbox: principals with an active `onboarding` grant can
+be placed into a working visibility group through the same resumable domain
+operation used by `helixir rbac user onboard`.
 
 ```bash
 helixir control-plane status
@@ -428,7 +435,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.17.1 notes](helixir/doc/v0.17.1/notes.md) | What changed in this release |
+| [v0.17.2 notes](helixir/doc/v0.17.2/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.

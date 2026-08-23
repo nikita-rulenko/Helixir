@@ -249,7 +249,16 @@ jobs:
           name: helixir-linux-x86_64
           path: release
 
+      - name: Validate canonical live E2E manifest
+        run: make test-e2e-manifest
+
+      - name: Verify Docker gate fail-closed diagnostics
+        run: make test-pre-release-client-preflight
+
       - name: Run the disposable remote-client gate
+        env:
+          # GitHub-hosted runners are single-job, throwaway Docker daemons.
+          HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER: '1'
         run: |
           version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
           tools/pre_release_client_gate.sh \
@@ -452,6 +461,68 @@ jobs:
           platforms: ${{ matrix.platform }}
           cache-from: type=gha,scope=release-control-plane-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=release-control-plane-${{ matrix.arch }}
+
+  dogfood-candidate-images:
+    name: Export disposable ARM64 dogfood candidates
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    needs: [build, web-assets, client-quality-gate, homebrew-preflight]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned HelixDB CLI
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 \
+            -o /tmp/helix https://github.com/nikita-rulenko/helix-db/releases/download/v2.3.5/helix-aarch64-unknown-linux-gnu
+          echo '193bf284febb37bbdbc75190c05b11519e9573ac5383d1462ceca462196b37c1  /tmp/helix' \
+            | sha256sum -c -
+          sudo install -m 0755 /tmp/helix /usr/local/bin/helix
+          test "$(helix --version)" = 'Helix CLI 2.3.5'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: helixir-linux-arm64
+          path: helixir/release/archive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: helixir-web-dist
+          path: helixir/release/web
+
+      - name: Prepare release-shaped control-plane context
+        run: |
+          mkdir -p helixir/release/payload
+          tar xzf helixir/release/archive/helixir-linux-arm64.tar.gz \
+            -C helixir/release/payload
+          test -x helixir/release/payload/helixir
+          test -f helixir/release/web/index.html
+
+      - name: Compile the exact candidate schema
+        working-directory: helixir
+        run: |
+          helix check
+          helix build -i dev --quiet
+          test -s .helix/dev/Dockerfile
+
+      - name: Build and export candidate images
+        working-directory: helixir
+        run: |
+          docker image inspect helix-helixir-dev:latest >/dev/null
+          docker tag helix-helixir-dev:latest "helix-helixir-candidate:${GITHUB_SHA}"
+          docker build --target release-control-plane \
+            --tag "helixir-control-plane-candidate:${GITHUB_SHA}" .
+          docker save "helix-helixir-candidate:${GITHUB_SHA}" | gzip -1 \
+            >helixdb-candidate-arm64.tar.gz
+          docker save "helixir-control-plane-candidate:${GITHUB_SHA}" | gzip -1 \
+            >control-plane-candidate-arm64.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dogfood-candidate-images-arm64
+          path: |
+            helixir/helixdb-candidate-arm64.tar.gz
+            helixir/control-plane-candidate-arm64.tar.gz
+          retention-days: 1
 
   docker-manifest:
     name: Publish multi-arch Docker manifests

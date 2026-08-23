@@ -9,7 +9,62 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
+use futures::FutureExt;
 use serde_json::{Value, json};
+use std::future::Future;
+use std::panic::{AssertUnwindSafe, resume_unwind};
+
+/// Global administrator used by the canonical live-E2E runner.
+///
+/// Ignored E2E tests must not silently fall back to the memory owner as the
+/// authenticated principal: permanent RBAC treats those identities as
+/// different things. The runner always sets this variable explicitly.
+pub fn e2e_actor() -> String {
+    std::env::var("HELIXIR_RBAC_ACTOR")
+        .expect("HELIXIR_RBAC_ACTOR must name the disposable E2E global admin")
+}
+
+/// Concrete workspace used by ordinary live-E2E writes.
+///
+/// `default` is a reserved compatibility workspace, but the runner still
+/// passes it explicitly so no fixture exercises the removed unscoped path.
+pub fn e2e_group() -> String {
+    std::env::var("HELIXIR_E2E_GROUP")
+        .expect("HELIXIR_E2E_GROUP must name the disposable E2E workspace")
+}
+
+/// Always run asynchronous fixture cleanup, including after an assertion panic.
+///
+/// Cleanup reports every failed best-effort operation instead of stopping at
+/// the first one. A successful test fails on cleanup drift; an already failing
+/// test preserves its original panic after printing cleanup diagnostics.
+pub async fn with_cleanup<Test, Cleanup, T>(test: Test, cleanup: Cleanup) -> T
+where
+    Test: Future<Output = T>,
+    Cleanup: Future<Output = Vec<String>>,
+{
+    let outcome = AssertUnwindSafe(test).catch_unwind().await;
+    let cleanup_errors = cleanup.await;
+    match outcome {
+        Ok(value) => {
+            assert!(
+                cleanup_errors.is_empty(),
+                "E2E fixture cleanup failed: {}",
+                cleanup_errors.join("; ")
+            );
+            value
+        }
+        Err(payload) => {
+            if !cleanup_errors.is_empty() {
+                eprintln!(
+                    "E2E fixture cleanup also failed: {}",
+                    cleanup_errors.join("; ")
+                );
+            }
+            resume_unwind(payload)
+        }
+    }
+}
 
 /// Query the live HelixDB directly (bypassing the MCP layer) so a test can
 /// assert the GROUND TRUTH of what was persisted — e.g. that reasoning edges
@@ -78,6 +133,8 @@ pub struct McpClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    actor_id: String,
+    group_id: String,
     /// Server-initiated notifications captured while waiting for responses.
     pub notifications: Vec<Value>,
 }
@@ -93,7 +150,19 @@ impl McpClient {
     /// against the shared HelixDB, which is the real multi-consumer topology.
     pub fn spawn_with_env(envs: &[(&str, &str)]) -> (Self, f64) {
         let t0 = Instant::now();
+        let actor_id = envs
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (*key == "HELIXIR_RBAC_ACTOR").then(|| (*value).to_string()))
+            .unwrap_or_else(e2e_actor);
+        let group_id = envs
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (*key == "HELIXIR_E2E_GROUP").then(|| (*value).to_string()))
+            .unwrap_or_else(e2e_group);
         let mut child = Command::new(env!("CARGO_BIN_EXE_helixir-mcp"))
+            .env("HELIXIR_RBAC_ACTOR", &actor_id)
+            .env("HELIXIR_E2E_GROUP", &group_id)
             .envs(envs.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -107,6 +176,8 @@ impl McpClient {
             stdin,
             stdout,
             next_id: 1,
+            actor_id,
+            group_id,
             notifications: Vec::new(),
         };
 
@@ -130,6 +201,7 @@ impl McpClient {
     pub fn request_raw(&mut self, method: &str, params: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
+        let params = self.authorize_tool_call(method, params);
         let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         writeln!(self.stdin, "{msg}").expect("write request");
         self.stdin.flush().expect("flush");
@@ -154,6 +226,35 @@ impl McpClient {
                 self.notifications.push(value);
             }
         }
+    }
+
+    fn authorize_tool_call(&self, method: &str, mut params: Value) -> Value {
+        if method != "tools/call" {
+            return params;
+        }
+        let Some(call) = params.as_object_mut() else {
+            return params;
+        };
+        let tool_name = call
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let Some(arguments) = call.get_mut("arguments").and_then(Value::as_object_mut) else {
+            return params;
+        };
+
+        // Explicit test arguments always win. This preserves negative actor
+        // mismatch coverage while making legacy happy-path fixtures RBAC aware.
+        arguments
+            .entry("actor_id")
+            .or_insert_with(|| Value::String(self.actor_id.clone()));
+        if matches!(tool_name.as_str(), "add_memory" | "think_commit") {
+            arguments
+                .entry("group_id")
+                .or_insert_with(|| Value::String(self.group_id.clone()));
+        }
+        params
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Value {

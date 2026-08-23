@@ -32,7 +32,7 @@ pub(crate) fn gather_config(
         host: e("HELIX_HOST", "localhost"),
         port: e("HELIX_PORT", "6970"),
         instance: e("HELIX_INSTANCE", "bench"),
-        llm_provider: e("HELIX_LLM_PROVIDER", "ollama"),
+        llm_provider: e("HELIX_LLM_PROVIDER", "cerebras"),
         llm_model: e("HELIX_LLM_MODEL", helixir::DEFAULT_LLM_MODEL),
         llm_key: e("HELIX_LLM_API_KEY", ""),
         emb_provider: e("HELIX_EMBEDDING_PROVIDER", "ollama"),

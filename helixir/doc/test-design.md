@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
 
 ## 1. Stance
 
@@ -28,14 +28,55 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.17.1`):** 358 library unit tests plus CLI tests
-(`cargo test --all-targets`) and **45 HELIX_E2E-gated test files** in
+**Current (`v0.17.2`):** 369 library unit tests plus CLI tests
+(`cargo test --all-targets`) and **59 ignored HELIX_E2E tests in 46 files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
 `cargo test`; record the provider, database fixture and date whenever claiming
 a live run. The manual recipes live in the suites' module docs. Run unit tests:
 `cargo test --lib` from `helixir/`.
+
+### Canonical ignored-E2E matrix
+
+`tools/e2e_manifest.json` is the machine-readable inventory for every ignored
+test under `helixir/tests/*e2e.rs`. Each test owns an execution topology,
+ingest-buffer mode, RBAC actor/group environment, prerequisites and cleanup
+strategy. `tools/e2e_matrix.py --check` discovers the Rust tests independently
+and fails on missing, stale, duplicate or changed-ignore entries; `make
+test-e2e-manifest` runs that check plus its Docker-free deterministic tests.
+
+The runner never targets the production HelixDB port `6970` and requires the
+operator to opt into an isolated database with `HELIXIR_E2E_DISPOSABLE=1`.
+Before a current-schema run it proves through `helixir rbac status --json` that
+RBAC is enabled and active, `HELIXIR_RBAC_ACTOR` is a global admin, and
+`HELIXIR_E2E_GROUP` exists. It injects those identities into library and MCP
+fixtures, clears `HELIX_LLM_FALLBACK_CHAIN`, and enables or removes
+`HELIXIR_INGEST_BUFFER` per test so suites cannot inherit a conflicting mode.
+Tests assigned to another topology are reported as explicit `SKIP` rows.
+
+Run the current-schema matrix only against a disposable, already bootstrapped
+instance:
+
+```bash
+HELIXIR_E2E_DISPOSABLE=1 HELIX_HOST=127.0.0.1 HELIX_PORT=16969 \
+HELIXIR_RBAC_ACTOR=codex HELIXIR_E2E_GROUP=default \
+python3 tools/e2e_matrix.py --run --topology current-schema
+```
+
+The RBAC bootstrap suite owns three destructive states. Give each scenario a
+separate empty database; never reuse one store between commands:
+
+```bash
+HELIXIR_E2E_DISPOSABLE=1 HELIX_HOST=127.0.0.1 HELIX_PORT=16969 \
+python3 tools/e2e_matrix.py --run --topology fresh-store --fresh-scenario fresh
+# Recreate an empty database, then repeat with legacy-upgrade and interrupted-legacy.
+```
+
+`client-gate` entries remain owned by `tools/pre_release_client_gate.sh`, which
+creates and destroys their database and network. The matrix can select them
+inside that disposable environment with `--topology client-gate`; it does not
+create Docker resources itself.
 
 The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
@@ -104,7 +145,19 @@ write and search read-back; the same probe must reject the HelixDB port as an
 MCP gateway. A model-free live graph contract then
 assigns one principal to two isolated groups and proves wrong-group write
 denial, distinct dedup fingerprints, and exact memory visibility for both
-different owners and one owner writing into different groups.
+different owners and one owner writing into different groups. The same
+disposable database then proves that charter C2/C4 blocks direct and
+pipeline-level update/supersession of immutable seeds and raw inputs.
+
+The Docker-heavy client gate must run on an entirely disposable daemon. Local
+invocation fails closed when the daemon has any existing container or volume;
+use a dedicated VM or Docker context and explicitly set
+`HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1`. GitHub-hosted release runners make
+the same assertion because their daemon exists for one job only. The safety
+preflight also checks daemon liveness again at every stage boundary and its
+model-free tests cover both an initially unavailable daemon and loss after a
+successful preflight. Run it with `make
+test-pre-release-client-preflight` without creating containers.
 
 Homebrew cannot be qualified in a Linux container: Docker Desktop on macOS
 runs Linux containers in a VM. The release workflow therefore installs the
@@ -220,9 +273,14 @@ owners.
   `tools/pre_release_client_gate.sh` after the direct-network MCP smoke in
   `tools/mcp_gateway_visibility_smoke.py`; locally use `make
   test-pre-release-client CLIENT_GATE_ARCHIVE=<linux-server.tar.gz>
-  CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>`. The two archives are
-  required separately so the gate also proves package ownership does not
-  overlap.
+  CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>
+  HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1` **only inside a dedicated disposable
+  VM/context**. The two archives are required separately so the gate also
+  proves package ownership does not overlap.
+- `helixir/tests/charter_protected_e2e.rs` — current-schema disposable-DB proof
+  that `memory://rules` exposes active charter v1.0 and public updates cannot
+  mutate `immutable` or `raw_input` memories; the atomic HQL backstops also
+  reject guarded updates and supersession edges when Rust preflight is bypassed.
 - `helixir/tests/schema_inventory_e2e.rs` — model-free, read-only live proof
   that all 22 nodes, 5 vectors and 30 edges return server-side aggregate counts
   through the deployed census queries; deprecated declarations must be empty.

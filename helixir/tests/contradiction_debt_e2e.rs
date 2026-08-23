@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -31,16 +33,24 @@ async fn reconcile_drains_preference_keeps_factual() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     let tooling = admin.tooling();
 
     let run = token();
     let user = format!("debt_{run}");
 
     // Four memories on distinct topics → four real Memory nodes.
-    async fn first_id(client: &HelixirClient, text: &str, user: &str) -> String {
+    async fn first_id(
+        client: &HelixirClient,
+        actor: &str,
+        group: &str,
+        text: &str,
+        user: &str,
+    ) -> String {
         client
-            .add(text, user, None, None)
+            .add_as_in_group(actor, text, user, None, None, Some(group))
             .await
             .expect("add")
             .memory_ids
@@ -53,36 +63,48 @@ async fn reconcile_drains_preference_keeps_factual() {
     // irrelevant — reconcile keys off the edge's strategy, which we seed below.
     let m1 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("Service debt{run}a uses LRU cache eviction."),
         &user,
     )
     .await;
     let m2 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("The debt{run}b harvest festival is held in October."),
         &user,
     )
     .await;
     let m3 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("Planet debt{run}c orbits a red dwarf star."),
         &user,
     )
     .await;
     let m4 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("Chef debt{run}d perfected a rye sourdough recipe."),
         &user,
     )
     .await;
     let m5 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("Volcano debt{run}e last erupted in the Pleistocene."),
         &user,
     )
     .await;
     let m6 = first_id(
         &client,
+        &actor,
+        &group,
         &format!("Violinist debt{run}f tuned to baroque pitch."),
         &user,
     )

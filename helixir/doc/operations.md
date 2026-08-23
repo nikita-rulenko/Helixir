@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -175,6 +175,12 @@ group. The target may be reserved `default`, but never `onboarding` or `moirai`.
 Use repeated runs for principals that intentionally belong to several working
 groups; add `--keep-onboarding` only to the staged first run.
 
+The global-admin control plane exposes the same operation under **Access graph
+→ Onboarding**. Its inbox is derived from active `onboarding` assignments in
+HelixDB, not from presence rows or a browser-local registry. Selecting a
+working group and role grants and verifies the target scope before the server
+removes temporary onboarding access.
+
 Removing a user deactivates assignments but preserves the User node and role
 history. Reserved workspaces cannot be deleted. The last global administrator
 cannot be revoked.
@@ -315,7 +321,7 @@ hold deeper snapshots are reported as requiring a restart.
 | `HELIX_LLM_MODEL` | `gpt-oss-120b` | Primary reasoning model |
 | `HELIX_LLM_API_KEY` | — | Remote primary-provider credential |
 | `HELIX_LLM_BASE_URL` | provider default | Custom OpenAI-compatible or Ollama URL |
-| `HELIX_LLM_FALLBACK_CHAIN` | `deepseek,ollama` | Ordered generation fallback tiers |
+| `HELIX_LLM_FALLBACK_CHAIN` | empty | Explicit opt-in generation fallback tiers; the default write path remains Cerebras `gpt-oss-120b` only |
 | `HELIX_DEEPSEEK_API_KEY` | — | DeepSeek fallback credential |
 | `HELIX_EMBEDDING_PROVIDER` | `ollama` | `ollama` or OpenAI-compatible `openai` |
 | `HELIX_EMBEDDING_URL` | `http://localhost:11434` | Embedding endpoint |
@@ -330,6 +336,7 @@ hold deeper snapshots are reported as requiring a restart.
 | `HELIXIR_EMBED_FALLBACK_DIMENSION` | auto | Expected fallback vector dimension |
 | `HELIXIR_EMBED_CACHE_WARMUP` | — | `1` for background or `blocking` for synchronous warmup |
 | `HELIXIR_GATEWAY_TOKEN` | — | Bearer token for the network MCP gateway |
+| `HELIXIR_GATEWAY_PUBLIC_URL` | — | Network-reachable `/mcp` URL advertised to administrators and remote clients |
 | `RUST_LOG` | `helixir=warn` | Logging filter |
 
 The persistent embedding namespace includes format, provider, normalized
@@ -370,6 +377,14 @@ helixir config set gateway.auth_token <secret>
 helixir config apply
 helixir gateway start --require-auth
 ```
+
+Listener coordinates and client coordinates are intentionally separate.
+`gateway.default_bind` controls where the server listens; `gateway.public_url`
+is the URL an administrator can safely send to another host. Configure it in
+the Stewardship page, with `helixir config set gateway.public_url <url>`, or
+through `HELIXIR_GATEWAY_PUBLIC_URL`. The Access graph shows the normalized
+`/mcp` endpoint and a copy-ready client command. Wildcard and loopback binds are
+shown for diagnosis but explicitly marked as not shareable.
 
 `--require-auth` fails closed with `503` until a token is configured. Do not use
 Helixir RBAC as a substitute for transport authentication against malicious
@@ -484,6 +499,8 @@ global administrator, and combines:
 
 - bounded memory, node, user, group, and live-agent projections;
 - searchable RBAC and dedup-federation administration;
+- a graph-derived onboarding inbox with atomic placement into working groups;
+- a copy-ready advertised MCP gateway endpoint for remote client handoff;
 - category-first graph exploration with drill-down into real memory nodes;
 - Moirai evidence and Hygieia event journals;
 - redacted settings with review-before-apply;

@@ -18,6 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -35,7 +37,9 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     let tooling = admin.tooling();
 
     let run = token();
@@ -59,7 +63,10 @@ async fn route_subsets_walks_high_pmi_chain_not_thick_axis() {
     ];
     let mut m: Vec<String> = Vec::new();
     for f in facts {
-        let r = client.add(f, &user, None, None).await.expect("add");
+        let r = client
+            .add_as_in_group(&actor, f, &user, None, None, Some(&group))
+            .await
+            .expect("add");
         if let Some(id) = r.memory_ids.first() {
             m.push(id.clone());
         }

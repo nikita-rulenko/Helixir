@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.17.1"
+version = "0.17.2"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]

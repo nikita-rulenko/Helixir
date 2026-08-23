@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (185 HQL queries that materialize the
+and `helixir/schema/queries.hx` (189 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -32,7 +32,7 @@ flowchart LR
 ```
 
 The physical contract declares **22 node types**, **5 vector-index types**, **30
-edge types**, and **185 named HQL queries**. Declaration is not the same as
+edge types**, and **189 named HQL queries**. Declaration is not the same as
 runtime use. The tables below label every surface as **active**, **optional**,
 or **reserved**; reserved entries have no live producer and are not product
 capabilities. The default embedding dimension is 768.

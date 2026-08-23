@@ -1,4 +1,4 @@
-.PHONY: build build-client install-client web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-hive test-pre-release-client test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build build-client install-client web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-manifest test-e2e-live test-e2e-hive test-pre-release-client test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
 BINARY_DIR := helixir/target/release
@@ -116,10 +116,20 @@ test: ## Run all tests
 	cd helixir && $(CARGO) test
 	cd helixir-client && $(CARGO) test --locked
 
+test-e2e-manifest: ## Deterministic ignored-E2E inventory and environment ownership check
+	python3 tools/e2e_matrix.py --check
+	cd tools && python3 -m unittest -v test_e2e_matrix.py
+
+test-e2e-live: ## Canonical disposable current-schema E2E matrix (never production port 6970)
+	python3 tools/e2e_matrix.py --run --topology current-schema
+
 test-e2e-hive: ## Hive cross-user E2E (needs live HelixDB + LLM + embeddings; same env as MCP)
 	cd helixir && HELIX_E2E=1 $(CARGO) test hive_cross_user_collective_link_e2e --test hive_memory_e2e -- --ignored --nocapture
 
 test-pre-release-client: ## Disposable APT, two-client and RBAC visibility release gate
+	@if [ "$${HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER:-0}" != 1 ]; then \
+		echo 'run this gate in a disposable VM/CI Docker daemon; set HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1 there' >&2; exit 2; \
+	fi
 	@test -f "$(CLIENT_GATE_ARCHIVE)" || { \
 		echo 'set CLIENT_GATE_ARCHIVE to a Linux release archive' >&2; exit 2; \
 	}
@@ -129,6 +139,9 @@ test-pre-release-client: ## Disposable APT, two-client and RBAC visibility relea
 	tools/pre_release_client_gate.sh --archive "$(CLIENT_GATE_ARCHIVE)" \
 		--client-archive "$(CLIENT_GATE_CLIENT_ARCHIVE)" \
 		--version "$(VERSION)" --arch "$(CLIENT_GATE_ARCH)"
+
+test-pre-release-client-preflight: ## Deterministic safety tests for the Docker gate
+	tools/test_pre_release_client_gate_preflight.sh
 
 test-control-plane-soak: ## Bounded live polling soak (requires running control-plane)
 	python3 tools/control_plane_soak.py

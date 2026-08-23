@@ -14,6 +14,14 @@ impl ToolingManager {
     ) -> Result<bool, ToolingError> {
         info!("Updating memory: {}", memory_id);
 
+        // Charter C2/C4 run before embeddings or any persistence mutation.
+        let protection = self.get_memory_protection(memory_id).await?;
+        if let Some(conflict_type) = protection.conflict_type() {
+            return Err(ToolingError::Memory(format!(
+                "memory {memory_id} is protected by charter ({conflict_type})"
+            )));
+        }
+
         let vector = self
             .embedder
             .generate(new_content, true)
@@ -50,16 +58,16 @@ impl ToolingManager {
         };
 
         #[derive(Serialize)]
-        struct UpdateByIdParams {
-            id: String,
+        struct UpdateParams {
+            memory_id: String,
             content: String,
             certainty: i64,
             importance: i64,
             updated_at: String,
         }
 
-        let params = UpdateByIdParams {
-            id: internal_id.clone(),
+        let params = UpdateParams {
+            memory_id: memory_id.to_string(),
             content: new_content.to_string(),
             // Read the configured defaults (was hardcoded 80/50 — a latent bug:
             // it diverged silently from config.default_* if those changed).
@@ -68,11 +76,21 @@ impl ToolingManager {
             updated_at: now.clone(),
         };
 
-        let _result: serde_json::Value = self
+        #[derive(serde::Deserialize)]
+        struct UpdateResult {
+            #[serde(default)]
+            updated: Option<serde_json::Value>,
+        }
+        let result: UpdateResult = self
             .db
-            .execute_query("updateMemoryById", &params)
+            .execute_query("updateMutableMemory", &params)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
+        if result.updated.is_none() {
+            return Err(ToolingError::Memory(format!(
+                "charter rejected concurrent update of {memory_id}"
+            )));
+        }
 
         debug!(
             "Memory {} (id={}) updated successfully",

@@ -15,6 +15,8 @@
 use helixir::core::HelixirClient;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod common;
+
 #[tokio::test]
 #[ignore = "needs HELIX_E2E=1 and live HelixDB + LLM + embeddings; see module doc"]
 async fn hive_cross_user_collective_link_e2e() {
@@ -50,9 +52,11 @@ async fn hive_cross_user_collective_link_e2e() {
         .initialize()
         .await
         .expect("initialize (health + ontology)");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
 
     let r_a = client
-        .add(&message, &user_a, None, None)
+        .add_as_in_group(&actor, &message, &user_a, None, None, Some(&group))
         .await
         .expect("user_a add_memory");
     let mem_a = r_a
@@ -62,7 +66,7 @@ async fn hive_cross_user_collective_link_e2e() {
         .expect("user_a should produce at least one memory id");
 
     let r_b = client
-        .add(&message, &user_b, None, None)
+        .add_as_in_group(&actor, &message, &user_b, None, None, Some(&group))
         .await
         .expect("user_b add_memory");
 
@@ -77,7 +81,8 @@ async fn hive_cross_user_collective_link_e2e() {
     let mut last5: Vec<(String, u64, String)> = vec![];
     for _ in 0..15 {
         let results = client
-            .search(
+            .search_as(
+                &actor,
                 &token,
                 &user_b,
                 helixir::core::helixir_client::SearchParams {

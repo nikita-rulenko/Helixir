@@ -8,7 +8,7 @@ use helixir::db::HelixClient;
 use helixir::schema_inventory::{SchemaLifecycle, census, declarations};
 
 #[tokio::test]
-#[ignore = "needs HELIX_E2E=1 and a live HelixDB with the current 185-query schema"]
+#[ignore = "needs HELIX_E2E=1 and a live HelixDB with the current deployed schema"]
 async fn every_physical_declaration_has_a_server_side_count() {
     assert_eq!(
         std::env::var("HELIX_E2E").unwrap_or_default(),

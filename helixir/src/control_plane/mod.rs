@@ -2,12 +2,14 @@
 
 mod admin;
 mod auth;
+mod connection;
 mod dto;
 mod graph;
 mod graph_project;
 mod graph_snapshot;
 mod host_admin;
 mod moirai;
+mod onboarding;
 mod operations;
 mod response_security;
 mod server;
@@ -21,10 +23,10 @@ use std::path::PathBuf;
 pub use dto::{
     AccessProjection, AgentFamilyProjection, AgentProjection, CategoryBreadcrumbProjection,
     CategoryEdgeProjection, CategoryNodeProjection, ContributorProjection, ControlPlaneMeta,
-    DiscoveryResponse, GraphEdgeProjection, GroupMutation, GroupProjection, GroupRoleProjection,
-    MemoryFieldProjection, MemoryGroupProjection, MemoryProjection, MoiraiInsightProjection,
-    MoiraiProjection, MoiraiStageProjection, MutationReceipt, OverviewStats, PrincipalProjection,
-    RoleMutation, SystemProjection,
+    DiscoveryResponse, GatewayConnectionProjection, GraphEdgeProjection, GroupMutation,
+    GroupProjection, GroupRoleProjection, MemoryFieldProjection, MemoryGroupProjection,
+    MemoryProjection, MoiraiInsightProjection, MoiraiProjection, MoiraiStageProjection,
+    MutationReceipt, OverviewStats, PrincipalProjection, RoleMutation, SystemProjection,
 };
 
 /// Runtime options for the local web control plane.

@@ -37,11 +37,9 @@ pub struct WriteConfig {
     /// Minimum NLI softmax probability for a routed edge; unconfident pairs
     /// stay with the LLM.
     pub nli_route_min_prob: f32,
-    /// Charter increment 2 (#34): when a destructive verdict (UPDATE /
-    /// SUPERSEDE / DELETE) hits a charter escalation, DEFER it instead of
-    /// executing — store the new fact alongside the old, record a
-    /// charter_deferred CONTRADICTS edge, and let the agent settle it with
-    /// resolve_contradiction (retract = the supersede happens then).
+    /// Charter v1.0 (#34): defer configurable C3/C5 destructive escalations.
+    /// C1/C2/C4 remain hard guards even when this diagnostic compatibility
+    /// switch is false.
     pub charter_blocking: bool,
 }
 impl Default for WriteConfig {
@@ -152,6 +150,11 @@ impl Default for SwarmConfig {
 #[serde(default)]
 pub struct GatewayConfig {
     pub default_bind: String,
+    /// Client-facing streamable-HTTP URL advertised by the control plane.
+    /// Keep this distinct from `default_bind`: wildcard and loopback binds are
+    /// valid listeners but are not useful connection coordinates for a remote
+    /// agent host.
+    pub public_url: Option<String>,
     /// Optional bearer token for the HTTP MCP gateway. `None` preserves the
     /// intentional full-trust network model. Prefer the
     /// `HELIXIR_GATEWAY_TOKEN` environment override for secrets.
@@ -161,6 +164,7 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             default_bind: "0.0.0.0:8765".to_string(),
+            public_url: None,
             auth_token: None,
         }
     }

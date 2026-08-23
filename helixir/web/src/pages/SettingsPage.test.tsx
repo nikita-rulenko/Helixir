@@ -14,6 +14,7 @@ const settings: SettingsSnapshot = {
   database: { host: "127.0.0.1", port: 6970, instance: "helixir" },
   reasoning: { provider: "cerebras", model: "gpt-oss-120b", base_url: "https://api.cerebras.ai/v1", temperature: 0.1, api_key_configured: true },
   embeddings: { provider: "ollama", model: "nomic-embed-text", url: "http://127.0.0.1:11434", api_key_configured: false },
+  gateway: { bind: "0.0.0.0:8765", public_url: "https://memory.example.test/mcp", auth_enabled: true },
   swarm: { active_window_secs: 120, presence_ttl_secs: 600 },
   watchdog: { enabled: true, sample_interval_secs: 30, mem_alert_pct: 80, mem_restart_pct: 95, allow_container_restart: true, allow_cache_reclaim: true, backup_interval_hours: 6, backup_keep: 7 },
 };

@@ -152,7 +152,7 @@ You have multiple cognitive roles. Activate the appropriate role based on user r
 | Connect two ideas | `connect_memories` | "How are auth and caching related?" (path between anchors) |
 | Complex thinking | FastThink (`think_*` tools) | Multi-step analysis, architecture decisions |
 | See connections | `get_memory_graph` | Explore memory structure |
-| Fix outdated info | `update_memory` | Correct wrong information |
+| Correct one exact unprotected record | `update_memory` | Fix a known extraction error by memory id; immutable/raw inputs are rejected |
 
 ## SEARCH MODES
 
@@ -318,7 +318,7 @@ Before calling `add_memory`, evaluate:
 - Grep/search results (technical noise)
 - Lint output, compiler warnings
 - File contents (already in codebase)
-- Repeated information (use `update_memory` instead)
+- Repeated information (let `add_memory` deduplicate it; do not rewrite a record merely to avoid repetition)
 - Temporary debugging data
 
 ### SAVE PROTOCOL:
@@ -326,7 +326,7 @@ Before calling `add_memory`, evaluate:
 Before add_memory, ask:
 1. Will this be useful in 1 week? → NO = skip
 2. Is this a DECISION or OUTCOME? → YES = save
-3. Does similar memory exist? → YES = update_memory, not add
+3. Does similar memory exist? → YES = use `add_memory`; the decision matrix will deduplicate, link, update, supersede, or escalate safely
 4. Is this technical noise? → YES = skip
 ```
 

@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -81,9 +81,12 @@ mundane, whose chain is an insight. Design consequences, each enforceable:
   (origin, edge, parent, ppr) and every connection a cumulative confidence,
   so the agent can verify a chain instead of believing it.
 - **The write side is governed by a charter** (`memory-charter.md`):
-  a constitution of conflicts the engine may never resolve silently
-  (deleting, rewriting preferences/goals/opinions, contradictions) —
-  they escalate to the agent as `needs_clarification` questions.
+  active v1.0 is a constitution of conflicts the engine may never resolve
+  silently. C1/C2/C4 hard-block automatic deletion and mutation of immutable
+  or raw-source records; seeds and adopted rules are created immutable in the
+  same persistence mutation, while interrupted legacy seed passes resume and
+  promote existing rows. C3/C5 defer governed rewrites by default. Every
+  dispute is surfaced as a `needs_clarification` question.
 
 ---
 
@@ -94,6 +97,7 @@ Releases as evidence of the project's direction. Source:
 
 | Tag | Date | Theme | Key additions / fixes |
 |---|---|---|---|
+| v0.17.2 | 2026-08-23 | Enforced memory charter | Charter v1.0 is enforced by Rust and atomic HQL mutation guards; protected seeds and learned rules are immutable, default generation remains on Cerebras `gpt-oss-120b`, client onboarding is visible in the admin UI, and destructive Docker release gates fail closed on non-disposable daemons. |
 | v0.17.1 | 2026-08-23 | Governed schema ledger | The physical HelixDB contract is now machine-classified as active, reserved, or deprecated and exposed through a bounded global-admin census. Server operators also get one resumable graph-backed command that moves an enrolled remote client from reserved onboarding into its working group without weakening RBAC. |
 | v0.17.0 | 2026-08-22 | Distributed agent family | Agent-only hosts get an independent `helixir-client` package that connects only to the MCP gateway. Presence now models stable authenticated principals separately from transient root/child execution instances, so one logical agent family stays online while any member lease is active without inventing memory writes. |
 | v0.16.1 | 2026-08-21 | One host, one gateway | HTTP-capable MCP clients share one managed gateway process because retained client-owned stdio pipes cannot provide a reliable server-side lifecycle signal. Registration is transport-aware, backup-verified and rollback-safe. |

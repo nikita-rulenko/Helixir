@@ -105,6 +105,36 @@ fn test_memory_decision_builders() {
 }
 
 #[test]
+fn validation_canonicalizes_operation_specific_targets() {
+    let engine = gated_engine();
+    let candidates = vec![similar("mem_expected", 0.91)];
+
+    let mut supersede = MemoryDecision::supersede("mem_expected", 90, "newer state");
+    supersede.target_memory_id = Some("mem_wrong".to_string());
+    assert!(engine.validate_decision(&mut supersede, &candidates));
+    assert_eq!(supersede.target_memory_id.as_deref(), Some("mem_expected"));
+    assert_eq!(
+        supersede.supersedes_memory_id.as_deref(),
+        Some("mem_expected")
+    );
+
+    let mut contradict = MemoryDecision {
+        operation: MemoryOperation::Contradict,
+        target_memory_id: Some("mem_wrong".to_string()),
+        contradicts_memory_id: Some("mem_expected".to_string()),
+        confidence: 90,
+        reasoning: "conflict".to_string(),
+        ..Default::default()
+    };
+    assert!(engine.validate_decision(&mut contradict, &candidates));
+    assert_eq!(contradict.target_memory_id.as_deref(), Some("mem_expected"));
+    assert_eq!(
+        contradict.contradicts_memory_id.as_deref(),
+        Some("mem_expected")
+    );
+}
+
+#[test]
 fn test_link_existing_builder() {
     let link = MemoryDecision::link_existing("mem_shared", 90, "same fact from different user");
     assert_eq!(link.operation, MemoryOperation::LinkExisting);

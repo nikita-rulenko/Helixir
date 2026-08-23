@@ -19,6 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -40,6 +42,8 @@ async fn ingest_buffer_roundtrip() {
 
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
     client.initialize().await.expect("initialize");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
 
     let run = token();
     let user = format!("ingest_e2e_{run}");
@@ -50,7 +54,7 @@ async fn ingest_buffer_roundtrip() {
 
     // 1. Enqueue — must return a pending_id without running the pipeline.
     let enq = client
-        .add_buffered(&msg, &user, None, None)
+        .add_buffered_as_in_group(&actor, &msg, &user, None, None, Some(&group))
         .await
         .expect("add_buffered");
     assert!(enq.queued, "buffered add must report queued=true");
@@ -63,7 +67,8 @@ async fn ingest_buffer_roundtrip() {
 
     // The pipeline has NOT run yet — nothing is searchable.
     let before = client
-        .search(
+        .search_as(
+            &actor,
             &msg,
             &user,
             helixir::core::helixir_client::SearchParams {
@@ -82,7 +87,7 @@ async fn ingest_buffer_roundtrip() {
 
     // 2. Drain the queue serially (what the background worker does).
     let processed = client
-        .admin_as("codex")
+        .admin_as(&actor)
         .await
         .expect("RBAC admin")
         .tooling()
@@ -92,7 +97,7 @@ async fn ingest_buffer_roundtrip() {
 
     // 3. Status is now done, with a result payload.
     let status = client
-        .add_status_as("codex", &enq.pending_id)
+        .add_status_as(&actor, &enq.pending_id)
         .await
         .expect("add_status");
     assert_eq!(status.status, "done", "status after drain: {status:?}");
@@ -104,7 +109,8 @@ async fn ingest_buffer_roundtrip() {
 
     // 4. The fact is now searchable.
     let after = client
-        .search(
+        .search_as(
+            &actor,
             &msg,
             &user,
             helixir::core::helixir_client::SearchParams {
@@ -123,7 +129,7 @@ async fn ingest_buffer_roundtrip() {
 
     // 5. Outbox carries the outcome; draining it delivers and prunes.
     let notices = client
-        .drain_notices_as("codex", &user, 20)
+        .drain_notices_as(&actor, &user, 20)
         .await
         .expect("drain_notices");
     assert!(
@@ -136,7 +142,7 @@ async fn ingest_buffer_roundtrip() {
     // Idempotent drain: the delivered notice does not come back, and the
     // tombstone PendingInput was pruned (status now not_found).
     let second = client
-        .drain_notices_as("codex", &user, 20)
+        .drain_notices_as(&actor, &user, 20)
         .await
         .expect("drain_notices 2");
     assert!(
@@ -144,7 +150,7 @@ async fn ingest_buffer_roundtrip() {
         "delivered notices must not be redelivered"
     );
     let gone = client
-        .add_status_as("codex", &enq.pending_id)
+        .add_status_as(&actor, &enq.pending_id)
         .await
         .expect("add_status gone");
     assert_eq!(

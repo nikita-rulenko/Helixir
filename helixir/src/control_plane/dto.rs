@@ -105,10 +105,24 @@ pub struct AccessProjection {
     /// Execution instances that are children of a logical principal.
     pub subagents: Vec<AgentProjection>,
     pub principals: Vec<PrincipalProjection>,
+    /// Principals whose temporary admission grant is still active.
+    pub onboarding_principals: Vec<PrincipalProjection>,
     pub groups: Vec<GroupProjection>,
     pub dedup_groups: Vec<DedupGroupProjection>,
     pub contributors: Vec<ContributorProjection>,
     pub contributor_sample_size: usize,
+}
+
+/// Safe client connection coordinates. The bearer value itself is never
+/// returned; only whether transport authentication is enabled.
+#[derive(Debug, Clone, Serialize)]
+pub struct GatewayConnectionProjection {
+    pub bind: String,
+    pub client_url: String,
+    pub advertised: bool,
+    pub shareable: bool,
+    pub auth_enabled: bool,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +285,15 @@ pub struct GroupMemberMutation {
 pub struct GroupUserMutation {
     pub group_id: String,
     pub subject_id: String,
+}
+
+/// Place a self-enrolled principal into an existing working group.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OnboardingPlacementMutation {
+    pub principal_id: String,
+    pub group_id: String,
+    #[serde(default = "default_worker_role")]
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

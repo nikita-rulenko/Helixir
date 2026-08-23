@@ -201,6 +201,8 @@ pub const AGED: &[(&str, &str, &str, &str)] = &[
 
 fn seed_aged() {
     use serde_json::json;
+    let actor = super::e2e_actor();
+    let group = super::e2e_group();
     super::db_query(
         "addUser",
         &json!({"user_id": GOLDEN_USER, "name": GOLDEN_USER}),
@@ -219,6 +221,15 @@ fn seed_aged() {
             "linkUserToMemory",
             &json!({"user_id": GOLDEN_USER, "memory_id": mid, "context": "golden"}),
         );
+        super::db_query(
+            "linkMemoryToRbacGroup",
+            &json!({
+                "memory_id": mid,
+                "group_id": group,
+                "assigned_by": actor,
+                "assigned_at": chrono::Utc::now().to_rfc3339(),
+            }),
+        );
     }
 }
 
@@ -227,6 +238,8 @@ fn seed_aged() {
 /// One batched add_prepared call: one embed batch, one decision phase, one
 /// concurrent inference phase — LLM-free on a fresh store, minutes not tens.
 pub async fn ensure_seeded(client: &HelixirClient) -> usize {
+    let actor = super::e2e_actor();
+    let group = super::e2e_group();
     let atoms: Vec<ExtractedMemory> = corpus()
         .into_iter()
         .map(|(_, text, mtype)| ExtractedMemory {
@@ -240,7 +253,14 @@ pub async fn ensure_seeded(client: &HelixirClient) -> usize {
         .collect();
 
     let r = client
-        .add_prepared(atoms, GOLDEN_USER, None, Some("golden-fixture"))
+        .add_prepared_as_in_group(
+            &actor,
+            atoms,
+            GOLDEN_USER,
+            None,
+            Some("golden-fixture"),
+            Some(&group),
+        )
         .await
         .expect("golden seed batch");
     let added_total = r.memories_added;
@@ -255,7 +275,7 @@ pub async fn ensure_seeded(client: &HelixirClient) -> usize {
         for (from_m, to_m, rt) in chains() {
             if let (Some(f), Some(t)) = (marker_ids.get(from_m), marker_ids.get(to_m)) {
                 let _ = client
-                    .admin_as("codex")
+                    .admin_as(&actor)
                     .await
                     .expect("RBAC admin")
                     .tooling()
@@ -281,7 +301,8 @@ pub async fn ensure_seeded(client: &HelixirClient) -> usize {
     // Visibility wait: poll until the first marker is searchable (or 30s).
     for _ in 0..30 {
         let hits = client
-            .search(
+            .search_as(
+                &actor,
                 "payments sqlite postgres migration",
                 GOLDEN_USER,
                 helixir::core::helixir_client::SearchParams {

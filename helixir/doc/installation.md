@@ -1,6 +1,6 @@
 # Installation
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
 
 This is the maintained installation reference. The root README intentionally
 keeps only the shortest working path; topology choices, package trust,
@@ -274,8 +274,11 @@ HELIX_EMBEDDING_API_KEY=... helixir onboard --non-interactive \
   --embedding-url https://api.openai.com/v1
 ```
 
-`--no-local-llm` skips only the optional fallback generation model. It does not
-disable NLI or embeddings.
+The default does not install a generation fallback: memory extraction and
+decisions stay on the configured Cerebras `gpt-oss-120b` path. Passing
+`--local-llm-model <model>` is an explicit opt-in. `--no-local-llm` makes that
+choice explicit and does not disable mandatory NLI or the selected embedding
+runtime; local embeddings still install Ollama plus Nomic.
 
 `helixir doctor` sends a real embedding probe. If the configured remote path is
 missing or invalid, doctor reports the failure, offers or performs recovery
@@ -319,6 +322,9 @@ each agent host:
 ```bash
 # Helixir host (trusted subnet; add --require-auth outside it)
 helixir gateway start --bind 0.0.0.0:8765
+
+# Advertise the address remote agent hosts can actually reach.
+helixir config set gateway.public_url http://10.0.0.12:8765/mcp
 
 # Agent host (choose one package manager)
 brew install nikita-rulenko/tap/helixir-client
@@ -387,6 +393,12 @@ For a custom stdio MCP client:
   }
 }
 ```
+
+The same placement is available in the global-admin control plane under
+**Access graph → Onboarding**. The page also displays the configured public MCP
+endpoint and a copy-ready `helixir-client connect` command. Its pending list is
+the live set of active `onboarding` memberships stored in HelixDB; it is not a
+second user registry.
 
 On macOS, the command normally starts with
 `/Users/<you>/.helixir/current/helixir-mcp`.

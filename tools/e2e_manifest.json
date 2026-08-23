@@ -1,0 +1,1118 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "actor_id": "codex",
+    "group_id": "default",
+    "retrieval_profile": "algo_opt"
+  },
+  "tests": [
+    {
+      "target": "atropos_capstone_e2e",
+      "test": "atropos_surfaces_the_one_real_thread",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed"
+    },
+    {
+      "target": "charter_blocking_e2e",
+      "test": "preference_reversal_never_rewrites_silently",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "charter_false_merge_e2e",
+      "test": "related_but_distinct_facts_both_persist_46",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "charter_learning_e2e",
+      "test": "three_identical_verdicts_grow_a_rule",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "charter_protected_e2e",
+      "test": "immutable_and_raw_input_reject_public_updates",
+      "topology": "client-gate",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + disposable current-schema HelixDB"
+    },
+    {
+      "target": "chunking_e2e",
+      "test": "long_memory_is_chunked_on_write_9",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "client_rbac_scope_e2e",
+      "test": "concurrent_clients_preserve_group_scoped_visibility",
+      "topology": "client-gate",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "requires HELIX_E2E=1 and a fresh disposable HelixDB v2.3.5 instance"
+    },
+    {
+      "target": "clotho_alias_e2e",
+      "test": "alias_pass_wires_synonyms_and_converges",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings"
+    },
+    {
+      "target": "clotho_autotag_e2e",
+      "test": "clotho_autotag_dictionary",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed + ollama embed"
+    },
+    {
+      "target": "clotho_dominance_e2e",
+      "test": "dominance_gate_keeps_domains_disjoint",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed + LLM"
+    },
+    {
+      "target": "concept_connect_polish_e2e",
+      "test": "connect_by_id_populates_node_content_23",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "concept_connect_polish_e2e",
+      "test": "concept_filter_excludes_adjacent_types_62",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "concurrent_mcp_stress_e2e",
+      "test": "concurrent_collective_search_does_not_crash",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "contradiction_debt_e2e",
+      "test": "reconcile_drains_preference_keeps_factual",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + LLM + the #45 contradiction queries deployed"
+    },
+    {
+      "target": "cross_domain_bridge_e2e",
+      "test": "cross_domain_bridge_via_category",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed"
+    },
+    {
+      "target": "daemon_e2e",
+      "test": "daemon_on_call_runs_exactly_one_pass",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + LLM + Category schema deployed"
+    },
+    {
+      "target": "edges_db_verified_e2e",
+      "test": "edges_persisted_with_correct_types_db",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "edges_db_verified_e2e",
+      "test": "causal_two_cycle_rejected_db",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings"
+    },
+    {
+      "target": "fast_commit_e2e",
+      "test": "think_commit_fast_path_latency_and_evidence_edge",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "hive_memory_e2e",
+      "test": "hive_cross_user_collective_link_e2e",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 and live HelixDB + LLM + embeddings; see module doc"
+    },
+    {
+      "target": "ingest_buffer_e2e",
+      "test": "ingest_buffer_roundtrip",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "enabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "lachesis_gate_e2e",
+      "test": "lachesis_gates_a_routed_chain",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "lachesis_pmi_e2e",
+      "test": "pmi_damps_thick_axis_lifts_specific",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed"
+    },
+    {
+      "target": "lachesis_route_subsets_e2e",
+      "test": "route_subsets_walks_high_pmi_chain_not_thick_axis",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Category schema deployed"
+    },
+    {
+      "target": "longest_chain_e2e",
+      "test": "longest_chain_reconstructs_a_thread",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB with a woven reasoning cluster"
+    },
+    {
+      "target": "mcp_full_surface_e2e",
+      "test": "mcp_full_surface_liveness",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_full_surface_e2e",
+      "test": "oracle_relation_inference_across_writes",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_ingest_e2e",
+      "test": "mcp_ingest_buffer",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "enabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, HELIXIR_INGEST_BUFFER=1, live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "multi_consumer_collective_invariants",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "multi_consumer_buffer_invariants",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "managed-by-test",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "buffered_add_reads_as_success_63",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "managed-by-test",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "list_users_discovery_gated_64",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "personal_thin_recall_hints_collective_64",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "collective_search_collapses_duplicate_holders_3a",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_multi_consumer_e2e",
+      "test": "write_with_agent_id_appears_in_swarm_39",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "managed-by-test",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "mcp_read_e2e",
+      "test": "mcp_read_e2e",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 and live HelixDB (bench corpus) + embeddings; see module doc"
+    },
+    {
+      "target": "mcp_write_e2e",
+      "test": "mcp_write_e2e",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, live HelixDB + embeddings + working LLM; see module doc"
+    },
+    {
+      "target": "negative_inputs_e2e",
+      "test": "malformed_inputs_are_handled_gracefully",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "nli_antimerge_e2e",
+      "test": "paraphrase_merge_never_unifies_contradiction",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "nli"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + the NLI model"
+    },
+    {
+      "target": "nli_route_e2e",
+      "test": "nli_routes_a_typed_edge_with_a_dead_llm",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "nli"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + the NLI model (no LLM needed)"
+    },
+    {
+      "target": "ontology_classification_e2e",
+      "test": "every_ontology_type_is_classified_correctly",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "read-only",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + a working LLM (real extraction calls)"
+    },
+    {
+      "target": "ontology_classification_e2e",
+      "test": "mixed_paragraph_does_not_collapse_into_fact",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "read-only",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + a working LLM (real extraction calls)"
+    },
+    {
+      "target": "orchestrator_e2e",
+      "test": "full_pass_runs_the_whole_choreography",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm",
+        "category-schema"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + LLM + Category schema deployed"
+    },
+    {
+      "target": "raw_family_e2e",
+      "test": "raw_family_collapses_but_atoms_stay",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "rbac_bootstrap_e2e",
+      "test": "fresh_store_and_legacy_upgrade_bootstrap",
+      "topology": "fresh-store",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs a disposable empty HelixDB instance and HELIX_E2E_FRESH=1",
+      "scenarios": [
+        "fresh",
+        "legacy-upgrade",
+        "interrupted-legacy"
+      ]
+    },
+    {
+      "target": "rbac_compat_e2e",
+      "test": "compatibility_bootstrap_is_idempotent_and_routes_omitted_groups",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, an RBAC admin, deployed schema, and embeddings"
+    },
+    {
+      "target": "rbac_e2e",
+      "test": "rbac_dedup_federation_preserves_history_and_isolates_future_writes",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "fixture-guard",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, enabled RBAC, models, and deployed schema"
+    },
+    {
+      "target": "rbac_policy_cache_e2e",
+      "test": "cached_policy_observes_grants_and_revocations_immediately",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "fixture-guard",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, enabled RBAC, and the revisioned policy query"
+    },
+    {
+      "target": "rbac_secondary_e2e",
+      "test": "secondary_surfaces_are_actor_bound_and_fail_closed",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "fixture-guard",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1, enabled RBAC, deployed schema, and helixir-mcp"
+    },
+    {
+      "target": "read_path_e2e",
+      "test": "read_path_e2e",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 and live HelixDB + embeddings; see module doc"
+    },
+    {
+      "target": "reasoning_extraction_e2e",
+      "test": "reasoning_edge_created_on_fresh_write",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "reasoning_extraction_e2e",
+      "test": "associative_edges_built_on_fresh_write",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "reasoning_extraction_e2e",
+      "test": "structural_edges_guaranteed_on_explicit_statement",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "schema_inventory_e2e",
+      "test": "every_physical_declaration_has_a_server_side_count",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "read-only",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 and a live HelixDB with the current deployed schema"
+    },
+    {
+      "target": "stitch_e2e",
+      "test": "stitch_builds_because_across_old_memories",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+    },
+    {
+      "target": "supersede_demotion_e2e",
+      "test": "superseded_hub_ranks_below_its_correction",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "embeddings"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings (no LLM)"
+    },
+    {
+      "target": "swarm_e2e",
+      "test": "two_hosts_appear_in_one_roster",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Agent presence schema deployed"
+    },
+    {
+      "target": "swarm_e2e",
+      "test": "mcp_presence_is_activity_driven_and_farewell_stays_terminal",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "helixir-mcp"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + Agent presence schema deployed"
+    },
+    {
+      "target": "valid_from_e2e",
+      "test": "valid_from_is_a_real_timestamp",
+      "topology": "current-schema",
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm"
+      ],
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + LLM + addMemoryWithValidFrom deployed"
+    }
+  ]
+}

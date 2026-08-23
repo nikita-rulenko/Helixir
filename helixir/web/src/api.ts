@@ -94,10 +94,34 @@ export interface AccessProjection {
   agent_families: AgentFamilyProjection[];
   subagents: AgentProjection[];
   principals: PrincipalProjection[];
+  onboarding_principals: PrincipalProjection[];
   groups: GroupProjection[];
   dedup_groups: DedupGroupProjection[];
   contributors: Array<{ user_id: string; memories: number }>;
   contributor_sample_size: number;
+}
+
+export interface GatewayConnectionProjection {
+  bind: string;
+  client_url: string;
+  advertised: boolean;
+  shareable: boolean;
+  auth_enabled: boolean;
+  warning: string | null;
+}
+
+export interface OnboardingPlacementReport {
+  principal_id: string;
+  group_id: string;
+  group_created: boolean;
+  requested_role: string;
+  active_roles: string[];
+  onboarding_active: boolean;
+  onboarding_roles_revoked: string[];
+  readable_groups: string[];
+  can_write_own_memories: boolean;
+  memory_scope: string;
+  dedup_group_id?: string;
 }
 
 export interface MemoryProjection {
@@ -209,6 +233,7 @@ export interface SettingsSnapshot {
   database: { host: string; port: number; instance: string };
   reasoning: { provider: string; model: string; base_url: string; temperature: number; api_key_configured: boolean };
   embeddings: { provider: string; model: string; url: string; api_key_configured: boolean };
+  gateway: { bind: string; public_url: string; auth_enabled: boolean };
   swarm: { active_window_secs: number; presence_ttl_secs: number };
   watchdog: {
     enabled: boolean; sample_interval_secs: number; mem_alert_pct: number; mem_restart_pct: number;
@@ -221,6 +246,7 @@ export interface SettingsPatch {
   reasoning_provider?: string; reasoning_model?: string; reasoning_base_url?: string;
   reasoning_temperature?: number; reasoning_api_key?: string;
   embedding_provider?: string; embedding_model?: string; embedding_url?: string; embedding_api_key?: string;
+  gateway_public_url?: string;
   swarm_active_window_secs?: number; swarm_presence_ttl_secs?: number;
   watchdog_enabled?: boolean; watchdog_sample_interval_secs?: number;
   watchdog_mem_alert_pct?: number; watchdog_mem_restart_pct?: number;

@@ -96,6 +96,16 @@ pub(super) async fn load_access(db: &Arc<HelixClient>, actor: &str) -> Option<Ac
                 })
                 .collect(),
         })
+        .collect::<Vec<_>>();
+    let onboarding_principals = principals
+        .iter()
+        .filter(|principal| {
+            principal
+                .groups
+                .iter()
+                .any(|group| group.group_id == crate::core::rbac_compat::ONBOARDING_GROUP_ID)
+        })
+        .cloned()
         .collect();
     let groups = policy
         .groups
@@ -156,6 +166,7 @@ pub(super) async fn load_access(db: &Arc<HelixClient>, actor: &str) -> Option<Ac
         agent_families,
         subagents,
         principals,
+        onboarding_principals,
         groups,
         dedup_groups,
         contributors,

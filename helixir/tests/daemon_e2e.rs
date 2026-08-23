@@ -14,6 +14,8 @@ use helixir::agents::daemon::DaemonConfig;
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -31,13 +33,18 @@ async fn daemon_on_call_runs_exactly_one_pass() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("daem_{run}");
     for i in 0..2 {
         let fact = format!("Run {run} item {i}: the background worker drained queue slot {i}.");
-        client.add(&fact, &user, None, None).await.expect("add");
+        client
+            .add_as_in_group(&actor, &fact, &user, None, None, Some(&group))
+            .await
+            .expect("add");
     }
 
     let cfg = DaemonConfig {

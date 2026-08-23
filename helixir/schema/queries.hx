@@ -49,6 +49,10 @@ QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, co
 QUERY addMemoryKeyedScoped(memory_id: String, content_key: String, rbac_scope: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, rbac_scope: rbac_scope, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// Charter v1.0 creation path: protection is persisted atomically with content.
+QUERY addMemoryKeyedScopedProtected(memory_id: String, content_key: String, rbac_scope: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String, immutable: I64) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, rbac_scope: rbac_scope, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata, immutable: immutable })
+  RETURN memory
 // Consensus over a fingerprint group: how many distinct holders across all
 // personal nodes that share this content_key.
 QUERY getContentKeyGroupUserCount(content_key: String) =>
@@ -67,6 +71,12 @@ QUERY getMemoryContentKeysBatch(memory_ids: [String]) =>
 QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
   memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
   updated <- memory::UPDATE({ content_key: content_key })
+  RETURN updated
+// Charter C2: additive hardening path for system seeds and approved learned
+// rules. Existing memories remain untouched until explicitly promoted.
+QUERY setMemoryImmutable(memory_id: String, immutable: I64) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  updated <- memory::UPDATE({ immutable: 1 })
   RETURN updated
 // One-way repair for system-generated memories that predate the explicit
 // Moirai security domain. Both fields move together so dedup and visibility
@@ -133,11 +143,18 @@ QUERY getRecentContexts(limit: I64) =>
   contexts <- N<Context>::RANGE(0, limit)
   RETURN contexts
 QUERY updateMemory(memory_id: String, content: String, certainty: I64, importance: I64, updated_at: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
+  RETURN updated
+// Charter C2/C4 atomic mutation guard. Rust performs a descriptive preflight,
+// while this predicate closes the race with a concurrent immutable promotion.
+QUERY updateMutableMemory(memory_id: String, content: String, certainty: I64, importance: I64, updated_at: String) =>
+  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
   updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
   RETURN updated
 QUERY updateMemoryById(id: ID, content: String, certainty: I64, importance: I64, updated_at: String) =>
-  updated <- N<Memory>(id)::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
+  memory <- N<Memory>(id)::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
   RETURN updated
 QUERY deleteMemoryEmbedding(memory_id: ID) =>
   DROP N<Memory>(memory_id)::Out<HAS_EMBEDDING>
@@ -186,7 +203,14 @@ QUERY resolveMemoryContradictions(memory_id: String, strategy: String) =>
   RETURN updated
 QUERY addMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
   new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
-  old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::FIRST
+  old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  supersedes <- AddE<SUPERSEDES>({ reason: reason, superseded_at: superseded_at, is_contradiction: is_contradiction })::From(new_memory)::To(old_memory)
+  RETURN supersedes
+// Charter C2/C4 atomic supersession guard. Protected sources never acquire a
+// SUPERSEDES edge, including through explicit contradiction resolution.
+QUERY addMutableMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
+  new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
+  old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
   supersedes <- AddE<SUPERSEDES>({ reason: reason, superseded_at: superseded_at, is_contradiction: is_contradiction })::From(new_memory)::To(old_memory)
   RETURN supersedes
 QUERY getSupersededMemories(memory_id: String) =>

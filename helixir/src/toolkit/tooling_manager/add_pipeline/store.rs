@@ -40,6 +40,32 @@ impl ToolingManager {
         context_tags: &str,
         fingerprint_scope: Option<&str>,
     ) -> Result<(String, usize), ToolingError> {
+        self.store_new_memory_with_policy(
+            memory,
+            user_id,
+            vector,
+            context_tags,
+            fingerprint_scope,
+            "llm_extraction",
+            false,
+        )
+        .await
+    }
+
+    /// Store one memory with its constitutional protection in the same HQL
+    /// mutation that creates the node. Seeds and adopted charter rules must
+    /// never exist in an observable `immutable=0` intermediate state.
+    #[allow(clippy::too_many_arguments)] // persistence contract is explicit at this boundary
+    pub(crate) async fn store_new_memory_with_policy(
+        &self,
+        memory: &ExtractedMemory,
+        user_id: &str,
+        vector: &[f32],
+        context_tags: &str,
+        fingerprint_scope: Option<&str>,
+        source: &str,
+        immutable: bool,
+    ) -> Result<(String, usize), ToolingError> {
         // Memory.user_id must always match the owning user: personal search (e.g. SmartTraversalV2)
         // filters on this field; empty values break isolation until backfilled.
         if user_id.trim().is_empty() {
@@ -75,6 +101,7 @@ impl ToolingManager {
             context_tags: String,
             source: String,
             metadata: String,
+            immutable: i64,
         }
 
         let input = AddMemoryInput {
@@ -91,8 +118,9 @@ impl ToolingManager {
             updated_at: now.clone(),
             valid_from: now.clone(),
             context_tags: context_tags.to_string(),
-            source: "llm_extraction".to_string(),
+            source: source.to_string(),
             metadata: "{}".to_string(),
+            immutable: i64::from(immutable),
         };
 
         #[derive(serde::Deserialize)]
@@ -106,7 +134,7 @@ impl ToolingManager {
 
         let response: AddMemoryResponse = self
             .db
-            .execute_query("addMemoryKeyedScoped", &input)
+            .execute_query("addMemoryKeyedScopedProtected", &input)
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
 
@@ -187,7 +215,7 @@ impl ToolingManager {
                     &memory.memory_type,
                     memory.certainty as i64,
                     memory.importance as i64,
-                    "llm_extraction",
+                    source,
                     "",
                     "{}",
                 )

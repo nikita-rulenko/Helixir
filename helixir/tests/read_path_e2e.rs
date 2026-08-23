@@ -48,6 +48,7 @@ async fn read_path_e2e() {
 
     let client = HelixirClient::from_env().expect("HelixirClient::from_env");
     client.initialize().await.expect("initialize");
+    let actor = common::e2e_actor();
 
     // #76: the golden corpus is deterministic and LLM-free — seed it in
     // place if this store has never seen it (content_key dedup makes the
@@ -65,7 +66,8 @@ async fn read_path_e2e() {
     for (i, (query, expected)) in golden.iter().enumerate() {
         let t0 = Instant::now();
         let results = client
-            .search(
+            .search_as(
+                &actor,
                 query,
                 USER,
                 helixir::core::helixir_client::SearchParams {
@@ -113,7 +115,8 @@ async fn read_path_e2e() {
     for (query, _) in &golden {
         let t0 = Instant::now();
         let _ = client
-            .search(
+            .search_as(
+                &actor,
                 query,
                 USER,
                 helixir::core::helixir_client::SearchParams {
@@ -146,7 +149,8 @@ async fn read_path_e2e() {
     // 3a. A year-old fact is reachable in EVERY mode.
     for mode in ["full", "recent", "contextual", "deep"] {
         let rs = client
-            .search(
+            .search_as(
+                &actor,
                 q_old,
                 USER,
                 helixir::core::helixir_client::SearchParams {
@@ -177,7 +181,8 @@ async fn read_path_e2e() {
             .unwrap_or(false)
     };
     let windowed_old = client
-        .search(
+        .search_as(
+            &actor,
             q_old,
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -198,7 +203,8 @@ async fn read_path_e2e() {
         windowed_old.iter().map(|r| &r.content).collect::<Vec<_>>()
     );
     let windowed_event = client
-        .search(
+        .search_as(
+            &actor,
             q_event,
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -225,7 +231,7 @@ async fn read_path_e2e() {
     // back THROUGH THE GRAPH — flagged as a flashback with its event date,
     // never hidden and never disguised as an in-window row.
     let _ = client
-        .admin_as("codex")
+        .admin_as(&actor)
         .await
         .expect("RBAC admin")
         .tooling()
@@ -245,7 +251,8 @@ async fn read_path_e2e() {
         to: None,
     };
     let flash_rs = client
-        .search(
+        .search_as(
+            &actor,
             q_event,
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -288,7 +295,8 @@ async fn read_path_e2e() {
     // ---------- 4. search_reasoning_chain: relations without an LLM ----------
     let t0 = Instant::now();
     let chains = client
-        .search_reasoning_chain(
+        .search_reasoning_chain_as(
+            &actor,
             "why did payments migrate from sqlite to postgres",
             USER,
             Some("both"),
@@ -314,7 +322,8 @@ async fn read_path_e2e() {
     // The point of Helixir vs plain RAG: the agent asks "why" and gets back a
     // cause via a BECAUSE edge, not just similar text.
     let causal = client
-        .search_reasoning_chain(
+        .search_reasoning_chain_as(
+            &actor,
             "why did checkout latency spikes stop",
             USER,
             Some("causal"),
@@ -348,7 +357,8 @@ async fn read_path_e2e() {
         "IS_A",
     ];
     let infer_chains = client
-        .search_reasoning_chain(
+        .search_reasoning_chain_as(
+            &actor,
             "postgres sqlite migration checkout latency metrics",
             USER,
             Some("both"),
@@ -374,7 +384,8 @@ async fn read_path_e2e() {
     // ---------- 4c. collective scope (Hive shared graph) ----------
     let t0 = Instant::now();
     let collective = client
-        .search(
+        .search_as(
+            &actor,
             "flaky test",
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -403,7 +414,8 @@ async fn read_path_e2e() {
     // Elder-brain requirement: the agent must be able to tell a direct hit
     // from a fact pulled through the graph, and see the link that pulled it.
     let provenance_results = client
-        .search(
+        .search_as(
+            &actor,
             "postgres migration payments service",
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -443,7 +455,8 @@ async fn read_path_e2e() {
     // ---------- 4e. connect_memories: path between two anchors ----------
     let t0 = Instant::now();
     let connection = client
-        .connect_memories(
+        .connect_memories_as(
+            &actor,
             "sqlite file locked under concurrent writers",
             "team standardized on postgres for new services",
             USER,
@@ -466,7 +479,8 @@ async fn read_path_e2e() {
     // ---------- 5. get_memory_graph ----------
     // Anchor on a chain node resolved at runtime (ids are random per seed).
     let anchor = client
-        .search(
+        .search_as(
+            &actor,
             "payments service migrated sqlite postgres",
             USER,
             helixir::core::helixir_client::SearchParams {
@@ -484,7 +498,7 @@ async fn read_path_e2e() {
         .expect("GA1 must be findable to anchor the graph probe");
     let t0 = Instant::now();
     let graph = client
-        .get_graph(USER, Some(anchor.as_str()), Some(2))
+        .get_graph_as(&actor, USER, Some(anchor.as_str()), Some(2))
         .await
         .expect("get_graph");
     let graph_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -496,7 +510,8 @@ async fn read_path_e2e() {
     // ---------- 6. search_by_concept ----------
     let t0 = Instant::now();
     let concepts = client
-        .search_by_concept(
+        .search_by_concept_as(
+            &actor,
             "payments service migrated postgres",
             USER,
             Some("action"),

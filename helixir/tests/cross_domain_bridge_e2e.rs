@@ -21,6 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -38,7 +40,9 @@ async fn cross_domain_bridge_via_category() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("xcat_{run}");
@@ -49,8 +53,14 @@ async fn cross_domain_bridge_via_category() {
     let fact_b = "Shale well-completion costs rose this quarter as fracking-fluid additives \
                   became more expensive.";
 
-    let a = client.add(fact_a, &user, None, None).await.expect("add A");
-    let b = client.add(fact_b, &user, None, None).await.expect("add B");
+    let a = client
+        .add_as_in_group(&actor, fact_a, &user, None, None, Some(&group))
+        .await
+        .expect("add A");
+    let b = client
+        .add_as_in_group(&actor, fact_b, &user, None, None, Some(&group))
+        .await
+        .expect("add B");
     assert!(!a.memory_ids.is_empty(), "fact A produced no memory");
     assert!(!b.memory_ids.is_empty(), "fact B produced no memory");
 
@@ -78,7 +88,7 @@ async fn cross_domain_bridge_via_category() {
     // search-anchor lottery: both endpoints are known, the only question is
     // whether the shared Category bridges them.
     let res = client
-        .connect_memories(&a.memory_ids[0], &b.memory_ids[0], &user, Some(4))
+        .connect_memories_as(&actor, &a.memory_ids[0], &b.memory_ids[0], &user, Some(4))
         .await
         .expect("connect_memories");
 
