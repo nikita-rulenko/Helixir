@@ -159,6 +159,21 @@ model-free tests cover both an initially unavailable daemon and loss after a
 successful preflight. Run it with `make
 test-pre-release-client-preflight` without creating containers.
 
+When a successful workflow artifact cannot cross the Actions blob transport,
+`tools/build_dogfood_candidate.sh` is the exact-source fallback. It is allowed
+only on an explicitly disposable, empty Docker daemon; it fails before
+compilation below 4 GiB RAM or without explicit memory and 2 GiB swap
+assertions. The explicit memory value is intersected with the daemon report
+because a nested Docker daemon can report its parent VM instead of its own
+cgroup ceiling. The HelixDB builder is rewritten in the generated, ignored
+workspace to use one Cargo job. The control plane is compiled with the same
+limit from a `git
+archive` of the exact candidate commit, so ignored release payloads cannot
+inject stale binaries or web assets. The script then exports checksummed ARM64
+HelixDB and control-plane archives for the backup rehearsal. `make
+test-dogfood-candidate-preflight` tests these resource and daemon-ownership
+failures without starting Docker.
+
 Homebrew cannot be qualified in a Linux container: Docker Desktop on macOS
 runs Linux containers in a VM. The release workflow therefore installs the
 unpublished `helixir` and `helixir-client` formulae together on native Apple

@@ -143,6 +143,9 @@ test-pre-release-client: ## Disposable APT, two-client and RBAC visibility relea
 test-pre-release-client-preflight: ## Deterministic safety tests for the Docker gate
 	tools/test_pre_release_client_gate_preflight.sh
 
+test-dogfood-candidate-preflight: ## Deterministic resource/safety checks for isolated candidate builds
+	tools/test_build_dogfood_candidate_preflight.sh
+
 test-control-plane-soak: ## Bounded live polling soak (requires running control-plane)
 	python3 tools/control_plane_soak.py
 

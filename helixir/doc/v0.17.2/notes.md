@@ -53,6 +53,11 @@ control plane without reconstructing CLI state by hand.
   candidate images. Operators can rehearse a restored backup in isolation
   before replacing a dogfood runtime, without compiling on the production
   Docker daemon.
+- If artifact transport is unavailable, the exact-source fallback now refuses
+  a non-empty daemon or fewer than 4 GiB effective RAM plus explicit memory and
+  swap assertions, constrains the generated HelixDB and control-plane builds
+  to one Cargo job, compiles the control plane from the exact commit archive
+  and exports checksummed candidates.
 
 ## Upgrade
 

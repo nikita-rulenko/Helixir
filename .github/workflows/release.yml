@@ -253,7 +253,9 @@ jobs:
         run: make test-e2e-manifest
 
       - name: Verify Docker gate fail-closed diagnostics
-        run: make test-pre-release-client-preflight
+        run: |
+          make test-pre-release-client-preflight
+          make test-dogfood-candidate-preflight
 
       - name: Run the disposable remote-client gate
         env:
