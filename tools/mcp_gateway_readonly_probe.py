@@ -57,6 +57,38 @@ class Session:
         self.request_id += 1
         return result
 
+
+def model_free_calls(actor: str) -> tuple[tuple[str, dict], ...]:
+    """Return lifecycle probes that never require an embedding or reasoning model."""
+
+    agent_id = f"{actor}-systemd-release-gate"
+    return (
+        (
+            "agent_heartbeat",
+            {
+                "actor_id": actor,
+                "agent_id": agent_id,
+                "status": "systemd-release-gate",
+            },
+        ),
+        (
+            "list_memories",
+            {
+                "actor_id": actor,
+                "user_id": actor,
+                "limit": 1,
+            },
+        ),
+        (
+            "agent_farewell",
+            {
+                "actor_id": actor,
+                "agent_id": agent_id,
+            },
+        ),
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gateway", required=True)
@@ -109,38 +141,13 @@ def main() -> None:
 
     tools = session.request("tools/list", {}).get("tools", [])
     names = {tool.get("name") for tool in tools}
-    required = {"agent_heartbeat", "agent_farewell", "search_memory", "swarm_status"}
+    required = {"agent_heartbeat", "agent_farewell", "list_memories", "swarm_status"}
     missing = sorted(required - names)
     if missing:
         raise RuntimeError(f"gateway omitted required tools: {', '.join(missing)}")
 
     outcomes: dict[str, str] = {}
-    for name, arguments in (
-        (
-            "agent_heartbeat",
-            {
-                "actor_id": args.actor,
-                "agent_id": f"{args.actor}-systemd-release-gate",
-                "status": "systemd-release-gate",
-            },
-        ),
-        (
-            "search_memory",
-            {
-                "actor_id": args.actor,
-                "user_id": args.actor,
-                "query": "gateway lifecycle release proof",
-                "mode": "recent",
-            },
-        ),
-        (
-            "agent_farewell",
-            {
-                "actor_id": args.actor,
-                "agent_id": f"{args.actor}-systemd-release-gate",
-            },
-        ),
-    ):
+    for name, arguments in model_free_calls(args.actor):
         result = session.request("tools/call", {"name": name, "arguments": arguments})
         outcomes[name] = "error" if result.get("isError") else "ok"
 
