@@ -1,11 +1,10 @@
 //! #47 longest-chain context reconstruction — pull the single longest coherent
 //! reasoning thread through a topic and narrate it hop by hop.
 //!
-//! Runs against the live `claude` dogfood cluster (the Moira/Helixir
-//! development memories), which is densely woven with IMPLIES/BECAUSE/SUPPORTS/
-//! CONTRADICTS edges (search_reasoning_chain reports deepest_chain ≈ 8). We
-//! assert a multi-hop ordered thread comes back and print it — the elder-brain
-//! replaying how an understanding came to be.
+//! Seeds the deterministic golden corpus into the disposable current-schema
+//! database. Its payments thread contains three typed reasoning hops, so the
+//! release gate proves reconstruction without depending on a developer's
+//! private dogfood memories.
 //!
 //! ```text
 //! HELIX_E2E=1 HELIXIR_RETRIEVAL_PROFILE=algo_opt \
@@ -14,23 +13,29 @@
 
 use helixir::core::HelixirClient;
 
+mod common;
+use common::golden::{GOLDEN_USER, ensure_seeded};
+
 #[tokio::test]
-#[ignore = "needs HELIX_E2E=1 + live HelixDB with a woven reasoning cluster"]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings; self-seeds golden graph"]
 async fn longest_chain_reconstructs_a_thread() {
     assert_eq!(std::env::var("HELIX_E2E").unwrap_or_default(), "1");
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
+    let actor = common::e2e_actor();
+    ensure_seeded(&client).await;
 
     let narrative = client
-        .longest_chain(
-            "Moira critical path: relation density, Clotho, Lachesis, daemon, honesty kit",
-            "claude",
+        .longest_chain_as(
+            &actor,
+            "payments sqlite migration checkout latency postgres standardization",
+            GOLDEN_USER,
             8,
         )
         .await
         .expect("longest_chain")
-        .expect("a reasoning thread should exist in the claude cluster");
+        .expect("the deterministic golden payments thread should exist");
 
     println!("\n==== longest_chain_e2e ====");
     println!(

@@ -1,6 +1,6 @@
 # Test design
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 ## 1. Stance
 
@@ -28,8 +28,8 @@ Tests (v0.3.1 baseline):
    ✔  1 bash smoke script                          helixir/tests/test_hive_queries.sh
 ```
 
-**Current (`v0.17.1`):** 358 library unit tests plus CLI tests
-(`cargo test --all-targets`) and **45 HELIX_E2E-gated test files** in
+**Current (`v0.18.0`):** 386 library unit tests plus CLI tests
+(`cargo test --all-targets`) and **60 ignored HELIX_E2E tests in 46 files** in
 `helixir/tests/*_e2e.rs` (mcp_*, read_path,
 clotho/lachesis/atropos, daemon, swarm, nli_antimerge, reasoning_extraction,
 negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
@@ -37,10 +37,80 @@ negative_inputs, …). E2E are opt-in and are not implied by an ordinary green
 a live run. The manual recipes live in the suites' module docs. Run unit tests:
 `cargo test --lib` from `helixir/`.
 
+### Canonical ignored-E2E matrix
+
+`tools/e2e_manifest.json` is the machine-readable inventory for every ignored
+test under `helixir/tests/*e2e.rs`. Each test owns an execution topology,
+ingest-buffer mode, RBAC actor/group environment, prerequisites and cleanup
+strategy. `tools/e2e_matrix.py --check` discovers the Rust tests independently
+and fails on missing, stale, duplicate or changed-ignore entries; `make
+test-e2e-manifest` runs that check plus its Docker-free deterministic tests.
+
+The runner never targets the production HelixDB port `6970` and requires the
+operator to opt into an isolated database with `HELIXIR_E2E_DISPOSABLE=1`.
+Before a current-schema run it proves through `helixir rbac status --json` that
+RBAC is enabled and active, `HELIXIR_RBAC_ACTOR` is a global admin, and
+`HELIXIR_E2E_GROUP` exists. It injects those identities into library and MCP
+fixtures, clears `HELIX_LLM_FALLBACK_CHAIN`, and enables or removes
+`HELIXIR_INGEST_BUFFER` per test so suites cannot inherit a conflicting mode.
+Tests assigned to another topology are reported as explicit `SKIP` rows.
+
+Every live matrix run receives one disposable `CARGO_TARGET_DIR`; the runner
+disables incremental/debug-heavy test artifacts, refuses to start without the
+configured retained disk headroom plus cache allowance, checks target size and
+free space after every test, and removes the directory on success, failure or
+interruption. The defaults retain 20 GiB and cap the per-run target at 24 GiB;
+operators may tighten them with `HELIXIR_E2E_MIN_FREE_GIB` and
+`HELIXIR_E2E_MAX_TARGET_GIB`. Initial/final free space and peak target size are
+printed into the captured gate log. This prevents the canonical matrix from
+growing the repository's shared `helixir/target` cache.
+
+Run the current-schema matrix only against a disposable, already bootstrapped
+instance:
+
+```bash
+HELIXIR_E2E_DISPOSABLE=1 HELIX_HOST=127.0.0.1 HELIX_PORT=16969 \
+HELIXIR_RBAC_ACTOR=codex HELIXIR_E2E_GROUP=default \
+python3 tools/e2e_matrix.py --run --topology current-schema
+```
+
+The RBAC bootstrap suite owns three destructive states. Give each scenario a
+separate empty database; never reuse one store between commands:
+
+```bash
+HELIXIR_E2E_DISPOSABLE=1 HELIX_HOST=127.0.0.1 HELIX_PORT=16969 \
+python3 tools/e2e_matrix.py --run --topology fresh-store --fresh-scenario fresh
+# Recreate an empty database, then repeat with legacy-upgrade and interrupted-legacy.
+```
+
+`client-gate` entries remain owned by `tools/pre_release_client_gate.sh`, which
+creates and destroys their database and network. The matrix can select them
+inside that disposable environment with `--topology client-gate`; it does not
+create Docker resources itself.
+
 The refactor-audit lifecycle coverage includes optional gateway-auth policy,
 FastThink generation pinning across hot reload, and the invariant that two
 consecutive runtime-generation publications retain one process-owned ingest
 worker while swapping its `ToolingManager`.
+
+The gateway CLI separately renders shell-free launchd and systemd service
+definitions and asserts immediate start, keepalive/restart policy, persisted
+bind/auth arguments and safe escaping. A release host smoke must start the
+promoted binary through its managed service, prove a single listener, restart
+the service, and repeat MCP initialize, tool discovery, heartbeat and read-only
+recall before an HTTP-wired client is considered reboot-safe.
+
+The immutable release workflow performs that smoke on the packaged
+`helixir-linux-x86_64.tar.gz`, not on `target/`: a privileged Ubuntu 24.04
+container boots a real systemd user manager with linger, installs durable
+configuration, starts the gateway twice, restarts the whole user manager and
+requires automatic recovery with exactly one listener. The final negative
+phase keeps an HTTP listener alive outside `helixir-gateway.service` and proves
+that `helixir gateway status` fails because a reachable port is not evidence of
+a reboot-safe owner. The bounded `helixdb-mock` is sufficient for Linux
+transport and model-free call coverage; the adjacent disposable
+`client-quality-gate` owns semantic RBAC read/write, while production macOS
+reboot recall remains separate live evidence.
 
 Swarm lifecycle coverage separates logical principals from execution
 instances: principal-aware heartbeat is idempotent, cannot silently re-parent
@@ -52,15 +122,52 @@ principal-prefix matching only in presentation projections (MCP swarm status
 and the administrator control plane), never in authorization or persistence.
 
 The issue #89 resource regression is additionally guarded by live, disposable
-HelixDB soaks over a cold backup. Primary-key graph/RBAC projections must avoid
-the multi-MiB-per-call scan amplification; the remaining upstream v2.3.5
-`SearchV` high-water retention must stay inside the managed 3 GiB envelope and
-Hygieia must restart the disposable container before OOM without losing the
-volume. The one-way RBAC migration may perform only two projected memory-ID
+HelixDB soaks over a cold backup. Memory and content-key hot paths use secondary
+indices reconstructed once at startup, and the maintained compiler must return
+collections for bulk updates without collapsing them to one object. SearchV
+high-water retention must stay inside the managed 3 GiB envelope and Hygieia
+must restart the disposable container before OOM without losing the volume.
+The canonical on-call daemon test must also complete every due stage in
+one pass inside that envelope: corpus size is a scalar `COUNT`, PMI membership
+uses ID-only projections, and one bounded category topology is reused for every
+seed. The one-way RBAC migration may perform only two projected memory-ID
 passes. `tools/memprobe.py --dump-to` captures private checksummed arena dumps
 and `--analyze-dump` reports structural repetition without emitting recovered
 data. The live RBAC cache suite performs 1,000 revision checks and then proves
 that a committed grant and revocation invalidate the process cache immediately.
+
+Release-blocking memory attribution follows the root
+[`PROFILING.md`](../../PROFILING.md) contract. The standalone Rust
+`helixdb-mock` generates its route registry from the checked-in HQL contract and
+must cover every query exactly once with the same HelixDB v2.3.5 top-level
+envelopes and missing-lookup errors. Its fixtures are bounded and deterministic;
+unknown Rust-only routes remain errors so schema/client drift cannot become a
+false-green compatibility shim. A registry test scans every literal
+`execute_query*` call under `helixir/src` and fails when Rust names a route that
+is absent from `queries.hx`; `health` is the sole transport-level exception.
+`make check-memory-boundary` runs formatter,
+Clippy, unit/golden tests, the symbolized profiling build and the Docker-free
+harness contract tests in CI.
+
+The public release-evidence fingerprint covers the complete `helixir/src`
+runtime plus its Cargo, charter, schema, maintained-HelixDB and harness inputs.
+Git-ignored host artifacts are excluded, so the same tracked candidate has one
+source identity in a developer checkout, Actions checkout and source archive.
+
+`make test-helixdb-fork` additionally proves existing-node index reconstruction
+is restart-idempotent, the reader pool defaults to two workers per core, bulk
+indexed `UPDATE` preserves scalar versus collection response shapes, and the
+release image compiler cannot silently fall back to upstream sources.
+
+The live differential lane replays one immutable, redacted trace first against
+the bounded mock and then against a cold real v2.3.5 copy. Workload and database
+memory are sampled in separate cgroups, the run aborts at 85% of the configured
+limit, and only the uninstrumented faithful lane can determine a release
+verdict. CPU/heap profilers run afterward against the already implicated
+process; diagnostic allocators can explain retention but cannot turn a failing
+faithful run green. The harness refuses production port `6970`, non-loopback or
+non-disposable Docker, shared workload/database containers, stale identities,
+and public artifact paths.
 
 NLI is part of every build. Unit coverage verifies host-variant digest
 availability and the contradiction/paraphrase readiness contract; installer
@@ -104,7 +211,34 @@ write and search read-back; the same probe must reject the HelixDB port as an
 MCP gateway. A model-free live graph contract then
 assigns one principal to two isolated groups and proves wrong-group write
 denial, distinct dedup fingerprints, and exact memory visibility for both
-different owners and one owner writing into different groups.
+different owners and one owner writing into different groups. The same
+disposable database then proves that charter C2/C4 blocks direct and
+pipeline-level update/supersession of immutable seeds and raw inputs.
+
+The Docker-heavy client gate must run on an entirely disposable daemon. Local
+invocation fails closed when the daemon has any existing container or volume;
+use a dedicated VM or Docker context and explicitly set
+`HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1`. GitHub-hosted release runners make
+the same assertion because their daemon exists for one job only. The safety
+preflight also checks daemon liveness again at every stage boundary and its
+model-free tests cover both an initially unavailable daemon and loss after a
+successful preflight. Run it with `make
+test-pre-release-client-preflight` without creating containers.
+
+When a successful workflow artifact cannot cross the Actions blob transport,
+`tools/build_dogfood_candidate.sh` is the exact-source fallback. It is allowed
+only on an explicitly disposable, empty Docker daemon; it fails before
+compilation below 4 GiB RAM or without explicit memory and 2 GiB swap
+assertions. The explicit memory value is intersected with the daemon report
+because a nested Docker daemon can report its parent VM instead of its own
+cgroup ceiling. The HelixDB builder is rewritten in the generated, ignored
+workspace to use one Cargo job. The control plane is compiled with the same
+limit from a `git
+archive` of the exact candidate commit, so ignored release payloads cannot
+inject stale binaries or web assets. The script then exports checksummed ARM64
+HelixDB and control-plane archives for the backup rehearsal. `make
+test-dogfood-candidate-preflight` tests these resource and daemon-ownership
+failures without starting Docker.
 
 Homebrew cannot be qualified in a Linux container: Docker Desktop on macOS
 runs Linux containers in a VM. The release workflow therefore installs the
@@ -209,10 +343,13 @@ owners.
 ### Integration / E2E
 
 - `helixir/tests/hive_memory_e2e.rs::hive_cross_user_collective_link_e2e`
-  — marked `#[ignore]`. Runs only with `make test-e2e-hive` and requires:
-  live HelixDB, real LLM API key, real embedding API key.
-  Asserts: two owners in one authorized RBAC group/federation contribute to
-  one scoped consensus family (`user_count ≥ 2`), while isolated groups do not.
+  — marked `#[ignore]` and targets only a disposable live HelixDB. It writes
+  two exact author-level memories with one scoped fingerprint and proves the
+  physical consensus projection reports two holders. LLM extraction is kept
+  outside this invariant because wording variance changes the input rather
+  than the Hive result. The full MCP/LLM path remains covered by
+  `mcp_multi_consumer_e2e::multi_consumer_collective_invariants`, including
+  collective visibility, consensus collapse and personal isolation.
 - `helixir/tests/test_hive_queries.sh` — bash script poking HelixDB queries
   directly. Not invoked from `make test`.
 - `helixir/tests/client_rbac_scope_e2e.rs` — deterministic disposable-DB
@@ -220,9 +357,14 @@ owners.
   `tools/pre_release_client_gate.sh` after the direct-network MCP smoke in
   `tools/mcp_gateway_visibility_smoke.py`; locally use `make
   test-pre-release-client CLIENT_GATE_ARCHIVE=<linux-server.tar.gz>
-  CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>`. The two archives are
-  required separately so the gate also proves package ownership does not
-  overlap.
+  CLIENT_GATE_CLIENT_ARCHIVE=<linux-client.tar.gz>
+  HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1` **only inside a dedicated disposable
+  VM/context**. The two archives are required separately so the gate also
+  proves package ownership does not overlap.
+- `helixir/tests/charter_protected_e2e.rs` — current-schema disposable-DB proof
+  that `memory://rules` exposes active charter v1.0 and public updates cannot
+  mutate `immutable` or `raw_input` memories; the atomic HQL backstops also
+  reject guarded updates and supersession edges when Rust preflight is bypassed.
 - `helixir/tests/schema_inventory_e2e.rs` — model-free, read-only live proof
   that all 22 nodes, 5 vectors and 30 edges return server-side aggregate counts
   through the deployed census queries; deprecated declarations must be empty.
@@ -335,7 +477,10 @@ model; its embedding endpoint remains live:
 - `tests/read_path_e2e.rs` — library level (`HelixirClient`): hit@5 / MRR
   quality bars (baseline MRR 0.687 after PPR), cold/warm latency, causal
   "why" restoration, collective scope, provenance shape, temporal-window
-  isolation, `connect_memories` path shape.
+  isolation, `connect_memories` path shape. Its year-old vector-weak
+  `GOLDOLD` fixture is also the live regression for evidence-preserving
+  hybrid rank: native BM25 rank 1 must survive real-cosine, freshness and
+  PPR reranking in every mode, but an explicit time window still filters it.
 - `tests/mcp_read_e2e.rs` — spawns the real `helixir-mcp` binary and speaks
   stdio JSON-RPC like a real client; same quality bars; measures server boot
   and per-call transport overhead (~0.2 ms vs library).

@@ -12,7 +12,7 @@ mod common;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use common::db_edge_types_out;
+use common::{db_edge_types_out, e2e_actor, e2e_group};
 use helixir::agents::lachesis::stitch::Stitcher;
 use helixir::core::helixir_client::HelixirClient;
 use helixir::llm::extractor::ExtractedMemory;
@@ -38,7 +38,9 @@ async fn stitch_builds_because_across_old_memories() {
 
     let client = HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = e2e_actor();
+    let group = e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     let tooling = admin.tooling();
 
     let run = token();
@@ -59,7 +61,7 @@ async fn stitch_builds_because_across_old_memories() {
     .collect();
 
     let r = client
-        .add_prepared(atoms, &user, None, Some("stitch-e2e"))
+        .add_prepared_as_in_group(&actor, atoms, &user, None, Some("stitch-e2e"), Some(&group))
         .await
         .expect("prepared add");
     assert_eq!(r.memories_added, 2, "two atoms expected: {r:?}");

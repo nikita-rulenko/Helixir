@@ -66,9 +66,25 @@ fn generated_patch_contains_only_allowlisted_paths() {
     let patch = build_config_patch(&SettingsPatch {
         mode: Some(MemoryMode::Insights),
         backup_keep: Some(14),
+        gateway_public_url: Some("https://memory.example.test/mcp".into()),
         ..SettingsPatch::default()
     });
-    assert_eq!(patch.values.len(), 2);
+    assert_eq!(patch.values.len(), 3);
     assert_eq!(patch.values["mode"], "Insights");
     assert_eq!(patch.values["watchdog.backup_keep"], "14");
+    assert_eq!(
+        patch.values["gateway.public_url"],
+        "https://memory.example.test/mcp"
+    );
+}
+
+#[test]
+fn gateway_public_url_requires_http_transport() {
+    assert!(
+        validate(&SettingsPatch {
+            gateway_public_url: Some("ssh://memory.example.test".into()),
+            ..SettingsPatch::default()
+        })
+        .is_err()
+    );
 }

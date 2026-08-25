@@ -72,7 +72,7 @@ impl Planner {
             (BackendChoice::ProvisionLocal, BackendState::Missing) => {
                 steps.push(InstallStep::required(
                     InstallAction::DeploySchema,
-                    "compile the bundled schema into a HelixDB v2.3.5 image",
+                    "prepare the release-pinned managed HelixDB image",
                 ));
                 steps.push(InstallStep::required(
                     InstallAction::ProvisionBackend,
@@ -100,7 +100,7 @@ impl Planner {
                     ));
                     steps.push(InstallStep::required(
                         InstallAction::DeploySchema,
-                        "rebuild and recreate the managed backend on the preserved volume",
+                        "deploy the release-pinned backend on the preserved volume",
                     ));
                 }
             }
@@ -124,7 +124,7 @@ impl Planner {
             (BackendChoice::ProvisionLocal, BackendState::Remote { .. }) => {
                 steps.push(InstallStep::required(
                     InstallAction::DeploySchema,
-                    "compile the bundled schema into a HelixDB v2.3.5 image",
+                    "prepare the release-pinned managed HelixDB image",
                 ));
                 steps.push(InstallStep::required(
                     InstallAction::ProvisionBackend,

@@ -16,6 +16,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use helixir::core::HelixirClient;
 use helixir::llm::extractor::ExtractedMemory;
 
+mod common;
+
 fn atom(text: &str) -> ExtractedMemory {
     ExtractedMemory {
         text: text.to_string(),
@@ -41,6 +43,8 @@ async fn nli_routes_a_typed_edge_with_a_dead_llm() {
 
         let client = HelixirClient::from_env().expect("client");
         client.initialize().await.expect("init");
+        let actor = common::e2e_actor();
+        let group = common::e2e_group();
 
         let run = format!(
             "{:x}",
@@ -65,14 +69,28 @@ async fn nli_routes_a_typed_edge_with_a_dead_llm() {
         );
 
         let r1 = client
-            .add_prepared(vec![atom(&a)], &user, None, Some("e2e-nli"))
+            .add_prepared_as_in_group(
+                &actor,
+                vec![atom(&a)],
+                &user,
+                None,
+                Some("e2e-nli"),
+                Some(&group),
+            )
             .await
             .expect("first write");
         assert_eq!(r1.memories_added, 1);
         tokio::time::sleep(Duration::from_secs(2)).await; // snapshot lag
 
         let r2 = client
-            .add_prepared(vec![atom(&b)], &user, None, Some("e2e-nli"))
+            .add_prepared_as_in_group(
+                &actor,
+                vec![atom(&b)],
+                &user,
+                None,
+                Some("e2e-nli"),
+                Some(&group),
+            )
             .await
             .expect("second write");
         assert_eq!(

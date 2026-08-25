@@ -18,6 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -35,7 +37,9 @@ async fn dominance_gate_keeps_domains_disjoint() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     // Ensure the dictionary has the broad domains both facts could grab at the
     // noise floor (agriculture/raw-material/technology), so the gate has
     // something to suppress.
@@ -47,8 +51,14 @@ async fn dominance_gate_keeps_domains_disjoint() {
     let sw =
         "The repository layer dispatches HTTP handlers through the Chi router in the Go service.";
     let ag = "Farmers harvested a record grain crop this season after the strong monsoon rains.";
-    let s = client.add(sw, &user, None, None).await.expect("add sw");
-    let a = client.add(ag, &user, None, None).await.expect("add ag");
+    let s = client
+        .add_as_in_group(&actor, sw, &user, None, None, Some(&group))
+        .await
+        .expect("add sw");
+    let a = client
+        .add_as_in_group(&actor, ag, &user, None, None, Some(&group))
+        .await
+        .expect("add ag");
     let s_id = s.memory_ids.first().expect("sw id").clone();
     let a_id = a.memory_ids.first().expect("ag id").clone();
 

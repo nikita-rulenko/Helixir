@@ -125,17 +125,12 @@ impl ToolingManager {
         #[derive(Deserialize, Default)]
         struct Resp {
             #[serde(default)]
-            memories: Vec<Row>,
-        }
-        #[derive(Deserialize)]
-        struct Row {
-            #[serde(default, deserialize_with = "nullable_string")]
-            memory_id: String,
+            memories: Vec<Option<String>>,
         }
         let resp: Resp = self
             .db
             .execute_query(
-                "getMemoriesByCategory",
+                "getMemoryIdsByCategory",
                 &serde_json::json!({
                     "category_id": category_id,
                     "exclude_memory_id": "",
@@ -147,7 +142,7 @@ impl ToolingManager {
         Ok(resp
             .memories
             .into_iter()
-            .map(|m| m.memory_id)
+            .flatten()
             .filter(|s| !s.is_empty())
             .collect())
     }
@@ -307,21 +302,21 @@ impl ToolingManager {
     }
 
     /// Total memory count — the PMI universe N for subset routing.
-    pub async fn total_memory_count(&self, scan_limit: i64) -> Result<usize, ToolingError> {
-        #[derive(Deserialize, Default)]
-        struct Resp {
-            #[serde(default)]
-            memories: Vec<serde_json::Value>,
-        }
-        let resp: Resp = self
+    ///
+    /// `scan_limit` is retained for API compatibility but deliberately ignored:
+    /// HelixDB computes the scalar count server-side. Materializing Memory rows
+    /// here used to retain the decoded scan arena for the lifetime of v2.3.5.
+    pub async fn total_memory_count(&self, _scan_limit: i64) -> Result<usize, ToolingError> {
+        let response: serde_json::Value = self
             .db
-            .execute_query(
-                "getRecentMemories",
-                &serde_json::json!({ "limit": scan_limit }),
-            )
+            .execute_query("countAllMemories", &serde_json::json!({}))
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
-        Ok(resp.memories.len())
+        first_unsigned(&response)
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or_else(|| {
+                ToolingError::Database("countAllMemories returned no unsigned count".to_string())
+            })
     }
 
     /// Canonical id for a normalized category name, or None if absent.
@@ -357,5 +352,28 @@ impl ToolingManager {
             Err(e) if e.to_string().to_lowercase().contains("no value found") => Ok(None),
             Err(e) => Err(ToolingError::Database(e.to_string())),
         }
+    }
+}
+
+fn first_unsigned(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::Array(values) => values.iter().find_map(first_unsigned),
+        serde_json::Value::Object(values) => values.values().find_map(first_unsigned),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_unsigned;
+
+    #[test]
+    fn count_projection_accepts_helix_wrappers() {
+        assert_eq!(
+            first_unsigned(&serde_json::json!({"count": [5883]})),
+            Some(5883)
+        );
+        assert_eq!(first_unsigned(&serde_json::json!({"count": null})), None);
     }
 }

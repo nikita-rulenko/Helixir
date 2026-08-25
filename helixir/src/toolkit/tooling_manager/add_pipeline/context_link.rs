@@ -2,7 +2,7 @@
 //! miss (so callers can use `context_tag` without first owning context
 //! lifecycle), then writes a `VALID_IN` edge with priority 50.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::super::{ToolingError, ToolingManager};
@@ -34,23 +34,36 @@ impl ToolingManager {
                 name: String,
             }
 
-            let existing: Option<serde_json::Value> = self
+            #[derive(Deserialize)]
+            struct ContextLookup {
+                context: ContextId,
+            }
+
+            #[derive(Deserialize)]
+            struct ContextId {
+                context_id: String,
+            }
+
+            match self
                 .db
-                .execute_query(
+                .execute_query::<ContextLookup, _>(
                     "getContextByName",
                     &GetByNameParams {
                         name: context_name.to_string(),
                     },
                 )
                 .await
-                .ok();
-
-            if let Some(ref val) = existing {
-                val.get("context_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-            } else {
-                None
+            {
+                Ok(existing) if !existing.context.context_id.is_empty() => {
+                    Some(existing.context.context_id)
+                }
+                Ok(_) => {
+                    return Err(ToolingError::Database(
+                        "getContextByName returned an empty context_id".to_string(),
+                    ));
+                }
+                Err(error) if error.is_graph_not_found() => None,
+                Err(error) => return Err(ToolingError::Database(error.to_string())),
             }
         };
 
@@ -76,8 +89,7 @@ impl ToolingManager {
                     parent_context: String,
                 }
 
-                let _ = self
-                    .db
+                self.db
                     .execute_query::<serde_json::Value, _>(
                         "addContext",
                         &AddContextParams {
@@ -88,7 +100,8 @@ impl ToolingManager {
                             parent_context: "".to_string(),
                         },
                     )
-                    .await;
+                    .await
+                    .map_err(|error| ToolingError::Database(error.to_string()))?;
 
                 debug!("Created new context '{}' ({})", context_name, new_id);
                 new_id

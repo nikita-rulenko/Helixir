@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use helixir::agents::orchestrator::PassConfig;
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -31,7 +33,9 @@ async fn full_pass_runs_the_whole_choreography() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("orch_{run}");
@@ -39,7 +43,10 @@ async fn full_pass_runs_the_whole_choreography() {
         let fact = format!(
             "Run {run} note {i}: the deployment pipeline step {i} compiled and shipped cleanly."
         );
-        client.add(&fact, &user, None, None).await.expect("add");
+        client
+            .add_as_in_group(&actor, &fact, &user, None, None, Some(&group))
+            .await
+            .expect("add");
     }
 
     let cfg = PassConfig {

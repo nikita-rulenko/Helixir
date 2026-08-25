@@ -112,10 +112,10 @@ pub(crate) async fn run() -> Result<()> {
             GatewayCmd::Start { bind, require_auth } => {
                 let config = helixir::core::config::HelixirConfig::from_env();
                 let bind = bind.as_deref().unwrap_or(&config.gateway.default_bind);
-                gateway_start(bind, *require_auth)
+                gateway_service_start(bind, *require_auth)
             }
-            GatewayCmd::Stop => stop_process("gateway"),
-            GatewayCmd::Status => gateway_status(),
+            GatewayCmd::Stop => gateway_service_stop(),
+            GatewayCmd::Status => gateway_service_status(),
         };
     }
 

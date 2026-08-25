@@ -1,6 +1,6 @@
 # Installation
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 This is the maintained installation reference. The root README intentionally
 keeps only the shortest working path; topology choices, package trust,
@@ -274,8 +274,11 @@ HELIX_EMBEDDING_API_KEY=... helixir onboard --non-interactive \
   --embedding-url https://api.openai.com/v1
 ```
 
-`--no-local-llm` skips only the optional fallback generation model. It does not
-disable NLI or embeddings.
+The default does not install a generation fallback: memory extraction and
+decisions stay on the configured Cerebras `gpt-oss-120b` path. Passing
+`--local-llm-model <model>` is an explicit opt-in. `--no-local-llm` makes that
+choice explicit and does not disable mandatory NLI or the selected embedding
+runtime; local embeddings still install Ollama plus Nomic.
 
 `helixir doctor` sends a real embedding probe. If the configured remote path is
 missing or invalid, doctor reports the failure, offers or performs recovery
@@ -295,8 +298,15 @@ helixir gateway start --bind 127.0.0.1:8765
 helixir setup --gateway 127.0.0.1:8765
 ```
 
-The gateway setup path safely backs up, replaces and verifies existing native
-Codex/Claude registrations; it rolls the client config back on failure.
+On macOS, `gateway start` installs `com.helixir.gateway` as a launchd agent. On
+Linux, it enables `helixir-gateway.service` through the user systemd instance.
+Both variants start immediately and restart on failure. Launchd recovers after
+login/reboot; the Linux unit recovers with the user session, while a headless
+pre-login service requires `loginctl enable-linger <user>`. Re-running the
+command is idempotent and first retires a legacy detached gateway so only one
+process can own the endpoint. The gateway setup path safely backs up, replaces
+and verifies existing native Codex/Claude registrations; it rolls the client
+config back on failure.
 
 Stdio clients receive:
 
@@ -319,6 +329,9 @@ each agent host:
 ```bash
 # Helixir host (trusted subnet; add --require-auth outside it)
 helixir gateway start --bind 0.0.0.0:8765
+
+# Advertise the address remote agent hosts can actually reach.
+helixir config set gateway.public_url http://10.0.0.12:8765/mcp
 
 # Agent host (choose one package manager)
 brew install nikita-rulenko/tap/helixir-client
@@ -388,6 +401,12 @@ For a custom stdio MCP client:
 }
 ```
 
+The same placement is available in the global-admin control plane under
+**Access graph → Onboarding**. The page also displays the configured public MCP
+endpoint and a copy-ready `helixir-client connect` command. Its pending list is
+the live set of active `onboarding` memberships stored in HelixDB; it is not a
+second user registry.
+
 On macOS, the command normally starts with
 `/Users/<you>/.helixir/current/helixir-mcp`.
 
@@ -397,7 +416,7 @@ On macOS, the command normally starts with
 - Rust 1.88+ only when building from source.
 - One reasoning LLM path: Cerebras, DeepSeek, Ollama, or another configured
   compatible endpoint.
-- Helix CLI **v2.3.5** for source/schema development.
+- The checked-in maintained HelixDB v2.3.5 fork for source/schema development.
 
 ### HelixDB version pin
 
@@ -406,23 +425,24 @@ different engine: it has no compatible `helix check` / `helix build` workflow
 and does not register this repository's HQL schema. Never run `helix update` in
 this project.
 
-Install the exact upstream v2.3.5 artifact for the host. For example:
+Release archives carry a server-only descriptor pinned to the immutable
+multi-architecture maintained-backend image and its corresponding AGPL source
+archive. Managed-local onboarding pulls and verifies that exact digest; remote
+and existing-local backends are never replaced by the installer.
+
+For source development, build the checked-in fork rather than installing an
+upstream CLI:
 
 ```bash
-mkdir -p ~/.local/bin
-curl -L -o ~/.local/bin/helix \
-  https://github.com/HelixDB/helix-db/releases/download/v2.3.5/helix-x86_64-unknown-linux-gnu
-chmod +x ~/.local/bin/helix
-helix --version
+make build-helixdb-cli
+HELIX_REPO_PATH="$PWD/helixdb" ./helixdb/target/release/helix --version
+make build-helixdb-image
 ```
 
-Expected output includes `Helix CLI 2.3.5`. Other available artifact names are
-`helix-aarch64-apple-darwin`, `helix-x86_64-apple-darwin`,
-`helix-aarch64-unknown-linux-gnu`, and
-`helix-x86_64-pc-windows-msvc.exe`.
-
-A preserved mirror of the same release is available at
-[nikita-rulenko/helix-db v2.3.5](https://github.com/nikita-rulenko/helix-db/releases/tag/v2.3.5).
+Expected output is `Helix CLI 2.3.5`. The fork adds restart-safe secondary-index
+backfill, bounded reader fan-out and collection-correct bulk updates without
+changing the LMDB storage generation. `helixdb/UPSTREAM.md` records the exact
+upstream revision and maintenance policy.
 
 ### Persistence warning
 

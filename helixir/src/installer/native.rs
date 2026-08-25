@@ -96,10 +96,11 @@ fn backend_endpoint(state: &BackendState) -> Option<(String, u16)> {
 
 fn mark_backend_schema_compatible(state: &mut BackendState) {
     match state {
-        BackendState::ManagedLocal {
-            schema_compatible, ..
-        }
-        | BackendState::ExistingLocal {
+        // Managed-local compatibility includes the maintained engine revision
+        // and container identity checked during discovery. A matching HQL
+        // string alone must not bless an unpatched upstream v2.3.5 image.
+        BackendState::ManagedLocal { .. } => {}
+        BackendState::ExistingLocal {
             schema_compatible, ..
         }
         | BackendState::Remote {
@@ -138,6 +139,7 @@ fn detect_backend_state(host: &str, port: u16) -> BackendState {
         backend.host == host
             && backend.port == port
             && backend.helix_cli_version == super::backend::HELIX_CLI_VERSION
+            && backend.engine_revision == super::backend::ENGINE_REVISION
             && super::backend::schema_fingerprint(&schema_dir_for_install())
                 .is_ok_and(|fingerprint| fingerprint == backend.schema_fingerprint)
     });
@@ -194,6 +196,16 @@ fn discover_managed_container(host: &str, port: u16) -> Option<BackendManifest> 
     let rows = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout).ok()?;
     let row = rows.first()?;
     let image = row.pointer("/Config/Image")?.as_str()?.to_string();
+    let engine_revision = row
+        .pointer("/Config/Labels/io.helixir.engine-revision")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let schema_fingerprint = row
+        .pointer("/Config/Labels/io.helixir.schema-fingerprint")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let volume = row
         .get("Mounts")?
         .as_array()?
@@ -227,6 +239,8 @@ fn discover_managed_container(host: &str, port: u16) -> Option<BackendManifest> 
         container: "helixdb".to_string(),
         image,
         volume,
+        engine_revision,
+        schema_fingerprint,
         ..Default::default()
     })
 }
@@ -266,7 +280,15 @@ fn managed_container_matches(backend: &BackendManifest) -> bool {
                                 == Some(backend.volume.as_str())
                     })
                 });
-            image_matches && volume_matches
+            let engine_matches = row
+                .pointer("/Config/Labels/io.helixir.engine-revision")
+                .and_then(serde_json::Value::as_str)
+                == Some(backend.engine_revision.as_str());
+            let schema_matches = row
+                .pointer("/Config/Labels/io.helixir.schema-fingerprint")
+                .and_then(serde_json::Value::as_str)
+                == Some(backend.schema_fingerprint.as_str());
+            image_matches && volume_matches && engine_matches && schema_matches
         })
 }
 

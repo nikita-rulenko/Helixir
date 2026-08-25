@@ -218,20 +218,20 @@ mod tests {
     use crate::core::config::HelixirConfig;
 
     #[test]
-    fn chain_without_deepseek_key_degrades_to_ollama_only() {
-        // default chain is ["deepseek", "ollama"]; no key ⇒ deepseek skipped,
-        // NOT a boot failure.
+    fn default_chain_is_disabled_for_gpt_oss_only_writes() {
         let config = HelixirConfig::default();
-        assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+        assert!(!config.llm_fallback_enabled);
+        assert!(config.llm_fallback_chain.is_empty());
         let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
-        assert_eq!(tiers.len(), 1);
-        assert_eq!(tiers[0].provider_name(), "ollama");
+        assert!(tiers.is_empty());
     }
 
     #[test]
     fn chain_with_deepseek_key_yields_both_tiers_in_order() {
         let config = HelixirConfig {
             deepseek_api_key: Some("test-key".to_string()),
+            llm_fallback_enabled: true,
+            llm_fallback_chain: vec!["deepseek".to_string(), "ollama".to_string()],
             ..HelixirConfig::default()
         };
         let tiers = LlmProviderFactory::resolve_fallback_tiers(&config);
@@ -244,6 +244,7 @@ mod tests {
     fn chain_skips_tier_equal_to_primary_and_unknown_names() {
         let config = HelixirConfig {
             llm_provider: "ollama".to_string(),
+            llm_fallback_enabled: true,
             llm_fallback_chain: vec!["ollama".to_string(), "gpt5".to_string()],
             ..HelixirConfig::default()
         };
@@ -267,6 +268,7 @@ mod tests {
         let config = HelixirConfig {
             llm_provider: "ollama".to_string(),
             llm_api_key: Some("cb-key".to_string()),
+            llm_fallback_enabled: true,
             llm_fallback_chain: vec!["cerebras".to_string()],
             ..HelixirConfig::default()
         };

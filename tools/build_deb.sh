@@ -39,7 +39,7 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/lib/helixir" "$payload" "$out
 tar -xzf "$archive" -C "$payload"
 
 for required in helixir helixir-mcp helixir-deploy schema/schema.hx schema/queries.hx \
-  skills/helixir-memory/SKILL.md helix.toml; do
+  skills/helixir-memory/SKILL.md helix.toml backend-image.json; do
   [[ -e "$payload/$required" ]] || {
     printf 'release archive is missing %s\n' "$required" >&2
     exit 1

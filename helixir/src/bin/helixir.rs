@@ -84,6 +84,9 @@ pub(crate) use watch::*;
 #[path = "helixir/gateway.rs"]
 mod gateway;
 pub(crate) use gateway::*;
+#[path = "helixir/gateway_service.rs"]
+mod gateway_service;
+pub(crate) use gateway_service::*;
 #[path = "helixir/journal.rs"]
 mod journal;
 pub(crate) use journal::*;

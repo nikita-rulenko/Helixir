@@ -83,13 +83,28 @@ impl LLMDecisionEngine {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            if decision.target_memory_id.is_none() {
+            // The wire format keeps operation-specific aliases for model
+            // clarity, but execution and charter enforcement must share one
+            // canonical target. Prefer the operation-specific field, validate
+            // it against the recalled candidates, then mirror it back.
+            let requested = match decision.operation {
+                MemoryOperation::Supersede => decision
+                    .supersedes_memory_id
+                    .clone()
+                    .or_else(|| decision.target_memory_id.clone()),
+                MemoryOperation::Contradict => decision
+                    .contradicts_memory_id
+                    .clone()
+                    .or_else(|| decision.target_memory_id.clone()),
+                _ => decision.target_memory_id.clone(),
+            };
+            let canonical = if requested.is_none() {
                 if let Some(best) = highest {
                     warn!(
-                        "Operation {:?} missing target_memory_id, using highest-scoring similar memory: {}",
+                        "Operation {:?} missing target, using highest-scoring similar memory: {}",
                         decision.operation, best.id
                     );
-                    decision.target_memory_id = Some(best.id.clone());
+                    Some(best.id.clone())
                 } else {
                     warn!(
                         "Operation {:?} requires target but no similar memories available, falling back to ADD",
@@ -97,15 +112,28 @@ impl LLMDecisionEngine {
                     );
                     return false;
                 }
-            } else if let Some(ref id) = decision.target_memory_id {
+            } else if let Some(ref id) = requested {
                 let exists = similar_memories.iter().any(|m| m.id == *id);
                 if !exists {
-                    warn!("target_memory_id '{}' not found in similar memories", id);
+                    warn!("operation target '{}' not found in similar memories", id);
                     if let Some(best) = highest {
                         warn!("Replacing with highest-scoring similar memory: {}", best.id);
-                        decision.target_memory_id = Some(best.id.clone());
+                        Some(best.id.clone())
+                    } else {
+                        return false;
                     }
+                } else {
+                    requested
                 }
+            } else {
+                None
+            };
+
+            decision.target_memory_id = canonical.clone();
+            match decision.operation {
+                MemoryOperation::Supersede => decision.supersedes_memory_id = canonical,
+                MemoryOperation::Contradict => decision.contradicts_memory_id = canonical,
+                _ => {}
             }
         }
 

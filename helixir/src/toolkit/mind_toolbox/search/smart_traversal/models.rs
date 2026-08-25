@@ -182,6 +182,10 @@ pub struct SearchConfig {
 
     pub vector_weight: f64,
     pub temporal_weight: f64,
+    /// Relative contribution of real cosine to a hybrid phase-1 seed.
+    pub hybrid_vector_weight: f64,
+    /// Relative contribution of the BM25/RRF rank signal to a hybrid seed.
+    pub hybrid_bm25_weight: f64,
     pub graph_semantic_weight: f64,
     pub graph_graph_weight: f64,
     pub graph_temporal_weight: f64,
@@ -218,6 +222,8 @@ impl Default for SearchConfig {
             ]),
             vector_weight: 0.7,
             temporal_weight: 0.3,
+            hybrid_vector_weight: 0.6,
+            hybrid_bm25_weight: 0.4,
             graph_semantic_weight: 0.3,
             graph_graph_weight: 0.5,
             graph_temporal_weight: 0.2,

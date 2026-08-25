@@ -130,6 +130,7 @@ def render(
     assert_path_exists libexec/"skills/helixir-memory/SKILL.md"
     assert_path_exists libexec/"integration/AGENTS.md"
     assert_path_exists libexec/"integration/SKILLS.md"
+    refute_path_exists libexec/"backend-image.json"
     refute_path_exists libexec/"helixir"
     refute_path_exists libexec/"helixir-mcp"
     refute_path_exists libexec/"schema"
@@ -170,6 +171,7 @@ end
     assert_path_exists libexec/"skills/helixir-memory/SKILL.md"
     assert_path_exists libexec/"integration/AGENTS.md"
     assert_path_exists libexec/"integration/SKILLS.md"
+    assert_path_exists libexec/"backend-image.json"
     refute_path_exists libexec/"helixir-client"
   end
 end

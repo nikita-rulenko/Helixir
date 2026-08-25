@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 Helixir has two deliberate interaction surfaces: LLM agents use MCP/stdio (or
 the authenticated gateway), while a human global administrator uses the CLI or
@@ -39,6 +39,12 @@ Under `HELIXIR_RETRIEVAL_PROFILE=algo_opt`, `add_memory` responses may carry a
 (`memory-charter.md`) forbids resolving silently. Each entry has the conflict
 type, the existing memory, the decision already taken and a ready-to-ask
 question; the agent decides whether to ask the human.
+
+The active charter is exposed as `memory://rules`. C2/C4 are hard runtime
+guards: `update_memory` and the add decision pipeline reject destructive
+mutation of `immutable` and `source=raw_input` targets before embedding or
+persistence. `update_memory` is only for correcting a known, unprotected
+record by exact id; normal evolution goes through `add_memory`.
 
 ### FastThink tools (ephemeral working memory)
 

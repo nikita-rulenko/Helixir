@@ -8,6 +8,7 @@ use rmcp::{
 };
 use serde_json::json;
 use tokio::sync::broadcast;
+use tracing::warn;
 
 use super::params::*;
 use super::prompts;
@@ -239,10 +240,19 @@ impl ServerHandler for HelixirMcpServer {
                 let override_path = std::env::var("HOME")
                     .map(|h| std::path::PathBuf::from(h).join(".helixir/memory-charter.md"))
                     .ok();
-                let mut content = override_path
+                let override_content = override_path
                     .filter(|p| p.exists())
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .unwrap_or_else(|| include_str!("../../memory-charter.md").to_string());
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                let mut content = match override_content {
+                    Some(stale) if stale.contains("DRAFT v0.1") => {
+                        warn!(
+                            "ignoring stale ~/.helixir/memory-charter.md draft; bundled active charter v1.0 wins"
+                        );
+                        include_str!("../../memory-charter.md").to_string()
+                    }
+                    Some(current) => current,
+                    None => include_str!("../../memory-charter.md").to_string(),
+                };
                 // #34 2b: learned rules render BESIDE the constitution, never
                 // inside it — the constitution is immune to self-learning.
                 let learned = self.client().tooling().learned_charter_rules().await;

@@ -1,6 +1,6 @@
 # Architecture (sysdesign)
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 ## 1. System context
 
@@ -26,7 +26,7 @@
    │   HelixDB            │                │   LLM + Embedding APIs     │
    │   graph + vector     │                │   - Cerebras (LLM)         │
    │   :6969              │                │   - OpenAI / OpenRouter    │
-   │   185 HQL queries    │                │   - Ollama (local)         │
+   │   192 HQL queries    │                │   - Ollama (local)         │
    │   22 nodes / 30 edges│                │                            │
    └──────────────────────┘                └────────────────────────────┘
 ```
@@ -183,8 +183,11 @@ bug to file — not a feature to copy.
 | `LLMDecisionEngine` | `src/llm/decision/engine.rs` | ADD/UPDATE/SUPERSEDE/CONTRADICT/NOOP/LINK_EXISTING/CROSS_CONTRADICT decisions |
 | `EmbeddingGenerator` | `src/llm/embeddings/` | Vector generation, provider/fallback wire paths, versioned in-memory/persistent cache and diagnostics |
 | `HelixClient` | `src/db/client.rs` | HTTP transport to HelixDB + retry |
+| Maintained HelixDB v2.3.5 fork | `../../helixdb/` | Pinned LMDB-era engine with restart-safe secondary-index reconstruction, two-worker bounded read fan-out and collection-correct bulk `UPDATE`; release images are digest-pinned and retain the upstream AGPL license. |
+| HelixDB v2.3.5 emulator | `../../helixdb-mock/` | Generated HTTP query registry, exact response envelopes, bounded stateful fixtures, latency profiles and redacted request telemetry. It is a differential process-boundary oracle, never a substitute for live HelixDB behavior. |
+| Differential memory harness | `../../tools/memory_boundary.py`, `../../tools/memory_boundary_lib/` | Disposable-daemon isolation, immutable run identity, separate workload/database cgroup sampling, 85% fail-closed abort, profiler lifecycle and redacted comparison reports under the root `PROFILING.md` contract. |
 | Installer orchestrator | `src/installer/service.rs`, `src/installer/executor/` | One detect/prepare/apply/verify service, deterministic plans, concrete native mutation adapters, ordered rollback reports and explicit embedding strategies; frontends provide presentation and consent only |
-| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, Hygieia telemetry, the machine-checked physical schema ledger/census, redacted settings and the managed backup vault; never owns host mutation policy |
+| Web control plane | `src/control_plane/`, `web/` | Global-admin-only versioned HTTP API and compiled browser shell. Projects overview counters/mode, advertised MCP client handoff, graph-derived onboarding placement, RBAC principals/groups/dedup mutations and permission checks, swarm presence/pruning, a bounded group/identity-aware memory graph, admin-only Moirai witness provenance, Hygieia telemetry, the machine-checked physical schema ledger/census, redacted settings and the managed backup vault; never owns host mutation policy |
 | Control-plane image | `Dockerfile` (`control-plane` / artifact-only `release-control-plane` targets), `docker-compose.yml` | Immutable frontend/backend packaging and the restricted runtime boundary; releases reuse native ABI-gated binaries and a shared frontend artifact rather than recompiling Rust; no host filesystem or Docker authority |
 | Native host supervisor | `src/installer/supervisor.rs`, `src/installer/operations.rs`, `src/installer/{settings,backups}.rs`, `src/control_plane/supervisor.rs` | Authenticated bridge for host discovery, plan construction, durable cursor-based install operations, redacted atomic settings, guarded managed-volume backup/restore, a bounded Hygieia health/journal projection, and an allowlisted set of typed lifecycle operations; exposes no general shell or filesystem endpoint |
 | RBAC policy service | `src/core/rbac.rs`, `src/core/rbac/`, `src/core/rbac_compat.rs`, `src/core/rbac_registry.rs` | Graph-backed policy, administration, memory scoping, compatibility bootstrap, and registry projection |

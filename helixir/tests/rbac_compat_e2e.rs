@@ -4,11 +4,13 @@ use helixir::core::rbac::ClientWorkspaceOnboarding;
 use helixir::core::{HelixirClient, ONBOARDING_GROUP_ID, Role};
 use helixir::llm::extractor::ExtractedMemory;
 
+mod common;
+
 #[tokio::test]
 #[ignore = "needs HELIX_E2E=1, an RBAC admin, deployed schema, and embeddings"]
 async fn compatibility_bootstrap_is_idempotent_and_routes_omitted_groups() {
     assert_eq!(std::env::var("HELIX_E2E").unwrap_or_default(), "1");
-    let admin = std::env::var("HELIXIR_RBAC_ACTOR").unwrap_or_else(|_| "codex".to_string());
+    let admin = common::e2e_actor();
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
     let rbac = client.rbac();

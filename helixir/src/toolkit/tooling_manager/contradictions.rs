@@ -197,9 +197,15 @@ impl ToolingManager {
         old_id: &str,
         reason: &str,
     ) -> Result<(), ToolingError> {
-        self.db
+        if let Some(conflict_type) = self.get_memory_protection(old_id).await?.conflict_type() {
+            return Err(ToolingError::Memory(format!(
+                "memory {old_id} is protected by charter ({conflict_type})"
+            )));
+        }
+        let response = self
+            .db
             .execute_query::<serde_json::Value, _>(
-                "addMemorySupersession",
+                "addMutableMemorySupersession",
                 &serde_json::json!({
                     "new_id": new_id,
                     "old_id": old_id,
@@ -210,6 +216,14 @@ impl ToolingManager {
             )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
+        if response
+            .get("supersedes")
+            .is_none_or(serde_json::Value::is_null)
+        {
+            return Err(ToolingError::Memory(format!(
+                "charter rejected supersession target {old_id}"
+            )));
+        }
         Ok(())
     }
 

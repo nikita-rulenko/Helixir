@@ -23,7 +23,7 @@ pub struct HelixirConfig {
     pub llm_fallback_enabled: bool,
     pub llm_fallback_url: String,
     pub llm_fallback_model: String,
-    /// Ordered provider names tried after the primary (smart → cheap → local).
+    /// Explicit opt-in provider names tried after the primary.
     /// Entries equal to the primary, unknown names, or tiers missing
     /// credentials are skipped at boot with a warning — a partial chain still
     /// boots. Env: `HELIX_LLM_FALLBACK_CHAIN` (comma-separated).
@@ -106,10 +106,10 @@ impl HelixirConfig {
             llm_base_url: None,
             llm_temperature: 0.3,
 
-            llm_fallback_enabled: true,
+            llm_fallback_enabled: false,
             llm_fallback_url: crate::DEFAULT_OLLAMA_URL.to_string(),
             llm_fallback_model: crate::DEFAULT_LLM_FALLBACK_MODEL.to_string(),
-            llm_fallback_chain: vec!["deepseek".to_string(), "ollama".to_string()],
+            llm_fallback_chain: Vec::new(),
             deepseek_api_key: None,
             deepseek_model: crate::DEFAULT_DEEPSEEK_MODEL.to_string(),
 
@@ -245,6 +245,9 @@ impl HelixirConfig {
         if let Ok(token) = std::env::var("HELIXIR_GATEWAY_TOKEN") {
             self.gateway.auth_token = (!token.is_empty()).then_some(token);
         }
+        if let Ok(url) = std::env::var("HELIXIR_GATEWAY_PUBLIC_URL") {
+            self.gateway.public_url = (!url.trim().is_empty()).then_some(url);
+        }
         if let Ok(provider) = std::env::var("HELIX_LLM_PROVIDER") {
             self.llm_provider = provider;
         }
@@ -257,8 +260,8 @@ impl HelixirConfig {
         if let Ok(url) = std::env::var("HELIX_LLM_BASE_URL") {
             self.llm_base_url = Some(url);
         }
-        // Comma-separated tier names; an explicitly empty value clears the
-        // chain (fallback off without touching llm_fallback_enabled).
+        // Comma-separated tier names. Setting this variable is an explicit
+        // opt-in; an empty value clears and disables generation fallback.
         if let Ok(chain) = std::env::var("HELIX_LLM_FALLBACK_CHAIN") {
             self.llm_fallback_chain = chain
                 .split(',')
@@ -266,6 +269,7 @@ impl HelixirConfig {
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect();
+            self.llm_fallback_enabled = !self.llm_fallback_chain.is_empty();
         }
         if let Ok(key) = std::env::var("HELIX_DEEPSEEK_API_KEY") {
             self.deepseek_api_key = Some(key);

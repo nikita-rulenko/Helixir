@@ -19,6 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -36,7 +38,9 @@ async fn pmi_damps_thick_axis_lifts_specific() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("lpmi_{run}");
@@ -52,7 +56,10 @@ async fn pmi_damps_thick_axis_lifts_specific() {
     ];
     let mut mids: Vec<String> = Vec::new();
     for f in facts {
-        let r = client.add(f, &user, None, None).await.expect("add");
+        let r = client
+            .add_as_in_group(&actor, f, &user, None, None, Some(&group))
+            .await
+            .expect("add");
         if let Some(id) = r.memory_ids.first() {
             mids.push(id.clone());
         }

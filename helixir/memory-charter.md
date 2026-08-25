@@ -1,13 +1,11 @@
 # Helixir Memory Charter
 
-> DRAFT v0.1 — awaiting owner approval. The write path currently runs in
-> "defer, don't destroy" mode (increment 2, #34): destructive verdicts on the
-> conflicts below are DEFERRED — both facts are stored, the dispute lives on a
-> charter_deferred CONTRADICTS edge, and `resolve_contradiction` settles it
-> (retract executes the supersede then, with history). Non-destructive
-> conflicts are surfaced to the agent
-> in `add_memory.needs_clarification`, but every decision still executes.
-> Blocking semantics activate only after this charter is approved.
+> **ACTIVE v1.0 — owner-approved through issue #34.** The write path follows
+> "defer, don't destroy": destructive verdicts governed by the charter are
+> deferred, both facts remain stored, and `resolve_contradiction` settles the
+> dispute with history intact. C1, C2 and C4 are hard constitutional guards.
+> The compatibility setting `write.charter_blocking = false` may disable
+> C3/C5 deferral for diagnostics, but it cannot disable those hard guards.
 
 This charter governs what Helixir may decide on its own when writing
 memories, what it must escalate to the agent (and through the agent — to the
@@ -34,8 +32,11 @@ everything below.
   the conflict is escalated. Memory is an elder brain: it forgets nothing
   silently. (The library-level `delete()` remains as an explicit
   administrative action; it is deliberately not exposed over MCP.)
-- **C2. Never overwrite memories marked `immutable`** (system seeds,
-  approved charter rules, memories the user marked final).
+- **C2. Never overwrite memories marked `immutable`.** System seeds and
+  explicitly adopted charter rules are promoted to immutable storage. The
+  current agent-facing API does not expose a general-purpose "mark final"
+  operation; operators may promote existing records through the controlled
+  persistence path.
 - **C3. Preferences, goals and opinions are never rewritten silently.**
   Any `CONTRADICT`, and any `UPDATE`/`SUPERSEDE` touching these types —
   even at high engine confidence — is escalated. A reversed preference may
@@ -48,11 +49,13 @@ everything below.
 
 ## 2. Learned rules (grown from precedents, each with provenance)
 
-Rules appear here when the user explicitly answers "allow always" to a
-clarification, or approves an agent proposal after repeated identical
-answers. Every rule links (BECAUSE edges) to the episodes that created it.
+Rules appear in the live `memory://rules` resource when the user explicitly
+adopts an agent proposal after repeated identical contradiction resolutions.
+Precedent episodes retain SUPPORTS provenance to both disputed memories.
+Adopted rules are marked immutable and render beside this constitution; the
+constitution itself never self-learns.
 
-_(empty — no precedents yet)_
+_(Runtime rules are loaded from HelixDB and appended by `memory://rules`.)_
 
 <!-- Example of a learned rule:
 - **L1.** Facts about code structure: newest wins silently (no escalation
@@ -67,3 +70,13 @@ _(empty — no precedents yet)_
 - `CONTRADICT` / `CROSS_CONTRADICT` decisions → execute (both facts are
   kept, linked by a CONTRADICTS edge — non-destructive) **and** flag in
   `needs_clarification`.
+
+## 4. Executable contract
+
+| Article | Runtime enforcement | Verification |
+|---|---|---|
+| C1 | `DELETE` is converted to non-destructive deferral/supersession | deterministic charter tests + blocking E2E |
+| C2 | direct and decision-pipeline rewrites load `Memory.immutable` and fail closed; seeds/rules are created immutable atomically and interrupted seed passes resume | deterministic protection tests + protected-memory E2E |
+| C3 | preference/goal/opinion rewrites enter `needs_clarification`; destructive verdicts defer by default | deterministic charter tests + reversal E2E |
+| C4 | direct and decision-pipeline rewrites reject `source=raw_input` targets | deterministic protection tests + protected-memory E2E |
+| C5 | destructive verdicts below the configured confidence threshold escalate and defer by default | deterministic charter tests |

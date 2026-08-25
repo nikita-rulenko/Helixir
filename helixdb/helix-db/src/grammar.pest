@@ -1,0 +1,326 @@
+// ---------------------------------------------------------------------
+// Main rules
+// ---------------------
+source = { SOI ~ (schema_def | migration_def | query_def)* ~ EOI }
+
+
+// ---------------------------------------------------------------------
+// Schema definitions
+// ---------------------------------------------------------------------
+schema_def = {( schema_version ~ "{" ~ (vector_def | node_def | edge_def)* ~ "}") | (vector_def | node_def | edge_def) }
+vector_def = { "V::" ~ identifier_upper ~ node_body? }
+node_def   = { "N::" ~ identifier_upper ~ node_body? }
+
+edge_modifier = { "UNIQUE" }
+edge_def = { "E::" ~ identifier_upper ~ edge_modifier? ~ edge_body }
+
+node_body  = { "{" ~ field_defs ~ "}" }
+edge_body  = { "{" ~ "From:" ~ identifier_upper ~ "," ~ ("To:" ~ identifier_upper ~ "," ~ properties ~ "}" | "To:" ~ identifier_upper ~ ","? ~ "}") }
+field_defs = { (field_def ~ ",")* ~ (field_def ~ ","?)? }
+field_def  = { index? ~ identifier ~ ":" ~ param_type ~ (default)? }
+unique = { "UNIQUE" }
+index = { unique? ~ "INDEX" }
+default = { "DEFAULT" ~  (now | float | integer | boolean | string_literal | none) }
+// optional = { "OPTIONAL" }
+properties = { "Properties" ~ ":" ~ "{" ~ field_defs? ~ "}" }
+schema_version = { "schema::" ~ integer }
+
+// ---------------------------------------------------------------------
+// Migration definitions
+// ---------------------------------------------------------------------
+migration_def = { "MIGRATION" ~ schema_version ~ "=>" ~ schema_version ~ "{" ~ migration_body ~ "}" }
+node_decl = { "N::" ~ identifier_upper }
+edge_decl = { "E::" ~ identifier_upper }
+vec_decl = { "V::" ~ identifier_upper }
+anon_decl = { "_::" }
+
+item_def = { node_decl | edge_decl | vec_decl }
+cast = { "AS" ~ (named_type | ID_TYPE | date_type) }
+
+field_migration = { identifier ~ ":" ~ ((now | float | integer | boolean | string_literal | none) | (identifier ~ cast?))}
+field_migrations = { (field_migration ~ ",")* ~ (field_migration ~ ","?)?  }
+
+node_migration = { "{" ~ field_migrations ~ "}" }
+edge_migration = { "{" ~ "Properties" ~ ":" ~ "{" ~ field_migrations ~ "}" ~ "}" }
+
+
+migration_item_mapping = { item_def ~ "=>" ~ (item_def | anon_decl) ~ (node_migration | edge_migration) }
+migration_body = { migration_item_mapping* }
+
+
+// ---------------------------------------------------------------------
+// Query definitions
+// ---------------------------------------------------------------------
+query_def    = { built_in_macro? ~ "QUERY" ~ identifier ~ query_params ~ "=>" ~ query_body ~ return_stmt } // TODO: possible optional return stmt
+query_params = { "(" ~ (param_def ~ ("," ~ param_def)*)? ~ ")" }
+param_def    = { identifier ~ optional_param? ~ ":" ~ param_type }
+query_body   = { (get_stmt | drop | for_loop | creation_stmt)* }
+optional_param = { "?" }
+
+
+// ---------------------------------------------------------------------
+// Assignments and traversals
+// ---------------------------------------------------------------------
+get_stmt            = { identifier ~ "<-" ~ evaluates_to_anything }
+traversal           = { (start_node | start_edge | search_vector | start_vector) ~ step* ~ last_step? }
+id_traversal        = { identifier ~ ((step+ ~ last_step?) | last_step) }
+anonymous_traversal = { "_"  ~ ((step+ ~ last_step?) | last_step)? }
+step                = { "::" ~ (graph_step | order_by| aggregate | group_by | where_step | intersect_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE | rerank_rrf | rerank_mmr) }
+last_step           = { "::" ~ (bool_operations | update | upsert_v | upsert_e | upsert_n | first) }
+// change this for loop to be able to take traversals etc in the future.
+for_loop            = { "FOR" ~ for_argument ~ "IN" ~ identifier ~ "{" ~ query_body ~ "}" }
+for_argument        = { object_access | object_destructuring | identifier }
+object_access       = { identifier ~ "." ~ identifier }
+object_destructuring = { "{" ~ identifier ~ ("," ~ identifier)* ~ "}" }
+
+// ---------------------------------------------------------------------
+// Evaluation rules for different types
+// ---------------------------------------------------------------------
+creation_stmt = {
+  AddN
+  | AddV
+  | BatchAddV
+  | AddE
+}
+
+evaluates_to_anything = {
+  AddN
+  | AddV
+  | BatchAddV
+  | AddE
+  | exists
+  | none
+  | traversal
+  | id_traversal
+  | search_vector
+  | bm25_search
+  | math_function_call
+  | string_literal
+  | array_literal
+  | float
+  | integer
+  | boolean
+  | and
+  | or
+  | identifier
+}
+
+// ---------------------------------------------------------------------
+// Evaluates to bool
+// ---------------------------------------------------------------------
+evaluates_to_bool = {
+    exists
+  | boolean
+  | and
+  | or
+  | identifier
+  | traversal
+  | id_traversal
+}
+
+// ---------------------------------------------------------------------
+// Evaluates to number
+// ---------------------------------------------------------------------
+evaluates_to_number = {
+    math_function_call
+  | float
+  | integer
+  | identifier
+  | traversal
+  | id_traversal
+}
+
+// ---------------------------------------------------------------------
+// Return statement
+// ---------------------------------------------------------------------
+return_stmt = { "RETURN" ~ (evaluates_to_anything ~ ("," ~ evaluates_to_anything)* | array_creation | object_creation) }
+
+// ---------------------------------------------------------------------
+// Creation steps
+// ---------------------------------------------------------------------
+create_field  = { "{" ~ new_field ~ ("," ~ new_field)* ~ ","? ~ "}" }
+new_field     = { identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | create_field) }
+to_from       = { to ~ from? | from ~ to? }
+to            = { "::" ~ "To" ~ "(" ~ id_arg ~ ")" }
+from          = { "::" ~ "From" ~ "(" ~ id_arg ~ ")" }
+vec_literal   = { "[" ~ (float) ~ ("," ~ (float))* ~ "]" }
+vector_data = { vec_literal | embed_method | identifier }
+AddN          = { "AddN" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? }
+AddE          = { "AddE" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? ~ to_from }
+AddV          = { "AddV" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ vector_data ~ ("," ~ create_field)* ~ ")") }
+
+// ---------------------------------------------------------------------
+// Source steps
+// ---------------------------------------------------------------------
+start_node = { "N" ~ ("<" ~ type_args ~ ">")? ~ ("(" ~ (id_args | by_index) ~ ")")? }
+start_edge = { "E" ~ ("<" ~ type_args ~ ">")? ~ ("(" ~ (id_args | by_index) ~ ")")? }
+start_vector = { "V" ~ ("<" ~ type_args ~ ">")? ~ ("(" ~ (id_args | by_index) ~ ")")? }
+by_index = { "{" ~ id_arg ~ ":" ~ evaluates_to_anything ~ "}" }
+// ---------------------------------------------------------------------
+// Traversal steps
+// ---------------------------------------------------------------------
+graph_step = {
+  out_e
+  | in_e
+  | from_n
+  | to_n
+  | from_v
+  | to_v
+  | out
+  | in_nodes
+  | shortest_path_dijkstras
+  | shortest_path_bfs
+  | shortest_path_astar
+  | shortest_path
+  | search_vector
+}
+out_e ={  "OutE" ~ ("<" ~ type_args ~ ">")?}
+in_e ={ "InE" ~ ("<" ~ type_args ~ ">")?}
+from_n ={ "FromN"}
+to_n ={ "ToN"}
+from_v ={ "FromV"}
+to_v ={ "ToV"}
+out ={ "Out" ~ ("<" ~ type_args ~ ">")?}
+in_nodes ={ "In" ~ ("<" ~ type_args ~ ">")?}
+shortest_path ={ "ShortestPath" ~ ("<" ~ type_args ~ ">")? ~ to_from}
+shortest_path_dijkstras ={ "ShortestPathDijkstras" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ ")" ~ to_from}
+shortest_path_bfs ={ "ShortestPathBFS" ~ ("<" ~ type_args ~ ">")? ~ to_from}
+shortest_path_astar ={ "ShortestPathAStar" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ "," ~ string_literal ~ ")" ~ to_from}
+
+
+// ---------------------------------------------------------------------
+// Util steps
+// ---------------------------------------------------------------------
+where_step = { "WHERE" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ")" }
+intersect_step = { "INTERSECT" ~ "(" ~ anonymous_traversal ~ ")" }
+exists     = { negate? ~ "EXISTS" ~ "(" ~ (traversal | id_traversal | anonymous_traversal) ~ ")" }
+negate     = { "!" }
+range_step = { "RANGE" ~ "(" ~ (evaluates_to_number) ~ "," ~ (evaluates_to_number) ~ ")" }
+order_by   = { "ORDER" ~ "<" ~ order_by_type ~ ">" ~"(" ~ (to_order) ~ ")" }
+to_order = { anonymous_traversal | id_traversal }
+order_by_type = { asc | desc }
+asc = { "Asc" }
+desc = { "Desc" }
+count        = { "COUNT" }
+none         = { "NONE" }
+ID           = { "ID" }
+update_field = { identifier ~ ":" ~ (evaluates_to_anything | anonymous_traversal) }
+update       = { ("UPDATE"|"Update") ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+upsert_n       = { "UpsertN" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+upsert_e       = { "UpsertE" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" ~  to_from}
+upsert_v       = { "UpsertV" ~ "(" ~ vector_data ~ "," ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+drop = { "DROP" ~ evaluates_to_anything }
+first = { "FIRST" }
+aggregate = { "AGGREGATE_BY" ~ "(" ~ (identifier ~ ("," ~ identifier)*) ~ ")" }
+group_by = { "GROUP_BY" ~ "(" ~ (identifier ~ ("," ~ identifier)*) ~ ")" }
+
+
+// ---------------------------------------------------------------------
+// Reranker steps
+// ---------------------------------------------------------------------
+rerank_rrf = { "RerankRRF" ~ ("(" ~ "k" ~ ":" ~ evaluates_to_number ~ ")")? }
+rerank_mmr = { "RerankMMR" ~ "(" ~ "lambda" ~ ":" ~ evaluates_to_number ~ ("," ~ "distance" ~ ":" ~ (string_literal | identifier))? ~ ")" }
+
+// ---------------------------------------------------------------------
+// Vector steps
+// ---------------------------------------------------------------------
+search_vector = { "SearchV" ~ "<" ~ identifier_upper ~ ">" ~ "(" ~ vector_data ~ "," ~ (integer | identifier) ~ ")" }// ~ ("::" ~ pre_filter)? }
+bm25_search = { "SearchBM25" ~ "<" ~ identifier_upper ~ ">" ~ "(" ~ (string_literal | identifier) ~ "," ~ (integer | identifier) ~ ")" }
+pre_filter = { "PREFILTER" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ")" }
+BatchAddV = { "BatchAddV" ~ "<" ~ identifier_upper ~ ">" ~ "(" ~ identifier ~ ")" }
+embed_method = { "Embed" ~ "(" ~ (identifier | string_literal) ~ ")" }
+
+// ---------------------------------------------------------------------
+// Mathematical functions
+// ---------------------------------------------------------------------
+math_function_call = { math_function_name ~ "(" ~ function_args? ~ ")" }
+function_args      = { math_expression ~ ("," ~ math_expression)* }
+math_expression    = { math_function_call | id_traversal | evaluates_to_number | anonymous_traversal  }
+
+math_function_name = {
+    // Arithmetic (binary)
+    "ADD" | "SUB" | "MUL" | "DIV" | "POW" | "MOD" |
+    // Unary math
+    "ABS" | "SQRT" | "LN" | "LOG10" | "LOG" | "EXP" |
+    "CEIL" | "FLOOR" | "ROUND" |
+    // Trigonometry
+    "SIN" | "COS" | "TAN" | "ASIN" | "ACOS" | "ATAN" | "ATAN2" |
+    // Constants
+    "PI" | "E" |
+    // Aggregates
+    "MIN" | "MAX" | "SUM" | "AVG" | "COUNT"
+}
+
+// ---------------------------------------------------------------------
+// Boolean operations
+// ---------------------------------------------------------------------
+and             = { negate? ~ "AND" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
+or              = { negate? ~ "OR" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
+bool_operations = { GT | GTE | LT | LTE | EQ | NEQ | CONTAINS | IS_IN }
+GT              = { "GT" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+GTE             = { "GTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+LT              = { "LT" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+LTE             = { "LTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+EQ              = { "EQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
+NEQ             = { "NEQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
+CONTAINS        = { "CONTAINS" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
+IS_IN           = { "IS_IN" ~ "(" ~ (array_literal | identifier) ~ ")" }
+array_literal     = { "[" ~ (evaluates_to_anything) ~ ("," ~ (evaluates_to_anything))* ~ "]" }
+
+
+// ---------------------------------------------------------------------
+// Object access and remapping steps
+// ---------------------------------------------------------------------
+object_step   = { "{" ~ ((mapping_field ~ ("," ~ mapping_field)* ~ "," ~ spread_object ~ ","?) | (mapping_field ~ ("," ~ mapping_field)* ~ ","?) ) ~ "}" }
+exclude_field = { "!" ~ "{" ~ identifier ~ ("," ~ identifier)* ~ "}" }
+closure_step  = { "|" ~ identifier ~ "|" ~ object_step }
+spread_object = { ".." ~ ","?}
+mapping_field = { (identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | object_step)) | identifier }
+array_creation = { "[" ~ (identifier | object_creation ) ~ ("," ~ (identifier | object_creation))* ~ ","? ~ "]" }
+object_creation = {  "{" ~ object_inner ~ ("," ~ object_inner)* ~ ","? ~ "}" }
+object_inner = { identifier ~ ":" ~ object_field }
+object_field = { (object_creation | array_creation | evaluates_to_anything) }
+
+// ---------------------------------------------------------------------
+// Macros
+// ---------------------------------------------------------------------
+built_in_macro = { mcp_macro | model_macro }
+mcp_macro = { "#[mcp]" }
+
+model_macro = { "#[" ~ "model" ~ "(" ~ model_name ~ ")" ~ "]" }
+model_name = { identifier | string_literal }
+
+// Removed path_macro and path_algorithm - now using distinct function names
+
+
+
+// ---------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------
+type_args = { identifier_upper ~ ("," ~ identifier_upper)* }
+id_arg    = { (identifier | string_literal) }
+id_args   = { (id_arg) ~ ("," ~ id_arg)* }
+array            = { "[" ~ param_type ~ "]" }
+object           = { "{" ~ field_defs ~ "}" }
+named_type       = { "String" | "Boolean" | "F32" | "F64" | "I8" | "I16" | "I32" | "I64" | "U8" | "U16" | "U32" | "U64" | "U128" }
+ID_TYPE          = { "ID" }
+date_type       = { "Date" }
+param_type       = { named_type | date_type | ID_TYPE | array | object | identifier  }
+
+// ---------------------------------------------------------------------
+// Literals
+// ---------------------------------------------------------------------
+string_literal   = ${ "\"" ~ inner_string ~ "\"" }
+inner_string     = @{ (!("\"" | "\\") ~ ANY)* }
+boolean          =  { "true" | "false" }
+identifier       = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier_upper = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+integer          = @{ ASCII_DIGIT+ }
+float            = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+now              = { "NOW" }
+
+// ---------------------------------------------------------------------
+// Whitespace and comments
+// ---------------------------------------------------------------------
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
