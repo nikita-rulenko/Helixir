@@ -2,7 +2,9 @@ use super::batch_expansion::graph_expansion_phase_batched;
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::ppr::personalized_pagerank;
-use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
+use super::scoring::{
+    calculate_graph_combined_score_weighted, calculate_vector_combined_score_weighted, cosine_score,
+};
 use crate::core::{RetrievalProfile, TimeWindow};
 use crate::db::HelixClient;
 use crate::llm::EmbeddingGenerator;
@@ -140,12 +142,7 @@ impl SmartTraversalV2 {
                 let mut reranked = 0u32;
                 for (hit, emb) in vector_hits.iter_mut().zip(embeddings.iter()) {
                     let real_score = cosine_score(query_embedding, emb);
-                    if (real_score - hit.vector_score).abs() > 0.01 {
-                        let temporal = hit.temporal_score;
-                        hit.vector_score = real_score;
-                        hit.combined_score = (real_score * config.vector_weight
-                            + temporal * config.temporal_weight)
-                            .clamp(0.0, 1.0);
+                    if rerank_seed(hit, real_score, &config) {
                         reranked += 1;
                     }
                 }
@@ -211,11 +208,37 @@ impl SmartTraversalV2 {
                 let Some(ppr) = ppr_scores.get(&result.memory_id) else {
                     continue;
                 };
+                let direct_retrieval_score = result.combined_score;
+                let has_bm25_evidence = result
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("bm25_rank"))
+                    .is_some();
+                let hybrid_semantic_floor = if has_bm25_evidence {
+                    result.vector_score
+                } else {
+                    0.0
+                };
                 result.graph_score = *ppr;
-                result.combined_score = (config.graph_semantic_weight * result.vector_score
+                let graph_blend = (config.graph_semantic_weight * result.vector_score
                     + config.graph_graph_weight * ppr
                     + config.graph_temporal_weight * result.temporal_score)
                     .clamp(0.0, 1.0);
+                // PPR is additional graph evidence, not permission to erase a
+                // direct retrieval hit. In particular, a BM25-backed fact may
+                // be old and graph-isolated: replacing its hybrid semantic
+                // score with the graph blend made exact lexical matches
+                // disappear from the honest top-K. The floor is the already
+                // blended cosine/BM25 score, not the raw BM25 rank score, so a
+                // weak lexical rank-1 does not receive an artificial 0.95.
+                // Expanded rows have no independent retrieval evidence, so
+                // only seeds receive this floor.
+                result.combined_score = preserve_direct_seed_score(
+                    &result.source,
+                    direct_retrieval_score,
+                    hybrid_semantic_floor,
+                    graph_blend,
+                );
                 if let Some(meta) = result.metadata.as_mut() {
                     meta.insert(
                         "ppr".to_string(),
@@ -224,8 +247,11 @@ impl SmartTraversalV2 {
                     // Raw cosine survives next to the blended score: the
                     // write-path duplicate gate needs the pure semantic
                     // signal, not the rank blend (#32 W2).
+                    meta.entry("cosine".to_string()).or_insert_with(|| {
+                        serde_json::Value::from((result.vector_score * 1000.0).round() / 1000.0)
+                    });
                     meta.insert(
-                        "cosine".to_string(),
+                        "semantic_score".to_string(),
                         serde_json::Value::from((result.vector_score * 1000.0).round() / 1000.0),
                     );
                 }
@@ -390,6 +416,8 @@ impl SmartTraversalV2 {
         hasher.update(config.graph_depth.to_le_bytes());
         hasher.update(config.min_vector_score.to_le_bytes());
         hasher.update(config.min_combined_score.to_le_bytes());
+        hasher.update(config.hybrid_vector_weight.to_le_bytes());
+        hasher.update(config.hybrid_bm25_weight.to_le_bytes());
 
         if let Some(edge_types) = &config.edge_types {
             for edge_type in edge_types {
@@ -411,6 +439,92 @@ impl SmartTraversalV2 {
     }
 }
 
+/// Blend the real semantic signal with the phase-1 hybrid rank without
+/// changing what `metadata.cosine` means to the write-side duplicate gate.
+fn rerank_seed(hit: &mut SearchResult, real_cosine: f64, config: &SearchConfig) -> bool {
+    let previous_semantic = hit.vector_score;
+    let hybrid = hit
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("phase1_hybrid"))
+        .is_some();
+    let semantic_score = if hybrid {
+        let fusion_score = hit
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("rrf_rank_score"))
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(previous_semantic);
+        // A document that is strong in only one arm is deliberately placed
+        // behind dual-arm documents by RRF.  The fused *position* therefore
+        // cannot be the sole lexical relevance signal: a BM25 rank-1 exact
+        // hit may sit late in the union and would be erased by cosine
+        // reranking.  Preserve the stronger of the fused order and the
+        // document's native BM25 rank.  This remains rank-based and avoids
+        // mixing incomparable raw BM25/cosine magnitudes.
+        let lexical_score = hit
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("bm25_rank_score"))
+            .and_then(serde_json::Value::as_f64)
+            .map_or(fusion_score, |bm25_score| bm25_score.max(fusion_score));
+        blend_hybrid_relevance(
+            real_cosine,
+            lexical_score,
+            config.hybrid_vector_weight,
+            config.hybrid_bm25_weight,
+        )
+    } else {
+        real_cosine
+    };
+
+    hit.vector_score = semantic_score;
+    hit.combined_score = calculate_vector_combined_score_weighted(
+        semantic_score,
+        hit.temporal_score,
+        config.vector_weight,
+        config.temporal_weight,
+    );
+    let metadata = hit.metadata.get_or_insert_with(Default::default);
+    metadata.insert("cosine".to_string(), serde_json::Value::from(real_cosine));
+    metadata.insert(
+        "semantic_score".to_string(),
+        serde_json::Value::from(semantic_score),
+    );
+
+    (semantic_score - previous_semantic).abs() > 0.01
+}
+
+fn blend_hybrid_relevance(
+    cosine: f64,
+    fusion_score: f64,
+    vector_weight: f64,
+    bm25_weight: f64,
+) -> f64 {
+    let vector_weight = vector_weight.max(0.0);
+    let bm25_weight = bm25_weight.max(0.0);
+    let total = vector_weight + bm25_weight;
+    if !total.is_finite() || total <= f64::EPSILON {
+        return cosine.clamp(0.0, 1.0);
+    }
+    ((cosine * vector_weight + fusion_score * bm25_weight) / total).clamp(0.0, 1.0)
+}
+
+fn preserve_direct_seed_score(
+    source: &str,
+    direct_retrieval_score: f64,
+    hybrid_semantic_floor: f64,
+    graph_blend: f64,
+) -> f64 {
+    if source == "vector" {
+        graph_blend
+            .max(direct_retrieval_score)
+            .max(hybrid_semantic_floor)
+    } else {
+        graph_blend
+    }
+}
+
 /// #88: indices of the top `cap` rows by score, descending. Pure so the
 /// selection contract is unit-tested without an embedder.
 fn top_rerank_indices(scores: &[f64], cap: usize) -> Vec<usize> {
@@ -426,7 +540,11 @@ fn top_rerank_indices(scores: &[f64], cap: usize) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::top_rerank_indices;
+    use super::{
+        blend_hybrid_relevance, preserve_direct_seed_score, rerank_seed, top_rerank_indices,
+    };
+    use crate::toolkit::mind_toolbox::search::smart_traversal::{SearchConfig, SearchResult};
+    use std::collections::HashMap;
 
     #[test]
     fn cap_larger_than_input_keeps_everything() {
@@ -446,5 +564,93 @@ mod tests {
         let top = top_rerank_indices(&scores, 2);
         assert_eq!(top.len(), 2);
         assert!(top.contains(&1));
+    }
+
+    #[test]
+    fn hybrid_seed_keeps_rrf_signal_while_exposing_pure_cosine() {
+        let mut hit = SearchResult::from_vector("old", "exact lexical hit", 0.95, 0.0);
+        hit.metadata = Some(HashMap::from([
+            (
+                "phase1_hybrid".to_string(),
+                serde_json::Value::String("vector_rrf_bm25".to_string()),
+            ),
+            ("rrf_rank_score".to_string(), serde_json::Value::from(0.95)),
+            ("bm25_rank".to_string(), serde_json::Value::from(1)),
+            ("bm25_rank_score".to_string(), serde_json::Value::from(0.95)),
+        ]));
+        let config = SearchConfig::default();
+
+        rerank_seed(&mut hit, 0.20, &config);
+
+        let expected_semantic = blend_hybrid_relevance(0.20, 0.95, 0.6, 0.4);
+        assert!((hit.vector_score - expected_semantic).abs() < 1e-9);
+        assert!(hit.combined_score >= config.min_combined_score);
+        let metadata = hit.metadata.expect("rerank metadata");
+        assert_eq!(
+            metadata.get("cosine").and_then(serde_json::Value::as_f64),
+            Some(0.20)
+        );
+        assert_eq!(
+            metadata
+                .get("bm25_rank")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            metadata
+                .get("rrf_rank_score")
+                .and_then(serde_json::Value::as_f64),
+            Some(0.95)
+        );
+    }
+
+    #[test]
+    fn bm25_rank_one_survives_a_late_rrf_union_position() {
+        let mut hit = SearchResult::from_vector("old", "exact lexical hit", 0.20, 0.0);
+        hit.metadata = Some(HashMap::from([
+            (
+                "phase1_hybrid".to_string(),
+                serde_json::Value::String("vector_rrf_bm25".to_string()),
+            ),
+            ("rrf_rank_score".to_string(), serde_json::Value::from(0.20)),
+            ("bm25_rank".to_string(), serde_json::Value::from(1)),
+            ("bm25_rank_score".to_string(), serde_json::Value::from(0.95)),
+        ]));
+        let config = SearchConfig::default();
+
+        rerank_seed(&mut hit, 0.50, &config);
+
+        let expected_semantic = blend_hybrid_relevance(0.50, 0.95, 0.6, 0.4);
+        assert!((hit.vector_score - expected_semantic).abs() < 1e-9);
+        assert!(hit.combined_score >= config.min_combined_score);
+    }
+
+    #[test]
+    fn non_hybrid_seed_still_uses_pure_cosine() {
+        let mut hit = SearchResult::from_vector("plain", "vector hit", 0.95, 0.0);
+        let config = SearchConfig::default();
+
+        rerank_seed(&mut hit, 0.42, &config);
+
+        assert!((hit.vector_score - 0.42).abs() < 1e-9);
+        assert_eq!(
+            hit.metadata
+                .as_ref()
+                .and_then(|m| m.get("cosine"))
+                .and_then(serde_json::Value::as_f64),
+            Some(0.42)
+        );
+    }
+
+    #[test]
+    fn direct_seed_score_is_a_floor_for_graph_reranking() {
+        assert_eq!(preserve_direct_seed_score("vector", 0.66, 0.0, 0.49), 0.66);
+        assert_eq!(preserve_direct_seed_score("vector", 0.40, 0.0, 0.70), 0.70);
+        assert_eq!(preserve_direct_seed_score("graph", 0.66, 0.95, 0.49), 0.49);
+    }
+
+    #[test]
+    fn bm25_hybrid_semantic_is_a_direct_seed_floor() {
+        assert_eq!(preserve_direct_seed_score("vector", 0.66, 0.78, 0.49), 0.78);
     }
 }

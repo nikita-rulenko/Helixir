@@ -178,7 +178,13 @@ done
 printf '%s\n' '[1/7] Compile the current HQL contract and build an isolated HelixDB image'
 current_stage='1/7: isolated HelixDB image build'
 assert_docker_alive
-(cd "$repo_root/helixir" && helix check && helix build -i dev --quiet)
+helix_bin=${HELIXIR_HELIX_BIN:-"$repo_root/helixdb/target/release/helix"}
+if [[ ! -x "$helix_bin" ]]; then
+  cargo build --release --locked --manifest-path "$repo_root/helixdb/Cargo.toml" -p helix-cli
+fi
+(cd "$repo_root/helixir" && \
+  HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" check && \
+  HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" build -i dev --quiet)
 test -f "$repo_root/helixir/.helix/dev/Dockerfile"
 docker image inspect helix-helixir-dev:latest >/dev/null
 docker tag helix-helixir-dev:latest "$db_image"

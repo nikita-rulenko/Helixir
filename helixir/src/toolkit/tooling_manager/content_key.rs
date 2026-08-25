@@ -17,7 +17,8 @@ pub struct MemoryBrief {
     pub memory_id: String,
     pub content: String,
     pub content_key: String,
-    pub security_domain: String,
+    pub source: String,
+    pub security_domain: Option<String>,
 }
 
 impl ToolingManager {
@@ -43,7 +44,7 @@ impl ToolingManager {
     }
 
     /// All memory_ids that share a fingerprint group.
-    pub async fn memories_in_group(&self, content_key: &str) -> Vec<String> {
+    pub async fn memories_in_group(&self, content_key: &str) -> Result<Vec<String>, ToolingError> {
         #[derive(Deserialize)]
         struct Node {
             #[serde(default)]
@@ -67,7 +68,7 @@ impl ToolingManager {
                     .filter(|s| !s.is_empty())
                     .collect()
             })
-            .unwrap_or_default()
+            .map_err(|error| ToolingError::Database(error.to_string()))
     }
 
     /// Stamp a fingerprint onto a memory (used by backfill + unify).
@@ -100,20 +101,41 @@ impl ToolingManager {
             if key == canonical {
                 continue;
             }
-            for id in self.memories_in_group(key).await {
-                if self.set_content_key(&id, canonical).await.is_ok() {
-                    restamped += 1;
-                }
-            }
+            restamped += self.restamp_content_key_group(key, canonical).await?;
         }
         Ok(restamped)
+    }
+
+    /// Move one complete non-unique fingerprint group to `canonical` in a
+    /// single indexed mutation. Returns the number of updated Memory nodes.
+    pub async fn restamp_content_key_group(
+        &self,
+        content_key: &str,
+        canonical: &str,
+    ) -> Result<usize, ToolingError> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            updated_count: usize,
+        }
+        self.db
+            .execute_query::<Resp, _>(
+                "restampContentKeyGroup",
+                &serde_json::json!({
+                    "content_key": content_key,
+                    "canonical": canonical,
+                }),
+            )
+            .await
+            .map(|response| response.updated_count)
+            .map_err(|error| ToolingError::Database(error.to_string()))
     }
 
     /// A batch of memories as briefs (id + content + fingerprint) for the merge
     /// scan. Paraphrase merging is a COLLECTIVE pass over the whole store (facts
     /// are tied to a user by the node's `user_id` field, not a HAS_MEMORY edge),
     /// so this scans recent memories globally rather than one user's edges.
-    pub async fn list_recent_briefs(&self, limit: i64) -> Vec<MemoryBrief> {
+    pub async fn list_recent_briefs(&self, limit: i64) -> Result<Vec<MemoryBrief>, ToolingError> {
         #[derive(Deserialize)]
         struct Node {
             #[serde(default)]
@@ -122,6 +144,8 @@ impl ToolingManager {
             content: String,
             #[serde(default)]
             content_key: Option<String>,
+            #[serde(default)]
+            source: String,
         }
         #[derive(Deserialize)]
         struct Resp {
@@ -133,7 +157,7 @@ impl ToolingManager {
             .execute_query::<Resp, _>("getRecentMemories", &serde_json::json!({ "limit": limit }))
             .await
             .map(|response| response.memories)
-            .unwrap_or_default();
+            .map_err(|error| ToolingError::Database(error.to_string()))?;
         let ids = nodes
             .iter()
             .map(|node| node.memory_id.clone())
@@ -142,19 +166,17 @@ impl ToolingManager {
         let domains = crate::core::RbacManager::new(self.db.clone())
             .memory_security_domains(&ids)
             .await
-            .unwrap_or_default();
-        nodes
+            .map_err(|error| ToolingError::Database(error.to_string()))?;
+        Ok(nodes
             .into_iter()
             .filter(|node| !node.memory_id.is_empty())
             .map(|node| MemoryBrief {
-                security_domain: domains
-                    .get(&node.memory_id)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string()),
+                security_domain: domains.get(&node.memory_id).cloned(),
                 memory_id: node.memory_id,
                 content: node.content,
                 content_key: node.content_key.unwrap_or_default(),
+                source: node.source,
             })
-            .collect()
+            .collect())
     }
 }

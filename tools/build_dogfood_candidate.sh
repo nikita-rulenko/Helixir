@@ -19,17 +19,14 @@ while (($#)); do
   esac
 done
 
-for command in docker git helix gzip python3 tar; do
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+for command in docker git gzip python3 tar; do
   command -v "$command" >/dev/null || {
     printf 'dogfood candidate fallback requires %s\n' "$command" >&2
     exit 1
   }
 done
-
-[[ "$(helix --version)" == *'2.3.5'* ]] || {
-  printf '%s\n' 'dogfood candidate fallback requires Helix CLI v2.3.5' >&2
-  exit 1
-}
 
 [[ ${HELIXIR_DOGFOOD_DISPOSABLE_DOCKER:-0} == 1 ]] || {
   printf '%s\n' \
@@ -99,7 +96,6 @@ fi
   exit 2
 }
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 [[ "$(git -C "$repo_root" rev-parse HEAD)" == "$candidate_sha" ]] || {
   printf '%s\n' 'candidate SHA does not match repository HEAD' >&2
   exit 1
@@ -110,6 +106,19 @@ git -C "$repo_root" diff --quiet -- . || {
 }
 git -C "$repo_root" diff --cached --quiet -- . || {
   printf '%s\n' 'staged changes make the dogfood candidate non-exact' >&2
+  exit 1
+}
+
+helix_bin=${HELIXIR_HELIX_BIN:-"$repo_root/helixdb/target/release/helix"}
+if [[ ! -x "$helix_bin" ]]; then
+  command -v cargo >/dev/null || {
+    printf '%s\n' 'dogfood candidate fallback requires cargo to build the maintained HelixDB CLI' >&2
+    exit 1
+  }
+  cargo build --release --locked --manifest-path "$repo_root/helixdb/Cargo.toml" -p helix-cli
+fi
+[[ "$("$helix_bin" --version)" == *'2.3.5'* ]] || {
+  printf '%s\n' 'dogfood candidate fallback requires the maintained Helix CLI v2.3.5' >&2
   exit 1
 }
 
@@ -180,9 +189,9 @@ printf '%s\n' '[1/4] Compile the exact HelixDB schema on the disposable daemon'
 (
   cd "$repo_root/helixir"
   PATH="$work:$PATH" HELIXIR_DOGFOOD_REAL_DOCKER="$real_docker" \
-    helix check
+    HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" check
   PATH="$work:$PATH" HELIXIR_DOGFOOD_REAL_DOCKER="$real_docker" \
-    helix build -i dev --quiet
+    HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" build -i dev --quiet
 )
 
 db_image="helix-helixir-candidate:$candidate_sha"

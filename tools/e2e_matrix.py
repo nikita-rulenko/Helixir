@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +26,90 @@ TEST_PATTERN = re.compile(
 TOPOLOGIES = {"current-schema", "fresh-store", "client-gate"}
 INGEST_MODES = {"enabled", "disabled", "managed-by-test"}
 CLEANUP_MODES = {"read-only", "fixture-guard", "disposable-database"}
+GIB = 1024**3
+DEFAULT_MIN_FREE_GIB = 20.0
+DEFAULT_MAX_TARGET_GIB = 24.0
 
 
 class ManifestError(RuntimeError):
     """The checked-in E2E manifest does not describe the Rust test tree."""
+
+
+def _positive_gib(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ManifestError(f"{name} must be a positive number of GiB") from error
+    if value <= 0:
+        raise ManifestError(f"{name} must be a positive number of GiB")
+    return value
+
+
+def _tree_bytes(root: Path) -> int:
+    total = 0
+    if not root.exists():
+        return total
+    for directory, _, files in os.walk(root):
+        for name in files:
+            path = Path(directory) / name
+            try:
+                total += path.stat().st_size
+            except FileNotFoundError:
+                continue
+    return total
+
+
+def create_bounded_cargo_target() -> tuple[Path, float, float, int]:
+    """Create one disposable Cargo cache and enforce release-gate headroom."""
+    min_free_gib = _positive_gib("HELIXIR_E2E_MIN_FREE_GIB", DEFAULT_MIN_FREE_GIB)
+    max_target_gib = _positive_gib(
+        "HELIXIR_E2E_MAX_TARGET_GIB", DEFAULT_MAX_TARGET_GIB
+    )
+    temp_root = Path(
+        os.environ.get("HELIXIR_E2E_TEMP_ROOT", tempfile.gettempdir())
+    ).expanduser()
+    temp_root.mkdir(parents=True, exist_ok=True)
+    initial_free = shutil.disk_usage(temp_root).free
+    required_free = (min_free_gib + max_target_gib) * GIB
+    if initial_free < required_free:
+        raise ManifestError(
+            f"only {initial_free / GIB:.2f} GiB free on {temp_root}; "
+            f"the E2E preflight requires {required_free / GIB:.2f} GiB "
+            "(retained headroom plus bounded Cargo target)"
+        )
+    target = Path(tempfile.mkdtemp(prefix="helixir-e2e-cargo-", dir=temp_root))
+    atexit.register(shutil.rmtree, target, True)
+    print(
+        f"E2E storage: target={target} initial_free={initial_free / GIB:.2f} GiB "
+        f"max_target={max_target_gib:.2f} GiB",
+        flush=True,
+    )
+    return target, min_free_gib, max_target_gib, initial_free
+
+
+def check_storage_envelope(
+    target: Path, min_free_gib: float, max_target_gib: float
+) -> tuple[int, int]:
+    """Fail closed before another test can exhaust the host or Docker disk."""
+    target_bytes = _tree_bytes(target)
+    free_bytes = shutil.disk_usage(target).free
+    if target_bytes > max_target_gib * GIB:
+        raise ManifestError(
+            f"Cargo target reached {target_bytes / GIB:.2f} GiB; "
+            f"limit is {max_target_gib:.2f} GiB"
+        )
+    if free_bytes < min_free_gib * GIB:
+        raise ManifestError(
+            f"free space fell to {free_bytes / GIB:.2f} GiB; "
+            f"safety floor is {min_free_gib:.2f} GiB"
+        )
+    return target_bytes, free_bytes
+
+
+def cleanup_cargo_target(target: Path | None) -> None:
+    if target is not None:
+        shutil.rmtree(target, ignore_errors=True)
 
 
 def discover_ignored_tests() -> dict[str, str]:
@@ -178,6 +261,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    cargo_target: Path | None = None
+    initial_free = 0
+    peak_target = 0
     try:
         manifest = load_manifest()
         tests = validate_manifest(manifest)
@@ -200,6 +286,9 @@ def main() -> int:
         host = os.environ.get("HELIX_HOST", "127.0.0.1")
         port = int(os.environ.get("HELIX_PORT", "6969"))
         ensure_disposable_target(host, port)
+        cargo_target, min_free_gib, max_target_gib, initial_free = (
+            create_bounded_cargo_target()
+        )
 
         selected = set(args.only)
         known = {f"{row['target']}::{row['test']}" for row in tests}
@@ -216,6 +305,9 @@ def main() -> int:
                 "HELIX_PORT": str(port),
                 "HELIXIR_RBAC_ACTOR": actor,
                 "HELIXIR_E2E_GROUP": group,
+                "CARGO_TARGET_DIR": str(cargo_target),
+                "CARGO_INCREMENTAL": "0",
+                "CARGO_PROFILE_TEST_DEBUG": "0",
             }
         )
         if args.topology != "fresh-store":
@@ -228,11 +320,22 @@ def main() -> int:
             if selected and key not in selected:
                 print(f"SKIP {key}: not selected")
                 continue
+            if not selected and row.get("run_by_default") is False:
+                print(f"SKIP {key}: explicit selection required")
+                continue
             if row["topology"] != args.topology:
                 print(f"SKIP {key}: requires topology {row['topology']}")
                 continue
             env = build_environment(row, actor, group)
-            env.update({"HELIX_HOST": host, "HELIX_PORT": str(port)})
+            env.update(
+                {
+                    "HELIX_HOST": host,
+                    "HELIX_PORT": str(port),
+                    "CARGO_TARGET_DIR": str(cargo_target),
+                    "CARGO_INCREMENTAL": "0",
+                    "CARGO_PROFILE_TEST_DEBUG": "0",
+                }
+            )
             if args.topology == "fresh-store":
                 env["HELIX_E2E_FRESH"] = "1"
                 env["HELIX_E2E_SCENARIO"] = args.fresh_scenario
@@ -253,6 +356,10 @@ def main() -> int:
             print(f"RUN  {key}", flush=True)
             ran += 1
             result = subprocess.run(command, cwd=ROOT, env=env)
+            target_bytes, _ = check_storage_envelope(
+                cargo_target, min_free_gib, max_target_gib
+            )
+            peak_target = max(peak_target, target_bytes)
             if result.returncode != 0:
                 failures.append(key)
                 print(f"FAIL {key}: exit {result.returncode}", flush=True)
@@ -267,6 +374,16 @@ def main() -> int:
     except (ManifestError, OSError, ValueError) as error:
         print(f"e2e-matrix: {error}", file=sys.stderr)
         return 2
+    finally:
+        if cargo_target is not None:
+            cleanup_cargo_target(cargo_target)
+            final_free = shutil.disk_usage(cargo_target.parent).free
+            print(
+                f"E2E storage: peak_target={peak_target / GIB:.2f} GiB "
+                f"free_initial={initial_free / GIB:.2f} GiB "
+                f"free_after_cleanup={final_free / GIB:.2f} GiB",
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

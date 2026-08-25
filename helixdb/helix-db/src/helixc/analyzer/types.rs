@@ -1,0 +1,448 @@
+use std::collections::HashMap;
+
+use crate::helixc::{
+    generator::{
+        queries::Parameter as GeneratedParameter,
+        schemas::{
+            EdgeSchema as GeneratedEdgeSchema, NodeSchema as GeneratedNodeSchema, SchemaProperty,
+            VectorSchema as GeneratedVectorSchema,
+        },
+        utils::{GenRef, GeneratedType, GeneratedValue, RustType as GeneratedRustType},
+    },
+    parser::types::{DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema},
+};
+
+fn capitalize_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
+
+impl From<NodeSchema> for GeneratedNodeSchema {
+    fn from(generated: NodeSchema) -> Self {
+        GeneratedNodeSchema {
+            name: generated.name.1,
+            properties: generated
+                .fields
+                .into_iter()
+                .map(|f| SchemaProperty {
+                    name: f.name,
+                    field_type: f.field_type.into(),
+                    default_value: f.defaults.map(|d| d.into()),
+                    field_prefix: f.prefix,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<EdgeSchema> for GeneratedEdgeSchema {
+    fn from(generated: EdgeSchema) -> Self {
+        GeneratedEdgeSchema {
+            name: generated.name.1,
+            from: generated.from.1,
+            to: generated.to.1,
+            properties: generated.properties.map_or(vec![], |fields| {
+                fields
+                    .into_iter()
+                    .map(|f| SchemaProperty {
+                        name: f.name,
+                        field_type: f.field_type.into(),
+                        default_value: f.defaults.map(|d| d.into()),
+                        field_prefix: f.prefix,
+                    })
+                    .collect()
+            }),
+            is_unique: generated.unique,
+        }
+    }
+}
+
+impl From<VectorSchema> for GeneratedVectorSchema {
+    fn from(generated: VectorSchema) -> Self {
+        GeneratedVectorSchema {
+            name: generated.name,
+            properties: generated
+                .fields
+                .into_iter()
+                .map(|f| SchemaProperty {
+                    name: f.name,
+                    field_type: f.field_type.into(),
+                    default_value: f.defaults.map(|d| d.into()),
+                    field_prefix: f.prefix,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl GeneratedParameter {
+    pub fn unwrap_param(
+        query_name: &str,
+        param: Parameter,
+        parameters: &mut Vec<GeneratedParameter>,
+        sub_parameters: &mut Vec<(String, Vec<GeneratedParameter>)>,
+    ) {
+        match param.param_type.1 {
+            FieldType::Identifier(ref id) => {
+                parameters.push(GeneratedParameter {
+                    name: param.name.1,
+                    field_type: GeneratedType::Variable(GenRef::Std(id.clone())),
+                    is_optional: param.is_optional,
+                });
+            }
+            FieldType::Array(inner) => match inner.as_ref() {
+                FieldType::Object(obj) => {
+                    let struct_name =
+                        format!("{}{}Data", query_name, capitalize_first(&param.name.1));
+                    unwrap_object(query_name, struct_name.clone(), obj, sub_parameters);
+                    parameters.push(GeneratedParameter {
+                        name: param.name.1.clone(),
+                        field_type: GeneratedType::Vec(Box::new(GeneratedType::Object(
+                            GenRef::Std(struct_name),
+                        ))),
+                        is_optional: param.is_optional,
+                    });
+                }
+                param_type => {
+                    parameters.push(GeneratedParameter {
+                        name: param.name.1,
+                        field_type: GeneratedType::Vec(Box::new(param_type.clone().into())),
+                        is_optional: param.is_optional,
+                    });
+                }
+            },
+            FieldType::Object(obj) => {
+                let struct_name = format!("{}{}Data", query_name, capitalize_first(&param.name.1));
+                unwrap_object(query_name, struct_name.clone(), &obj, sub_parameters);
+                parameters.push(GeneratedParameter {
+                    name: param.name.1.clone(),
+                    field_type: GeneratedType::Variable(GenRef::Std(struct_name)),
+                    is_optional: param.is_optional,
+                });
+            }
+            param_type => {
+                parameters.push(GeneratedParameter {
+                    name: param.name.1,
+                    field_type: param_type.into(),
+                    is_optional: param.is_optional,
+                });
+            }
+        }
+    }
+}
+
+fn unwrap_object(
+    query_name: &str,
+    name: String,
+    obj: &HashMap<String, FieldType>,
+    sub_parameters: &mut Vec<(String, Vec<GeneratedParameter>)>,
+) {
+    let sub_param = (
+        name,
+        obj.iter()
+            .map(|(field_name, field_type)| match field_type {
+                FieldType::Object(obj) => {
+                    let nested_name = format!("{}{}Data", query_name, capitalize_first(field_name));
+                    unwrap_object(query_name, nested_name.clone(), obj, sub_parameters);
+                    GeneratedParameter {
+                        name: field_name.clone(),
+                        field_type: GeneratedType::Object(GenRef::Std(nested_name)),
+                        is_optional: false,
+                    }
+                }
+                FieldType::Array(inner) => match inner.as_ref() {
+                    FieldType::Object(obj) => {
+                        let nested_name =
+                            format!("{}{}Data", query_name, capitalize_first(field_name));
+                        unwrap_object(query_name, nested_name.clone(), obj, sub_parameters);
+                        GeneratedParameter {
+                            name: field_name.clone(),
+                            field_type: GeneratedType::Vec(Box::new(GeneratedType::Object(
+                                GenRef::Std(nested_name),
+                            ))),
+                            is_optional: false,
+                        }
+                    }
+                    _ => GeneratedParameter {
+                        name: field_name.clone(),
+                        field_type: GeneratedType::from(field_type.clone()),
+                        is_optional: false,
+                    },
+                },
+                _ => GeneratedParameter {
+                    name: field_name.clone(),
+                    field_type: GeneratedType::from(field_type.clone()),
+                    is_optional: false,
+                },
+            })
+            .collect(),
+    );
+    sub_parameters.push(sub_param);
+}
+impl From<FieldType> for GeneratedType {
+    fn from(generated: FieldType) -> Self {
+        match generated {
+            FieldType::String => GeneratedType::RustType(GeneratedRustType::String),
+            FieldType::F32 => GeneratedType::RustType(GeneratedRustType::F32),
+            FieldType::F64 => GeneratedType::RustType(GeneratedRustType::F64),
+            FieldType::I8 => GeneratedType::RustType(GeneratedRustType::I8),
+            FieldType::I16 => GeneratedType::RustType(GeneratedRustType::I16),
+            FieldType::I32 => GeneratedType::RustType(GeneratedRustType::I32),
+            FieldType::I64 => GeneratedType::RustType(GeneratedRustType::I64),
+            FieldType::U8 => GeneratedType::RustType(GeneratedRustType::U8),
+            FieldType::U16 => GeneratedType::RustType(GeneratedRustType::U16),
+            FieldType::U32 => GeneratedType::RustType(GeneratedRustType::U32),
+            FieldType::U64 => GeneratedType::RustType(GeneratedRustType::U64),
+            FieldType::U128 => GeneratedType::RustType(GeneratedRustType::U128),
+            FieldType::Boolean => GeneratedType::RustType(GeneratedRustType::Bool),
+            FieldType::Uuid => GeneratedType::RustType(GeneratedRustType::Uuid),
+            FieldType::Date => GeneratedType::RustType(GeneratedRustType::Date),
+            FieldType::Array(inner) => GeneratedType::Vec(Box::new(GeneratedType::from(*inner))),
+            FieldType::Identifier(ref id) => GeneratedType::Variable(GenRef::Std(id.clone())),
+            FieldType::Object(_) => {
+                // Objects are handled separately in parameter unwrapping
+                // Return a placeholder type for now
+                GeneratedType::Variable(GenRef::Std("Value".to_string()))
+            }
+        }
+    }
+}
+
+impl From<DefaultValue> for GeneratedValue {
+    fn from(generated: DefaultValue) -> Self {
+        match generated {
+            DefaultValue::String(s) => GeneratedValue::Primitive(GenRef::Std(s)),
+            DefaultValue::F32(f) => GeneratedValue::Primitive(GenRef::Std(f.to_string())),
+            DefaultValue::F64(f) => GeneratedValue::Primitive(GenRef::Std(f.to_string())),
+            DefaultValue::I8(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::I16(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::I32(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::I64(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::U8(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::U16(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::U32(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::U64(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::U128(i) => GeneratedValue::Primitive(GenRef::Std(i.to_string())),
+            DefaultValue::Boolean(b) => GeneratedValue::Primitive(GenRef::Std(b.to_string())),
+            DefaultValue::Now => {
+                GeneratedValue::Primitive(GenRef::Std("chrono::Utc::now()".to_string()))
+            }
+            DefaultValue::Empty => GeneratedValue::Unknown,
+        }
+    }
+}
+
+/// Metadata for GROUPBY and AGGREGATE_BY operations
+#[derive(Debug, Clone, PartialEq)]
+pub struct AggregateInfo {
+    pub source_type: Box<Type>, // Original type being aggregated (Node, Edge, Vector)
+    pub properties: Vec<String>, // Properties being grouped by
+    pub is_count: bool,         // true for COUNT mode
+    pub is_group_by: bool,      // true for GROUP_BY, false for AGGREGATE_BY
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum Type {
+    Aggregate(AggregateInfo),
+    Node(Option<String>),
+    Nodes(Option<String>),
+    Edge(Option<String>),
+    Edges(Option<String>),
+    Vector(Option<String>),
+    Vectors(Option<String>),
+    Scalar(FieldType),
+    Object(HashMap<String, Type>),
+    Array(Box<Type>),
+    Anonymous(Box<Type>),
+    Count,
+    Boolean,
+    Unknown,
+}
+
+impl Type {
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Type::Aggregate(_) => "aggregate",
+            Type::Node(_) => "node",
+            Type::Nodes(_) => "nodes",
+            Type::Edge(_) => "edge",
+            Type::Edges(_) => "edges",
+            Type::Vector(_) => "vector",
+            Type::Vectors(_) => "vectors",
+            Type::Scalar(_) => "scalar",
+            Type::Object(_) => "object",
+            Type::Array(_) => "array",
+            Type::Count => "count",
+            Type::Boolean => "boolean",
+            Type::Unknown => "unknown",
+            Type::Anonymous(ty) => ty.kind_str(),
+        }
+    }
+
+    pub fn get_type_name(&self) -> String {
+        match self {
+            Type::Aggregate(_) => "aggregate".to_string(),
+            Type::Node(Some(name)) => name.clone(),
+            Type::Nodes(Some(name)) => name.clone(),
+            Type::Edge(Some(name)) => name.clone(),
+            Type::Edges(Some(name)) => name.clone(),
+            Type::Vector(Some(name)) => name.clone(),
+            Type::Vectors(Some(name)) => name.clone(),
+            Type::Scalar(ft) => ft.to_string(),
+            Type::Anonymous(ty) => ty.get_type_name(),
+            Type::Array(ty) => ty.get_type_name(),
+            Type::Count => "count".to_string(),
+            Type::Boolean => "boolean".to_string(),
+            Type::Unknown => "unknown".to_string(),
+            Type::Object(fields) => {
+                let field_names = fields.keys().cloned().collect::<Vec<_>>();
+                format!("object({})", field_names.join(", "))
+            }
+            Type::Node(None) => "node".to_string(),
+            Type::Nodes(None) => "nodes".to_string(),
+            Type::Edge(None) => "edge".to_string(),
+            Type::Edges(None) => "edges".to_string(),
+            Type::Vector(None) => "vector".to_string(),
+            Type::Vectors(None) => "vectors".to_string(),
+        }
+    }
+
+    /// Recursively strip <code>Anonymous</code> layers and return the base type.
+    pub fn base(&self) -> &Type {
+        match self {
+            Type::Anonymous(inner) => inner.base(),
+            _ => self,
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Same, but returns an owned clone for convenience.
+    pub fn cloned_base(&self) -> Type {
+        match self {
+            Type::Anonymous(inner) => inner.cloned_base(),
+            _ => self.clone(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            Type::Scalar(
+                FieldType::I8
+                    | FieldType::I16
+                    | FieldType::I32
+                    | FieldType::I64
+                    | FieldType::U8
+                    | FieldType::U16
+                    | FieldType::U32
+                    | FieldType::U64
+                    | FieldType::U128
+                    | FieldType::F32
+                    | FieldType::F64,
+            ) | Type::Count
+        )
+    }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            Type::Scalar(
+                FieldType::I8
+                    | FieldType::I16
+                    | FieldType::I32
+                    | FieldType::I64
+                    | FieldType::U8
+                    | FieldType::U16
+                    | FieldType::U32
+                    | FieldType::U64
+                    | FieldType::U128
+            ) | Type::Count
+        )
+    }
+
+    pub fn into_single(self) -> Type {
+        match self {
+            Type::Scalar(ft) => Type::Scalar(ft),
+            Type::Object(fields) => Type::Object(fields),
+            Type::Count => Type::Count,
+            Type::Boolean => Type::Boolean,
+            Type::Unknown => Type::Unknown,
+            Type::Anonymous(inner) => Type::Anonymous(Box::new(inner.into_single())),
+            Type::Aggregate(info) => Type::Aggregate(info),
+            Type::Node(name) => Type::Node(name),
+            Type::Nodes(name) => Type::Node(name),
+            Type::Edge(name) => Type::Edge(name),
+            Type::Edges(name) => Type::Edge(name),
+            Type::Vector(name) => Type::Vector(name),
+            Type::Vectors(name) => Type::Vector(name),
+            Type::Array(inner) => *inner,
+        }
+    }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::Count, Type::Count) => true,
+            (Type::Count, Type::Scalar(ft)) | (Type::Scalar(ft), Type::Count) => {
+                &FieldType::I64 == ft
+            }
+            (Type::Scalar(ft), Type::Scalar(other_ft)) => ft == other_ft,
+            (Type::Object(fields), Type::Object(other_fields)) => fields == other_fields,
+            (Type::Boolean, Type::Boolean) => true,
+            (Type::Unknown, Type::Unknown) => true,
+            (Type::Anonymous(inner), Type::Anonymous(other_inner)) => inner == other_inner,
+            (Type::Node(name), Type::Node(other_name)) => name == other_name,
+            (Type::Nodes(name), Type::Nodes(other_name)) => name == other_name,
+            (Type::Edge(name), Type::Edge(other_name)) => name == other_name,
+            (Type::Edges(name), Type::Edges(other_name)) => name == other_name,
+            (Type::Vector(name), Type::Vector(other_name)) => name == other_name,
+            (Type::Vectors(name), Type::Vectors(other_name)) => name == other_name,
+            (Type::Array(inner), Type::Array(other_inner)) => inner == other_inner,
+            (Type::Vector(name), Type::Vectors(other_name)) => name == other_name,
+            (Type::Aggregate(info), Type::Aggregate(other_info)) => info == other_info,
+            _ => false,
+        }
+    }
+}
+
+impl From<FieldType> for Type {
+    fn from(ft: FieldType) -> Self {
+        use FieldType::*;
+        match ft {
+            String | Boolean | F32 | F64 | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | U128
+            | Uuid | Date => Type::Scalar(ft.clone()),
+            Array(inner_ft) => Type::Array(Box::new(Type::from(*inner_ft))),
+            Object(obj) => Type::Object(obj.into_iter().map(|(k, v)| (k, Type::from(v))).collect()),
+            Identifier(id) => Type::Scalar(FieldType::Identifier(id)),
+        }
+    }
+}
+
+impl From<&FieldType> for Type {
+    fn from(ft: &FieldType) -> Self {
+        use FieldType::*;
+        match ft {
+            String | Boolean | F32 | F64 | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | U128
+            | Uuid | Date => Type::Scalar(ft.clone()),
+            Array(inner_ft) => Type::Array(Box::new(Type::from(*inner_ft.clone()))),
+            Object(obj) => Type::Object(
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), Type::from(v)))
+                    .collect(),
+            ),
+            Identifier(id) => Type::Scalar(FieldType::Identifier(id.clone())),
+        }
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}

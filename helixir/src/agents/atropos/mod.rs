@@ -224,7 +224,15 @@ impl Atropos<'_> {
             // Idempotency: an identical hypothesis already lives in the graph.
             let scope = format!("rbac:group:{}", crate::core::rbac_compat::MOIRAI_GROUP_ID);
             let key = compute_content_key_scoped(&text, "opinion", Some(&scope));
-            let existing = self.tooling.memories_in_group(&key).await;
+            let existing = match self.tooling.memories_in_group(&key).await {
+                Ok(existing) => existing,
+                Err(error) => {
+                    // Idempotency must fail closed: a failed lookup is not proof
+                    // that the hypothesis is absent.
+                    warn!("insight persist: content-key lookup failed, skipping: {error}");
+                    continue;
+                }
+            };
             if !existing.is_empty() {
                 for memory_id in existing {
                     if let Err(error) = self.tooling.link_moirai_memory(&memory_id).await {

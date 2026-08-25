@@ -203,10 +203,13 @@ RIGHT: "Related, from May 12: …" — WRONG: presenting the May row as June.
 
 ## HelixDB v2.3.5 schema/query discipline
 
-Helixir is pinned to **Helix CLI v2.3.5** (the LMDB-era v2 engine). Do not run
-`helix update`, use a v3/hyperscale binary, or mix v3 deployment instructions
-into this repository: v3 has a different runtime and will not register this
-schema. The project contract is `helix.toml` at the repository root with
+Helixir is pinned to its maintained **HelixDB v2.3.5 fork** in the top-level
+`helixdb/` directory (the LMDB-era v2 engine). Do not run `helix update`, use
+the unpatched upstream binary, use a v3/hyperscale binary, or mix v3 deployment
+instructions into this repository: v3 has a different runtime and will not
+register this schema. Managed-local server releases use the immutable database
+image declared by the server-only `backend-image.json`; client packages never
+carry or operate that runtime. The project contract is `helix.toml` at the repository root with
 `queries = "helixir/schema"`, `helixir/schema/schema.hx`, and
 `helixir/schema/queries.hx`.
 
@@ -225,7 +228,9 @@ Before touching a schema or query:
    on nodes/edges, never vectors. `UpsertN` is available in the pinned v2.3.5
    toolchain and is used only with a stable domain key.
 
-The safe deployment sequence is mandatory:
+Build/check through `make build-helixdb-cli` and
+`HELIX_REPO_PATH=<repo>/helixdb helixdb/target/release/helix check`. The safe
+deployment sequence is mandatory:
 
 ```text
 helix --version                         # must report 2.3.5

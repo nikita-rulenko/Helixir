@@ -1,6 +1,7 @@
-.PHONY: build build-client install-client web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-e2e-manifest test-e2e-live test-e2e-hive test-pre-release-client test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
+.PHONY: build build-client build-helixdb-cli build-helixdb-image install-client web-build control-plane-image control-plane-secrets control-plane-supervisor control-plane-up stack-up stack-down docker-compose-up docker-compose-down helixir test test-helixdb-fork test-helixdb-mock test-memory-boundary check-memory-boundary test-e2e-manifest test-e2e-live test-e2e-hive test-pre-release-client test-gateway-systemd test-control-plane-soak check run deploy-schema setup onboard doctor config docker-up docker-down migrate-helix-fresh clean help
 
 CARGO      := cargo
+PYTHON     ?= $(shell for bin in python3.12 python3.11 python3.10 python3; do command -v $$bin 2>/dev/null && break; done)
 BINARY_DIR := helixir/target/release
 CLIENT_BINARY := helixir-client/target/release/helixir-client
 MCP_BIN    := $(BINARY_DIR)/helixir-mcp
@@ -15,6 +16,8 @@ CLIENT_GATE_ARCH ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 CONTROL_PLANE_IMAGE ?= helixir-control-plane:$(VERSION)
 CONTROL_PLANE_TOKEN_FILE ?= $(HOME)/.helixir/run/control-plane-browser.token
 INSTALL_ROOT ?= $(HOME)/.helixir
+HELIXDB_CLI ?= $(CURDIR)/helixdb/target/release/helix
+HELIXDB_REPO ?= $(CURDIR)/helixdb
 ifndef INSTALL_ID
 INSTALL_ID := $(VERSION)-source-$(shell date -u +%Y%m%d%H%M%S)
 endif
@@ -52,6 +55,13 @@ build: ## Build native release binaries for this host
 
 build-client: ## Build the thin remote-agent client only
 	cd helixir-client && $(CARGO) build --release --locked
+
+build-helixdb-cli: ## Build the maintained HelixDB v2.3.5 fork CLI
+	$(CARGO) build --release --locked --manifest-path helixdb/Cargo.toml -p helix-cli
+
+build-helixdb-image: build-helixdb-cli ## Compile HQL and build the maintained HelixDB image
+	cd helixir && HELIX_REPO_PATH="$(HELIXDB_REPO)" "$(HELIXDB_CLI)" check && \
+		HELIX_REPO_PATH="$(HELIXDB_REPO)" "$(HELIXDB_CLI)" build -i dev --quiet
 
 install-client: build-client ## Install the thin client binary and start guided connection
 	@mkdir -p "$(INSTALL_ROOT)/bin"
@@ -115,13 +125,36 @@ doctor: ## Run the read-only installation doctor
 test: ## Run all tests
 	cd helixir && $(CARGO) test
 	cd helixir-client && $(CARGO) test --locked
+	$(MAKE) test-helixdb-mock
+	$(MAKE) test-memory-boundary
+
+test-helixdb-mock: ## Test the bounded HelixDB v2.3.5 wire emulator
+	$(CARGO) test --manifest-path helixdb-mock/Cargo.toml --locked
+
+test-helixdb-fork: ## Test the v2 index migration and bounded reader fan-out
+	$(CARGO) fmt --manifest-path helixdb/Cargo.toml --all -- --check
+	$(CARGO) test --manifest-path helixdb/Cargo.toml -p helix-db startup_backfills_a_new_index_for_existing_nodes --locked
+	$(CARGO) test --manifest-path helixdb/Cargo.toml -p helix-db gateway_opts --locked
+	$(CARGO) test --manifest-path helixdb/Cargo.toml -p helix-db update_over_ --locked
+	$(CARGO) test --manifest-path helixdb/Cargo.toml -p helix-cli commands::build::tests --locked
+
+test-memory-boundary: ## Test the fail-closed differential memory harness (no Docker)
+	$(PYTHON) -m unittest -v tools.test_memory_boundary tools.test_memory_boundary_credentials tools.test_memory_boundary_replay tools.test_profiling_automation tools.test_backend_release tools.test_verify_release_memory_evidence
+
+check-memory-boundary: ## Lint and test the emulator plus profiling harness
+	$(CARGO) fmt --manifest-path helixdb-mock/Cargo.toml --all -- --check
+	$(CARGO) clippy --manifest-path helixdb-mock/Cargo.toml --all-targets -- -D warnings
+	$(CARGO) test --manifest-path helixdb-mock/Cargo.toml --locked
+	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --manifest-path helixdb-mock/Cargo.toml --no-deps --document-private-items
+	$(CARGO) build --manifest-path helixdb-mock/Cargo.toml --profile profiling --locked
+	$(PYTHON) -m unittest -v tools.test_memory_boundary tools.test_memory_boundary_credentials tools.test_memory_boundary_replay tools.test_profiling_automation tools.test_backend_release tools.test_verify_release_memory_evidence
 
 test-e2e-manifest: ## Deterministic ignored-E2E inventory and environment ownership check
-	python3 tools/e2e_matrix.py --check
-	cd tools && python3 -m unittest -v test_e2e_matrix.py
+	$(PYTHON) tools/e2e_matrix.py --check
+	cd tools && $(PYTHON) -m unittest -v test_e2e_matrix.py
 
 test-e2e-live: ## Canonical disposable current-schema E2E matrix (never production port 6970)
-	python3 tools/e2e_matrix.py --run --topology current-schema
+	$(PYTHON) tools/e2e_matrix.py --run --topology current-schema
 
 test-e2e-hive: ## Hive cross-user E2E (needs live HelixDB + LLM + embeddings; same env as MCP)
 	cd helixir && HELIX_E2E=1 $(CARGO) test hive_cross_user_collective_link_e2e --test hive_memory_e2e -- --ignored --nocapture
@@ -143,11 +176,21 @@ test-pre-release-client: ## Disposable APT, two-client and RBAC visibility relea
 test-pre-release-client-preflight: ## Deterministic safety tests for the Docker gate
 	tools/test_pre_release_client_gate_preflight.sh
 
+test-gateway-systemd: ## Release archive lifecycle gate in privileged Ubuntu/systemd
+	@test -f "$(GATEWAY_SYSTEMD_ARCHIVE)" || { \
+		echo 'set GATEWAY_SYSTEMD_ARCHIVE to helixir-linux-x86_64.tar.gz' >&2; exit 2; \
+	}
+	@test -f "$(GATEWAY_SYSTEMD_MOCK)" || { \
+		echo 'set GATEWAY_SYSTEMD_MOCK to the Linux helixdb-mock binary' >&2; exit 2; \
+	}
+	tools/gateway_systemd_gate.sh --archive "$(GATEWAY_SYSTEMD_ARCHIVE)" \
+		--mock "$(GATEWAY_SYSTEMD_MOCK)"
+
 test-dogfood-candidate-preflight: ## Deterministic resource/safety checks for isolated candidate builds
 	tools/test_build_dogfood_candidate_preflight.sh
 
 test-control-plane-soak: ## Bounded live polling soak (requires running control-plane)
-	python3 tools/control_plane_soak.py
+	$(PYTHON) tools/control_plane_soak.py
 
 check: ## Run cargo check + clippy
 	cd helixir && $(CARGO) check && $(CARGO) clippy
@@ -194,10 +237,10 @@ config: ## Print MCP config for Cursor
 	@echo '}'
 
 mem-reclaim: ## Shed reclaimable page cache charged to the HelixDB container (#89)
-	python3 tools/memprobe.py helix-helixir-local-bench_app --reclaim
+	$(PYTHON) tools/memprobe.py helix-helixir-local-bench_app --reclaim
 
 mem-probe: ## Profile where the container's memory actually goes (#89)
-	python3 tools/memprobe.py helix-helixir-local-bench_app
+	$(PYTHON) tools/memprobe.py helix-helixir-local-bench_app
 
 # Lifecycle note: docker-up runs with --restart unless-stopped (same policy as
 # docker-compose.yml) — the container auto-recovers from Docker Desktop
@@ -214,6 +257,7 @@ docker-up: ## Start HelixDB container
 			-e HELIX_PORT=$(HELIX_PORT) \
 			-e HELIX_DATA_DIR=/data \
 			-e HELIX_CORES_OVERRIDE=1 \
+			-e HELIX_WORKERS_PER_CORE=2 \
 			-e MIMALLOC_PURGE_DELAY=0 \
 			-e MIMALLOC_PURGE_DECOMMITS=1 \
 			-e MIMALLOC_ARENA_PURGE_MULT=1 \

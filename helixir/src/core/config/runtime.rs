@@ -156,8 +156,9 @@ pub struct GatewayConfig {
     /// agent host.
     pub public_url: Option<String>,
     /// Optional bearer token for the HTTP MCP gateway. `None` preserves the
-    /// intentional full-trust network model. Prefer the
-    /// `HELIXIR_GATEWAY_TOKEN` environment override for secrets.
+    /// intentional full-trust network model. A foreground gateway may use the
+    /// `HELIXIR_GATEWAY_TOKEN` environment override; a managed gateway requires
+    /// the protected central config so the secret survives service restart.
     pub auth_token: Option<String>,
 }
 impl Default for GatewayConfig {

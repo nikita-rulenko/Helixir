@@ -7,7 +7,7 @@
 
 use parking_lot::RwLock;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -263,32 +263,41 @@ impl EntityManager {
     ) -> Result<Vec<Entity>, EntityError> {
         #[derive(Deserialize)]
         struct EntitiesResult {
-            entities: Vec<Entity>,
+            #[serde(default)]
+            entities: Vec<EntityDbResponse>,
+            #[serde(default)]
+            mentions: Vec<EntityDbResponse>,
         }
 
         match self
             .client
             .execute_query::<EntitiesResult, _>(
-                "getEntitiesForMemory",
+                "getMemoryEntities",
                 &serde_json::json!({"memory_id": memory_id}),
             )
             .await
         {
             Ok(result) => {
-                for entity in &result.entities {
+                let mut seen = HashSet::new();
+                let entities: Vec<Entity> = result
+                    .entities
+                    .into_iter()
+                    .chain(result.mentions)
+                    .map(Entity::from)
+                    .filter(|entity| seen.insert(entity.entity_id.clone()))
+                    .collect();
+                for entity in &entities {
                     self.add_to_cache(entity);
                 }
                 debug!(
                     "Found {} entities for memory {}",
-                    result.entities.len(),
+                    entities.len(),
                     crate::safe_truncate(memory_id, 8)
                 );
-                Ok(result.entities)
+                Ok(entities)
             }
-            Err(e) => {
-                warn!("Failed to get entities for memory {}: {}", memory_id, e);
-                Ok(Vec::new())
-            }
+            Err(error) if error.is_graph_not_found() => Ok(Vec::new()),
+            Err(error) => Err(EntityError::Database(error.to_string())),
         }
     }
 
@@ -298,28 +307,29 @@ impl EntityManager {
         limit: usize,
     ) -> Result<Vec<Entity>, EntityError> {
         #[derive(Deserialize)]
-        struct EntitiesResult {
-            entities: Vec<Entity>,
+        struct EntityByNameResult {
+            entity: EntityDbResponse,
+        }
+
+        if limit == 0 || query.trim().is_empty() {
+            return Ok(Vec::new());
         }
 
         match self
             .client
-            .execute_query::<EntitiesResult, _>(
-                "searchEntities",
-                &serde_json::json!({"query": query, "limit": limit}),
+            .execute_query::<EntityByNameResult, _>(
+                "getEntityByName",
+                &serde_json::json!({"name": query.trim()}),
             )
             .await
         {
             Ok(result) => {
-                for entity in &result.entities {
-                    self.add_to_cache(entity);
-                }
-                Ok(result.entities)
+                let entity = Entity::from(result.entity);
+                self.add_to_cache(&entity);
+                Ok(vec![entity])
             }
-            Err(e) => {
-                warn!("Failed to search entities: {}", e);
-                Ok(Vec::new())
-            }
+            Err(error) if error.is_graph_not_found() => Ok(Vec::new()),
+            Err(error) => Err(EntityError::Database(error.to_string())),
         }
     }
 

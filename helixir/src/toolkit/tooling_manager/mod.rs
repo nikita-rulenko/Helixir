@@ -9,6 +9,7 @@ mod events;
 mod graph;
 pub(crate) mod helpers;
 pub mod ingest_buffer;
+pub(crate) mod paraphrase;
 mod reasoning;
 mod search;
 pub use search::MemorySearchOptions;

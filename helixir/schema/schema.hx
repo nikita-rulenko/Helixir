@@ -102,7 +102,7 @@ N::Agent {
   status: String DEFAULT "idle"
 }
 N::Memory {
-  memory_id: String,
+  INDEX memory_id: String,
   INDEX content_key: String DEFAULT "",
   rbac_scope: String DEFAULT "",
   user_id: String DEFAULT "",
@@ -202,7 +202,7 @@ E::PART_OF {
 }
 N::Context {
   context_id: String,
-  name: String,
+  INDEX name: String,
   context_type: String,
   properties: String,
   parent_context: String

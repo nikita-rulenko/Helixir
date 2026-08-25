@@ -1,6 +1,6 @@
 [package]
 name = "helixir"
-version = "0.17.2"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nikita Rulenko (x.com/dengoslav)"]
@@ -131,6 +131,7 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 temp-env = "0.3.6"
+tempfile = "3.23.0"
 tokio-test = "0.4"
 
 [lib]
@@ -152,3 +153,11 @@ path = "src/bin/helixir_bench.rs"
 [[bin]]
 name = "helixir"
 path = "src/bin/helixir.rs"
+
+# Optimized diagnostic build with resolvable Rust stacks. This profile preserves
+# the default allocator; allocator-changing DHAT/jemalloc builds are separate,
+# non-canonical evidence under the root PROFILING.md contract.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"

@@ -1,6 +1,6 @@
 # Userflow
 
-> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 Helixir has two deliberate interaction surfaces: LLM agents use MCP/stdio (or
 the authenticated gateway), while a human global administrator uses the CLI or

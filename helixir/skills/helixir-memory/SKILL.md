@@ -211,8 +211,12 @@ not protection against a malicious client that can spoof `actor_id`.
 
 ## HelixDB schema discipline
 
-This repository targets Helix CLI v2.3.5. Never run `helix update` or use the
-v3 hyperscale engine. HQL supports `//` line comments, not block comments.
+This repository targets its maintained HelixDB v2.3.5 fork in the top-level
+`helixdb/` directory. Never run `helix update`, substitute the unpatched
+upstream v2 binary, or use the v3 hyperscale engine. Release-managed local
+servers consume the immutable server-only HelixDB image declared by
+`backend-image.json`; existing-local and remote databases are never taken over
+by the installer. HQL supports `//` line comments, not block comments.
 
 Before changing schema or queries:
 
@@ -220,9 +224,14 @@ Before changing schema or queries:
 2. Prefer additive changes and avoid new non-nullable fields on populated
    nodes without a migration.
 3. Keep node, edge, direction, and query names exact.
-4. Run `helix check`.
+4. Run `make build-helixdb-cli`, then run `helix check` through
+   `helixdb/target/release/helix` with `HELIX_REPO_PATH=<repo>/helixdb`.
 5. Before a live transition, back up the persistent volume, stop writers,
    deploy against the same volume, and perform read-only verification.
+
+The OOM regression gate is `make check-memory-boundary`; it exercises the
+differential emulator and maintained fork contract without targeting the
+production port or volume. Never profile production HelixDB directly.
 
 A missing RBAC query means the deployed schema is stale. Surface the error;
 never fall back to a local ACL or silently disable enforcement.

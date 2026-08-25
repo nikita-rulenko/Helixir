@@ -304,6 +304,26 @@
       "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + LLM + Category schema deployed"
     },
     {
+      "target": "daemon_e2e",
+      "test": "daemon_profile_stage_runs_exactly_one_pass",
+      "topology": "current-schema",
+      "run_by_default": false,
+      "environment": {
+        "ingest_buffer": "disabled",
+        "actor": "HELIXIR_RBAC_ACTOR",
+        "group": "HELIXIR_E2E_GROUP",
+        "retrieval_profile": "algo_opt"
+      },
+      "cleanup": "disposable-database",
+      "requires": [
+        "helixdb-v2.3.5",
+        "permanent-rbac",
+        "reasoning-llm",
+        "profiling-harness"
+      ],
+      "ignore_reason": "isolated HelixDB profiling probe selected by HELIXIR_PROFILE_STAGE"
+    },
+    {
       "target": "edges_db_verified_e2e",
       "test": "edges_persisted_with_correct_types_db",
       "topology": "current-schema",
@@ -371,12 +391,9 @@
       },
       "cleanup": "disposable-database",
       "requires": [
-        "helixdb-v2.3.5",
-        "permanent-rbac",
-        "embeddings",
-        "reasoning-llm"
+        "helixdb-v2.3.5"
       ],
-      "ignore_reason": "needs HELIX_E2E=1 and live HelixDB + LLM + embeddings; see module doc"
+      "ignore_reason": "needs HELIX_E2E=1 and a disposable HelixDB; see module doc"
     },
     {
       "target": "ingest_buffer_e2e",
@@ -465,9 +482,10 @@
       "cleanup": "disposable-database",
       "requires": [
         "helixdb-v2.3.5",
-        "permanent-rbac"
+        "permanent-rbac",
+        "embeddings"
       ],
-      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB with a woven reasoning cluster"
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings; self-seeds golden graph"
     },
     {
       "target": "mcp_full_surface_e2e",
@@ -644,10 +662,9 @@
         "helixdb-v2.3.5",
         "permanent-rbac",
         "embeddings",
-        "reasoning-llm",
         "helixir-mcp"
       ],
-      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"
+      "ignore_reason": "needs HELIX_E2E=1 + live HelixDB + embeddings"
     },
     {
       "target": "mcp_multi_consumer_e2e",

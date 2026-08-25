@@ -1,6 +1,7 @@
 use super::*;
 
-pub(crate) fn gateway_start(bind: &str, require_auth: bool) -> Result<()> {
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn gateway_start_detached(bind: &str, require_auth: bool) -> Result<()> {
     let mut args = vec!["gateway", "run", "--bind", bind];
     if require_auth {
         args.push("--require-auth");
@@ -25,7 +26,7 @@ pub(crate) fn gateway_start(bind: &str, require_auth: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn gateway_status() -> Result<()> {
+pub(crate) fn gateway_status_detached() -> Result<()> {
     let Some(state) = read_pid_state("gateway") else {
         println!("gateway: stopped (no pid file)");
         return Ok(());

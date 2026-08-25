@@ -1,6 +1,6 @@
 # Operations
 
-> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 This guide covers the native CLI, RBAC administration, configuration, gateway,
 Moirai, Hygieia, the web control plane, and development operations. Installation
@@ -360,6 +360,21 @@ helixir gateway status
 helixir gateway stop
 ```
 
+On macOS and Linux, `start`, `status`, and `stop` manage a launchd or systemd
+user service. The macOS LaunchAgent returns after login/reboot. The Linux user
+unit returns with the user session; on a headless host that must serve before
+login, the operator explicitly enables lingering with `loginctl enable-linger
+<user>`. `start` replaces the service definition idempotently and retires any
+legacy detached PID before binding the port; `stop` disables the service.
+`status` exits non-zero when that reboot-safe owner is absent or unhealthy,
+even if an unrelated foreground process happens to occupy the HTTP port.
+`gateway run` remains the explicit foreground form. On unsupported platforms,
+`start` falls back to the legacy detached-process lifecycle.
+Managed services read the protected central config and reject transient
+`HELIX_*`/`HELIXIR_*` overrides rather than silently losing them at the next
+login. Persist configuration with `helixir config set`; secrets are never
+copied into a plist or systemd unit.
+
 `setup --gateway` uses the native Codex and Claude Code CLIs, backs up a
 conflicting registration, replaces it with HTTP, verifies the result, and
 restores the backup on failure. File-configured clients receive the equivalent
@@ -522,6 +537,35 @@ a fresh safety snapshot, restores the selected archive, and probes the live
 schema. An incompatible recovery automatically rolls back to the safety
 snapshot and verifies the current schema again.
 
+### Docker control-plane recovery without guessing about production
+
+Treat Docker API failure and HelixDB data-plane failure as separate incidents.
+If MCP/read-only memory calls still work while `docker info` or `docker inspect`
+times out, stop every release, build and container gate: the database is still
+serving, but Docker cannot safely prove container/volume state. Do not start a
+second daemon, prune storage, delete volumes, or repeatedly issue mutations.
+
+Recovery is an explicit operator action:
+
+1. verify one production memory read and record the latest verified backup path
+   and checksum;
+2. stop all disposable gate activity and confirm no test targets port `6970`;
+3. restart Docker Desktop from the host UI (or its documented host service
+   action), accepting the short data-plane interruption;
+4. wait for `docker info` to return normally, then inspect the production
+   container: it must be running, use the expected image and volume, report
+   `OOMKilled=false`, and show no unexpected restart loop;
+5. verify the Helixir schema marker, permanent RBAC, read and one explicitly
+   approved write through the product surface; compare memory count with the
+   pre-restart observation;
+6. remove only disposable resources by their exact gate labels, then rerun the
+   isolated release gate from a clean target directory.
+
+If the initial memory read fails, this is a production outage rather than a
+Docker-control-only incident: stop immediately and recover through the managed
+backup procedure above. A successful Docker restart is not release evidence;
+the faithful 85-percent memory gate and full isolated E2E matrix must still pass.
+
 ## Development operations
 
 ```bash
@@ -534,11 +578,12 @@ make docker-up
 make docker-down
 ```
 
-The repository targets Helix CLI v2.3.5. Before any schema transition:
+The repository targets its maintained HelixDB v2.3.5 compiler fork. Before any
+schema transition:
 
 1. create and verify a recoverable backup of the persistent volume;
 2. stop writers;
-3. run `helix check` with v2.3.5;
+3. run `make build-helixdb-cli`, then `helix check` through that exact fork;
 4. rebuild/recreate against the same persistent volume;
 5. perform health and read-only query verification;
 6. resume writers only after the schema contract is proven.

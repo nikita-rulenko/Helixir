@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 mod common;
-use common::McpClient;
+use common::{McpClient, db_query};
 
 fn token() -> String {
     format!(
@@ -28,6 +28,28 @@ fn token() -> String {
             .expect("clock")
             .as_nanos()
     )
+}
+
+fn wait_for_creator_asserts(owner: &str, memory_id: &str) -> Value {
+    let mut ground_truth = Value::Null;
+    for _ in 0..60 {
+        ground_truth = db_query("getMemoryStances", &json!({"memory_id": memory_id}));
+        let creator_present = ground_truth["knowers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|user| user["user_id"].as_str() == Some(owner));
+        let asserts_present = ground_truth["stance_edges"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|edge| edge["stance"].as_str() == Some("asserts"));
+        if creator_present && asserts_present {
+            return ground_truth;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    ground_truth
 }
 
 #[test]
@@ -144,56 +166,61 @@ fn mcp_write_e2e() {
         println!("preference reversal kept both versions (no escalation this run)");
     }
 
-    // ---------- 4. Hive stances: second knower confirms ----------
-    let shared = format!(
-        "Write e2e {run}: The canonical deployment region for the project is eu-central-1."
-    );
+    // ---------- 4. Hive stances: every author asserts their own node ----------
     let user_c = format!("e2e_write_{run}_c");
     let user_d = format!("e2e_write_{run}_d");
-    let (first, _) = mcp.call_tool("add_memory", json!({"message": shared, "user_id": user_c}));
-    assert!(first["memories_added"].as_u64().unwrap_or(0) >= 1);
-    let (_, _) = mcp.call_tool("add_memory", json!({"message": shared, "user_id": user_d}));
+    let first_fact = format!("Write e2e {run}: the canary deployment region is eu-central-1.");
+    let second_fact = format!("Write e2e {run}: the disaster recovery region is eu-west-1.");
+    let (first, _) = mcp.call_tool(
+        "add_memory",
+        json!({"message": first_fact, "user_id": user_c}),
+    );
+    assert!(
+        first["memories_added"].as_u64().unwrap_or(0) >= 1,
+        "first owner-specific stance fixture must create a memory: owner={user_c}, fact={first_fact:?}, ack={first}"
+    );
+    let (second, _) = mcp.call_tool(
+        "add_memory",
+        json!({"message": second_fact, "user_id": user_d}),
+    );
+    assert!(
+        second["memories_added"].as_u64().unwrap_or(0) >= 1,
+        "second owner-specific stance fixture must create a memory: owner={user_d}, fact={second_fact:?}, ack={second}"
+    );
 
-    // Phase 2 (cross-user link) runs in the background — poll collective
-    // search until the stance distribution shows a second knower.
-    let mut linked = false;
-    for _ in 0..15 {
-        std::thread::sleep(Duration::from_secs(2));
-        let (results, _) = mcp.call_tool(
-            "search_memory",
-            json!({
-                "query": shared, "user_id": user_c,
-                "mode": "full", "scope": "collective", "limit": 5
-            }),
+    // Distinct owner-specific facts make both writes exercise creation instead
+    // of legitimately taking LINK_EXISTING/NOOP. Since #43, the creator stance
+    // contract is `asserts`; `confirms` is retired. Fingerprint consensus is
+    // exercised separately by the direct-HQL multi-consumer fixture.
+    for (owner, ack) in [(&user_c, &first), (&user_d, &second)] {
+        let memory_ids = ack["memory_ids"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{owner} write returned no memory_ids: {ack}"));
+        assert!(
+            !memory_ids.is_empty(),
+            "{owner} write returned no ids: {ack}"
         );
-        let results = results.as_array().cloned().unwrap_or_default();
-        linked = results.iter().any(|r| {
-            let meta = &r["metadata"];
-            let user_count_ok = meta["user_count"].as_u64().unwrap_or(0) >= 2;
-            let stances = &meta["stances"];
-            let confirms = stances["confirms"].as_u64().unwrap_or(0);
-            let asserts = stances["asserts"].as_u64().unwrap_or(0);
-            user_count_ok || confirms >= 1 && asserts >= 1
-        });
-        if linked {
-            let sample: Vec<&Value> = results
-                .iter()
-                .filter(|r| r["metadata"]["stances"].is_object())
-                .collect();
-            if let Some(r) = sample.first() {
-                println!(
-                    "stances on shared fact: {} (user_count={})",
-                    r["metadata"]["stances"], r["metadata"]["user_count"]
-                );
-            }
-            break;
+        for memory_id in memory_ids {
+            let memory_id = memory_id
+                .as_str()
+                .unwrap_or_else(|| panic!("non-string memory id for {owner}: {ack}"));
+            let ground_truth = wait_for_creator_asserts(owner, memory_id);
+            let creator_present = ground_truth["knowers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|user| user["user_id"].as_str() == Some(owner));
+            let asserts_present = ground_truth["stance_edges"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|edge| edge["stance"].as_str() == Some("asserts"));
+            assert!(
+                creator_present && asserts_present,
+                "MCP write must persist the creator's asserts stance; owner={owner}, memory_id={memory_id}, ack={ack}, ground_truth={ground_truth}"
+            );
         }
     }
-    assert!(
-        linked,
-        "second knower must appear via Phase 2 (HAS_MEMORY stance link) \
-         within the polling window"
-    );
 
     println!("\n==== mcp_write_e2e summary ====");
     println!("batch add: {first_added} memories; re-add gated to {second_added}");
@@ -201,5 +228,5 @@ fn mcp_write_e2e() {
         "charter escalation: {} clarification(s)",
         clarifications.len()
     );
-    println!("hive stances: second knower linked");
+    println!("hive stances: each MCP author owns an asserts edge");
 }

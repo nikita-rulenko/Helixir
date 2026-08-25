@@ -267,17 +267,19 @@ impl ContextManager {
         struct LinkParams {
             memory_id: String,
             context_id: String,
-            priority: i32,
+            priority: i64,
+            exclusive: i64,
         }
 
         match self
             .client
-            .execute_query::<(), _>(
-                "linkMemoryToContext",
+            .execute_query::<serde_json::Value, _>(
+                "addMemoryValidIn",
                 &LinkParams {
                     memory_id: memory_id.to_string(),
                     context_id: context_id.to_string(),
-                    priority,
+                    priority: i64::from(priority),
+                    exclusive: 0,
                 },
             )
             .await

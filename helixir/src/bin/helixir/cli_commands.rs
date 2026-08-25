@@ -347,7 +347,7 @@ pub(crate) enum GatewayCmd {
         #[arg(long)]
         require_auth: bool,
     },
-    /// Start a DETACHED background gateway. Writes a PID file; `stop` ends it.
+    /// Start the reboot-safe gateway service (launchd/systemd where supported).
     Start {
         /// Listen address. Defaults to `gateway.default_bind` from config.
         #[arg(long)]
@@ -356,9 +356,9 @@ pub(crate) enum GatewayCmd {
         #[arg(long)]
         require_auth: bool,
     },
-    /// Stop the background gateway.
+    /// Stop and disable the managed gateway service.
     Stop,
-    /// Show the background gateway's status.
+    /// Show the managed or legacy detached gateway status.
     Status,
 }
 

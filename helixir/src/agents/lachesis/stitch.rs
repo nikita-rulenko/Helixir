@@ -164,7 +164,7 @@ impl<'a> Stitcher<'a> {
             let scope = format!("rbac:group:{}", crate::core::rbac_compat::MOIRAI_GROUP_ID);
             let key =
                 crate::core::memory_fingerprint::content_key_scoped(&text, "opinion", Some(&scope));
-            let existing = self.tooling.memories_in_group(&key).await;
+            let existing = self.tooling.memories_in_group(&key).await?;
             if !existing.is_empty() {
                 for insight_id in existing {
                     let _ = self.tooling.link_moirai_memory(&insight_id).await;

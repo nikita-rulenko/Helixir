@@ -1,6 +1,6 @@
 # Dataflow
 
-> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 This document walks the two pipelines that matter most:
 
@@ -236,12 +236,14 @@ the time bound, not the RBAC bound.
        │
        ▼
  ┌──────────────────────────────────────────────────────────────────────┐
- │  STEP 4 — Combined scoring                                           │
- │    src/toolkit/mind_toolbox/search/smart_traversal/scoring.rs     │
+ │  STEP 4 — Evidence-preserving hybrid scoring                         │
+ │    src/toolkit/mind_toolbox/search/smart_traversal/                  │
  │                                                                      │
- │       score = vector_weight    * cosine_similarity                   │
- │             + temporal_weight  * temporal_freshness                  │
- │             + graph_weight     * graph_proximity                     │
+ │    • re-embed candidates and keep pure cosine in metadata.cosine;    │
+ │    • blend cosine with rank-normalized BM25/RRF for semantic_score;  │
+ │    • combine semantic score, freshness and PPR graph proximity;      │
+ │    • direct score and BM25-backed hybrid semantic are score floors: │
+ │      graph/freshness may promote a direct hit, never erase it.       │
  │                                                                      │
  │       weights from HelixirConfig.search_thresholds (defaults:        │
  │       0.7 / 0.3 / 0.5 — note these don't sum to 1; relative only)    │
@@ -265,8 +267,16 @@ the time bound, not the RBAC bound.
  └──────────────────────────────────────────────────────────────────────┘
        │
        ▼
- Vec<SearchResult> { id, content, score, metadata, created_at }
+Vec<SearchResult> { id, content, score, metadata, created_at }
 ```
+
+The score metadata deliberately keeps the signals separate. `cosine` is the
+pure query/candidate similarity consumed by write-side duplicate decisions;
+`bm25_rank`, `bm25_rank_score`, `rrf_rank` and `rrf_rank_score` describe the
+lexical/fusion evidence; `semantic_score` is the read-side cosine/lexical
+blend; `ppr` is graph evidence. A direct BM25 rank-1 hit therefore remains in
+the honest top-K even when it is old or graph-isolated, while an explicit
+event-time window can still exclude it before ranking.
 
 ### Event-time windows and flashback projection
 

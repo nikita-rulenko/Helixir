@@ -7,8 +7,9 @@
 //! instance — the actual deployment shape.
 //!
 //! Invariants asserted (the 7 agreed with Nikita):
-//!   1+2. consensus + cross-user dedup — the same fact from K users links to
-//!        ONE memory node whose user_count reflects all K;
+//!   1+2. consensus + cross-user dedup — author-level nodes for the same fact
+//!        share one content_key family, projected as one row whose user_count
+//!        reflects all K;
 //!   3.   collective visibility — a fresh user finds others' knowledge via
 //!        scope=collective;
 //!   4.   personal isolation — that fresh user does NOT see it in scope=personal;
@@ -25,6 +26,7 @@
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use helixir::core::{HelixirClient, RbacMemoryScope};
 use serde_json::{Value, json};
 
 mod common;
@@ -46,6 +48,95 @@ fn require_e2e() {
         "1",
         "Set HELIX_E2E=1 when running this test with --ignored"
     );
+}
+
+/// Persist one author-level memory without entering extraction or the decision
+/// pipeline. The shared `content_key` is deliberately fixture-controlled: this
+/// test validates the MCP projection of an already-persisted fingerprint group,
+/// while product fingerprint generation is covered by unit tests inside the
+/// crate (the production hash helper is intentionally crate-private).
+#[allow(clippy::too_many_arguments)]
+async fn seed_collective_holder(
+    client: &HelixirClient,
+    db: &helixir::HelixClient,
+    actor: &str,
+    scope: &RbacMemoryScope,
+    owner: &str,
+    memory_id: &str,
+    content_key: &str,
+    content: &str,
+    embedding: &[f32],
+) {
+    let _: Value = db
+        .execute_query("ensureUser", &json!({"user_id": owner, "name": owner}))
+        .await
+        .unwrap_or_else(|error| panic!("ensure fixture owner {owner}: {error}"));
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let inserted: Value = db
+        .execute_query(
+            "addMemoryKeyedScoped",
+            &json!({
+                "memory_id": memory_id,
+                "content_key": content_key,
+                "rbac_scope": scope.fingerprint_scope().unwrap_or_default(),
+                "user_id": owner,
+                "content": content,
+                "memory_type": "fact",
+                "certainty": 95,
+                "importance": 60,
+                "created_at": now,
+                "updated_at": now,
+                "valid_from": now,
+                "context_tags": "e2e-collapse-3a",
+                "source": "fixture",
+                "metadata": "{}",
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("insert holder {owner}/{memory_id}: {error}"));
+    let internal_id = inserted
+        .get("memory")
+        .and_then(|memory| memory.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            panic!("insert holder {owner}/{memory_id} returned no internal id: {inserted}")
+        });
+
+    let _: Value = db
+        .execute_query(
+            "addMemoryEmbedding",
+            &json!({
+                "memory_id": internal_id,
+                "vector_data": embedding
+                    .iter()
+                    .map(|value| f64::from(*value))
+                    .collect::<Vec<_>>(),
+                "embedding_model": client.embedder().model(),
+                "created_at": now,
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("embed holder {owner}/{memory_id}: {error}"));
+    let _: Value = db
+        .execute_query(
+            "linkUserToMemoryWithStance",
+            &json!({
+                "user_id": owner,
+                "memory_id": memory_id,
+                "context": "e2e-collapse-3a",
+                "stance": "asserts",
+                "certainty": 95,
+                "linked_at": now,
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("link holder stance {owner}/{memory_id}: {error}"));
+    client
+        .rbac()
+        .link_memory_to_scope(memory_id, scope, actor)
+        .await
+        .unwrap_or_else(|error| panic!("link holder RBAC scope {owner}/{memory_id}: {error}"));
 }
 
 /// Poll a buffered write to completion via get_add_status from any consumer.
@@ -505,86 +596,109 @@ fn personal_thin_recall_hints_collective_64() {
     println!("thin personal recall emitted a collective hint in content[1] ✓");
 }
 
-/// #3a — fake collective duplicates. Two users asserting the SAME fact share one
-/// content_key (consensus is per fingerprint group), so a collective search must
-/// fold them into ONE row that reports the holder count — not return the same
-/// fact once per user. The collapse logic itself is unit-tested in search.rs;
-/// this proves it end-to-end through the real pipeline.
-#[test]
-#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings + working LLM"]
-fn collective_search_collapses_duplicate_holders_3a() {
+/// #3a — collective duplicate projection. Two users asserting the SAME persisted atom
+/// share one content_key (consensus is per fingerprint group), so a collective
+/// search must fold them into ONE row that reports the holder count — not return
+/// the same fact once per user. The fixture deliberately bypasses generative
+/// extraction and decision phases: this test owns persistence + MCP projection,
+/// not whether an LLM extracts or classifies the same sentence twice.
+#[tokio::test]
+#[ignore = "needs HELIX_E2E=1 + live HelixDB + embeddings"]
+async fn collective_search_collapses_duplicate_holders_3a() {
     require_e2e();
-    // Per-write extraction is probabilistic: an attempt where the two holders'
-    // atoms come out ONLY as divergent paraphrases (and no raw echo is stored)
-    // never exercises the collapse at all. Retry the whole scenario a few
-    // times; the no-duplicate-content invariant is asserted on every attempt.
-    let attempts = 3;
-    for attempt in 1..=attempts {
-        if collapse_scenario_3a(attempt == attempts) {
-            return;
-        }
-        println!("attempt {attempt}/{attempts}: contents never coincided, retrying");
-    }
-}
-
-/// One run of the 3a scenario. Asserts the hard invariant (no duplicated
-/// content in the collective view) unconditionally; returns whether a
-/// collapsed row (collapsed_holders>=2) was observed. When `last` is set the
-/// missing collapse is a failure instead of a retry signal.
-fn collapse_scenario_3a(last: bool) -> bool {
     let run = token();
     let coll = [("HELIXIR_MODE", "collective")];
-
-    // A short, atomic fact so extraction is stable and both holders land on the
-    // same content_key.
     let fact =
         format!("Collapse3a {run}: the deploy runbook for svc{run} lives at docs/deploy-{run}.md.");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let client = HelixirClient::from_env().expect("HelixirClient::from_env");
+    client
+        .initialize()
+        .await
+        .expect("initialize deterministic collapse fixture");
+    let authorized = client
+        .rbac()
+        .authorize_and_resolve_write_scope(&actor, &format!("c3a_a_{run}"), Some(&group))
+        .await
+        .expect("authorize deterministic collapse fixture");
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
+    let db = admin.db();
+    let embedding = client
+        .embedder()
+        .generate_batch(&[fact.as_str()], true)
+        .await
+        .expect("embed deterministic collapse fixture")
+        .into_iter()
+        .next()
+        .expect("embedding batch returned no vector");
+    let content_key = format!("fixture-collapse-3a-{run}");
+
+    let mut seeded_ids = Vec::new();
     for who in ["a", "b"] {
-        let (mut m, _) = McpClient::spawn_with_env(&coll);
-        let (ack, _) = m.call_tool(
-            "add_memory",
-            json!({ "message": fact, "user_id": format!("c3a_{who}_{run}") }),
-        );
-        assert_eq!(
-            ack["ok"].as_bool(),
-            Some(true),
-            "holder {who} write must succeed: {ack}"
-        );
+        let owner = format!("c3a_{who}_{run}");
+        let memory_id = format!("mem_c3a_{who}_{run}");
+        seed_collective_holder(
+            &client,
+            db,
+            &actor,
+            &authorized.scope,
+            &owner,
+            &memory_id,
+            &content_key,
+            &fact,
+            &embedding,
+        )
+        .await;
+        seeded_ids.push(memory_id);
     }
 
-    // A third identity reads the shared collective.
-    let (mut r, _) = McpClient::spawn_with_env(&coll);
-    let (found, _) = r.call_tool(
-        "search_memory",
-        json!({
-            "query": format!("where does the deploy runbook for svc{run} live"),
-            "user_id": format!("c3a_reader_{run}"),
-            "mode": "full",
-            "scope": "collective",
-            "limit": 10
-        }),
-    );
-    let rows = found.as_array().cloned().unwrap_or_default();
-    let matches: Vec<&Value> = rows
-        .iter()
-        .filter(|m| {
-            m["content"]
-                .as_str()
-                .map(|c| c.contains(&format!("deploy-{run}")) || c.contains(&format!("svc{run}")))
-                .unwrap_or(false)
-        })
-        .collect();
+    // A fresh third MCP process performs every read attempt. Reusing one reader
+    // would let a snapshot-lag miss sit in its 60-second traversal cache for the
+    // entire polling window, turning a visibility wait into a cache-TTL test.
+    let query = format!("where does the deploy runbook for svc{run} live");
+    let mut found = Value::Null;
+    let mut matches = Vec::new();
+    for _ in 0..15 {
+        let (mut reader, _) = McpClient::spawn_with_env(&coll);
+        (found, _) = reader.call_tool(
+            "search_memory",
+            json!({
+                "query": query,
+                "user_id": format!("c3a_reader_{run}"),
+                "mode": "full",
+                "scope": "collective",
+                "limit": 10
+            }),
+        );
+        matches = found
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|memory| {
+                memory["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains(&run))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if matches.iter().any(|memory| {
+            memory["metadata"]["collapsed_holders"]
+                .as_u64()
+                .is_some_and(|holders| holders >= 2)
+        }) {
+            break;
+        }
+        sleep(Duration::from_secs(2));
+    }
 
     assert!(
         !matches.is_empty(),
-        "the shared fact must surface in a collective search: {found}"
+        "the directly seeded shared fact must surface through MCP; seeded_ids={seeded_ids:?}, content_key={content_key}, last={found}"
     );
-    // #3a core contract: the SAME content must never appear twice in a
-    // collective result — write-time dedup collapses identical atoms into one
-    // row. NOTE: per-write extraction is probabilistic, so the two users'
-    // atoms may come out PARAPHRASED (different content_key -> legitimately
-    // distinct rows; the async NLI merge backstop owns that case). Asserting
-    // "exactly one row" was testing LLM determinism, not the dedup contract.
+    // #3a core contract: the SAME content_key must never appear twice in a
+    // collective result — the read projection collapses the two author nodes
+    // into one row.
     let mut by_content: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for m in &matches {
         *by_content
@@ -602,20 +716,23 @@ fn collapse_scenario_3a(last: bool) -> bool {
         .iter()
         .filter_map(|m| m["metadata"]["collapsed_holders"].as_u64())
         .max();
-    let collapsed = holders.map(|h| h >= 2).unwrap_or(false);
-    if !collapsed {
-        assert!(
-            !last,
-            "no attempt produced coinciding content — the collapse was never exercised: {matches:?}"
-        );
-        return false;
-    }
+    let user_count = matches
+        .iter()
+        .filter_map(|m| m["metadata"]["user_count"].as_u64())
+        .max();
+    assert!(
+        holders.is_some_and(|count| count >= 2),
+        "two deterministic holders must collapse into one MCP row; seeded_ids={seeded_ids:?}, user_count={user_count:?}, matches={matches:?}"
+    );
+    assert!(
+        user_count.is_some_and(|count| count >= 2),
+        "fingerprint consensus must project both holders; seeded_ids={seeded_ids:?}, holders={holders:?}, matches={matches:?}"
+    );
 
     println!("\n==== collective_search_collapses_duplicate_holders_3a ====");
     println!(
         "2 holders -> no duplicate content in collective view, collapsed_holders={holders:?} ✓"
     );
-    true
 }
 
 /// #39 — rendezvous through the shared DB. A writing agent that passes agent_id

@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Download immutable checksums
         run: gh release download "${{ inputs.tag }}" --pattern SHA256SUMS --dir distribution
@@ -92,12 +92,14 @@ jobs:
           test -f "$server_prefix/libexec/skills/helixir-memory/SKILL.md"
           test -f "$server_prefix/libexec/integration/AGENTS.md"
           test -f "$server_prefix/libexec/integration/SKILLS.md"
+          test -f "$server_prefix/libexec/backend-image.json"
           test "$("$client_prefix/bin/helixir-client" --version)" = \
             "helixir-client ${INPUT_TAG#v}"
           "$client_prefix/bin/helixir-client" connect --help >/dev/null
           "$client_prefix/bin/helixir-client" doctor --help >/dev/null
           test ! -e "$client_prefix/libexec/helixir"
           test ! -e "$client_prefix/libexec/schema"
+          test ! -e "$client_prefix/libexec/backend-image.json"
           brew test nikita-rulenko/tap/helixir
           brew test nikita-rulenko/tap/helixir-client
           brew uninstall nikita-rulenko/tap/helixir-client
@@ -132,7 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Install package tooling
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev
@@ -150,6 +152,12 @@ jobs:
             --pattern 'helixir-client-linux-*.tar.gz' \
             --pattern SHA256SUMS --dir archives
           (cd archives && sha256sum --ignore-missing -c SHA256SUMS)
+          for archive in archives/helixir-linux-*.tar.gz; do
+            test "$(tar -tzf "$archive" | sed 's#^\./##' | grep -cx 'backend-image.json')" = 1
+          done
+          for archive in archives/helixir-client-linux-*.tar.gz; do
+            ! tar -tzf "$archive" | sed 's#^\./##' | grep -qx 'backend-image.json'
+          done
 
       - name: Build deterministic packages
         env:
@@ -184,11 +192,13 @@ jobs:
                 DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/helixir.deb >/dev/null
                 helixir --version
                 helixir onboard --help >/dev/null
+                test -f /usr/lib/helixir/backend-image.json
                 DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/helixir-client.deb >/dev/null
                 helixir-client --version
                 helixir-client connect --help >/dev/null
                 test ! -e /usr/lib/helixir-client/helixir-mcp
                 test ! -e /usr/lib/helixir-client/schema
+                test ! -e /usr/lib/helixir-client/backend-image.json
                 mkdir -p /root/.helixir && touch /root/.helixir/preserve-me
                 DEBIAN_FRONTEND=noninteractive apt-get purge -y helixir-client >/dev/null
                 DEBIAN_FRONTEND=noninteractive apt-get purge -y helixir >/dev/null
@@ -212,7 +222,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Install repository tooling
         run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev gnupg

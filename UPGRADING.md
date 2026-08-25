@@ -13,25 +13,32 @@
 > `HELIX_DATA_DIR` for containers as our compose/install configure). After the
 > upgrade, verify: write a memory, restart the instance, confirm it survived.
 
-## v0.17.1 → v0.17.2 — enforced charter and guarded release runtime
+## v0.17.1 → v0.18.0 — the maintained substrate
 
-v0.17.2 keeps the physical 22-node/5-vector/30-edge schema but expands the
-query bundle from 185 to 189. The new queries and guarded replacements enforce
-charter C2/C4 atomically, so a full host must deploy the matching HelixDB image;
-updating only the Rust binary leaves the protection contract incomplete.
+v0.18.0 keeps the physical 22-node/5-vector/30-edge schema but expands the
+query bundle from 185 to 192 and replaces the upstream database image with the
+checked-in maintained HelixDB v2.3.5 fork. The release adds secondary-index
+reconstruction for existing volumes, indexed memory lookups, collection-safe
+bulk updates, atomic charter guards, and the complete current-schema RBAC
+contract. A full host must therefore upgrade the database image, query bundle,
+server binaries, gateway and control plane together; replacing only the Rust
+binary is unsupported.
 
 1. stop the gateway, watchdog, control plane and other memory writers;
 2. create a cold backup of the persistent volume, verify its archive and
    restore it into an isolated rehearsal directory;
-3. build or obtain the exact v0.17.2 HelixDB v2.3.5 image on a disposable
+3. build or obtain the exact v0.18.0 maintained HelixDB v2.3.5 image on a disposable
    Docker daemon, then boot the restored copy on an alternate port;
 4. verify schema marker/census queries, memory counts, permanent RBAC and
    charter-protected mutations against the rehearsal;
 5. replace the database container against the original persistent volume,
    update the server binaries and control plane together, then restart exactly
    one gateway and watchdog;
-6. run `helixir doctor --json`, verify memory read/write and confirm that a
-   protected system seed cannot be rewritten.
+6. run `helixir doctor --json`, verify memory read/write, indexed lookup and
+   the 57/57 schema census, then confirm that a protected system seed cannot be
+   rewritten;
+7. restart every MCP client so it reloads the current tool schemas, prompts and
+   installed Helixir skill.
 
 The release validation workflow can export architecture-native dogfood
 candidate images for this rehearsal. Do not run the Docker-heavy client gate or
@@ -284,7 +291,7 @@ safe defaults. Version-by-version notes, newest first:
 
 | Version | Theme | Worth knowing when upgrading |
 |:--------|:------|:------------------------------|
-| **v0.17.2** | The enforced charter | Charter v1.0 is enforced by Rust and atomic HQL guards, default generation stays on Cerebras `gpt-oss-120b`, client placement is available in the admin UI, and destructive Docker gates fail closed. **Back up, rehearse the restored volume with the exact candidate image, and deploy all 189 queries before replacing full-host services.** |
+| **v0.18.0** | The maintained substrate | Helixir ships its maintained HelixDB v2.3.5 fork, indexed-query OOM correction, differential/profiling gates, charter v1.0, reboot-safe gateway, permanent-RBAC E2E and lexical-evidence-preserving search. **Back up, rehearse the restored volume with the exact candidate image, and deploy all 192 queries before replacing full-host services.** |
 | **v0.17.1** | The governed ledger | Adds three bounded schema-census queries, a machine-checked 57-declaration lifecycle ledger, global-admin control-plane visibility, and resumable server-side client placement. **Back up and redeploy the current queries before replacing full-host services; this patch does not remove or rewrite any stored node or edge.** |
 | **v0.17.0** | The distributed family | Independent Homebrew/APT `helixir-client`, bounded onboarding enrollment, direct gateway diagnostics, explicit principal/instance presence, logical Agent families and Subagent drill-down. **Back up and redeploy the current schema before replacing full-host services.** |
 | **v0.16.1** | One host, one gateway | HTTP-capable MCP clients share one managed gateway instead of accumulating children behind retained stdio pipes. No schema migration; start the gateway, run `setup --gateway`, doctor, then restart clients. |

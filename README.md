@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.17.2"><img src="https://img.shields.io/badge/release-v0.17.2-2ea44f" alt="Release v0.17.2" /></a>
+  <a href="https://github.com/nikita-rulenko/Helixir/releases/tag/v0.18.0"><img src="https://img.shields.io/badge/release-v0.18.0-2ea44f" alt="Release v0.18.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.88%2B-e76f00?logo=rust&logoColor=white" alt="Rust 1.88+" />
   <img src="https://img.shields.io/badge/MCP-compatible-5865f2" alt="MCP compatible" />
   <img src="https://img.shields.io/badge/HelixDB-v2.3.5-7950f2" alt="HelixDB v2.3.5" />
@@ -67,7 +67,7 @@ Choose the package by what this machine owns:
 
 ### Full Helixir host
 
-The portable installer selects the signed artifact for the current machine and
+The portable installer selects the checksummed artifact for the current machine and
 opens the guided onboarding flow:
 
 ```bash
@@ -99,9 +99,14 @@ helixir gateway start --bind 127.0.0.1:8765
 helixir setup --gateway 127.0.0.1:8765
 ```
 
-The setup command backs up conflicting client configuration, replaces the
-`helixir-local` entry only after explicit gateway selection, and verifies the
-result. Stdio remains available as a compatibility transport.
+`gateway start` installs and starts a reboot-safe launchd service on macOS or
+a systemd user service on Linux; repeating it replaces the service definition
+without creating a second listener. The Linux service starts with the user
+session; headless hosts that need it before login must enable lingering for the
+Helixir account with `loginctl enable-linger <user>`. The setup command backs
+up conflicting client configuration, replaces the `helixir-local` entry only
+after explicit gateway selection, and verifies the result. Stdio remains
+available as a compatibility transport.
 
 Onboarding detects Codex, Claude Code, and Cursor, registers `helixir-local`,
 installs the canonical Agent Skill, and verifies a real embedding request. The
@@ -362,7 +367,7 @@ The exact caller and projection contract is documented in
 | Moirai | Clotho categories, Lachesis routes, Atropos hypotheses with admin-only witness provenance |
 | Hygieia | Database, model, storage, process, memory-pressure, and backup health supervision |
 | Administration | Users, agents, groups, roles, dedup federations, graph explorer, settings, operations, backup vault |
-| Distribution | Signed native archives, Homebrew tap, signed APT repository, and multi-architecture containers |
+| Distribution | Checksummed native archives, Homebrew tap, signed APT repository, and multi-architecture containers |
 
 The MCP server exposes 23 tools, two prompts, and three resources. Start with
 `search_memory` for recall, `add_memory` for durable knowledge,
@@ -435,7 +440,7 @@ The root README is the product tour. Maintained reference material lives under
 | [Test design](helixir/doc/test-design.md) | Coverage map, E2E gates, and known integrity risks |
 | [Glossary](GLOSSARY.md) | Project vocabulary: PPR, RRF, Hive, Moirai, charter, provenance |
 | [Upgrading](UPGRADING.md) | Version-by-version operational migration notes |
-| [v0.17.2 notes](helixir/doc/v0.17.2/notes.md) | What changed in this release |
+| [v0.18.0 notes](helixir/doc/v0.18.0/notes.md) | What changed in this release |
 
 Historical audits and previous release snapshots remain frozen inside
 `helixir/doc/`; they are evidence, not current instructions.
@@ -452,7 +457,9 @@ make check
 make test
 ```
 
-Helixir targets Rust 2024 and **Helix CLI v2.3.5**. HelixDB v3/hyperscale is a
+Helixir targets Rust 2024 and its checked-in, maintained **HelixDB v2.3.5
+fork**. `make build-helixdb-cli` builds the exact compiler used by release
+images; do not substitute an upstream or v3 CLI. HelixDB v3/hyperscale is a
 different engine and cannot build this schema. Read the
 [installation prerequisites](helixir/doc/installation.md#prerequisites) before
 running schema commands.
@@ -462,11 +469,12 @@ update the matching evergreen document in the same change.
 
 ## License
 
-[MIT](LICENSE) © 2025–2026 Nikita Rulenko
+[MIT](LICENSE) © 2025–2026 Nikita Rulenko. The maintained HelixDB fork under
+`helixdb/` retains its upstream [AGPL-3.0 license](helixdb/LICENSE).
 
 ## Links
 
 - [HelixDB](https://github.com/HelixDB/helix-db) — graph + vector database
 - [Model Context Protocol](https://modelcontextprotocol.io/) — agent integration protocol
-- [Releases](https://github.com/nikita-rulenko/Helixir/releases) — signed artifacts and checksums
+- [Releases](https://github.com/nikita-rulenko/Helixir/releases) — checksummed artifacts and release notes
 - [Issues](https://github.com/nikita-rulenko/Helixir/issues) — bugs, roadmap, and release evidence

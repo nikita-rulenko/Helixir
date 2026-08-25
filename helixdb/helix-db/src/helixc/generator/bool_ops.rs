@@ -1,0 +1,545 @@
+use core::fmt;
+use std::fmt::Display;
+
+use crate::helixc::generator::{
+    source_steps::SourceStep,
+    traversal_steps::{ReservedProp, Step, Traversal, TraversalType},
+};
+
+use super::utils::{GenRef, GeneratedValue, Separator};
+
+#[derive(Clone, Debug)]
+pub enum BoolOp {
+    Gt(Gt),
+    Gte(Gte),
+    Lt(Lt),
+    Lte(Lte),
+    Eq(Eq),
+    Neq(Neq),
+    Contains(Contains),
+    IsIn(IsIn),
+    PropertyEq(PropertyEq),
+    PropertyNeq(PropertyNeq),
+}
+impl Display for BoolOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            BoolOp::Gt(gt) => format!("{gt}"),
+            BoolOp::Gte(gte) => format!("{gte}"),
+            BoolOp::Lt(lt) => format!("{lt}"),
+            BoolOp::Lte(lte) => format!("{lte}"),
+            BoolOp::Eq(eq) => format!("{eq}"),
+            BoolOp::Neq(neq) => format!("{neq}"),
+            BoolOp::Contains(contains) => format!("v{contains}"),
+            BoolOp::IsIn(is_in) => format!("v{is_in}"),
+            BoolOp::PropertyEq(prop_eq) => format!("{prop_eq}"),
+            BoolOp::PropertyNeq(prop_neq) => format!("{prop_neq}"),
+        };
+        write!(f, "map_value_or(false, |v| {s})?")
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Gt {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Gt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} > {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Gte {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Gte {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} >= {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Lt {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Lt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} < {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Lte {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Lte {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} <= {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Eq {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Eq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} == {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Neq {
+    pub left: GeneratedValue,
+    pub right: GeneratedValue,
+}
+impl Display for Neq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} != {}", self.left, self.right)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PropertyEq {
+    pub var: String,
+    pub property: String,
+}
+impl Display for PropertyEq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}.get_property(\"{}\").map_or(false, |w| w == v)",
+            self.var, self.property
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PropertyNeq {
+    pub var: String,
+    pub property: String,
+}
+impl Display for PropertyNeq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}.get_property(\"{}\").map_or(false, |w| w != v)",
+            self.var, self.property
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Contains {
+    pub value: GeneratedValue,
+}
+impl Display for Contains {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, ".contains({})", self.value)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IsIn {
+    pub value: GeneratedValue,
+}
+impl Display for IsIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, ".is_in({})", self.value)
+    }
+}
+
+/// Boolean expression is used for a traversal or set of traversals wrapped in AND/OR
+/// that resolve to a boolean value
+#[derive(Clone, Debug)]
+pub enum BoExp {
+    Not(Box<BoExp>),
+    And(Vec<BoExp>),
+    Or(Vec<BoExp>),
+    Exists(Traversal),
+    Expr(Traversal),
+    Empty,
+}
+
+impl BoExp {
+    pub fn negate(&self) -> Self {
+        match self {
+            BoExp::Not(expr) => *expr.clone(),
+            _ => BoExp::Not(Box::new(self.clone())),
+        }
+    }
+
+    pub fn is_not(&self) -> bool {
+        matches!(self, BoExp::Not(_))
+    }
+}
+impl Display for BoExp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BoExp::Not(expr) => write!(f, "!({expr})"),
+            BoExp::And(exprs) => {
+                let displayed_exprs = exprs.iter().map(|s| format!("{s}")).collect::<Vec<_>>();
+                write!(f, "({})", displayed_exprs.join(" && "))
+            }
+            BoExp::Or(exprs) => {
+                let displayed_exprs = exprs.iter().map(|s| format!("{s}")).collect::<Vec<_>>();
+                write!(f, "({})", displayed_exprs.join(" || "))
+            }
+            BoExp::Exists(traversal) => {
+                // Optimize Exists expressions in filter context to use std::iter::once for single values
+                let is_val_traversal = match &traversal.traversal_type {
+                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
+                        GenRef::Std(s) | GenRef::Literal(s) => {
+                            s == "val"
+                                && matches!(
+                                    traversal.source_step.inner(),
+                                    SourceStep::Identifier(_) | SourceStep::Anonymous
+                                )
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
+                if is_val_traversal {
+                    // Create a modified traversal that uses FromSingle instead of FromIter
+                    // This will generate: G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                    let mut optimized = traversal.clone();
+                    if let TraversalType::FromIter(var) = &traversal.traversal_type {
+                        optimized.traversal_type = TraversalType::FromSingle(var.clone());
+                    }
+                    write!(f, "Exist::exists(&mut {optimized})")
+                } else {
+                    write!(f, "Exist::exists(&mut {traversal})")
+                }
+            }
+            BoExp::Expr(traversal) => {
+                // Optimize simple property checks in filters to avoid unnecessary cloning and traversal creation
+                // Check if this is a FromVar("val") or FromSingle("val") traversal with just property fetch + bool op
+                let is_val_traversal = match &traversal.traversal_type {
+                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
+                        GenRef::Std(s) | GenRef::Literal(s) => s == "val",
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
+                if is_val_traversal {
+                    // Look for PropertyFetch followed by BoolOp pattern (in any Separator type)
+                    let mut prop_info: Option<&GenRef<String>> = None;
+                    let mut bool_op_info: Option<&BoolOp> = None;
+                    let mut other_steps = 0;
+
+                    for step in traversal.steps.iter() {
+                        match step {
+                            Separator::Period(Step::PropertyFetch(prop))
+                            | Separator::Newline(Step::PropertyFetch(prop))
+                            | Separator::Empty(Step::PropertyFetch(prop))
+                            | Separator::Comma(Step::PropertyFetch(prop))
+                            | Separator::Semicolon(Step::PropertyFetch(prop)) => {
+                                if prop_info.is_none() {
+                                    prop_info = Some(prop);
+                                }
+                            }
+                            Separator::Period(Step::BoolOp(op))
+                            | Separator::Newline(Step::BoolOp(op))
+                            | Separator::Empty(Step::BoolOp(op))
+                            | Separator::Comma(Step::BoolOp(op))
+                            | Separator::Semicolon(Step::BoolOp(op)) => {
+                                if bool_op_info.is_none() {
+                                    bool_op_info = Some(op);
+                                }
+                            }
+                            _ => {
+                                other_steps += 1;
+                            }
+                        }
+                    }
+
+                    // If we found exactly one PropertyFetch and one BoolOp, and no other steps, optimize
+                    if let (Some(prop), Some(bool_op)) = (prop_info, bool_op_info)
+                        && other_steps == 0
+                    {
+                        // Generate optimized code: val.get_property("prop").map_or(false, |v| ...)
+                        let bool_expr = match bool_op {
+                            BoolOp::Gt(gt) => format!("{gt}"),
+                            BoolOp::Gte(gte) => format!("{gte}"),
+                            BoolOp::Lt(lt) => format!("{lt}"),
+                            BoolOp::Lte(lte) => format!("{lte}"),
+                            BoolOp::Eq(eq) => format!("{eq}"),
+                            BoolOp::Neq(neq) => format!("{neq}"),
+                            BoolOp::Contains(contains) => format!("v{contains}"),
+                            BoolOp::IsIn(is_in) => format!("v{is_in}"),
+                            BoolOp::PropertyEq(prop_eq) => format!("{prop_eq}"),
+                            BoolOp::PropertyNeq(prop_neq) => format!("{prop_neq}"),
+                        };
+                        return write!(
+                            f,
+                            "val\n                    .get_property({})\n                    .map_or(false, |v| {})",
+                            prop, bool_expr
+                        );
+                    }
+
+                    // Handle complex traversals with prefix steps before property access + BoolOp
+                    // Pattern: [traversal steps...] + [PropertyFetch or ReservedPropertyAccess] + BoolOp
+                    if traversal.steps.len() > 2 {
+                        let last_idx = traversal.steps.len() - 1;
+                        let second_last_idx = traversal.steps.len() - 2;
+
+                        let last_step = traversal.steps[last_idx].inner();
+                        let second_last_step = traversal.steps[second_last_idx].inner();
+
+                        if let Step::BoolOp(bool_op) = last_step {
+                            let prefix_steps = &traversal.steps[..second_last_idx];
+                            let traversal_chain = prefix_steps
+                                .iter()
+                                .map(|sep| format!("{}", sep))
+                                .collect::<Vec<_>>()
+                                .join("");
+
+                            match second_last_step {
+                                Step::PropertyFetch(prop) => {
+                                    let bool_expr = match bool_op {
+                                        BoolOp::Eq(eq) => format!("{eq}"),
+                                        BoolOp::Neq(neq) => format!("{neq}"),
+                                        BoolOp::Gt(gt) => format!("{gt}"),
+                                        BoolOp::Gte(gte) => format!("{gte}"),
+                                        BoolOp::Lt(lt) => format!("{lt}"),
+                                        BoolOp::Lte(lte) => format!("{lte}"),
+                                        BoolOp::Contains(c) => format!("v{c}"),
+                                        BoolOp::IsIn(i) => format!("v{i}"),
+                                        BoolOp::PropertyEq(p) => format!("{p}"),
+                                        BoolOp::PropertyNeq(p) => format!("{p}"),
+                                    };
+
+                                    return write!(
+                                        f,
+                                        "G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                        {}
+                        .next()
+                        .map_or(false, |res| {{
+                            res.map_or(false, |node| {{
+                                node.get_property({}).map_or(false, |v| {})
+                            }})
+                        }})",
+                                        traversal_chain, prop, bool_expr
+                                    );
+                                }
+
+                                Step::ReservedPropertyAccess(reserved_prop) => {
+                                    let value_expr = match reserved_prop {
+                                        ReservedProp::Id => {
+                                            "Value::Id(ID::from(node.id()))".to_string()
+                                        }
+                                        ReservedProp::Label => {
+                                            "Value::from(node.label())".to_string()
+                                        }
+                                    };
+                                    let bool_expr = match bool_op {
+                                        BoolOp::Eq(eq) => {
+                                            format!("{} == {}", value_expr, eq.right)
+                                        }
+                                        BoolOp::Neq(neq) => {
+                                            format!("{} != {}", value_expr, neq.right)
+                                        }
+                                        BoolOp::Gt(gt) => {
+                                            format!("{} > {}", value_expr, gt.right)
+                                        }
+                                        BoolOp::Gte(gte) => {
+                                            format!("{} >= {}", value_expr, gte.right)
+                                        }
+                                        BoolOp::Lt(lt) => {
+                                            format!("{} < {}", value_expr, lt.right)
+                                        }
+                                        BoolOp::Lte(lte) => {
+                                            format!("{} <= {}", value_expr, lte.right)
+                                        }
+                                        BoolOp::Contains(c) => {
+                                            format!("{}{}", value_expr, c)
+                                        }
+                                        BoolOp::IsIn(i) => {
+                                            format!("{}{}", value_expr, i)
+                                        }
+                                        BoolOp::PropertyEq(_) | BoolOp::PropertyNeq(_) => {
+                                            "compile_error!(\"PropertyEq/PropertyNeq cannot be used with reserved properties\")".to_string()
+                                        }
+                                    };
+
+                                    return write!(
+                                        f,
+                                        "G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                        {}
+                        .next()
+                        .map_or(false, |res| {{
+                            res.map_or(false, |node| {{
+                                {}
+                            }})
+                        }})",
+                                        traversal_chain, bool_expr
+                                    );
+                                }
+
+                                _ => {} // Fall through to default
+                            }
+                        }
+                    }
+                }
+                // Fall back to full traversal for complex expressions
+                write!(f, "{traversal}")
+            }
+            BoExp::Empty => write!(f, ""),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helixc::generator::utils::GenRef;
+
+    // ============================================================================
+    // Comparison Operator Tests
+    // ============================================================================
+
+    #[test]
+    fn test_gt_display() {
+        let gt = Gt {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("10".to_string())),
+        };
+        assert_eq!(format!("{}", gt), "*v > 10");
+    }
+
+    #[test]
+    fn test_gte_display() {
+        let gte = Gte {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("5".to_string())),
+        };
+        assert_eq!(format!("{}", gte), "*v >= 5");
+    }
+
+    #[test]
+    fn test_lt_display() {
+        let lt = Lt {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("100".to_string())),
+        };
+        assert_eq!(format!("{}", lt), "*v < 100");
+    }
+
+    #[test]
+    fn test_lte_display() {
+        let lte = Lte {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("50".to_string())),
+        };
+        assert_eq!(format!("{}", lte), "*v <= 50");
+    }
+
+    #[test]
+    fn test_eq_display() {
+        let eq = Eq {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Literal(GenRef::Literal("test".to_string())),
+        };
+        assert_eq!(format!("{}", eq), "*v == \"test\"");
+    }
+
+    #[test]
+    fn test_neq_display() {
+        let neq = Neq {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("null".to_string())),
+        };
+        assert_eq!(format!("{}", neq), "*v != null");
+    }
+
+    #[test]
+    fn test_contains_display() {
+        let contains = Contains {
+            value: GeneratedValue::Literal(GenRef::Literal("substring".to_string())),
+        };
+        assert_eq!(format!("{}", contains), ".contains(\"substring\")");
+    }
+
+    #[test]
+    fn test_is_in_display() {
+        let is_in = IsIn {
+            value: GeneratedValue::Array(GenRef::Std("1, 2, 3".to_string())),
+        };
+        assert_eq!(format!("{}", is_in), ".is_in(&[1, 2, 3])");
+    }
+
+    // ============================================================================
+    // BoolOp Tests
+    // ============================================================================
+
+    #[test]
+    fn test_boolop_gt_wrapped() {
+        let bool_op = BoolOp::Gt(Gt {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Primitive(GenRef::Std("20".to_string())),
+        });
+        let output = format!("{}", bool_op);
+        assert!(output.contains("map_value_or(false, |v| *v > 20)"));
+    }
+
+    #[test]
+    fn test_boolop_eq_wrapped() {
+        let bool_op = BoolOp::Eq(Eq {
+            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+            right: GeneratedValue::Literal(GenRef::Literal("value".to_string())),
+        });
+        let output = format!("{}", bool_op);
+        assert!(output.contains("map_value_or(false, |v| *v == \"value\")"));
+    }
+
+    #[test]
+    fn test_boolop_contains_wrapped() {
+        let bool_op = BoolOp::Contains(Contains {
+            value: GeneratedValue::Literal(GenRef::Literal("text".to_string())),
+        });
+        let output = format!("{}", bool_op);
+        assert!(output.contains("map_value_or(false, |v| v.contains(\"text\"))"));
+    }
+
+    // ============================================================================
+    // BoExp Tests
+    // ============================================================================
+
+    #[test]
+    fn test_boexp_empty() {
+        let boexp = BoExp::Empty;
+        assert_eq!(format!("{}", boexp), "");
+    }
+
+    #[test]
+    fn test_boexp_negate() {
+        let boexp = BoExp::Empty;
+        let negated = boexp.negate();
+        assert!(negated.is_not());
+    }
+
+    #[test]
+    fn test_boexp_double_negate() {
+        let boexp = BoExp::Empty;
+        let negated = boexp.negate();
+        let double_negated = negated.negate();
+        assert!(!double_negated.is_not());
+    }
+
+    #[test]
+    fn test_boexp_is_not() {
+        let not_expr = BoExp::Not(Box::new(BoExp::Empty));
+        assert!(not_expr.is_not());
+
+        let normal_expr = BoExp::Empty;
+        assert!(!normal_expr.is_not());
+    }
+}

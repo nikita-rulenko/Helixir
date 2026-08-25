@@ -89,6 +89,7 @@ in this README.
 | Rust layers, component ownership, caches, background agents and policy boundaries | [architecture.md](architecture.md) |
 | Nodes, vectors, typed edges, ontology, RBAC graph and migration rules | [data-model.md](data-model.md) |
 | Unit, live HelixDB, MCP, browser, installer, package and recovery evidence | [test-design.md](test-design.md) |
+| Differential HelixDB emulation, memory attribution and profiler evidence | [../../PROFILING.md](../../PROFILING.md) |
 | Terms such as Hive, flashback, family collapse, Moirai, Hygieia and presence TTL | [../../GLOSSARY.md](../../GLOSSARY.md) |
 
 Release directories answer only “what changed in that release”. They are not
@@ -107,6 +108,7 @@ the place to discover current behavior.
 | Install method, topology, model or MCP registration | `installation.md` |
 | CLI, RBAC, config, gateway, daemon, watchdog or admin operation | `operations.md` |
 | Anything tied to one release | `<version>/notes.md` |
+| Memory/CPU incident reproduction, profiler choice or allocator evidence | root `PROFILING.md` |
 
 If a finding does not fit any of the above, prefer extending an existing file
 over creating a new one. The folder is intentionally flat.

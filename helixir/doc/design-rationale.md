@@ -1,6 +1,6 @@
 # Design rationale & evolution
 
-> _Reflects code as of `v0.17.2`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 This file is the **why** companion to the rest of `doc/`:
 
@@ -97,7 +97,7 @@ Releases as evidence of the project's direction. Source:
 
 | Tag | Date | Theme | Key additions / fixes |
 |---|---|---|---|
-| v0.17.2 | 2026-08-23 | Enforced memory charter | Charter v1.0 is enforced by Rust and atomic HQL mutation guards; protected seeds and learned rules are immutable, default generation remains on Cerebras `gpt-oss-120b`, client onboarding is visible in the admin UI, and destructive Docker release gates fail closed on non-disposable daemons. |
+| v0.18.0 | 2026-08-25 | Maintained memory substrate | Helixir adopts and ships its maintained HelixDB v2.3.5 fork, removes the indexed-query OOM cause, adds differential/profiling release gates, preserves BM25 evidence through cosine/PPR ranking, enforces charter v1.0, keeps generation on `gpt-oss-120b`, and restores the shared MCP gateway after reboot. |
 | v0.17.1 | 2026-08-23 | Governed schema ledger | The physical HelixDB contract is now machine-classified as active, reserved, or deprecated and exposed through a bounded global-admin census. Server operators also get one resumable graph-backed command that moves an enrolled remote client from reserved onboarding into its working group without weakening RBAC. |
 | v0.17.0 | 2026-08-22 | Distributed agent family | Agent-only hosts get an independent `helixir-client` package that connects only to the MCP gateway. Presence now models stable authenticated principals separately from transient root/child execution instances, so one logical agent family stays online while any member lease is active without inventing memory writes. |
 | v0.16.1 | 2026-08-21 | One host, one gateway | HTTP-capable MCP clients share one managed gateway process because retained client-owned stdio pipes cannot provide a reliable server-side lifecycle signal. Registration is transport-aware, backup-verified and rollback-safe. |
@@ -266,11 +266,12 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   long-term store and the decision engine would have to reason about its
   own scratchwork.
 
-### 3.7 Real cosine re-ranking on the client
+### 3.7 Real cosine without erasing lexical relevance
 
-- **What.** Search results are re-embedded on the client and ranked by
-  actual `cosine_similarity(query, candidate)`, not by a placeholder
-  score from HelixDB.
+- **What.** Search results are re-embedded on the client and receive an
+  actual `cosine_similarity(query, candidate)`, while native BM25 and RRF
+  remain independent ranking evidence. Cosine refines hybrid retrieval; it
+  does not replace the lexical arm.
 - **How.** `SmartTraversalV2` calls `EmbeddingGenerator::generate` for
   each candidate and computes the cosine in
   `mind_toolbox/search/smart_traversal/scoring.rs`. The process-local cache
@@ -284,6 +285,14 @@ shape: **what**, **how**, **why**, and what alternative was rejected.
   a hardcoded `0.8`, then a rank-based exponential decay — both gave
   rank-correct but query-independent scores. Re-embedding on the client
   is the documented workaround and makes scores compare across queries.
+- **Lexical floor.** A BM25 rank is converted with the same configured
+  rank-decay curve used by phase-1 retrieval and blended with real cosine.
+  For BM25-backed direct seeds, that hybrid semantic score and the pre-PPR
+  score are lower bounds on final ranking. The raw rank score itself is not a
+  floor, so a weak lexical rank-1 does not receive an artificial maximum. PPR
+  and temporal attention may promote a direct hit but cannot bury an exact
+  lexical match. Pure cosine stays in `metadata.cosine` so write-side dedup
+  does not consume the read-side blend.
 - **Cost / benefit.** One extra embedding call per candidate per search,
   amortized by the cache. Acceptable in exchange for scores that mean
   something.

@@ -47,10 +47,11 @@ user — there is no public reference good enough for blind copy-paste.
 
 - **Helixir** is a graph-based persistent memory system for LLM agents, written in Rust.
 - Runtime stack: Rust (edition 2024) + HelixDB (graph + vector DB) + MCP server over stdio.
-- **HelixDB CLI pin: v2.3.5** (the v2/LMDB generation). CLI v3.x is a
-  different engine (hyperscale/S3) and is incompatible — no `helix check`
-  / `helix build`, schema never registers. Never `helix update`; install
-  the pinned binary from the HelixDB GitHub release (README Prerequisites).
+- **HelixDB engine pin: the checked-in maintained v2.3.5 fork** (the v2/LMDB
+  generation). CLI v3.x is a different engine (hyperscale/S3) and is
+  incompatible — no compatible `helix check` / `helix build`, schema never
+  registers. Never `helix update` and never substitute an upstream binary;
+  use `make build-helixdb-cli` (README Prerequisites).
 - Crate lives in `helixir/`. Top-level holds `Makefile`, `install.sh`, `README.md`, deploy
   glue. `ansible/` and `.snapshots/` are intentionally **gitignored** (local-only).
 - Public GitHub repo: [`nikita-rulenko/Helixir`](https://github.com/nikita-rulenko/Helixir).
@@ -84,6 +85,13 @@ helixir/doc/
     ├── notes.md          engineering-level release notes
     └── state-snapshot.md metrics + open issues at that tag
 ```
+
+Resource and memory investigations have one additional root-level operational
+contract: [`PROFILING.md`](PROFILING.md). Read it before changing memory limits,
+allocators, daemon query shapes, HelixDB runtime flags, profiling builds, or the
+differential memory gate. It defines the faithful-versus-diagnostic evidence
+boundary, the 85 percent fail-closed abort, private artifact handling, and the
+rule that a diagnostic allocator may explain a failure but never pass a release.
 
 Each top-level doc carries a `> _Reflects code as of <tag>. Last verified: <date>._`
 header. If the code you're about to touch contradicts those docs, the docs are
@@ -197,6 +205,9 @@ the rules do not.
    - `test-design.md` — if it adds tests or touches the test surface.
    - `installation.md` / `operations.md` — if it changes packaging,
      onboarding, configuration, CLI administration, or service lifecycle.
+   - root `PROFILING.md` — if it investigates memory/CPU growth, changes an
+     allocator or memory envelope, profiles Rust/HelixDB, or touches the
+     differential OOM gate.
    - `helixir/doc/<latest-version>/` — for the most recent release's context.
 
    Skipping the rationale + the relevant doc is the most common cause of
@@ -600,7 +611,7 @@ this repo. They cost ~10 minutes per issue.
 
 ## 12. HelixDB v2.3.5 + RBAC agent contract
 
-- `helix --version` must be `2.3.5`; never run `helix update` or use a v3/hyperscale binary.
+- The in-repo maintained CLI must report `Helix CLI 2.3.5`; never run `helix update`, substitute an upstream v2 binary, or use a v3/hyperscale binary.
 - HQL in this repository supports `//` line comments; `/* ... */` block comments are rejected.
 - Before schema/query changes, read `helixir/doc/data-model.md` and `helixir/doc/architecture.md`, keep migrations additive, avoid non-nullable fields on populated nodes, and run `helix check`.
 - Before a live schema transition, create a recoverable backup of the persistent volume, stop/rebuild/recreate against that same volume, deploy, and perform read-only health/query verification. Never deploy an unbacked live volume.

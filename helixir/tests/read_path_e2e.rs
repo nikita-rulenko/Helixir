@@ -50,9 +50,8 @@ async fn read_path_e2e() {
     client.initialize().await.expect("initialize");
     let actor = common::e2e_actor();
 
-    // #76: the golden corpus is deterministic and LLM-free — seed it in
-    // place if this store has never seen it (content_key dedup makes the
-    // re-run a no-op, so the dead-LLM-key property of the suite holds).
+    // #76: the golden corpus is deterministic and LLM-free — enumerate exact
+    // fixture rows, insert only missing rows through HQL, and reuse their ids.
     let seeded = ensure_seeded(&client).await;
     println!("golden corpus: {seeded} atoms added this run");
 
@@ -162,6 +161,31 @@ async fn read_path_e2e() {
             )
             .await
             .unwrap_or_else(|e| panic!("{mode} search failed: {e}"));
+        if !hits(&rs, "GOLDOLD") {
+            let diagnostic = client
+                .search_as(
+                    &actor,
+                    q_old,
+                    USER,
+                    helixir::core::helixir_client::SearchParams {
+                        limit: Some(100),
+                        search_mode: Some(mode.to_string()),
+                        scope: Some("personal".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap_or_default();
+            eprintln!(
+                "GOLDOLD diagnostic mode={mode}: {:?}",
+                diagnostic
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.content.contains("GOLDOLD"))
+                    .map(|(rank, row)| (rank + 1, row.score, &row.metadata))
+                    .collect::<Vec<_>>()
+            );
+        }
         assert!(
             hits(&rs, "GOLDOLD"),
             "reachability violated: year-old GOLDOLD missing in mode={mode}: {:?}",
@@ -170,9 +194,9 @@ async fn read_path_e2e() {
     }
 
     // 3b. An EXPLICIT 30-day window is a hard filter on EVENT time for
-    // SEEDS: GOLDOLD (created AND valid 2025) may NOT rank as an ordinary
+    // SEEDS: GOLDOLD (created AND valid one year ago) may NOT rank as an ordinary
     // row; since #87 it MAY come back as a graph flashback, but then it MUST
-    // wear the flag. GOLDEVENT (ingested 2025 but valid_from 2026-06-20)
+    // wear the flag. GOLDEVENT (ingested one year ago but valid seven days ago)
     // survives as a seed — the bi-temporal discriminator.
     let is_flashback = |r: &helixir::core::helixir_client::SearchResult| {
         r.metadata
@@ -199,7 +223,7 @@ async fn read_path_e2e() {
         !windowed_old
             .iter()
             .any(|r| r.content.contains("GOLDOLD") && !is_flashback(r)),
-        "explicit temporal_days=30 must not rank GOLDOLD (event time 2025) as an ordinary row — unflagged, it WAS top-ranked for this query without the window: {:?}",
+        "explicit temporal_days=30 must not rank GOLDOLD (event time one year ago) as an ordinary row — unflagged, it WAS top-ranked for this query without the window: {:?}",
         windowed_old.iter().map(|r| &r.content).collect::<Vec<_>>()
     );
     let windowed_event = client
@@ -219,7 +243,7 @@ async fn read_path_e2e() {
         .expect("windowed search (event)");
     assert!(
         hits(&windowed_event, "GOLDEVENT"),
-        "bi-temporality: GOLDEVENT (ingested 2025, valid_from 2026-06) must SURVIVE the 30-day window: {:?}",
+        "bi-temporality: GOLDEVENT (ingested one year ago, valid seven days ago) must SURVIVE the 30-day window: {:?}",
         windowed_event
             .iter()
             .map(|r| &r.content)
@@ -242,12 +266,9 @@ async fn read_path_e2e() {
             80,
         )
         .await; // idempotent: the duplicate guard makes re-runs a no-op
+    let window_start = chrono::Utc::now() - chrono::Duration::days(30);
     let window = helixir::core::TimeWindow {
-        from: Some(
-            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-        ),
+        from: Some(window_start),
         to: None,
     };
     let flash_rs = client
@@ -281,14 +302,15 @@ async fn read_path_e2e() {
         "3c: the out-of-window GOLDOLD row must be FLAGGED flashback: {:?}",
         goldold_row.metadata
     );
+    let flashback_event = goldold_row
+        .metadata
+        .get("event_date")
+        .and_then(|value| value.as_str())
+        .and_then(|date| chrono::DateTime::parse_from_rfc3339(date).ok())
+        .map(|date| date.with_timezone(&chrono::Utc));
     assert!(
-        goldold_row
-            .metadata
-            .get("event_date")
-            .and_then(|v| v.as_str())
-            .map(|d| d.starts_with("2025"))
-            .unwrap_or(false),
-        "3c: the flashback must carry its true event date (2025-…): {:?}",
+        flashback_event.is_some_and(|date| date < window_start),
+        "3c: the flashback must carry its true out-of-window event date: {:?}",
         goldold_row.metadata
     );
 
@@ -342,11 +364,9 @@ async fn read_path_e2e() {
         "causal mode must restore at least one BECAUSE cause with content"
     );
 
-    // ---------- 4f. relation-inference baseline (guards #96 batch-infer) ----------
-    // The golden corpus is built through the write pipeline's relation
-    // inference. Pin, read-side and LLM-free, that inference does NOT collapse
-    // the graph-of-why to a single edge type: a batched re-implementation (#96),
-    // re-seeded onto a fresh store, must still yield MULTIPLE typed relations.
+    // ---------- 4f. deterministic relation baseline ----------
+    // The fixture wires relations directly. Pin, read-side and LLM-free, that
+    // the graph-of-why does not collapse to one edge type.
     const TYPED: [&str; 7] = [
         "BECAUSE",
         "IMPLIES",

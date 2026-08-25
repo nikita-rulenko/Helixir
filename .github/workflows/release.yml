@@ -10,8 +10,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  memory-boundary-contract:
+    name: HelixDB emulator and memory harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bind release to faithful real-HelixDB memory evidence
+        shell: bash
+        run: |
+          version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
+          release_tag="v$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "$release_tag"
+          fi
+          python3 tools/verify_release_memory_evidence.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --release-tag "$release_tag" \
+            --evidence "helixir/doc/$release_tag/memory-evidence.json"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            helixdb-mock
+            helixdb
+          key: release-helixdb-mock
+      - name: Verify bounded emulator and fail-closed harness
+        run: |
+          make check-memory-boundary
+          make test-helixdb-fork
+
+      - name: Build the release-mode HelixDB emulator
+        run: cargo build --release --locked --manifest-path helixdb-mock/Cargo.toml
+
+      - name: Upload Linux HelixDB emulator
+        uses: actions/upload-artifact@v4
+        with:
+          name: helixdb-mock-linux-x86_64
+          path: helixdb-mock/target/release/helixdb-mock
+
   build:
     name: Build ${{ matrix.target }}
+    needs: memory-boundary-contract
     runs-on: ${{ matrix.os }}
     # Linux artifacts are built against the Ubuntu 22.04 ABI baseline so the
     # same archive works on Debian 12 and current Ubuntu LTS releases. A null
@@ -231,17 +274,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: helixir
+          workspaces: |
+            helixir
+            helixdb
           key: pre-release-client-gate
 
-      - name: Install pinned HelixDB CLI
+      - name: Build maintained HelixDB v2 CLI
         run: |
-          curl -fsSL --retry 5 --retry-delay 5 \
-            -o /tmp/helix https://github.com/nikita-rulenko/helix-db/releases/download/v2.3.5/helix-x86_64-unknown-linux-gnu
-          echo '8a0d39c0955fb091a459882fecbaa352cfd36b968b73cc91ae35cbdd641a14de  /tmp/helix' \
-            | sha256sum -c -
-          sudo install -m 0755 /tmp/helix /usr/local/bin/helix
-          test "$(helix --version)" = 'Helix CLI 2.3.5'
+          cargo build --release --locked --manifest-path helixdb/Cargo.toml -p helix-cli
+          test "$(helixdb/target/release/helix --version)" = 'Helix CLI 2.3.5'
 
       - name: Download Linux release archive
         uses: actions/download-artifact@v4
@@ -267,6 +308,31 @@ jobs:
             --archive release/helixir-linux-x86_64.tar.gz \
             --client-archive release/helixir-client-linux-x86_64.tar.gz \
             --version "$version" --arch amd64
+
+  gateway-linux-systemd:
+    name: Linux archive gateway survives systemd user restart
+    runs-on: ubuntu-latest
+    needs: [build, memory-boundary-contract]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download promoted Linux release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: helixir-linux-x86_64
+          path: release
+
+      - name: Download bounded HelixDB emulator
+        uses: actions/download-artifact@v4
+        with:
+          name: helixdb-mock-linux-x86_64
+          path: release/mock
+
+      - name: Run privileged Ubuntu systemd lifecycle gate
+        run: |
+          tools/gateway_systemd_gate.sh \
+            --archive release/helixir-linux-x86_64.tar.gz \
+            --mock release/mock/helixdb-mock
 
   homebrew-preflight:
     name: Homebrew native install (${{ matrix.name }})
@@ -302,6 +368,14 @@ jobs:
             cp "$source" "$RUNNER_TEMP/helixir-assets/$asset"
           done
           test "$(find "$RUNNER_TEMP/helixir-assets" -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = 8
+          python3 tools/backend_release.py inject \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --artifacts-root "$RUNNER_TEMP/helixir-assets" \
+            --image-repository ghcr.io/example/helixir-helixdb \
+            --image-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --source-url https://example.invalid/helixir-helixdb-source.tar.gz \
+            --source-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+            --fork-revision "$GITHUB_SHA"
           (cd "$RUNNER_TEMP/helixir-assets" && shasum -a 256 *.tar.gz >SHA256SUMS)
           version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
           python3 tools/render_homebrew_formula.py \
@@ -341,11 +415,13 @@ jobs:
           test -f "$server_prefix/libexec/skills/helixir-memory/SKILL.md"
           test -f "$server_prefix/libexec/integration/AGENTS.md"
           test -f "$server_prefix/libexec/integration/SKILLS.md"
+          test -f "$server_prefix/libexec/backend-image.json"
           test "$("$client_prefix/bin/helixir-client" --version)" = "helixir-client $version"
           "$client_prefix/bin/helixir-client" connect --help >/dev/null
           "$client_prefix/bin/helixir-client" doctor --help >/dev/null
           test ! -e "$client_prefix/libexec/helixir"
           test ! -e "$client_prefix/libexec/schema"
+          test ! -e "$client_prefix/libexec/backend-image.json"
           mkdir -p "$HOME/.helixir"
           touch "$HOME/.helixir/pre-release-preserve"
           brew test helixir/pre-release/helixir
@@ -383,7 +459,7 @@ jobs:
     name: Package Docker images (${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
-    needs: [build, web-assets, client-quality-gate, homebrew-preflight]
+    needs: [build, web-assets, client-quality-gate, gateway-linux-systemd, homebrew-preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -468,18 +544,21 @@ jobs:
     name: Export disposable ARM64 dogfood candidates
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
-    needs: [build, web-assets, client-quality-gate, homebrew-preflight]
+    needs: [build, web-assets, client-quality-gate, gateway-linux-systemd, homebrew-preflight]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pinned HelixDB CLI
+      - uses: dtolnay/rust-toolchain@1.88
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixdb
+          key: dogfood-helixdb-v2
+
+      - name: Build maintained HelixDB v2 CLI
         run: |
-          curl -fsSL --retry 5 --retry-delay 5 \
-            -o /tmp/helix https://github.com/nikita-rulenko/helix-db/releases/download/v2.3.5/helix-aarch64-unknown-linux-gnu
-          echo '193bf284febb37bbdbc75190c05b11519e9573ac5383d1462ceca462196b37c1  /tmp/helix' \
-            | sha256sum -c -
-          sudo install -m 0755 /tmp/helix /usr/local/bin/helix
-          test "$(helix --version)" = 'Helix CLI 2.3.5'
+          cargo build --release --locked --manifest-path helixdb/Cargo.toml -p helix-cli
+          test "$(helixdb/target/release/helix --version)" = 'Helix CLI 2.3.5'
 
       - uses: actions/download-artifact@v4
         with:
@@ -501,9 +580,11 @@ jobs:
 
       - name: Compile the exact candidate schema
         working-directory: helixir
+        env:
+          HELIX_REPO_PATH: ${{ github.workspace }}/helixdb
         run: |
-          helix check
-          helix build -i dev --quiet
+          ../helixdb/target/release/helix check
+          ../helixdb/target/release/helix build -i dev --quiet
           test -s .helix/dev/Dockerfile
 
       - name: Build and export candidate images
@@ -526,11 +607,90 @@ jobs:
             helixir/control-plane-candidate-arm64.tar.gz
           retention-days: 1
 
+  helixdb-platform:
+    name: Package maintained HelixDB (${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ${{ matrix.os }}
+    needs: [build, memory-boundary-contract]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixdb
+          key: release-helixdb-${{ matrix.arch }}
+
+      - name: Build maintained compiler and exact schema image
+        run: |
+          cargo build --release --locked --manifest-path helixdb/Cargo.toml -p helix-cli
+          test "$(helixdb/target/release/helix --version)" = 'Helix CLI 2.3.5'
+          cd helixir
+          HELIX_REPO_PATH="$GITHUB_WORKSPACE/helixdb" ../helixdb/target/release/helix check
+          HELIX_REPO_PATH="$GITHUB_WORKSPACE/helixdb" ../helixdb/target/release/helix build -i dev --quiet
+          docker image inspect helix-helixir-dev:latest >/dev/null
+
+      - name: Read immutable backend metadata
+        id: backend
+        shell: bash
+        run: |
+          engine_revision=$(sed -n 's/^pub const ENGINE_REVISION: &str = "\([^"]*\)";/\1/p' helixir/src/installer/backend.rs)
+          upstream_revision=$(sed -n 's/^pub const UPSTREAM_REVISION: &str = "\([^"]*\)";/\1/p' helixir/src/installer/backend.rs)
+          schema_fingerprint=$(python3 tools/backend_release.py fingerprint --schema-dir helixir/schema)
+          test -n "$engine_revision"
+          test -n "$upstream_revision"
+          test -n "$schema_fingerprint"
+          echo "engine_revision=$engine_revision" >> "$GITHUB_OUTPUT"
+          echo "upstream_revision=$upstream_revision" >> "$GITHUB_OUTPUT"
+          echo "schema_fingerprint=$schema_fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label and push maintained backend architecture
+        env:
+          OWNER: ${{ github.repository_owner }}
+          ARCH: ${{ matrix.arch }}
+          ENGINE_REVISION: ${{ steps.backend.outputs.engine_revision }}
+          SCHEMA_FINGERPRINT: ${{ steps.backend.outputs.schema_fingerprint }}
+          UPSTREAM_REVISION: ${{ steps.backend.outputs.upstream_revision }}
+        run: |
+          image="ghcr.io/$OWNER/helixir-helixdb:sha-$GITHUB_SHA-$ARCH"
+          docker build \
+            --file helixdb/helixir-release.Dockerfile \
+            --build-arg BASE_IMAGE=helix-helixir-dev:latest \
+            --build-arg SOURCE_URL="https://github.com/$GITHUB_REPOSITORY" \
+            --build-arg REVISION="$GITHUB_SHA" \
+            --build-arg VERSION="$GITHUB_REF_NAME" \
+            --build-arg ENGINE_REVISION="$ENGINE_REVISION" \
+            --build-arg SCHEMA_FINGERPRINT="$SCHEMA_FINGERPRINT" \
+            --build-arg UPSTREAM_REVISION="$UPSTREAM_REVISION" \
+            --tag "$image" .
+          test "$(docker image inspect --format '{{ index .Config.Labels \"io.helixir.engine-revision\" }}' "$image")" = "$ENGINE_REVISION"
+          test "$(docker image inspect --format '{{ index .Config.Labels \"io.helixir.schema-fingerprint\" }}' "$image")" = "$SCHEMA_FINGERPRINT"
+          docker push "$image"
+
   docker-manifest:
     name: Publish multi-arch Docker manifests
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    needs: docker-platform
+    needs: [docker-platform, helixdb-platform]
     permissions:
       contents: read
       packages: write
@@ -542,16 +702,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish immutable and latest manifests
+      - name: Publish immutable manifests
         env:
           OWNER: ${{ github.repository_owner }}
           SHA: ${{ github.sha }}
           TAG: ${{ github.ref_name }}
         run: |
-          for image in helixir helixir-control-plane; do
+          for image in helixir helixir-control-plane helixir-helixdb; do
             docker buildx imagetools create \
               --tag "ghcr.io/$OWNER/$image:$TAG" \
-              --tag "ghcr.io/$OWNER/$image:latest" \
               "ghcr.io/$OWNER/$image:sha-$SHA-amd64" \
               "ghcr.io/$OWNER/$image:sha-$SHA-arm64"
           done
@@ -559,12 +718,13 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build, docker-manifest]
+    needs: [build, docker-manifest, gateway-linux-systemd]
     # Tag pushes only: workflow_dispatch runs are build validation, and
     # action-gh-release must never fire from a bare branch ref.
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -573,13 +733,67 @@ jobs:
         with:
           path: artifacts
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bind server archives to the maintained backend
+        shell: bash
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          image_repository="ghcr.io/$OWNER/helixir-helixdb"
+          image_digest=$(docker buildx imagetools inspect \
+            "$image_repository:$GITHUB_REF_NAME" \
+            | awk '$1 == "Digest:" { sub(/^sha256:/, "", $2); print $2; exit }')
+          test "${#image_digest}" = 64
+          docker buildx imagetools inspect \
+            "$image_repository@sha256:$image_digest" >/dev/null
+
+          source_name="helixir-helixdb-source-$GITHUB_REF_NAME.tar.gz"
+          git archive --format=tar \
+            --prefix="helixir-helixdb-source-$GITHUB_REF_NAME/" \
+            "$GITHUB_SHA" helixdb helixir/schema helixir/helix.toml \
+            | gzip -n > "artifacts/$source_name"
+          source_sha256=$(sha256sum "artifacts/$source_name" | cut -d' ' -f1)
+          source_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$source_name"
+
+          python3 tools/backend_release.py inject \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --artifacts-root artifacts \
+            --image-repository "$image_repository" \
+            --image-digest "$image_digest" \
+            --source-url "$source_url" \
+            --source-sha256 "$source_sha256" \
+            --fork-revision "$GITHUB_SHA" \
+            --output artifacts/backend-image.json
+
+          server_archives=0
+          while IFS= read -r -d '' archive; do
+            test "$(tar -tzf "$archive" | sed 's#^\./##' | grep -cx 'backend-image.json')" = 1
+            server_archives=$((server_archives + 1))
+          done < <(find artifacts -type f \
+            \( -name 'helixir-linux-*.tar.gz' -o -name 'helixir-macos-*.tar.gz' \
+              -o -name 'helixir-windows-*.tar.gz' \) -print0)
+          test "$server_archives" = 5
+
+          client_archives=0
+          while IFS= read -r -d '' archive; do
+            ! tar -tzf "$archive" | sed 's#^\./##' | grep -qx 'backend-image.json'
+            client_archives=$((client_archives + 1))
+          done < <(find artifacts -type f -name 'helixir-client-*.tar.gz' -print0)
+          test "$client_archives" = 5
+
       - name: Create release checksums
         shell: bash
         run: |
           : > artifacts/SHA256SUMS
           while IFS= read -r -d '' file; do
             sha256sum "$file" | sed "s#  .*#  $(basename "$file")#" >> artifacts/SHA256SUMS
-          done < <(find artifacts -type f -name '*.tar.gz' -print0)
+          done < <(find artifacts -type f \( -name '*.tar.gz' -o -name 'backend-image.json' \) -print0)
 
       - name: Load curated release metadata
         id: metadata
@@ -597,6 +811,7 @@ jobs:
         with:
           files: |
             artifacts/**/*.tar.gz
+            artifacts/backend-image.json
             artifacts/SHA256SUMS
           name: ${{ steps.metadata.outputs.title }}
           body_path: ${{ steps.metadata.outputs.notes }}
@@ -614,3 +829,30 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
     secrets: inherit
+
+  docker-latest:
+    name: Promote Docker latest tags
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote released immutable manifests
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for image in helixir helixir-control-plane helixir-helixdb; do
+            docker buildx imagetools create \
+              --tag "ghcr.io/$OWNER/$image:latest" \
+              "ghcr.io/$OWNER/$image:$TAG"
+          done

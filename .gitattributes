@@ -1,0 +1,3 @@
+# The maintained HelixDB fork preserves its upstream whitespace baseline.
+# Helixir-owned changes remain subject to the repository whitespace gate.
+helixdb/** -whitespace

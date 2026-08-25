@@ -25,6 +25,15 @@ pub enum NliLabel {
     Neutral,
 }
 
+/// Symmetric verdict for one paraphrase candidate. Both directions are
+/// evaluated exactly once so callers do not pay a third inference merely to
+/// distinguish contradiction from neutral.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NliPairVerdict {
+    pub same_fact: bool,
+    pub contradiction: bool,
+}
+
 impl NliLabel {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -122,12 +131,19 @@ impl NliJudge {
     /// direction is a contradiction and at least one is entailment. Never merges
     /// when contradiction fires either way (the catastrophic case).
     pub fn is_same_fact(&mut self, a: &str, b: &str) -> Result<bool> {
+        Ok(self.pair_verdict(a, b)?.same_fact)
+    }
+
+    /// Return a complete symmetric merge verdict using exactly two model runs.
+    pub fn pair_verdict(&mut self, a: &str, b: &str) -> Result<NliPairVerdict> {
         let (lab_ab, _) = self.classify(a, b)?;
         let (lab_ba, _) = self.classify(b, a)?;
-        if lab_ab == NliLabel::Contradiction || lab_ba == NliLabel::Contradiction {
-            return Ok(false);
-        }
-        Ok(lab_ab == NliLabel::Entailment || lab_ba == NliLabel::Entailment)
+        let contradiction = lab_ab == NliLabel::Contradiction || lab_ba == NliLabel::Contradiction;
+        Ok(NliPairVerdict {
+            same_fact: !contradiction
+                && (lab_ab == NliLabel::Entailment || lab_ba == NliLabel::Entailment),
+            contradiction,
+        })
     }
 }
 

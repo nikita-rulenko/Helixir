@@ -174,9 +174,13 @@ facts, not trivia.
 
 ## HelixDB v2.3.5 and RBAC runbook
 
-This integration template targets the repository's pinned Helix CLI v2.3.5.
-Never use `helix update` or a v3/hyperscale binary for this project. Schema and
-query changes are authored in `helixir/schema/schema.hx` and
+This integration template targets the repository's maintained HelixDB v2.3.5
+fork in `helixdb/`. Never use `helix update`, the unpatched upstream binary, or
+a v3/hyperscale binary for this project. Managed-local server releases consume
+the immutable database image declared by their server-only
+`backend-image.json`; existing-local and remote backends retain external
+lifecycle ownership, and `helixir-client` never carries the database runtime.
+Schema and query changes are authored in `helixir/schema/schema.hx` and
 `helixir/schema/queries.hx`; HQL supports `//` line comments only, not
 `/* ... */` block comments.
 
@@ -186,10 +190,13 @@ changes additive, avoid adding non-nullable fields to populated nodes, and run
 node/edge types and traversal directions exact, use both endpoints for
 `AddE<Kind>::From(... )::To(... )`, and do not update vectors with `UPDATE`.
 
-The deployment gate is: `helix --version` → `helix check` →
+The deployment gate is: `make build-helixdb-cli` →
+`HELIX_REPO_PATH=<repo>/helixdb helixdb/target/release/helix check` →
 `helix backup <instance> -o <dir>` → stop/rebuild/recreate against the same
 persistent volume → deploy with the configured v2 flow → health/read-only query
 verification. Do not mutate a live volume without a recoverable backup.
+Run `make check-memory-boundary` for the differential OOM regression contract;
+the harness must reject production port 6970 and the production volume.
 
 RBAC is permanently enabled, stored in HelixDB, and is the shared source of
 truth for CLI, MCP, and Rust. The one-way resumable bootstrap puts pre-RBAC

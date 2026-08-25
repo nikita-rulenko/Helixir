@@ -3,17 +3,21 @@
 //! whose exact memory ids died with the 2026-06-30 data loss.
 //!
 //! Design decisions:
-//! - Seeded through `add_prepared` (no extraction), so the DEAD-LLM-KEY
-//!   property of the read suites is preserved end to end.
+//! - Seeded through direct typed HQL after generating real embeddings, so no
+//!   extraction or write-decision LLM can make fixture setup non-deterministic.
 //! - Assertions match CONTENT MARKERS, not memory ids — ids are random
 //!   UUIDs, but the texts are ours; marker matching survives re-seeds
-//!   (content_key dedup makes re-seeding a deterministic no-op).
+//!   (fixture enumeration makes re-seeding a deterministic no-op).
 //! - Typed causal chains are wired directly via `add_relation` so
 //!   `search_reasoning_chain` has deterministic structure to walk.
 
-use helixir::core::HelixirClient;
-use helixir::llm::extractor::ExtractedMemory;
 use helixir::toolkit::mind_toolbox::reasoning::ReasoningType;
+
+mod seed;
+
+pub async fn ensure_seeded(client: &helixir::core::HelixirClient) -> usize {
+    seed::ensure_seeded(client).await
+}
 
 pub const GOLDEN_USER: &str = "golden_v1";
 
@@ -177,147 +181,4 @@ pub fn golden_set() -> Vec<(&'static str, Vec<&'static str>)> {
         ("linter warnings policy on main", vec!["GC3"]),
         ("incident runbook rewrite goal", vec!["GC4"]),
     ]
-}
-
-/// Aged fixtures for the temporal contract (#31): raw HQL inserts with
-/// CONTROLLED created_at / valid_from (no vector — the BM25 arm of hybrid
-/// search carries them). `GOLDOLD` is a year-old ingestion; `GOLDEVENT`
-/// was ingested long ago but its EVENT time (valid_from) is recent —
-/// the bi-temporal discriminator.
-pub const AGED: &[(&str, &str, &str, &str)] = &[
-    (
-        "gold_aged_created",
-        "golden GOLDOLD: the legacy billing cron still runs quarterly reconciliation.",
-        "2025-05-01T00:00:00+00:00",
-        "2025-05-01T00:00:00+00:00",
-    ),
-    (
-        "gold_aged_event",
-        "golden GOLDEVENT: the quarterly reconciliation window moved to the first business day.",
-        "2025-05-01T00:00:00+00:00",
-        "2026-06-20T00:00:00+00:00",
-    ),
-];
-
-fn seed_aged() {
-    use serde_json::json;
-    let actor = super::e2e_actor();
-    let group = super::e2e_group();
-    super::db_query(
-        "addUser",
-        &json!({"user_id": GOLDEN_USER, "name": GOLDEN_USER}),
-    );
-    for (mid, text, created, valid_from) in AGED {
-        super::db_query(
-            "addMemoryWithValidFrom",
-            &json!({
-                "memory_id": mid, "user_id": GOLDEN_USER, "content": text,
-                "memory_type": "fact", "certainty": 90, "importance": 60,
-                "created_at": created, "updated_at": created, "valid_from": valid_from,
-                "context_tags": "golden-fixture", "source": "fixture", "metadata": "{}",
-            }),
-        );
-        super::db_query(
-            "linkUserToMemory",
-            &json!({"user_id": GOLDEN_USER, "memory_id": mid, "context": "golden"}),
-        );
-        super::db_query(
-            "linkMemoryToRbacGroup",
-            &json!({
-                "memory_id": mid,
-                "group_id": group,
-                "assigned_by": actor,
-                "assigned_at": chrono::Utc::now().to_rfc3339(),
-            }),
-        );
-    }
-}
-
-/// Idempotently seed the corpus + chains + aged fixtures, then WAIT for
-/// search visibility (HelixDB snapshot lag: durable != immediately visible).
-/// One batched add_prepared call: one embed batch, one decision phase, one
-/// concurrent inference phase — LLM-free on a fresh store, minutes not tens.
-pub async fn ensure_seeded(client: &HelixirClient) -> usize {
-    let actor = super::e2e_actor();
-    let group = super::e2e_group();
-    let atoms: Vec<ExtractedMemory> = corpus()
-        .into_iter()
-        .map(|(_, text, mtype)| ExtractedMemory {
-            text: text.to_string(),
-            memory_type: mtype.to_string(),
-            certainty: 90,
-            importance: 60,
-            entities: vec![],
-            context: None,
-        })
-        .collect();
-
-    let r = client
-        .add_prepared_as_in_group(
-            &actor,
-            atoms,
-            GOLDEN_USER,
-            None,
-            Some("golden-fixture"),
-            Some(&group),
-        )
-        .await
-        .expect("golden seed batch");
-    let added_total = r.memories_added;
-
-    // Fresh store: ADDs come back in input order -> marker->id mapping holds.
-    if added_total == corpus().len() {
-        let marker_ids: std::collections::HashMap<&'static str, String> = corpus()
-            .iter()
-            .map(|(m, _, _)| *m)
-            .zip(r.memory_ids.iter().cloned())
-            .collect();
-        for (from_m, to_m, rt) in chains() {
-            if let (Some(f), Some(t)) = (marker_ids.get(from_m), marker_ids.get(to_m)) {
-                let _ = client
-                    .admin_as(&actor)
-                    .await
-                    .expect("RBAC admin")
-                    .tooling()
-                    .add_typed_relation(f, t, rt, 80)
-                    .await;
-            }
-        }
-    }
-
-    // Aged fixtures are independent of the batch: seed when absent.
-    let probe = super::db_query(
-        "getMemory",
-        &serde_json::json!({"memory_id": "gold_aged_created"}),
-    );
-    if probe
-        .get("memory")
-        .and_then(|m| m.get("memory_id"))
-        .is_none()
-    {
-        seed_aged();
-    }
-
-    // Visibility wait: poll until the first marker is searchable (or 30s).
-    for _ in 0..30 {
-        let hits = client
-            .search_as(
-                &actor,
-                "payments sqlite postgres migration",
-                GOLDEN_USER,
-                helixir::core::helixir_client::SearchParams {
-                    limit: Some(5),
-                    search_mode: Some("full".to_string()),
-                    scope: Some("personal".to_string()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap_or_default();
-        if hits.iter().any(|h| h.content.contains("GA1")) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    added_total
 }

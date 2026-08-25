@@ -1,3 +1,4 @@
+use super::backup::resolved_backup_dir;
 use super::*;
 
 #[test]
@@ -31,6 +32,19 @@ fn retention_keeps_newest_n() {
     );
     assert!(newest_backup_age_hours(&dir).is_some());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn empty_backup_dir_resolves_next_to_health_journal() {
+    let journal = std::path::Path::new("/private/helixir/health.jsonl");
+    assert_eq!(
+        resolved_backup_dir("", journal),
+        std::path::PathBuf::from("/private/helixir/backups")
+    );
+    assert_eq!(
+        resolved_backup_dir("/srv/helixir-backups", journal),
+        std::path::PathBuf::from("/srv/helixir-backups")
+    );
 }
 
 fn filetime_from_secs(secs: i64) -> std::time::SystemTime {
