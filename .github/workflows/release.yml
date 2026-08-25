@@ -302,6 +302,7 @@ jobs:
         env:
           # GitHub-hosted runners are single-job, throwaway Docker daemons.
           HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER: '1'
+          HELIXIR_HELIX_BIN: ${{ github.workspace }}/helixdb/target/release/helix
         run: |
           version=$(awk -F '"' '/^version[[:space:]]*=/ {print $2; exit}' helixir/Cargo.toml)
           tools/pre_release_client_gate.sh \

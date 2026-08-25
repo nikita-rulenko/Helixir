@@ -24,13 +24,27 @@ while (($#)); do
   esac
 done
 
-for command in cargo curl docker helix; do
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+helix_bin=${HELIXIR_HELIX_BIN:-}
+if [[ -z "$helix_bin" ]]; then
+  if command -v helix >/dev/null 2>&1; then
+    helix_bin=$(command -v helix)
+  else
+    helix_bin="$repo_root/helixdb/target/release/helix"
+  fi
+fi
+
+for command in cargo curl docker; do
   command -v "$command" >/dev/null || {
     printf 'pre-release client gate requires %s\n' "$command" >&2
     exit 1
   }
 done
-[[ "$(helix --version)" == *'2.3.5'* ]] || {
+[[ -x "$helix_bin" ]] || {
+  printf 'pre-release client gate requires Helix CLI at %s\n' "$helix_bin" >&2
+  exit 1
+}
+[[ "$("$helix_bin" --version)" == *'2.3.5'* ]] || {
   printf '%s\n' 'pre-release client gate requires Helix CLI v2.3.5' >&2
   exit 1
 }
@@ -80,7 +94,6 @@ case "$arch" in
   *) printf 'unsupported Debian architecture: %s\n' "$arch" >&2; exit 2 ;;
 esac
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/helixir-client-gate.XXXXXX")
 gate_id="helixir-client-gate-$(date -u +%Y%m%d%H%M%S)-$$"
 network="$gate_id"
@@ -178,7 +191,6 @@ done
 printf '%s\n' '[1/7] Compile the current HQL contract and build an isolated HelixDB image'
 current_stage='1/7: isolated HelixDB image build'
 assert_docker_alive
-helix_bin=${HELIXIR_HELIX_BIN:-"$repo_root/helixdb/target/release/helix"}
 if [[ ! -x "$helix_bin" ]]; then
   cargo build --release --locked --manifest-path "$repo_root/helixdb/Cargo.toml" -p helix-cli
 fi

@@ -40,7 +40,7 @@ and prevents exact lexical memories from disappearing during graph reranking.
   clean disposable artifacts on every exit path.
 - The faithful cold ordered workload — baseline, Clotho, insights,
   reconciliation and merge — completed without OOM, restart or functional
-  query errors. The database peaked at 128.4 MiB in the final six-scenario gate
+  query errors. The database peaked at 137.4 MiB in the final six-scenario gate
   inside its 3 GiB envelope.
 
 ## Search that keeps lexical evidence
@@ -90,10 +90,13 @@ and prevents exact lexical memories from disappearing during graph reranking.
   including 23/23 MCP tools, concurrent reads, Hive consensus, RBAC
   isolation/federation/history, NLI, Moirai/Lachesis, schema inventory, swarm
   lifecycle and read/write quality gates.
-- The deterministic surface passed 447 Helixir tests, 11 client tests, 18
-  maintained-fork tests, 34 mock tests, 45 memory-boundary Python tests, 15 web
+- The deterministic surface passed 449 Helixir tests, 11 client tests, 18
+  maintained-fork tests, 34 mock tests, 60 memory-boundary Python tests, 15 web
   unit tests and 24 browser scenarios, plus strict formatting, Clippy, rustdoc,
   package and safety preflights.
+- `helixir config set mode` now canonicalizes documented lower-case CLI values
+  into the Serde-safe TOML enum representation, and the remote-client gate binds
+  the exact maintained HelixDB CLI instead of depending on ambient `PATH` state.
 
 ## Upgrade
 

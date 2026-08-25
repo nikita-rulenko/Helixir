@@ -78,6 +78,17 @@ write_fake_docker ''
 PATH="$work:$PATH" "$repo_root/tools/pre_release_client_gate.sh" --preflight-only \
   | grep -q 'preflight passed'
 
+# The release workflow builds the maintained CLI in-tree and binds that exact
+# path explicitly. Prove an unrelated PATH-level CLI cannot override it.
+printf '#!/usr/bin/env bash\nprintf "Helix CLI 3.0.0\\n"\n' >"$work/helix"
+printf '#!/usr/bin/env bash\nprintf "Helix CLI 2.3.5\\n"\n' >"$work/helix-explicit"
+chmod +x "$work/helix" "$work/helix-explicit"
+HELIXIR_HELIX_BIN="$work/helix-explicit" PATH="$work:$PATH" \
+  "$repo_root/tools/pre_release_client_gate.sh" --preflight-only \
+  | grep -q 'preflight passed'
+printf '#!/usr/bin/env bash\nprintf "Helix CLI 2.3.5\\n"\n' >"$work/helix"
+chmod +x "$work/helix"
+
 write_fake_docker 'helixir-control-plane\t0.0.0.0:6971->6971/tcp'
 HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1 PATH="$work:$PATH" \
   "$repo_root/tools/pre_release_client_gate.sh" --preflight-only \
