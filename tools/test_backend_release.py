@@ -132,6 +132,23 @@ class BackendReleaseTests(unittest.TestCase):
             backend_release.schema_fingerprint(schema), f"sha256:{digest.hexdigest()}"
         )
 
+    def test_release_workflow_uses_valid_docker_label_templates(self):
+        repo = Path(__file__).resolve().parents[1]
+        workflow = (repo / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        for label in (
+            "io.helixir.engine-revision",
+            "io.helixir.schema-fingerprint",
+        ):
+            self.assertIn(
+                f"--format '{{{{ index .Config.Labels \"{label}\" }}}}'",
+                workflow,
+            )
+            self.assertNotIn(
+                f"--format '{{{{ index .Config.Labels \\\"{label}\\\" }}}}'",
+                workflow,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -683,8 +683,8 @@ jobs:
             --build-arg SCHEMA_FINGERPRINT="$SCHEMA_FINGERPRINT" \
             --build-arg UPSTREAM_REVISION="$UPSTREAM_REVISION" \
             --tag "$image" .
-          test "$(docker image inspect --format '{{ index .Config.Labels \"io.helixir.engine-revision\" }}' "$image")" = "$ENGINE_REVISION"
-          test "$(docker image inspect --format '{{ index .Config.Labels \"io.helixir.schema-fingerprint\" }}' "$image")" = "$SCHEMA_FINGERPRINT"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.helixir.engine-revision" }}' "$image")" = "$ENGINE_REVISION"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.helixir.schema-fingerprint" }}' "$image")" = "$SCHEMA_FINGERPRINT"
           docker push "$image"
 
   docker-manifest:
