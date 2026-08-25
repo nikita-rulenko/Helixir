@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_tag": "v0.18.0",
-  "observed_at": "2026-08-24T18:38:54Z",
+  "observed_at": "2026-08-25T08:03:29Z",
   "max_age_days": 14,
   "evidence_lane": "faithful",
   "canonical_verdict": "pass",
@@ -30,8 +30,8 @@
       "tools/memory_boundary_lib",
       "tools/profiling/helixdb_target.py"
     ],
-    "sha256": "833a7e27a90b5fd5c381e6ee90a621ccaa49164ec5c71aefcbd418423cb6a8e9",
-    "file_count": 321
+    "sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+    "file_count": 558
   },
   "required_scenarios": [
     "daemon-full-pass",
@@ -50,12 +50,12 @@
       "instrumentation": "none",
       "build_profile": "profiling",
       "allocator": "mimalloc",
-      "tested_git_commit": "6269b1c877d2d68170752ef8415093db70df5446",
-      "private_report_sha256": "f16e28a4fb5db518f107e1aab7e3a14b8c648bf95fee3dfcaba2f61481aeeb34",
-      "trace_digest": "6c52f1ef75ac16765223f8ad7a575cd0ebd55787c2c81e07cfed92cd9ea8bfb3",
-      "tested_candidate_source_sha256": "37138973a8273a1dc660397637a92e6db271a58f16e18d3689d1d96d59ae23d8",
-      "candidate_binary_sha256": "20f400f96bf40f798ddade8cbc146e6e41a9a3e82116cc41fcd4502002b81dca",
-      "backend_image_id": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
+      "tested_git_commit": "41bd0e9ead27924887b21085cf931e9d57f883c2",
+      "private_report_sha256": "7ff3e9fefc31f9062854135435fef5d170634dc32d956348d533dcf0501197c1",
+      "trace_digest": "4ae9b65a81f5286072cb677b134aa0669cec038edd441d44948792f7f302fb22",
+      "tested_candidate_source_sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+      "candidate_binary_sha256": "65befe1f21f982708628c3bfead0b0472581050032c5dc582e41a6f88fbaf54d",
+      "backend_image_id": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
       "cold_state_sha256": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
       "scenarios": [
         {
@@ -66,8 +66,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 134610944,
-          "workload_peak_bytes": 874446848,
+          "database_peak_bytes": 144060416,
+          "workload_peak_bytes": 683196416,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -75,8 +75,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         },
         {
           "name": "ordered-baseline",
@@ -86,8 +86,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 39399424,
-          "workload_peak_bytes": 17498112,
+          "database_peak_bytes": 37085184,
+          "workload_peak_bytes": 15220736,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -95,8 +95,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         },
         {
           "name": "ordered-clotho",
@@ -106,8 +106,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 70926336,
-          "workload_peak_bytes": 23527424,
+          "database_peak_bytes": 69693440,
+          "workload_peak_bytes": 23937024,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -115,8 +115,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         },
         {
           "name": "ordered-insights",
@@ -126,8 +126,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 121077760,
-          "workload_peak_bytes": 19595264,
+          "database_peak_bytes": 134533120,
+          "workload_peak_bytes": 19955712,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -135,8 +135,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         },
         {
           "name": "ordered-reconcile",
@@ -146,8 +146,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 39751680,
-          "workload_peak_bytes": 18661376,
+          "database_peak_bytes": 39735296,
+          "workload_peak_bytes": 18792448,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -155,8 +155,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         },
         {
           "name": "ordered-merge",
@@ -166,8 +166,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 93020160,
-          "workload_peak_bytes": 569475072,
+          "database_peak_bytes": 91504640,
+          "workload_peak_bytes": 480641024,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -175,8 +175,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         }
       ]
     },
@@ -187,12 +187,12 @@
       "instrumentation": "none",
       "build_profile": "profiling",
       "allocator": "mimalloc",
-      "tested_git_commit": "6269b1c877d2d68170752ef8415093db70df5446",
-      "private_report_sha256": "78ca6310bae344fd82a0d7b3b83a976230d42011f219f0e5e1c558dd4de449e7",
-      "trace_digest": "cd9de63dfb31eeff7654b6a84f11725dedab32106d73a25b725940979b5ecafd",
-      "tested_candidate_source_sha256": "37138973a8273a1dc660397637a92e6db271a58f16e18d3689d1d96d59ae23d8",
-      "candidate_binary_sha256": "20f400f96bf40f798ddade8cbc146e6e41a9a3e82116cc41fcd4502002b81dca",
-      "backend_image_id": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
+      "tested_git_commit": "41bd0e9ead27924887b21085cf931e9d57f883c2",
+      "private_report_sha256": "3dd8879d7ea1b4f9929f5ed102cfe20058f9eb297e0c037f602c541857a7cc4c",
+      "trace_digest": "6abfcb1b013f2278779255089debd3c8be68120b3dca5ecc192f9d61bd95ac8a",
+      "tested_candidate_source_sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+      "candidate_binary_sha256": "65befe1f21f982708628c3bfead0b0472581050032c5dc582e41a6f88fbaf54d",
+      "backend_image_id": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
       "cold_state_sha256": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
       "scenarios": [
         {
@@ -203,8 +203,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 134582272,
-          "workload_peak_bytes": 728940544,
+          "database_peak_bytes": 142176256,
+          "workload_peak_bytes": 616513536,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -212,8 +212,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1",
-          "backend_image_after": "sha256:1190dc45218f144ea37895af1c8c19c92226dc091c0f39ac1fe6b62c8a993ae1"
+          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
         }
       ]
     }
