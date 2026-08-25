@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_tag": "v0.18.0",
-  "observed_at": "2026-08-25T08:03:29Z",
+  "observed_at": "2026-08-25T09:18:25Z",
   "max_age_days": 14,
   "evidence_lane": "faithful",
   "canonical_verdict": "pass",
@@ -30,7 +30,7 @@
       "tools/memory_boundary_lib",
       "tools/profiling/helixdb_target.py"
     ],
-    "sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+    "sha256": "7058c20e7287102dd407b0a2489322a016641a7071655233bc953cd7bd8483d1",
     "file_count": 558
   },
   "required_scenarios": [
@@ -50,12 +50,12 @@
       "instrumentation": "none",
       "build_profile": "profiling",
       "allocator": "mimalloc",
-      "tested_git_commit": "41bd0e9ead27924887b21085cf931e9d57f883c2",
-      "private_report_sha256": "7ff3e9fefc31f9062854135435fef5d170634dc32d956348d533dcf0501197c1",
-      "trace_digest": "4ae9b65a81f5286072cb677b134aa0669cec038edd441d44948792f7f302fb22",
-      "tested_candidate_source_sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+      "tested_git_commit": "8bf93ab018dd4320c4b1d1aebd7c274ef94cf137",
+      "private_report_sha256": "80d56959449ffcc0f1387ee61c338b8a7cb09b48d82901b9610d3a3e0b0f7f36",
+      "trace_digest": "1f7ba2783b4da89961b84209dffad59f004139eabad35a706c046081e8392a02",
+      "tested_candidate_source_sha256": "7058c20e7287102dd407b0a2489322a016641a7071655233bc953cd7bd8483d1",
       "candidate_binary_sha256": "65befe1f21f982708628c3bfead0b0472581050032c5dc582e41a6f88fbaf54d",
-      "backend_image_id": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+      "backend_image_id": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
       "cold_state_sha256": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
       "scenarios": [
         {
@@ -66,8 +66,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 144060416,
-          "workload_peak_bytes": 683196416,
+          "database_peak_bytes": 135409664,
+          "workload_peak_bytes": 711016448,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -75,8 +75,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         },
         {
           "name": "ordered-baseline",
@@ -86,8 +86,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 37085184,
-          "workload_peak_bytes": 15220736,
+          "database_peak_bytes": 39448576,
+          "workload_peak_bytes": 18022400,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -95,8 +95,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         },
         {
           "name": "ordered-clotho",
@@ -106,8 +106,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 69693440,
-          "workload_peak_bytes": 23937024,
+          "database_peak_bytes": 67309568,
+          "workload_peak_bytes": 23085056,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -115,8 +115,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         },
         {
           "name": "ordered-insights",
@@ -126,8 +126,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 134533120,
-          "workload_peak_bytes": 19955712,
+          "database_peak_bytes": 127012864,
+          "workload_peak_bytes": 19595264,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -135,8 +135,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         },
         {
           "name": "ordered-reconcile",
@@ -146,8 +146,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 39735296,
-          "workload_peak_bytes": 18792448,
+          "database_peak_bytes": 39669760,
+          "workload_peak_bytes": 18939904,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -155,8 +155,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         },
         {
           "name": "ordered-merge",
@@ -166,8 +166,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 91504640,
-          "workload_peak_bytes": 480641024,
+          "database_peak_bytes": 92409856,
+          "workload_peak_bytes": 560578560,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -175,8 +175,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         }
       ]
     },
@@ -187,12 +187,12 @@
       "instrumentation": "none",
       "build_profile": "profiling",
       "allocator": "mimalloc",
-      "tested_git_commit": "41bd0e9ead27924887b21085cf931e9d57f883c2",
-      "private_report_sha256": "3dd8879d7ea1b4f9929f5ed102cfe20058f9eb297e0c037f602c541857a7cc4c",
-      "trace_digest": "6abfcb1b013f2278779255089debd3c8be68120b3dca5ecc192f9d61bd95ac8a",
-      "tested_candidate_source_sha256": "706b08834ecf7c53a018a3797ea903c3d1501a248138ce2eeb08957cc3d2a076",
+      "tested_git_commit": "8bf93ab018dd4320c4b1d1aebd7c274ef94cf137",
+      "private_report_sha256": "6053d4065bf0f9aed94496373539d255294dfd57bd81123626f84c4ed9eb721a",
+      "trace_digest": "67a5a0bb10df88f2a3a001d7f76046a958aca88379dfdd54e846fa03a857db1b",
+      "tested_candidate_source_sha256": "7058c20e7287102dd407b0a2489322a016641a7071655233bc953cd7bd8483d1",
       "candidate_binary_sha256": "65befe1f21f982708628c3bfead0b0472581050032c5dc582e41a6f88fbaf54d",
-      "backend_image_id": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
+      "backend_image_id": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
       "cold_state_sha256": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
       "scenarios": [
         {
@@ -203,8 +203,8 @@
           "database_limit_bytes": 3221225472,
           "workload_limit_bytes": 1073741824,
           "abort_fraction": 0.85,
-          "database_peak_bytes": 142176256,
-          "workload_peak_bytes": 616513536,
+          "database_peak_bytes": 131997696,
+          "workload_peak_bytes": 722386944,
           "oom_events": 0,
           "oom_kill_events": 0,
           "restarts": 0,
@@ -212,8 +212,8 @@
           "separate_measurements": true,
           "cold_checksum_before": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
           "cold_checksum_after": "1b7271dad138d316f064dc937404e08cc892e8e3e2f6291c83c4cd029fee69dd",
-          "backend_image_before": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69",
-          "backend_image_after": "sha256:7d78a163bab039aa934c73f1e5117a0139c3cae0bb742d085ec2e0796133bd69"
+          "backend_image_before": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958",
+          "backend_image_after": "sha256:c1e00a86abc709ec5be4b5178cae5cdd0106e5a74df16424626371fd2ea5f958"
         }
       ]
     }

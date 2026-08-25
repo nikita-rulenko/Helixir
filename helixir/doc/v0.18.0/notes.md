@@ -40,7 +40,7 @@ and prevents exact lexical memories from disappearing during graph reranking.
   clean disposable artifacts on every exit path.
 - The faithful cold ordered workload — baseline, Clotho, insights,
   reconciliation and merge — completed without OOM, restart or functional
-  query errors. The database peaked at 137.4 MiB in the final six-scenario gate
+  query errors. The database peaked at 129.1 MiB in the final six-scenario gate
   inside its 3 GiB envelope.
 
 ## Search that keeps lexical evidence
