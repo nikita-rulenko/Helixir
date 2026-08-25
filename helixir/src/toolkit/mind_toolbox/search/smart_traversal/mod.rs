@@ -4,6 +4,7 @@ pub mod longest_chain;
 pub mod models;
 pub mod phases;
 pub mod ppr;
+mod rerank;
 pub mod rrf;
 pub mod scoring;
 pub mod traversal;

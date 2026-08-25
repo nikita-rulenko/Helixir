@@ -16,6 +16,47 @@ pub(crate) fn read_pid_state(name: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&body).ok()
 }
 
+#[cfg(unix)]
+pub(crate) fn process_command(pid: i32) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|command| !command.is_empty())
+}
+
+#[cfg(unix)]
+fn process_matches_state(state: &serde_json::Value) -> bool {
+    let Some(pid) = state.get("pid").and_then(serde_json::Value::as_i64) else {
+        return false;
+    };
+    let Some(executable) = state.get("executable").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(args) = state.get("args").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let Some(args) = args
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let expected = std::iter::once(executable)
+        .chain(args)
+        .collect::<Vec<_>>()
+        .join(" ");
+    process_command(pid as i32).is_some_and(|command| command == expected)
+}
+
 /// Signal 0 probes a pid's existence without delivering anything.
 #[cfg(unix)]
 pub(crate) fn is_alive(pid: i32) -> bool {
@@ -38,9 +79,14 @@ pub(crate) fn spawn_detached(
     args: &[&str],
     extra: serde_json::Value,
 ) -> Result<(u32, PathBuf)> {
-    if let Some(pid) = read_pid_state(name).and_then(|s| s.get("pid").and_then(|v| v.as_i64()))
+    if let Some(state) = read_pid_state(name)
+        && let Some(pid) = state.get("pid").and_then(serde_json::Value::as_i64)
         && is_alive(pid as i32)
     {
+        anyhow::ensure!(
+            process_matches_state(&state),
+            "refusing to replace {name} state: pid {pid} is alive but its process identity does not match the recorded executable and arguments"
+        );
         anyhow::bail!("{name} already running (pid {pid}); `helixir {name} stop` first");
     }
     let exe = std::env::current_exe().context("current_exe")?;
@@ -48,7 +94,7 @@ pub(crate) fn spawn_detached(
     let out = OpenOptions::new().create(true).append(true).open(&log)?;
     let err = out.try_clone()?;
 
-    let mut cmd = Command::new(exe);
+    let mut cmd = Command::new(&exe);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))
@@ -64,6 +110,8 @@ pub(crate) fn spawn_detached(
 
     let mut state = serde_json::json!({
         "pid": pid,
+        "executable": exe.display().to_string(),
+        "args": args,
         "started_at": chrono::Utc::now().to_rfc3339(),
         "log": log.display().to_string(),
     });
@@ -102,7 +150,12 @@ pub(crate) fn stop_process(name: &str) -> Result<()> {
         .and_then(|v| v.as_i64())
         .context("pid file has no pid")? as i32;
     if is_alive(pid) {
-        unsafe { libc::kill(pid, libc::SIGTERM) };
+        anyhow::ensure!(
+            process_matches_state(&state),
+            "refusing to signal pid {pid}: its process identity does not match the recorded {name} executable and arguments"
+        );
+        let result = unsafe { libc::kill(pid, libc::SIGTERM) };
+        anyhow::ensure!(result == 0, "failed to signal {name} process {pid}");
         println!("{name} stopped (pid {pid})");
     } else {
         println!("{name} already gone (stale pid {pid}); cleaned up");
@@ -169,3 +222,28 @@ pub(crate) fn daemon_start(
 }
 
 // Foreground watchdog execution lives in the adjacent module.
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pid_identity_requires_the_recorded_executable_and_arguments() {
+        let mut child = Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        let state = serde_json::json!({
+            "pid": child.id(),
+            "executable": "/bin/sleep",
+            "args": ["5"],
+        });
+        assert!(process_matches_state(&state));
+
+        let wrong = serde_json::json!({
+            "pid": child.id(),
+            "executable": "/bin/sleep",
+            "args": ["6"],
+        });
+        assert!(!process_matches_state(&wrong));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}

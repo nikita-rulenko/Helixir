@@ -13,6 +13,7 @@ Checks:
   5. Known removed schema names do not reappear as current contracts.
   6. Maintained Markdown files contain no broken local links and Mermaid
      blocks have a supported diagram declaration.
+  7. The current Cargo release has both release notes and a state snapshot.
 """
 
 import glob
@@ -24,6 +25,13 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parent.parent.parent
 failures = []
 README_LINE_BUDGET = 600
+RELEASE_DOCS_ROOT = ROOT / "helixir/doc"
+RELEASE_DOCS = [
+    path
+    for release_dir in sorted(RELEASE_DOCS_ROOT.glob("v*"))
+    if release_dir.is_dir()
+    for path in sorted(release_dir.glob("*.md"))
+]
 
 MAINTAINED_DOCS = [
     ROOT / "README.md",
@@ -36,7 +44,7 @@ MAINTAINED_DOCS = [
     ROOT / "helixir/skills/helixir-memory/SKILL.md",
     ROOT / "helixir/src/mcp/prompts/cognitive_protocol.md",
     *sorted((ROOT / "helixir/doc").glob("*.md")),
-    *sorted((ROOT / "helixir/doc/v0.17.1").glob("*.md")),
+    *RELEASE_DOCS,
 ]
 
 
@@ -240,12 +248,30 @@ def check_upgrading():
         )
 
 
+def check_current_release_docs():
+    cargo = (ROOT / "helixir/Cargo.toml").read_text()
+    match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)', cargo, re.M)
+    if not match:
+        fail("Cargo.toml: cannot parse release version")
+        return
+    version = f"v{match.group(1)}"
+    release_dir = RELEASE_DOCS_ROOT / version
+    for name in ("notes.md", "state-snapshot.md"):
+        path = release_dir / name
+        if not path.is_file():
+            fail(f"{path.relative_to(ROOT)}: current release document is missing")
+            continue
+        if not path.read_text().startswith(f"# {version}"):
+            fail(f"{path.relative_to(ROOT)}: release heading does not match {version}")
+
+
 check_internal_anchors()
 check_local_links_and_mermaid()
 check_tool_count()
 check_contract_counts()
 check_removed_contracts()
 check_upgrading()
+check_current_release_docs()
 
 if failures:
     print("docs-lint FAILED:")

@@ -43,8 +43,8 @@ fn mcp_read_e2e() {
         "This suite validates the algo_opt read path"
     );
 
-    // #76: seed the deterministic corpus through the LIBRARY client (LLM-free
-    // add_prepared) before spawning the MCP binary under test.
+    // #76: seed exact missing fixture rows through direct typed HQL (with real
+    // embeddings, without the write-decision LLM) before spawning MCP.
     {
         let rt = tokio::runtime::Runtime::new().expect("rt");
         rt.block_on(async {

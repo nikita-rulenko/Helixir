@@ -107,6 +107,26 @@ pub(crate) fn config_validate(content: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("invalid helixir.toml: {e}"))
 }
 
+fn config_value(key: &str, raw: &str) -> Result<toml_edit::Value> {
+    let parsed = raw.parse().unwrap_or_else(|_| toml_edit::Value::from(raw));
+    if key.trim() != "mode" {
+        return Ok(parsed);
+    }
+
+    let mode = parsed
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("mode must be a string"))?;
+    let canonical = match mode.trim().to_ascii_lowercase().as_str() {
+        "solo" => "Solo",
+        "collective" | "hive" | "shared" => "Collective",
+        "insights" | "collective+insights" | "full" => "Insights",
+        _ => anyhow::bail!(
+            "invalid mode `{mode}`; expected solo, collective, or collective+insights"
+        ),
+    };
+    Ok(toml_edit::Value::from(canonical))
+}
+
 pub(crate) fn config_set(key: &str, value: &str) -> Result<()> {
     let p = config_target_path()?;
     let content = std::fs::read_to_string(&p).unwrap_or_default();
@@ -123,9 +143,7 @@ pub(crate) fn config_set(key: &str, value: &str) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("{seg} exists and is not a table"))?;
     }
     // Try native TOML typing first (5, 5.0, true, [..]); fall back to string.
-    let item: toml_edit::Value = value
-        .parse()
-        .unwrap_or_else(|_| toml_edit::Value::from(value));
+    let item = config_value(key, value)?;
     node[segs[segs.len() - 1]] = toml_edit::Item::Value(item);
 
     let out = doc.to_string();
@@ -278,5 +296,32 @@ api_key = "fallback-secret"
         assert_eq!(redacted.matches("<redacted>").count(), 5);
         assert!(redacted.contains("gpt-oss-120b"));
         assert!(redacted.contains("remote"));
+    }
+
+    #[test]
+    fn canonicalizes_cli_memory_mode_aliases_for_serde() {
+        for (input, expected) in [
+            ("solo", "Solo"),
+            ("collective", "Collective"),
+            ("shared", "Collective"),
+            ("collective+insights", "Insights"),
+            ("full", "Insights"),
+            ("\"insights\"", "Insights"),
+        ] {
+            let value = config_value("mode", input).expect("mode alias must be valid");
+            assert_eq!(value.as_str(), Some(expected));
+
+            let body = format!("mode = {value}\n");
+            config_validate(&body).expect("canonical mode must deserialize");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_cli_memory_mode_without_silent_solo_fallback() {
+        let error = config_value("mode", "unknown")
+            .expect_err("unknown mode must fail closed")
+            .to_string();
+        assert!(error.contains("invalid mode `unknown`"));
+        assert!(config_value("mode", "42").is_err());
     }
 }

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::db::HelixClient;
 use crate::toolkit::mind_toolbox::reasoning::{ReasoningEngine, ReasoningError, ReasoningType};
@@ -47,7 +47,7 @@ impl MemoryEvolution {
         &self,
         old_memory_id: &str,
         new_memory_id: &str,
-        _reason: Option<&str>,
+        reason: Option<&str>,
         _changed_by: Option<&str>,
     ) -> Result<EvolutionResult, EvolutionError> {
         info!(
@@ -56,52 +56,32 @@ impl MemoryEvolution {
             crate::safe_truncate(old_memory_id, 12)
         );
 
-        debug!("Setting temporal boundary on old memory: {}", old_memory_id);
-
         let now = Utc::now();
 
         #[derive(Serialize)]
-        struct UpdateValidUntil {
-            memory_id: String,
-            valid_until: String,
+        struct SupersessionParams {
+            new_id: String,
+            old_id: String,
+            reason: String,
+            superseded_at: String,
+            is_contradiction: i64,
         }
 
         self.client
-            .execute_query::<(), _>(
-                "updateMemoryValidUntil",
-                &UpdateValidUntil {
-                    memory_id: old_memory_id.to_string(),
-                    valid_until: now.to_rfc3339(),
+            .execute_query::<serde_json::Value, _>(
+                "addMemorySupersession",
+                &SupersessionParams {
+                    new_id: new_memory_id.to_string(),
+                    old_id: old_memory_id.to_string(),
+                    reason: reason.unwrap_or("superseded").to_string(),
+                    superseded_at: now.to_rfc3339(),
+                    is_contradiction: 0,
                 },
             )
             .await
             .map_err(|e| EvolutionError::Database(e.to_string()))?;
 
-        debug!(
-            "Creating SUPERSEDES edge: {} -> {}",
-            new_memory_id, old_memory_id
-        );
-
-        let edge_created = match self
-            .reasoning_engine
-            .add_relation(
-                new_memory_id,
-                old_memory_id,
-                ReasoningType::Supports,
-                95,
-                None,
-            )
-            .await
-        {
-            Ok(_) => {
-                debug!("SUPERSEDES edge created successfully");
-                true
-            }
-            Err(e) => {
-                warn!("Failed to create SUPERSEDES edge: {}", e);
-                false
-            }
-        };
+        let edge_created = true;
 
         info!(
             "Memory supersession complete: {} supersedes {}",
@@ -192,19 +172,43 @@ impl MemoryEvolution {
 
         let now = Utc::now();
 
+        #[derive(Deserialize)]
+        struct MemoryResponse {
+            memory: MutableFields,
+        }
+
+        #[derive(Deserialize)]
+        struct MutableFields {
+            certainty: i64,
+            importance: i64,
+        }
+
+        let existing = self
+            .client
+            .execute_query::<MemoryResponse, _>(
+                "getMemory",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await
+            .map_err(|e| EvolutionError::Database(e.to_string()))?;
+
         #[derive(Serialize)]
         struct UpdateContent {
             memory_id: String,
             content: String,
+            certainty: i64,
+            importance: i64,
             updated_at: String,
         }
 
         self.client
-            .execute_query::<(), _>(
-                "updateMemoryContent",
+            .execute_query::<serde_json::Value, _>(
+                "updateMutableMemory",
                 &UpdateContent {
                     memory_id: memory_id.to_string(),
                     content: enhanced_content.to_string(),
+                    certainty: existing.memory.certainty,
+                    importance: existing.memory.importance,
                     updated_at: now.to_rfc3339(),
                 },
             )

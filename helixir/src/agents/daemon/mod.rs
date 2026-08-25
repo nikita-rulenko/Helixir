@@ -54,7 +54,9 @@ impl<'a> Daemon<'a> {
 
     /// Run the scheduling loop. `on_pass(pass_number, &run)` is the sink — the
     /// caller journals/displays each completed pass. Continuous until Ctrl-C
-    /// unless `cfg.once`. A failed pass is logged and the loop continues.
+    /// unless `cfg.once`. Continuous mode logs a failed stage and proceeds to
+    /// the next pass; on-call mode returns the failure because there is no later
+    /// pass that could recover it.
     pub async fn run<F>(&self, cfg: DaemonConfig, mut on_pass: F) -> Result<(), ToolingError>
     where
         F: FnMut(u64, &PipelineRun),
@@ -147,7 +149,7 @@ impl<'a> Daemon<'a> {
                         }
                         on_pass(pass, &run);
                     }
-                    Err(e) => warn!("daemon: pass {pass} failed: {e}"),
+                    Err(e) => handle_stage_error("orchestrator", pass, cfg.once, e)?,
                 }
             }
 
@@ -171,7 +173,7 @@ impl<'a> Daemon<'a> {
                         s.drained_preference, s.drained_superseded, s.kept_live, s.notified
                     ),
                     Ok(_) => {}
-                    Err(e) => warn!("daemon: reconcile failed: {e}"),
+                    Err(e) => handle_stage_error("reconcile", pass, cfg.once, e)?,
                 }
             }
 
@@ -190,7 +192,7 @@ impl<'a> Daemon<'a> {
                         s.merged_groups, s.nodes_restamped, s.contradictions_blocked
                     ),
                     Ok(_) => {}
-                    Err(e) => warn!("daemon: paraphrase merge failed: {e}"),
+                    Err(e) => handle_stage_error("paraphrase merge", pass, cfg.once, e)?,
                 }
             }
 
@@ -212,5 +214,53 @@ impl<'a> Daemon<'a> {
             }
         }
         Ok(())
+    }
+}
+
+fn handle_stage_error(
+    stage: &str,
+    pass: u64,
+    once: bool,
+    error: impl std::fmt::Display,
+) -> Result<(), ToolingError> {
+    if once {
+        return Err(ToolingError::Memory(format!(
+            "daemon {stage} failed on pass {pass}: {error}"
+        )));
+    }
+    warn!("daemon: {stage} failed on pass {pass}: {error}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_stage_error;
+    use crate::toolkit::tooling_manager::types::ToolingError;
+
+    #[test]
+    fn on_call_stage_failure_is_returned_to_the_caller() {
+        let result = handle_stage_error(
+            "paraphrase merge",
+            1,
+            true,
+            ToolingError::Memory("bulk response mismatch".into()),
+        );
+        assert!(matches!(
+            result,
+            Err(ToolingError::Memory(message))
+                if message.contains("paraphrase merge failed on pass 1")
+                    && message.contains("bulk response mismatch")
+        ));
+    }
+
+    #[test]
+    fn continuous_stage_failure_is_recoverable() {
+        let result = handle_stage_error(
+            "paraphrase merge",
+            4,
+            false,
+            ToolingError::Memory("transient failure".into()),
+        );
+        assert!(result.is_ok());
     }
 }

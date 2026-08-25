@@ -6,6 +6,9 @@ use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::core::config::{HelixirConfig, MemoryMode};
+
+mod locks;
+use locks::{locked_fields, reject_locked_fields};
 /// Effective settings safe to return to the global-admin control plane.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSnapshot {
@@ -15,6 +18,7 @@ pub struct SettingsSnapshot {
     pub database: DatabaseSettings,
     pub reasoning: ReasoningSettings,
     pub embeddings: EmbeddingSettings,
+    pub gateway: GatewaySettings,
     pub swarm: SwarmSettings,
     pub watchdog: WatchdogSettings,
 }
@@ -41,6 +45,13 @@ pub struct EmbeddingSettings {
     pub model: String,
     pub url: String,
     pub api_key_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewaySettings {
+    pub bind: String,
+    pub public_url: String,
+    pub auth_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +86,7 @@ pub struct SettingsPatch {
     pub embedding_model: Option<String>,
     pub embedding_url: Option<String>,
     pub embedding_api_key: Option<String>,
+    pub gateway_public_url: Option<String>,
     pub swarm_active_window_secs: Option<u64>,
     pub swarm_presence_ttl_secs: Option<u64>,
     pub watchdog_enabled: Option<bool>,
@@ -181,6 +193,15 @@ fn snapshot(config: &HelixirConfig) -> SettingsSnapshot {
                 .as_ref()
                 .is_some_and(|key| !key.is_empty()),
         },
+        gateway: GatewaySettings {
+            bind: config.gateway.default_bind.clone(),
+            public_url: config.gateway.public_url.clone().unwrap_or_default(),
+            auth_enabled: config
+                .gateway
+                .auth_token
+                .as_ref()
+                .is_some_and(|token| !token.is_empty()),
+        },
         swarm: SwarmSettings {
             active_window_secs: config.swarm.active_window_secs,
             presence_ttl_secs: config.swarm.presence_ttl_secs,
@@ -260,6 +281,7 @@ fn validate(patch: &SettingsPatch) -> anyhow::Result<()> {
     for value in [
         patch.reasoning_base_url.as_ref(),
         patch.embedding_url.as_ref(),
+        patch.gateway_public_url.as_ref(),
     ]
     .into_iter()
     .flatten()
@@ -417,6 +439,9 @@ fn build_config_patch(patch: &SettingsPatch) -> super::config::ConfigPatch {
     if let Some(value) = &patch.embedding_api_key {
         out = out.set("embedding_api_key", value);
     }
+    if let Some(value) = &patch.gateway_public_url {
+        out = out.set("gateway.public_url", value);
+    }
     set!(patch.swarm_active_window_secs, "swarm.active_window_secs");
     set!(patch.swarm_presence_ttl_secs, "swarm.presence_ttl_secs");
     set!(patch.watchdog_enabled, "watchdog.enabled");
@@ -449,46 +474,6 @@ fn target_path() -> PathBuf {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".helixir/helixir.toml")
     })
-}
-
-fn locked_fields() -> Vec<String> {
-    [
-        ("HELIXIR_MODE", "mode"),
-        ("HELIX_LLM_PROVIDER", "reasoning_provider"),
-        ("HELIX_LLM_MODEL", "reasoning_model"),
-        ("HELIX_LLM_API_KEY", "reasoning_api_key"),
-        ("HELIX_LLM_BASE_URL", "reasoning_base_url"),
-        ("HELIX_EMBEDDING_PROVIDER", "embedding_provider"),
-        ("HELIX_EMBEDDING_MODEL", "embedding_model"),
-        ("HELIX_EMBEDDING_URL", "embedding_url"),
-        ("HELIX_EMBEDDING_API_KEY", "embedding_api_key"),
-    ]
-    .into_iter()
-    .filter(|(variable, _)| std::env::var_os(variable).is_some())
-    .map(|(_, field)| field.to_string())
-    .collect()
-}
-
-fn reject_locked_fields(patch: &SettingsPatch) -> anyhow::Result<()> {
-    let locked = locked_fields();
-    let requested = [
-        ("mode", patch.mode.is_some()),
-        ("reasoning_provider", patch.reasoning_provider.is_some()),
-        ("reasoning_model", patch.reasoning_model.is_some()),
-        ("reasoning_api_key", patch.reasoning_api_key.is_some()),
-        ("reasoning_base_url", patch.reasoning_base_url.is_some()),
-        ("embedding_provider", patch.embedding_provider.is_some()),
-        ("embedding_model", patch.embedding_model.is_some()),
-        ("embedding_url", patch.embedding_url.is_some()),
-        ("embedding_api_key", patch.embedding_api_key.is_some()),
-    ];
-    if let Some((field, _)) = requested
-        .into_iter()
-        .find(|(field, present)| *present && locked.iter().any(|locked| locked == field))
-    {
-        anyhow::bail!("{field} is controlled by the host environment");
-    }
-    Ok(())
 }
 
 #[cfg(test)]

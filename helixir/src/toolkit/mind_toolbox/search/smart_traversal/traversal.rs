@@ -2,6 +2,7 @@ use super::batch_expansion::graph_expansion_phase_batched;
 use super::models::{SearchConfig, SearchResult, TraversalStats};
 use super::phases::{TraversalError, graph_expansion_phase, rank_and_filter, vector_search_phase};
 use super::ppr::personalized_pagerank;
+use super::rerank::{preserve_direct_seed_score, rerank_seed, top_rerank_indices};
 use super::scoring::{calculate_graph_combined_score_weighted, cosine_score};
 use crate::core::{RetrievalProfile, TimeWindow};
 use crate::db::HelixClient;
@@ -140,12 +141,7 @@ impl SmartTraversalV2 {
                 let mut reranked = 0u32;
                 for (hit, emb) in vector_hits.iter_mut().zip(embeddings.iter()) {
                     let real_score = cosine_score(query_embedding, emb);
-                    if (real_score - hit.vector_score).abs() > 0.01 {
-                        let temporal = hit.temporal_score;
-                        hit.vector_score = real_score;
-                        hit.combined_score = (real_score * config.vector_weight
-                            + temporal * config.temporal_weight)
-                            .clamp(0.0, 1.0);
+                    if rerank_seed(hit, real_score, &config) {
                         reranked += 1;
                     }
                 }
@@ -211,11 +207,37 @@ impl SmartTraversalV2 {
                 let Some(ppr) = ppr_scores.get(&result.memory_id) else {
                     continue;
                 };
+                let direct_retrieval_score = result.combined_score;
+                let has_bm25_evidence = result
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("bm25_rank"))
+                    .is_some();
+                let hybrid_semantic_floor = if has_bm25_evidence {
+                    result.vector_score
+                } else {
+                    0.0
+                };
                 result.graph_score = *ppr;
-                result.combined_score = (config.graph_semantic_weight * result.vector_score
+                let graph_blend = (config.graph_semantic_weight * result.vector_score
                     + config.graph_graph_weight * ppr
                     + config.graph_temporal_weight * result.temporal_score)
                     .clamp(0.0, 1.0);
+                // PPR is additional graph evidence, not permission to erase a
+                // direct retrieval hit. In particular, a BM25-backed fact may
+                // be old and graph-isolated: replacing its hybrid semantic
+                // score with the graph blend made exact lexical matches
+                // disappear from the honest top-K. The floor is the already
+                // blended cosine/BM25 score, not the raw BM25 rank score, so a
+                // weak lexical rank-1 does not receive an artificial 0.95.
+                // Expanded rows have no independent retrieval evidence, so
+                // only seeds receive this floor.
+                result.combined_score = preserve_direct_seed_score(
+                    &result.source,
+                    direct_retrieval_score,
+                    hybrid_semantic_floor,
+                    graph_blend,
+                );
                 if let Some(meta) = result.metadata.as_mut() {
                     meta.insert(
                         "ppr".to_string(),
@@ -224,8 +246,11 @@ impl SmartTraversalV2 {
                     // Raw cosine survives next to the blended score: the
                     // write-path duplicate gate needs the pure semantic
                     // signal, not the rank blend (#32 W2).
+                    meta.entry("cosine".to_string()).or_insert_with(|| {
+                        serde_json::Value::from((result.vector_score * 1000.0).round() / 1000.0)
+                    });
                     meta.insert(
-                        "cosine".to_string(),
+                        "semantic_score".to_string(),
                         serde_json::Value::from((result.vector_score * 1000.0).round() / 1000.0),
                     );
                 }
@@ -390,6 +415,8 @@ impl SmartTraversalV2 {
         hasher.update(config.graph_depth.to_le_bytes());
         hasher.update(config.min_vector_score.to_le_bytes());
         hasher.update(config.min_combined_score.to_le_bytes());
+        hasher.update(config.hybrid_vector_weight.to_le_bytes());
+        hasher.update(config.hybrid_bm25_weight.to_le_bytes());
 
         if let Some(edge_types) = &config.edge_types {
             for edge_type in edge_types {
@@ -408,43 +435,5 @@ impl SmartTraversalV2 {
         }
 
         format!("{:x}", hasher.finalize())
-    }
-}
-
-/// #88: indices of the top `cap` rows by score, descending. Pure so the
-/// selection contract is unit-tested without an embedder.
-fn top_rerank_indices(scores: &[f64], cap: usize) -> Vec<usize> {
-    let mut idx: Vec<usize> = (0..scores.len()).collect();
-    idx.sort_by(|&a, &b| {
-        scores[b]
-            .partial_cmp(&scores[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    idx.truncate(cap);
-    idx
-}
-
-#[cfg(test)]
-mod tests {
-    use super::top_rerank_indices;
-
-    #[test]
-    fn cap_larger_than_input_keeps_everything() {
-        assert_eq!(top_rerank_indices(&[0.1, 0.9, 0.5], 10), vec![1, 2, 0]);
-    }
-
-    #[test]
-    fn cap_selects_best_scores_not_first_rows() {
-        // Discovery order is depth-order — the best candidates may sit late.
-        let scores = [0.2, 0.1, 0.95, 0.3, 0.9];
-        assert_eq!(top_rerank_indices(&scores, 2), vec![2, 4]);
-    }
-
-    #[test]
-    fn nan_scores_do_not_panic_or_win() {
-        let scores = [f64::NAN, 0.8, 0.4];
-        let top = top_rerank_indices(&scores, 2);
-        assert_eq!(top.len(), 2);
-        assert!(top.contains(&1));
     }
 }

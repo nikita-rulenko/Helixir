@@ -41,6 +41,8 @@ pub struct BackendManifest {
     pub image: String,
     pub volume: String,
     pub helix_cli_version: String,
+    #[serde(default)]
+    pub engine_revision: String,
     pub schema_fingerprint: String,
 }
 
@@ -106,6 +108,7 @@ mod tests {
                 image: "helix-helixir-dev:latest".to_string(),
                 volume: "helixdb_data".to_string(),
                 helix_cli_version: "2.3.5".to_string(),
+                engine_revision: crate::installer::backend::ENGINE_REVISION.to_string(),
                 schema_fingerprint: "sha256:test".to_string(),
             },
             models: vec!["nomic-embed-text".to_string()],

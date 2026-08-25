@@ -3,8 +3,9 @@
 //! On startup (opt-in via `HELIXIR_SELF_SEED=1|blocking`) Helixir writes a
 //! curated set of atomic facts about its own principles, charter and
 //! operational gotchas under `user_id = "helixir"`. The set is versioned via
-//! the `context_tags` marker (`helixir-seed@<N>`): seeding is idempotent and
-//! re-runs only when `SEED_VERSION` is bumped, e.g. on upgrade.
+//! the `context_tags` marker (`helixir-seed@<N>`). Startup audits every
+//! canonical sentence, promotes pre-v1.0 copies to immutable, and inserts only
+//! missing rows, so an interrupted seed pass resumes safely.
 //!
 //! Seeds bypass LLM extraction on purpose — these facts must land verbatim.
 //! Content derives from `doc/design-rationale.md`, `memory-charter.md` and
@@ -15,8 +16,40 @@ use tracing::{info, warn};
 use super::ToolingManager;
 use crate::llm::extractor::ExtractedMemory;
 
+#[derive(serde::Deserialize)]
+struct SeedProbe {
+    #[serde(default)]
+    memory_id: String,
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    immutable: Option<i64>,
+}
+
+fn seed_repair_plan(existing: &[SeedProbe]) -> (Vec<usize>, Vec<String>) {
+    let mut missing = Vec::new();
+    let mut promote = Vec::new();
+    for (index, (_, text)) in SEEDS.iter().enumerate() {
+        let matches: Vec<&SeedProbe> = existing
+            .iter()
+            .filter(|memory| memory.content == *text)
+            .collect();
+        if matches.is_empty() {
+            missing.push(index);
+            continue;
+        }
+        promote.extend(
+            matches
+                .into_iter()
+                .filter(|memory| memory.immutable.unwrap_or(0) == 0)
+                .map(|memory| memory.memory_id.clone()),
+        );
+    }
+    (missing, promote)
+}
+
 /// Bump to re-seed on the next startup (old seeds stay — elder brain).
-const SEED_VERSION: u32 = 3;
+const SEED_VERSION: u32 = 4;
 
 /// The system user that owns self-knowledge.
 pub const SEED_USER: &str = "helixir";
@@ -64,11 +97,15 @@ const SEEDS: &[(i32, &str)] = &[
     // --- Memory charter ---
     (
         90,
-        "The memory charter (memory-charter.md) lists conflicts Helixir may never resolve silently; they are returned in add_memory.needs_clarification for the agent to escalate to the human.",
+        "The active memory charter v1.0 (memory-charter.md) lists conflicts Helixir may never resolve silently; they are returned in add_memory.needs_clarification for the agent to escalate to the human.",
     ),
     (
         85,
         "Memory charter C1: memory never deletes itself silently — DELETE decisions always escalate to the agent.",
+    ),
+    (
+        85,
+        "Memory charter C2: immutable system seeds and approved learned rules cannot be overwritten by direct updates or the decision pipeline.",
     ),
     (
         85,
@@ -77,6 +114,10 @@ const SEEDS: &[(i32, &str)] = &[
     (
         85,
         "Memory charter C5: low-confidence UPDATE or SUPERSEDE decisions (confidence below 70) escalate for review.",
+    ),
+    (
+        85,
+        "Memory charter C4: source=raw_input memories preserve the original input and cannot be modified or superseded.",
     ),
     // --- Operational gotchas (hard-won) ---
     (
@@ -259,13 +300,31 @@ impl ToolingManager {
     async fn seed_system_memories(&self) {
         let tag = seed_tag();
 
-        if self.seed_version_present(&tag).await {
-            info!("Self-seed: {tag} already present, skipping");
+        let existing = self.load_seed_memories().await;
+        let (missing, promote) = seed_repair_plan(&existing);
+        let promotions_needed = promote.len();
+        let mut protected = 0usize;
+        for memory_id in promote {
+            match self.set_memory_immutable(&memory_id).await {
+                Ok(()) => protected += 1,
+                Err(error) => {
+                    warn!("Self-seed: failed to promote existing {memory_id} to immutable: {error}")
+                }
+            }
+        }
+        if missing.is_empty() && promotions_needed == 0 {
+            info!("Self-seed: all {} facts already protected", SEEDS.len());
             return;
         }
 
-        info!("Self-seed: writing {} system facts ({tag})", SEEDS.len());
-        let texts: Vec<&str> = SEEDS.iter().map(|(_, t)| *t).collect();
+        info!(
+            "Self-seed: inserting {} missing facts and promoted {protected} existing rows ({tag})",
+            missing.len()
+        );
+        let texts: Vec<&str> = missing.iter().map(|index| SEEDS[*index].1).collect();
+        if texts.is_empty() {
+            return;
+        }
         let embeddings = match self.embedder.generate_batch(&texts, true).await {
             Ok(e) => e,
             Err(e) => {
@@ -275,36 +334,43 @@ impl ToolingManager {
         };
 
         let mut stored = 0usize;
-        for ((importance, text), vector) in SEEDS.iter().zip(embeddings.iter()) {
+        for (index, vector) in missing.iter().zip(embeddings.iter()) {
+            let (importance, text) = SEEDS[*index];
             let memory = ExtractedMemory {
-                text: (*text).to_string(),
+                text: text.to_string(),
                 memory_type: "fact".to_string(),
                 certainty: 95,
-                importance: *importance,
+                importance,
                 entities: vec![],
                 context: None,
             };
             match self
-                .store_new_memory(&memory, SEED_USER, vector, &tag, None)
+                .store_new_memory_with_policy(
+                    &memory,
+                    SEED_USER,
+                    vector,
+                    &tag,
+                    None,
+                    "system_seed",
+                    true,
+                )
                 .await
             {
                 Ok(_) => stored += 1,
                 Err(e) => warn!("Self-seed: failed to store a seed: {e}"),
             }
         }
-        info!("Self-seed: stored {stored}/{} facts ({tag})", SEEDS.len());
+        info!(
+            "Self-seed: stored {stored}/{} missing facts ({tag})",
+            missing.len()
+        );
     }
 
-    async fn seed_version_present(&self, tag: &str) -> bool {
+    async fn load_seed_memories(&self) -> Vec<SeedProbe> {
         #[derive(serde::Deserialize)]
         struct MemoriesResponse {
             #[serde(default)]
             memories: Vec<SeedProbe>,
-        }
-        #[derive(serde::Deserialize)]
-        struct SeedProbe {
-            #[serde(default)]
-            context_tags: String,
         }
 
         let params = serde_json::json!({ "user_id": SEED_USER, "limit": 1000 });
@@ -313,9 +379,52 @@ impl ToolingManager {
             .execute_query::<MemoriesResponse, _>("getUserMemories", &params)
             .await
         {
-            Ok(r) => r.memories.iter().any(|m| m.context_tags == tag),
+            Ok(response) => response.memories,
             // "No value found" for a fresh instance is expected — seed away.
-            Err(_) => false,
+            Err(_) => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_seed_pass_resumes_and_promotes_legacy_rows() {
+        let existing = vec![
+            SeedProbe {
+                memory_id: "legacy-mutable".to_string(),
+                content: SEEDS[0].1.to_string(),
+                immutable: Some(0),
+            },
+            SeedProbe {
+                memory_id: "already-protected".to_string(),
+                content: SEEDS[1].1.to_string(),
+                immutable: Some(1),
+            },
+        ];
+
+        let (missing, promote) = seed_repair_plan(&existing);
+        assert_eq!(missing.len(), SEEDS.len() - 2);
+        assert!(!missing.contains(&0));
+        assert!(!missing.contains(&1));
+        assert_eq!(promote, vec!["legacy-mutable"]);
+    }
+
+    #[test]
+    fn fully_protected_seed_set_is_idempotent() {
+        let existing: Vec<SeedProbe> = SEEDS
+            .iter()
+            .enumerate()
+            .map(|(index, (_, content))| SeedProbe {
+                memory_id: format!("seed-{index}"),
+                content: (*content).to_string(),
+                immutable: Some(1),
+            })
+            .collect();
+        let (missing, promote) = seed_repair_plan(&existing);
+        assert!(missing.is_empty());
+        assert!(promote.is_empty());
     }
 }

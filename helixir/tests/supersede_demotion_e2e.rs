@@ -15,6 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use helixir::core::HelixirClient;
 use helixir::llm::extractor::ExtractedMemory;
 
+mod common;
+
 fn atom(text: &str) -> ExtractedMemory {
     ExtractedMemory {
         text: text.to_string(),
@@ -33,6 +35,8 @@ async fn superseded_hub_ranks_below_its_correction() {
 
     let client = HelixirClient::from_env().expect("client");
     client.initialize().await.expect("init");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
 
     let run = format!(
         "{:x}",
@@ -51,11 +55,13 @@ async fn superseded_hub_ranks_below_its_correction() {
     let fresh =
         format!("SUPTEST{run}: the payments gateway endpoint moved to https://new-gw.example/v2.");
     let r = client
-        .add_prepared(
+        .add_prepared_as_in_group(
+            &actor,
             vec![atom(&stale), atom(&fresh)],
             &user,
             None,
             Some("e2e-92"),
+            Some(&group),
         )
         .await
         .expect("seed");
@@ -64,7 +70,7 @@ async fn superseded_hub_ranks_below_its_correction() {
     let fresh_id = r.memory_ids[1].clone();
 
     client
-        .admin_as("codex")
+        .admin_as(&actor)
         .await
         .expect("RBAC admin")
         .tooling()
@@ -76,7 +82,8 @@ async fn superseded_hub_ranks_below_its_correction() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let results = client
-        .search(
+        .search_as(
+            &actor,
             &format!("SUPTEST{run} payments gateway endpoint"),
             &user,
             helixir::core::helixir_client::SearchParams {

@@ -95,12 +95,10 @@ impl HelixirClient {
         )
         .into();
 
-        // Resilience chain: if the primary errors (outage, exhausted quota),
-        // the same prompt cascades down llm_fallback_chain — by default
-        // smart remote → cheap remote → local Ollama — and readopts the
-        // primary as soon as it recovers. Tiers equal to the primary or
-        // missing credentials are skipped at boot; with no surviving tier
-        // this is an identity passthrough.
+        // Optional resilience chain. The default write path stays on the
+        // pinned Cerebras gpt-oss model; operators must explicitly opt into
+        // another generation tier. Embedding fallback is configured
+        // independently and may still use local Ollama/Nomic.
         let llm_provider: Arc<dyn LlmProvider> =
             LlmProviderFactory::create_chained(primary_llm, &config);
 

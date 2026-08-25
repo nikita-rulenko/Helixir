@@ -29,7 +29,9 @@ pub struct NativeInstallExecutor {
     pub(super) embedding_repaired: std::sync::atomic::AtomicBool,
     pub(super) managed_backend: bool,
     pub(super) recreate_managed_backend: bool,
-    pub(super) previous_image: std::sync::Mutex<Option<String>>,
+    previous_backend: std::sync::Mutex<Option<backend::PreviousBackendIdentity>>,
+    pub(super) backend_descriptor: Option<helixir::installer::backend::BackendImageDescriptor>,
+    pub(super) backend_descriptor_error: Option<String>,
 }
 
 impl NativeInstallExecutor {
@@ -410,42 +412,11 @@ impl helixir::installer::PlanExecutor for NativeInstallExecutor {
         &self,
         completed: &[helixir::installer::InstallAction],
     ) -> std::result::Result<(), String> {
-        use helixir::installer::InstallAction;
         // RBAC migration is monotonic. A failed plan leaves its graph-backed
         // checkpoint in `migrating`; the next run resumes it. Backend/schema
         // rollback below remains mandatory because it protects the data plane.
-        if completed
-            .iter()
-            .any(|action| matches!(action, InstallAction::BackupBackend))
-        {
-            let _ = self.run_docker(helixir::installer::backend::stop(&self.backend));
-            let _ = self.run_docker(helixir::installer::backend::remove(&self.backend));
-            if let Some(previous_image) = self
-                .previous_image
-                .lock()
-                .map_err(|_| "backend image rollback state lock is poisoned".to_string())?
-                .clone()
-            {
-                Self::run(
-                    "docker",
-                    &[
-                        "tag".to_string(),
-                        previous_image,
-                        self.backend.image.clone(),
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            self.run_docker(helixir::installer::backend::restore(
-                &self.backend,
-                &self.backup_dir,
-                &self.backup_name,
-            ))
-            .map_err(|error| error.to_string())?;
-            self.run_docker(helixir::installer::backend::provision(&self.backend))
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        self.rollback_backend_if_uncommitted(completed)
+            .map_err(|error| error.to_string())
     }
 }
 

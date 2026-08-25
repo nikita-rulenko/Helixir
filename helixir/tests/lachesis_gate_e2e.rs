@@ -17,6 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use helixir::agents::lachesis::EpistemicLabel;
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -34,7 +36,9 @@ async fn lachesis_gates_a_routed_chain() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     // Two clearly-distinct single facts — each must store exactly its own memory
     // (no dedup, no multi-split), so the BECAUSE edge we seed connects the two
@@ -44,20 +48,24 @@ async fn lachesis_gates_a_routed_chain() {
     let run = token();
     let user = format!("lachesis_gate_{run}");
     let ra = client
-        .add(
+        .add_as_in_group(
+            &actor,
             &format!("Service nova{run} adopted gRPC for its transport layer."),
             &user,
             None,
             None,
+            Some(&group),
         )
         .await
         .expect("add A");
     let rb = client
-        .add(
+        .add_as_in_group(
+            &actor,
             &format!("The nova{run} REST gateway was far too slow during peak traffic."),
             &user,
             None,
             None,
+            Some(&group),
         )
         .await
         .expect("add B");

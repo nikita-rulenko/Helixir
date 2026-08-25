@@ -26,6 +26,7 @@ fn test_fallback_chain_env_parses_and_empty_clears() {
         || {
             let config = HelixirConfig::from_env();
             assert_eq!(config.llm_fallback_chain, vec!["deepseek", "ollama"]);
+            assert!(config.llm_fallback_enabled);
         },
     );
     temp_env::with_var("HELIX_LLM_FALLBACK_CHAIN", Some(""), || {
@@ -34,6 +35,7 @@ fn test_fallback_chain_env_parses_and_empty_clears() {
             config.llm_fallback_chain.is_empty(),
             "explicit empty value must clear the chain"
         );
+        assert!(!config.llm_fallback_enabled);
     });
 }
 
@@ -97,7 +99,10 @@ fn config_defaults_match_audited_hardcode() {
     assert_eq!(c.ingest.max_retries, 5);
     assert_eq!(c.retry.max, 3);
     assert_eq!(c.gateway.default_bind, "0.0.0.0:8765");
+    assert!(c.gateway.public_url.is_none());
     assert!(c.gateway.auth_token.is_none());
+    assert!(!c.llm_fallback_enabled);
+    assert!(c.llm_fallback_chain.is_empty());
 }
 
 #[test]
@@ -106,12 +111,32 @@ fn gateway_auth_can_be_enabled_in_partial_config() {
         r#"
                 [gateway]
                 default_bind = "127.0.0.1:9876"
+                public_url = "https://memory.example.test/mcp"
                 auth_token = "test-token"
             "#,
     )
     .expect("gateway config parses");
     assert_eq!(cfg.gateway.default_bind, "127.0.0.1:9876");
+    assert_eq!(
+        cfg.gateway.public_url.as_deref(),
+        Some("https://memory.example.test/mcp")
+    );
     assert_eq!(cfg.gateway.auth_token.as_deref(), Some("test-token"));
+}
+
+#[test]
+fn gateway_public_url_env_overrides_config_without_exposing_a_secret() {
+    temp_env::with_var(
+        "HELIXIR_GATEWAY_PUBLIC_URL",
+        Some("https://memory.example.test/mcp"),
+        || {
+            let cfg = HelixirConfig::from_env();
+            assert_eq!(
+                cfg.gateway.public_url.as_deref(),
+                Some("https://memory.example.test/mcp")
+            );
+        },
+    );
 }
 
 #[test]

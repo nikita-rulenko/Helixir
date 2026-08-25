@@ -6,6 +6,54 @@ use tracing::{debug, warn};
 use super::super::{ToolingError, ToolingManager};
 
 impl ToolingManager {
+    /// Load the persisted fields that make C2/C4 constitutional guards.
+    /// Destructive callers propagate database errors and therefore fail closed.
+    pub(crate) async fn get_memory_protection(
+        &self,
+        memory_id: &str,
+    ) -> Result<crate::core::charter::TargetProtection, ToolingError> {
+        #[derive(serde::Deserialize)]
+        struct GetMemoryResponse {
+            #[serde(default)]
+            memory: Option<MemoryFields>,
+        }
+        #[derive(serde::Deserialize)]
+        struct MemoryFields {
+            #[serde(default)]
+            immutable: Option<i64>,
+            #[serde(default, deserialize_with = "crate::utils::nullable_string")]
+            source: String,
+        }
+
+        let response = self
+            .db
+            .execute_query::<GetMemoryResponse, _>(
+                "getMemory",
+                &serde_json::json!({"memory_id": memory_id}),
+            )
+            .await
+            .map_err(|error| ToolingError::Database(error.to_string()))?;
+        let memory = response.memory.ok_or_else(|| {
+            ToolingError::Memory(format!("charter target memory {memory_id} not found"))
+        })?;
+        Ok(crate::core::charter::target_protection(
+            memory.immutable.unwrap_or(0),
+            &memory.source,
+        ))
+    }
+
+    /// Promote a memory into the C2 immutable set.
+    pub(crate) async fn set_memory_immutable(&self, memory_id: &str) -> Result<(), ToolingError> {
+        self.db
+            .execute_query::<serde_json::Value, _>(
+                "setMemoryImmutable",
+                &serde_json::json!({"memory_id": memory_id, "immutable": 1}),
+            )
+            .await
+            .map_err(|error| ToolingError::Database(error.to_string()))?;
+        Ok(())
+    }
+
     pub(crate) async fn get_memory_type(&self, memory_id: &str) -> Option<String> {
         #[derive(serde::Deserialize)]
         struct GetMemoryResponse {
@@ -53,9 +101,15 @@ impl ToolingManager {
 
         let now = chrono::Utc::now().to_rfc3339();
 
-        self.db
-            .execute_query::<serde_json::Value, _>(
-                "updateMemory",
+        #[derive(serde::Deserialize)]
+        struct UpdateResult {
+            #[serde(default)]
+            updated: Option<serde_json::Value>,
+        }
+        let result = self
+            .db
+            .execute_query::<UpdateResult, _>(
+                "updateMutableMemory",
                 &UpdateInput {
                     memory_id: memory_id.to_string(),
                     content: new_content.to_string(),
@@ -66,6 +120,11 @@ impl ToolingManager {
             )
             .await
             .map_err(|e| ToolingError::Database(e.to_string()))?;
+        if result.updated.is_none() {
+            return Err(ToolingError::Memory(format!(
+                "charter rejected concurrent update of {memory_id}"
+            )));
+        }
 
         // Resolve the node's internal UUID FIRST: `deleteMemoryEmbedding` is
         // declared `memory_id: ID` (internal UUID), so passing the mem_… string

@@ -15,6 +15,20 @@ pub fn newest_backup_age_hours(dir: &std::path::Path) -> Option<f64> {
     Some(newest.elapsed().ok()?.as_secs_f64() / 3600.0)
 }
 
+/// Resolve the configured backup directory using the same default as the
+/// backup duty. Keeping this projection shared prevents the health API from
+/// reporting an unknown age while backups are present in the default path.
+pub(crate) fn resolved_backup_dir(configured: &str, health_journal: &std::path::Path) -> PathBuf {
+    if configured.is_empty() {
+        health_journal
+            .parent()
+            .map(|parent| parent.join("backups"))
+            .unwrap_or_else(|| PathBuf::from("./helixir-backups"))
+    } else {
+        PathBuf::from(configured)
+    }
+}
+
 /// Keep the newest `keep` archives, delete the rest. Returns pruned count.
 pub fn prune_backups(dir: &std::path::Path, keep: usize) -> usize {
     let mut archives: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
@@ -46,14 +60,7 @@ impl Hygieia<'_> {
         if cfg.backup_source_dir.is_empty() {
             return;
         }
-        let backup_dir = if cfg.backup_dir.is_empty() {
-            journal_path()
-                .parent()
-                .map(|p| p.join("backups"))
-                .unwrap_or_else(|| PathBuf::from("./helixir-backups"))
-        } else {
-            PathBuf::from(&cfg.backup_dir)
-        };
+        let backup_dir = resolved_backup_dir(&cfg.backup_dir, &journal_path());
         if let Err(e) = std::fs::create_dir_all(&backup_dir) {
             self.alert(
                 "backup_failed",

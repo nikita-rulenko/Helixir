@@ -1,25 +1,89 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 usage() {
   printf '%s\n' \
-    'usage: pre_release_client_gate.sh --archive FILE --client-archive FILE --version VERSION --arch amd64|arm64'
+    'usage: pre_release_client_gate.sh --archive FILE --client-archive FILE --version VERSION --arch amd64|arm64' \
+    '       pre_release_client_gate.sh --preflight-only'
 }
 
 archive=''
 client_archive=''
 version=''
 arch=''
+preflight_only=0
 while (($#)); do
   case "$1" in
     --archive) archive=${2:?}; shift 2 ;;
     --client-archive) client_archive=${2:?}; shift 2 ;;
     --version) version=${2:?}; shift 2 ;;
     --arch) arch=${2:?}; shift 2 ;;
+    --preflight-only) preflight_only=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+helix_bin=${HELIXIR_HELIX_BIN:-}
+if [[ -z "$helix_bin" ]]; then
+  if command -v helix >/dev/null 2>&1; then
+    helix_bin=$(command -v helix)
+  else
+    helix_bin="$repo_root/helixdb/target/release/helix"
+  fi
+fi
+
+for command in cargo curl docker; do
+  command -v "$command" >/dev/null || {
+    printf 'pre-release client gate requires %s\n' "$command" >&2
+    exit 1
+  }
+done
+[[ -x "$helix_bin" ]] || {
+  printf 'pre-release client gate requires Helix CLI at %s\n' "$helix_bin" >&2
+  exit 1
+}
+[[ "$("$helix_bin" --version)" == *'2.3.5'* ]] || {
+  printf '%s\n' 'pre-release client gate requires Helix CLI v2.3.5' >&2
+  exit 1
+}
+
+assert_docker_alive() {
+  docker info >/dev/null 2>&1 || {
+    printf '%s\n' 'Docker Engine is unavailable; aborting the client gate' >&2
+    exit 1
+  }
+}
+
+assert_disposable_docker() {
+  assert_docker_alive
+  if [[ ${HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER:-0} == 1 ]]; then
+    return
+  fi
+
+  local containers volumes
+  containers=$(docker ps -a --format '{{.Names}}\t{{.Ports}}' 2>/dev/null) || {
+    printf '%s\n' 'cannot inspect the Docker daemon; aborting the client gate' >&2
+    exit 1
+  }
+  volumes=$(docker volume ls -q 2>/dev/null) || {
+    printf '%s\n' 'cannot inspect Docker volumes; aborting the client gate' >&2
+    exit 1
+  }
+  if [[ -n "$containers" || -n "$volumes" ]]; then
+    printf '%s\n' \
+      'refusing to run the destructive Docker client gate on a daemon with existing containers or volumes' \
+      'run this gate in a disposable VM/CI runner or set HELIXIR_CLIENT_GATE_DISPOSABLE_DOCKER=1 only when the entire daemon is disposable' >&2
+    exit 1
+  fi
+}
+
+assert_disposable_docker
+if ((preflight_only)); then
+  printf '%s\n' 'client gate Docker preflight passed'
+  exit 0
+fi
 
 [[ -f "$archive" && -f "$client_archive" && -n "$version" ]] || {
   usage >&2
@@ -29,18 +93,7 @@ case "$arch" in
   amd64|arm64) ;;
   *) printf 'unsupported Debian architecture: %s\n' "$arch" >&2; exit 2 ;;
 esac
-for command in cargo curl docker helix; do
-  command -v "$command" >/dev/null || {
-    printf 'pre-release client gate requires %s\n' "$command" >&2
-    exit 1
-  }
-done
-[[ "$(helix --version)" == *'2.3.5'* ]] || {
-  printf '%s\n' 'pre-release client gate requires Helix CLI v2.3.5' >&2
-  exit 1
-}
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/helixir-client-gate.XXXXXX")
 gate_id="helixir-client-gate-$(date -u +%Y%m%d%H%M%S)-$$"
 network="$gate_id"
@@ -52,6 +105,18 @@ client_one="$gate_id-client-one"
 client_two="$gate_id-client-two"
 db_image="$gate_id-db:local"
 failed=1
+current_stage='initialization'
+
+report_failure() {
+  local status=$1
+  if ! docker info >/dev/null 2>&1; then
+    printf 'BLOCKER: Docker Engine disappeared during client-gate stage: %s\n' \
+      "$current_stage" >&2
+    printf '%s\n' \
+      'stop the release, preserve the daemon diagnostics, and file an infrastructure blocker before retrying on a fresh disposable runner' >&2
+  fi
+  return "$status"
+}
 
 cleanup() {
   if ((failed)); then
@@ -73,6 +138,7 @@ cleanup() {
   fi
   rm -rf -- "$work"
 }
+trap 'report_failure "$?"' ERR
 trap cleanup EXIT INT TERM
 
 wait_published_port() {
@@ -123,11 +189,21 @@ done
 }
 
 printf '%s\n' '[1/7] Compile the current HQL contract and build an isolated HelixDB image'
-(cd "$repo_root/helixir" && helix check && helix build -i dev --quiet)
+current_stage='1/7: isolated HelixDB image build'
+assert_docker_alive
+if [[ ! -x "$helix_bin" ]]; then
+  cargo build --release --locked --manifest-path "$repo_root/helixdb/Cargo.toml" -p helix-cli
+fi
+(cd "$repo_root/helixir" && \
+  HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" check && \
+  HELIX_REPO_PATH="$repo_root/helixdb" "$helix_bin" build -i dev --quiet)
 test -f "$repo_root/helixir/.helix/dev/Dockerfile"
-docker build --tag "$db_image" "$repo_root/helixir/.helix/dev"
+docker image inspect helix-helixir-dev:latest >/dev/null
+docker tag helix-helixir-dev:latest "$db_image"
 
 printf '%s\n' '[2/7] Build a real helixir-client package and local APT index'
+current_stage='2/7: APT package and index build'
+assert_docker_alive
 cp "$client_archive" "$work/client-archive.tar.gz"
 docker run --rm --platform "linux/$arch" \
   -v "$repo_root:/src:ro" -v "$work:/work" -w /work debian:12-slim sh -ec '
@@ -143,6 +219,8 @@ docker run --rm --platform "linux/$arch" \
   ' sh "$version" "$arch"
 
 printf '%s\n' '[3/7] Bootstrap a disposable database and start one shared MCP gateway'
+current_stage='3/7: disposable database and gateway bootstrap'
+assert_docker_alive
 docker network create "$network" >/dev/null
 docker run -d --name "$embedding_container" --network "$network" \
   python:3.12-slim python -u -c '
@@ -233,6 +311,8 @@ docker inspect -f '{{.State.Running}}' "$gateway_container" | grep -qx true
 }
 
 printf '%s\n' '[4/7] Install through apt in two clean client containers'
+current_stage='4/7: clean APT client installations'
+assert_docker_alive
 for spec in "$client_one:$work/client-one" "$client_two:$work/client-two"; do
   name=${spec%%:*}
   state=${spec#*:}
@@ -265,6 +345,8 @@ connect_client() {
 }
 
 printf '%s\n' '[5/7] Exercise concurrent distinct and idempotent shared enrollment'
+current_stage='5/7: concurrent client enrollment'
+assert_docker_alive
 connect_client "$client_one" gate-client-one gate-user-one \
   /state/distinct.json /state/project-one &
 pid_one=$!
@@ -286,6 +368,8 @@ wait "$pid_one"
 wait "$pid_two"
 
 printf '%s\n' '[6/7] Prove direct-network MCP read/write and reject the HelixDB port'
+current_stage='6/7: remote MCP read/write smoke'
+assert_docker_alive
 docker cp "$repo_root/tools/mcp_gateway_visibility_smoke.py" \
   "$client_one:/tmp/mcp_gateway_visibility_smoke.py"
 docker exec "$client_one" python3 /tmp/mcp_gateway_visibility_smoke.py \
@@ -295,11 +379,13 @@ docker exec "$client_one" python3 /tmp/mcp_gateway_visibility_smoke.py \
   --tag "$gate_id"
 
 printf '%s\n' '[7/7] Prove group-scoped write denial, dedup scopes, and memory visibility'
-(cd "$repo_root/helixir" && \
-  HELIX_E2E=1 HELIX_HOST=127.0.0.1 HELIX_PORT="$db_port" \
-  HELIXIR_RBAC_ACTOR=pre-release-admin \
-  HELIXIR_CLIENT_GATE_SHARED_PRINCIPAL=gate-shared \
-  cargo test --test client_rbac_scope_e2e -- --ignored --nocapture)
+current_stage='7/7: RBAC visibility and charter contracts'
+assert_docker_alive
+HELIXIR_E2E_DISPOSABLE=1 \
+HELIX_HOST=127.0.0.1 HELIX_PORT="$db_port" \
+HELIXIR_RBAC_ACTOR=pre-release-admin HELIXIR_E2E_GROUP=default \
+HELIXIR_CLIENT_GATE_SHARED_PRINCIPAL=gate-shared \
+python3 "$repo_root/tools/e2e_matrix.py" --run --topology client-gate
 
 failed=0
-printf '%s\n' 'PASS: APT install, direct-network MCP read/write, two remote clients, concurrent enrollment, and RBAC memory isolation'
+printf '%s\n' 'PASS: APT install, direct-network MCP read/write, two remote clients, concurrent enrollment, RBAC memory isolation, and charter C2/C4 guards'

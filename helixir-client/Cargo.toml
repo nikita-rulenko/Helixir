@@ -1,6 +1,6 @@
 [package]
 name = "helixir-client"
-version = "0.17.1"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Thin remote-agent bootstrapper for a Helixir MCP gateway"

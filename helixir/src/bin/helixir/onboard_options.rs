@@ -99,12 +99,8 @@ pub(crate) fn gather_onboard_options(
     let recommendation = helixir::installer::models::recommend_local_llm(total_memory_bytes());
     options.local_llm_model = if model_args.no_local_llm {
         None
-    } else if let Some(model) = &model_args.local_llm_model {
-        Some(model.clone())
-    } else if use_remote_embeddings {
-        None
     } else {
-        Some(recommendation.model.to_string())
+        model_args.local_llm_model.clone()
     };
 
     if interactive {
@@ -113,10 +109,10 @@ pub(crate) fn gather_onboard_options(
         } else {
             Confirm::new()
                 .with_prompt(format!(
-                    "Provision a local fallback LLM? Recommended: {} ({}, {})",
+                    "Opt into a local generation fallback? {} ({}, {})",
                     recommendation.model, recommendation.download, recommendation.rationale
                 ))
-                .default(!use_remote_embeddings)
+                .default(false)
                 .interact()?
         };
         if local_llm {

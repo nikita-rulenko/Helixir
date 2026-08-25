@@ -151,8 +151,8 @@ pub(crate) async fn setup_run(
         let url = normalize_gateway_url(&gw);
         println!("Gateway mode — wiring clients to {url}");
         println!("  HTTP transport: clients carry no HELIX_* env; the gateway holds the config.");
-        println!("  The memory mode lives on the GATEWAY process — start it with");
-        println!("  `HELIXIR_MODE={mode_label} helixir gateway start`, not on the client.\n");
+        println!("  The memory mode lives in the gateway's central config — set it with");
+        println!("  `helixir config set mode {mode_label}`, then run `helixir gateway start`.\n");
         if target.is_none() {
             wire_native_gateway_clients(&url, interactive, dry_run)?;
         }

@@ -32,7 +32,7 @@ fn fresh_local_plan_orders_backend_models_config_clients_then_doctor() {
     assert_eq!(actions[2], InstallAction::VerifyBackend);
     assert_eq!(actions[3], InstallAction::InstallOllama);
     assert_eq!(actions[4], InstallAction::StartOllama);
-    assert!(actions.contains(&InstallAction::PullOllamaModel(
+    assert!(!actions.contains(&InstallAction::PullOllamaModel(
         crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()
     )));
     assert!(actions.contains(&InstallAction::PullOllamaModel(
@@ -48,12 +48,9 @@ fn fresh_local_plan_orders_backend_models_config_clients_then_doctor() {
 
 #[test]
 fn satisfied_install_is_idempotent_except_for_verification() {
-    let models = [
-        crate::DEFAULT_LLM_FALLBACK_MODEL.to_string(),
-        crate::DEFAULT_EMBEDDING_MODEL.to_string(),
-    ]
-    .into_iter()
-    .collect();
+    let models = [crate::DEFAULT_EMBEDDING_MODEL.to_string()]
+        .into_iter()
+        .collect();
     let clients = selected_clients();
     let state = SystemState {
         backend: BackendState::ManagedLocal {

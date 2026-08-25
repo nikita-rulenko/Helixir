@@ -1,0 +1,58 @@
+[package]
+name = "helix-cli"
+version = "2.3.5"
+edition = "2024"
+
+[dependencies]
+helix-metrics = { path = "../metrics" }
+helix-db = { path = "../helix-db" }
+clap = { version = "4.5.53", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.47.1", features = ["full"] }
+eyre = "0.6.12"
+toml = "0.9.5"
+dirs = "6.0.0"
+reqwest = { version = "0.12.23", features = ["json"] }
+serde_json = "1.0.143"
+color-eyre = "0.6.5"
+cliclack = "0.3.7"
+async-trait = "0.1.89"
+thiserror = "2.0.12"
+iota = "0.2.3"
+self_update = "0.42.0"
+uuid = { version = "1.18.1", features = ["v4", "v6", "fast-rng"] }
+chrono = "0.4.42"
+flume = { version = "0.12.0",default-features = false,  features = ["async", "select"] }
+dotenvy = "0.15.7"
+tokio-tungstenite = "0.28.0"
+futures-util = "0.3.31"
+regex = "1.11.2"
+sha2 = "0.10"
+reqwest-eventsource = "0.6"
+indicatif = "0.18.3"
+webbrowser = "1.0"
+heed3 = "0.22.0"
+open = "5.3"
+ratatui = "0.29"
+crossterm = "0.28"
+tui-banner = "0.2.3"
+base64 = "0.22"
+helix-enterprise-ql = "0.1.1"
+
+
+[dev-dependencies]
+tempfile = "3.23.0"
+serial_test = "3.2"
+
+[lib]
+name = "helix_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "helix"
+path = "src/main.rs"
+
+[features]
+normal = ["helix-db/server"]
+ingestion = ["helix-db/full"]
+default = ["normal"]

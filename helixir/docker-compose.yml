@@ -35,10 +35,12 @@ services:
     environment:
       - HELIX_PORT=6969
       - HELIX_DATA_DIR=/data
-      # HelixDB v2.3.5 creates eight workers per visible core. A bounded local
-      # deployment uses eight workers total and eagerly decommits allocator-free
-      # pages, reducing (but not replacing) application-level scan avoidance.
+      # HelixDB v2.3.5 defaults to eight workers per visible core. A bounded
+      # local deployment uses two workers total and eagerly decommits
+      # allocator-free pages, reducing (but not replacing) application-level
+      # scan avoidance.
       - HELIX_CORES_OVERRIDE=1
+      - HELIX_WORKERS_PER_CORE=2
       - MIMALLOC_PURGE_DELAY=0
       - MIMALLOC_PURGE_DECOMMITS=1
       - MIMALLOC_ARENA_PURGE_MULT=1

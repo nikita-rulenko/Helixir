@@ -201,7 +201,7 @@ pub struct InstallOptions {
     pub mode: MemoryMode,
     /// Backend ownership/connection choice.
     pub backend: BackendChoice,
-    /// Optional local Ollama fallback LLM to ensure is available.
+    /// Optional, explicitly requested local generation fallback model.
     pub local_llm_model: Option<String>,
     /// Required, fully specified embedding strategy.
     pub embeddings: EmbeddingChoice,
@@ -219,7 +219,7 @@ impl Default for InstallOptions {
         Self {
             mode: MemoryMode::Collective,
             backend: BackendChoice::ProvisionLocal,
-            local_llm_model: Some(crate::DEFAULT_LLM_FALLBACK_MODEL.to_string()),
+            local_llm_model: None,
             embeddings: EmbeddingChoice::LocalOllamaNomic,
             clients: BTreeSet::new(),
             replace_conflicting_clients: false,

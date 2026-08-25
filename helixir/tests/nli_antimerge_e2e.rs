@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use helixir::core::HelixirClient;
 use helixir::llm::nli;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -38,7 +40,9 @@ async fn paraphrase_merge_never_unifies_contradiction() {
     }
 
     let client = HelixirClient::from_env().expect("from_env");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     let run = token();
     let user_x = format!("antimerge_{run}_x");
     let user_y = format!("antimerge_{run}_y");
@@ -50,7 +54,7 @@ async fn paraphrase_merge_never_unifies_contradiction() {
     let light = format!("I prefer the light color theme in editor build {run}.");
 
     let dark_id = client
-        .add(&dark, &user_x, None, None)
+        .add_as_in_group(&actor, &dark, &user_x, None, None, Some(&group))
         .await
         .expect("add dark")
         .memory_ids
@@ -58,7 +62,7 @@ async fn paraphrase_merge_never_unifies_contradiction() {
         .next()
         .expect("a dark memory id");
     let light_id = client
-        .add(&light, &user_y, None, None)
+        .add_as_in_group(&actor, &light, &user_y, None, None, Some(&group))
         .await
         .expect("add light")
         .memory_ids

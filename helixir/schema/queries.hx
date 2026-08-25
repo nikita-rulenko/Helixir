@@ -28,7 +28,7 @@ QUERY addMemoryWithValidFrom(memory_id: String, user_id: String, content: String
 // update branch is a no-op on identity.
 QUERY addOrLinkMemoryByContentKey(content_key: String, memory_id: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, context_tags: String, source: String, metadata: String, stance: String, linked_at: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
-  existing_mem <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  existing_mem <- N<Memory>({content_key: content_key})
   memory <- existing_mem::UpsertN({ memory_id: memory_id, content_key: content_key, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, context_tags: context_tags, source: source, metadata: metadata })
   existing_link <- E<HAS_MEMORY>
   link <- existing_link::UpsertE({ context: context_tags, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
@@ -36,7 +36,7 @@ QUERY addOrLinkMemoryByContentKey(content_key: String, memory_id: String, user_i
 // #54: derive user_count from the live HAS_MEMORY edge set instead of the
 // read-then-write scalar (a lost-update under concurrent linkers).
 QUERY getMemoryUserCount(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   count <- memory::In<HAS_MEMORY>::COUNT
   RETURN count
 // #43 (personal-node + subscribe-by-fingerprint model): each user keeps their own
@@ -49,51 +49,68 @@ QUERY addMemoryKeyed(memory_id: String, content_key: String, user_id: String, co
 QUERY addMemoryKeyedScoped(memory_id: String, content_key: String, rbac_scope: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String) =>
   memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, rbac_scope: rbac_scope, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata })
   RETURN memory
+// Charter v1.0 creation path: protection is persisted atomically with content.
+QUERY addMemoryKeyedScopedProtected(memory_id: String, content_key: String, rbac_scope: String, user_id: String, content: String, memory_type: String, certainty: I64, importance: I64, created_at: String, updated_at: String, valid_from: String, context_tags: String, source: String, metadata: String, immutable: I64) =>
+  memory <- AddN<Memory>({ memory_id: memory_id, content_key: content_key, rbac_scope: rbac_scope, user_id: user_id, content: content, memory_type: memory_type, certainty: certainty, importance: importance, created_at: created_at, updated_at: updated_at, valid_from: valid_from, context_tags: context_tags, source: source, metadata: metadata, immutable: immutable })
+  RETURN memory
 // Consensus over a fingerprint group: how many distinct holders across all
 // personal nodes that share this content_key.
 QUERY getContentKeyGroupUserCount(content_key: String) =>
-  holders <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))::In<HAS_MEMORY>
+  holders <- N<Memory>({content_key: content_key})::In<HAS_MEMORY>
   count <- holders::COUNT
   RETURN count
 // All personal nodes for a fingerprint group (collective view groups by these).
 QUERY getMemoriesByContentKey(content_key: String) =>
-  memories <- N<Memory>::WHERE(_::{content_key}::EQ(content_key))
+  memories <- N<Memory>({content_key: content_key})::RANGE(0, 1000000)
   RETURN memories
+// Bulk restamp is intentionally driven by the non-unique content_key index.
+// RANGE materializes the complete group before UPDATE mutates that same index.
+QUERY restampContentKeyGroup(content_key: String, canonical: String) =>
+  memories <- N<Memory>({content_key: content_key})::RANGE(0, 1000000)
+  updated <- memories::UPDATE({ content_key: canonical })
+  updated_count <- updated::COUNT
+  RETURN updated_count
 QUERY getMemoryContentKeysBatch(memory_ids: [String]) =>
   memories <- N<Memory>::WHERE(_::{memory_id}::IS_IN(memory_ids))
   RETURN memories
 // Backfill: stamp a content_key fingerprint onto an existing node (hash is
 // computed in Rust; HelixDB only stores it).
 QUERY setMemoryContentKey(memory_id: String, content_key: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   updated <- memory::UPDATE({ content_key: content_key })
+  RETURN updated
+// Charter C2: additive hardening path for system seeds and approved learned
+// rules. Existing memories remain untouched until explicitly promoted.
+QUERY setMemoryImmutable(memory_id: String, immutable: I64) =>
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
+  updated <- memory::UPDATE({ immutable: 1 })
   RETURN updated
 // One-way repair for system-generated memories that predate the explicit
 // Moirai security domain. Both fields move together so dedup and visibility
 // continue to describe the same domain.
 QUERY setMemorySecurityDomain(memory_id: String, content_key: String, rbac_scope: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   updated <- memory::UPDATE({ content_key: content_key, rbac_scope: rbac_scope })
   RETURN updated
 QUERY addMoiraiProvenance(insight_id: String, witness_id: String, source: String, created_at: String) =>
-  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
-  witness <- N<Memory>::WHERE(_::{memory_id}::EQ(witness_id))::FIRST
+  insight <- N<Memory>({memory_id: insight_id})::FIRST
+  witness <- N<Memory>({memory_id: witness_id})::FIRST
   existing <- insight::OutE<MOIRAI_DERIVED_FROM>::WHERE(_::ToN::{memory_id}::EQ(witness_id))
   link <- existing::UpsertE({ source: source, created_at: created_at })::From(insight)::To(witness)
   RETURN link
 QUERY getMoiraiWitnesses(insight_id: String) =>
-  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  insight <- N<Memory>({memory_id: insight_id})::FIRST
   witnesses <- insight::Out<MOIRAI_DERIVED_FROM>
   RETURN witnesses
 // Pre-v0.14.2 Atropos used generic incoming SUPPORTS edges. The repair path
 // copies their endpoints to MOIRAI_DERIVED_FROM, then removes the traversable
 // bridge so non-admin graph walks cannot consume the generated layer.
 QUERY getLegacyMoiraiWitnesses(insight_id: String) =>
-  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  insight <- N<Memory>({memory_id: insight_id})::FIRST
   witnesses <- insight::InE<MEMORY_RELATION>::WHERE(_::{relation_type}::EQ("SUPPORTS"))::FromN
   RETURN witnesses
 QUERY dropLegacyMoiraiSupports(insight_id: String) =>
-  insight <- N<Memory>::WHERE(_::{memory_id}::EQ(insight_id))::FIRST
+  insight <- N<Memory>({memory_id: insight_id})::FIRST
   DROP insight::InE<MEMORY_RELATION>::WHERE(_::{relation_type}::EQ("SUPPORTS"))
   RETURN "removed"
 // Pre-v0.14.2 Lachesis persisted generated causality directly as BECAUSE.
@@ -104,23 +121,23 @@ QUERY getLegacyLachesisEffects() =>
   effects <- edges::FromN
   RETURN effects
 QUERY getLegacyLachesisCauses(effect_id: String) =>
-  effect <- N<Memory>::WHERE(_::{memory_id}::EQ(effect_id))::FIRST
+  effect <- N<Memory>({memory_id: effect_id})::FIRST
   edges <- effect::OutE<BECAUSE>::WHERE(_::{reasoning_id}::EQ("lachesis-stitch"))
   causes <- edges::ToN
   RETURN causes
 QUERY dropLegacyLachesisStitches(effect_id: String) =>
-  effect <- N<Memory>::WHERE(_::{memory_id}::EQ(effect_id))::FIRST
+  effect <- N<Memory>({memory_id: effect_id})::FIRST
   DROP effect::OutE<BECAUSE>::WHERE(_::{reasoning_id}::EQ("lachesis-stitch"))
   RETURN "removed"
 QUERY getMemory(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   RETURN memory
 QUERY getRecentMemories(limit: I64) =>
   memories <- N<Memory>::RANGE(0, limit)
   RETURN memories
 QUERY linkUserToMemory(user_id: String, memory_id: String, context: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   link <- AddE<HAS_MEMORY>({ context: context, access_count: 0 })::From(user)::To(memory)
   RETURN link
 QUERY addContext(context_id: String, name: String, context_type: String, properties: String, parent_context: String) =>
@@ -129,15 +146,25 @@ QUERY addContext(context_id: String, name: String, context_type: String, propert
 QUERY getContext(context_id: String) =>
   context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
   RETURN context
+QUERY getContextByName(name: String) =>
+  context <- N<Context>::WHERE(_::{name}::EQ(name))::FIRST
+  RETURN context
 QUERY getRecentContexts(limit: I64) =>
   contexts <- N<Context>::RANGE(0, limit)
   RETURN contexts
 QUERY updateMemory(memory_id: String, content: String, certainty: I64, importance: I64, updated_at: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
+  RETURN updated
+// Charter C2/C4 atomic mutation guard. Rust performs a descriptive preflight,
+// while this predicate closes the race with a concurrent immutable promotion.
+QUERY updateMutableMemory(memory_id: String, content: String, certainty: I64, importance: I64, updated_at: String) =>
+  memory <- N<Memory>({memory_id: memory_id})::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
   updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
   RETURN updated
 QUERY updateMemoryById(id: ID, content: String, certainty: I64, importance: I64, updated_at: String) =>
-  updated <- N<Memory>(id)::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
+  memory <- N<Memory>(id)::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  updated <- memory::UPDATE({ content: content, certainty: certainty, importance: importance, updated_at: updated_at })
   RETURN updated
 QUERY deleteMemoryEmbedding(memory_id: ID) =>
   DROP N<Memory>(memory_id)::Out<HAS_EMBEDDING>
@@ -146,8 +173,8 @@ QUERY getMemoryEmbedding(memory_id: ID) =>
   embedding <- N<Memory>(memory_id)::Out<HAS_EMBEDDING>::FIRST
   RETURN embedding
 QUERY addMemoryRelation(source_id: String, target_id: String, relation_type: String, strength: I64, created_at: String, metadata: String) =>
-  source <- N<Memory>::WHERE(_::{memory_id}::EQ(source_id))::FIRST
-  target <- N<Memory>::WHERE(_::{memory_id}::EQ(target_id))::FIRST
+  source <- N<Memory>({memory_id: source_id})::FIRST
+  target <- N<Memory>({memory_id: target_id})::FIRST
   relation <- AddE<MEMORY_RELATION>({ relation_type: relation_type, strength: strength, created_at: created_at, metadata: metadata })::From(source)::To(target)
   RETURN relation
 QUERY getRelatedMemories(memory_id: ID) =>
@@ -155,18 +182,18 @@ QUERY getRelatedMemories(memory_id: ID) =>
   related <- memory::Out<MEMORY_RELATION>
   RETURN related
 QUERY addMemoryImplication(from_id: String, to_id: String, probability: I64, reasoning_id: String) =>
-  from_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(from_id))::FIRST
-  to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
+  from_memory <- N<Memory>({memory_id: from_id})::FIRST
+  to_memory <- N<Memory>({memory_id: to_id})::FIRST
   implication <- AddE<IMPLIES>({ probability: probability, reasoning_id: reasoning_id })::From(from_memory)::To(to_memory)
   RETURN implication
 QUERY addMemoryCausation(from_id: String, to_id: String, strength: I64, reasoning_id: String) =>
-  from_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(from_id))::FIRST
-  to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
+  from_memory <- N<Memory>({memory_id: from_id})::FIRST
+  to_memory <- N<Memory>({memory_id: to_id})::FIRST
   causation <- AddE<BECAUSE>({ strength: strength, reasoning_id: reasoning_id })::From(from_memory)::To(to_memory)
   RETURN causation
 QUERY addMemoryContradiction(from_id: String, to_id: String, resolution: String, resolved: I64, resolution_strategy: String) =>
-  from_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(from_id))::FIRST
-  to_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(to_id))::FIRST
+  from_memory <- N<Memory>({memory_id: from_id})::FIRST
+  to_memory <- N<Memory>({memory_id: to_id})::FIRST
   contradiction <- AddE<CONTRADICTS>({ resolution: resolution, resolved: resolved, resolution_strategy: resolution_strategy })::From(from_memory)::To(to_memory)
   RETURN contradiction
 
@@ -174,23 +201,30 @@ QUERY addMemoryContradiction(from_id: String, to_id: String, resolution: String,
 // disputes (edges + their targets, parallel order) so the Cutter can drain the
 // dead ones; and retire the open ones from a memory with a strategy label.
 QUERY getMemoryContradictionsFull(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   out_edges <- memory::OutE<CONTRADICTS>
   out_targets <- memory::Out<CONTRADICTS>
   RETURN out_edges, out_targets
 
 QUERY resolveMemoryContradictions(memory_id: String, strategy: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   edges <- memory::OutE<CONTRADICTS>::WHERE(_::{resolved}::EQ(0))
   updated <- edges::UPDATE({ resolved: 1, resolution_strategy: strategy })
   RETURN updated
 QUERY addMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
-  new_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(new_id))::FIRST
-  old_memory <- N<Memory>::WHERE(_::{memory_id}::EQ(old_id))::FIRST
+  new_memory <- N<Memory>({memory_id: new_id})::FIRST
+  old_memory <- N<Memory>({memory_id: old_id})::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
+  supersedes <- AddE<SUPERSEDES>({ reason: reason, superseded_at: superseded_at, is_contradiction: is_contradiction })::From(new_memory)::To(old_memory)
+  RETURN supersedes
+// Charter C2/C4 atomic supersession guard. Protected sources never acquire a
+// SUPERSEDES edge, including through explicit contradiction resolution.
+QUERY addMutableMemorySupersession(new_id: String, old_id: String, reason: String, superseded_at: String, is_contradiction: I64) =>
+  new_memory <- N<Memory>({memory_id: new_id})::FIRST
+  old_memory <- N<Memory>({memory_id: old_id})::WHERE(_::{immutable}::EQ(0))::WHERE(_::{source}::NEQ("raw_input"))::FIRST
   supersedes <- AddE<SUPERSEDES>({ reason: reason, superseded_at: superseded_at, is_contradiction: is_contradiction })::From(new_memory)::To(old_memory)
   RETURN supersedes
 QUERY getSupersededMemories(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   superseded <- memory::Out<SUPERSEDES>
   RETURN superseded
 QUERY getSupersededBatch(memory_ids: [String]) =>
@@ -199,24 +233,24 @@ QUERY getSupersededBatch(memory_ids: [String]) =>
   successors <- memories::In<SUPERSEDES>
   RETURN memories, superseded_edges, successors
 QUERY getSupersedingMemory(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   superseding <- memory::In<SUPERSEDES>
   RETURN superseding
 QUERY getMemoryOutgoingRelations(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   implies_out <- memory::OutE<IMPLIES>
   because_out <- memory::OutE<BECAUSE>
   relations_out <- memory::OutE<MEMORY_RELATION>
   RETURN implies_out, because_out, relations_out
 QUERY getMemoryIncomingRelations(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   implies_in <- memory::InE<IMPLIES>
   because_in <- memory::InE<BECAUSE>
   relations_in <- memory::InE<MEMORY_RELATION>
   RETURN implies_in, because_in, relations_in
 QUERY addReasoningRelation(relation_id: String, from_memory_id: String, to_memory_id: String, relation_type: String, strength: I64, confidence: I64, explanation: String, created_by: String, created_at: String) =>
-  from_mem <- N<Memory>::WHERE(_::{memory_id}::EQ(from_memory_id))::FIRST
-  to_mem <- N<Memory>::WHERE(_::{memory_id}::EQ(to_memory_id))::FIRST
+  from_mem <- N<Memory>({memory_id: from_memory_id})::FIRST
+  to_mem <- N<Memory>({memory_id: to_memory_id})::FIRST
   relation <- AddE<MEMORY_RELATION>({ relation_type: relation_type, strength: strength, created_at: created_at, metadata: "" })::From(from_mem)::To(to_mem)
   RETURN relation
 QUERY addMemoryEmbedding(memory_id: ID, vector_data: [F64], embedding_model: String, created_at: Date) =>
@@ -248,17 +282,17 @@ QUERY createEntity(entity_id: String, name: String, entity_type: String, propert
   })
   RETURN entity
 QUERY linkExtractedEntity(memory_id: String, entity_id: String, confidence: I64, method: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
   link <- AddE<EXTRACTED_ENTITY>({ confidence: confidence, method: method })::From(memory)::To(entity)
   RETURN link
 QUERY linkMentionsEntity(memory_id: String, entity_id: String, salience: I64, sentiment: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   entity <- N<Entity>::WHERE(_::{entity_id}::EQ(entity_id))::FIRST
   link <- AddE<MENTIONS>({ salience: salience, sentiment: sentiment })::From(memory)::To(entity)
   RETURN link
 QUERY linkMemoryToInstanceOf(memory_id: String, concept_id: String, confidence: I64) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   concept <- N<Concept>::WHERE(_::{concept_id}::EQ(concept_id))::FIRST
   link <- AddE<INSTANCE_OF>({ confidence: confidence })::From(memory)::To(concept)
   RETURN link
@@ -287,7 +321,7 @@ QUERY searchRecentMemories(query_vector: [F64], limit: I64, cutoff_date: Date) =
   RETURN embeddings
 QUERY addMemoryChunk(chunk_id: String, parent_memory_id: String, position: I64, content: String, token_count: I64, created_at: String) =>
   chunk <- AddN<MemoryChunk>({ chunk_id: chunk_id, parent_memory_id: parent_memory_id, position: position, content: content, token_count: token_count, created_at: created_at })
-  parent <- N<Memory>::WHERE(_::{memory_id}::EQ(parent_memory_id))::FIRST
+  parent <- N<Memory>({memory_id: parent_memory_id})::FIRST
   link <- AddE<HAS_CHUNK>({ chunk_index: position })::From(parent)::To(chunk)
   RETURN chunk
 QUERY addDocPage(url: String, title: String, category: String, word_count: I64) =>
@@ -421,17 +455,17 @@ QUERY revokeRbacGroupRole(subject_id: String, role: String, group_id: String, me
   config <- config_rows::UpsertN({ config_id: "default", updated_at: revoked_at, updated_by: updated_by })
   RETURN updated, membership_updated, config
 QUERY linkMemoryToRbacGroup(memory_id: String, group_id: String, assigned_by: String, assigned_at: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   group <- N<RbacGroup>::WHERE(_::{group_id}::EQ(group_id))::FIRST
   existing <- memory::OutE<MEMORY_IN_RBAC_GROUP>::WHERE(_::ToN::{group_id}::EQ(group_id))
   link <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at })::From(memory)::To(group)
   RETURN link
 QUERY unlinkMemoryFromRbacGroup(memory_id: String, group_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   DROP memory::OutE<MEMORY_IN_RBAC_GROUP>::WHERE(_::ToN::{group_id}::EQ(group_id))
   RETURN "deleted"
 QUERY linkMemoryToRbacDedupGroup(memory_id: String, dedup_group_id: String, assigned_by: String, assigned_at: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   dedup_group <- N<RbacDedupGroup>::WHERE(_::{dedup_group_id}::EQ(dedup_group_id))::FIRST
   existing <- memory::OutE<MEMORY_IN_RBAC_DEDUP_GROUP>::WHERE(_::ToN::{dedup_group_id}::EQ(dedup_group_id))
   link <- existing::UpsertE({ assigned_by: assigned_by, assigned_at: assigned_at })::From(memory)::To(dedup_group)
@@ -681,18 +715,18 @@ QUERY initializeBaseOntology() =>
   RETURN thing
 
 QUERY linkMemoryToChunk(memory_id: String, chunk_id: String, chunk_index: I64) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   chunk <- N<MemoryChunk>::WHERE(_::{chunk_id}::EQ(chunk_id))::FIRST
   link <- AddE<HAS_CHUNK>({ chunk_index: chunk_index })::From(memory)::To(chunk)
   RETURN link
 
 QUERY getMemoryChunks(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   chunks <- memory::Out<HAS_CHUNK>
   RETURN chunks
 
 QUERY getMemoryWithChunks(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   chunks <- memory::Out<HAS_CHUNK>
   RETURN memory, chunks
 
@@ -702,7 +736,7 @@ QUERY getUserMemories(user_id: String, limit: I64) =>
   RETURN memories
 
 QUERY getMemoryEntities(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   entities <- memory::Out<EXTRACTED_ENTITY>
   mentions <- memory::Out<MENTIONS>
   RETURN entities, mentions
@@ -717,19 +751,19 @@ QUERY getMemoriesByEntity(entity_id: String, exclude_memory_id: String, limit: I
   RETURN memories
 
 QUERY getMemoryConcepts(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   instance_of <- memory::Out<INSTANCE_OF>
   belongs_to <- memory::Out<TAGGED_AS>
   RETURN instance_of, belongs_to
 
 QUERY getMemoryReasoningRelations(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   outgoing <- memory::Out<MEMORY_RELATION>
   incoming <- memory::In<MEMORY_RELATION>
   RETURN outgoing, incoming
 
 QUERY getMemoryLogicalConnections(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   implies_out <- memory::Out<IMPLIES>
   implies_in <- memory::In<IMPLIES>
   because_out <- memory::Out<BECAUSE>
@@ -742,7 +776,7 @@ QUERY getMemoryLogicalConnections(memory_id: String) =>
 
 
 QUERY getMemoryGraphStats(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   entities <- memory::Out<EXTRACTED_ENTITY>
   mentions <- memory::Out<MENTIONS>
   concepts <- memory::Out<INSTANCE_OF>
@@ -858,12 +892,12 @@ QUERY searchByContextTag(tag: String, limit: I64) =>
   RETURN memories
 
 QUERY getMemoryUsers(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   users <- memory::In<HAS_MEMORY>
   RETURN users
 
 QUERY updateMemoryUserCount(memory_id: String, user_count: I64, updated_at: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   updated <- memory::UPDATE({ user_count: user_count, updated_at: updated_at })
   RETURN updated
 
@@ -873,7 +907,7 @@ QUERY checkUserMemoryLink(user_id: String, memory_id: String) =>
   RETURN memories
 
 QUERY getMemoryContradictions(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   contradicts_out <- memory::Out<CONTRADICTS>
   contradicts_in <- memory::In<CONTRADICTS>
   RETURN contradicts_out, contradicts_in
@@ -884,7 +918,7 @@ QUERY globalVectorSearch(query_vector: [F64], limit: I64) =>
   RETURN memories
 
 QUERY linkMemoryToSession(memory_id: String, session_id: String, sequence: I64) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   session <- N<Session>::WHERE(_::{session_id}::EQ(session_id))::FIRST
   link <- AddE<CREATED_IN>({ sequence: sequence })::From(memory)::To(session)
   RETURN link
@@ -895,7 +929,7 @@ QUERY getSessionMemories(session_id: String) =>
   RETURN memories
 
 QUERY getMemorySession(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   session <- memory::Out<CREATED_IN>
   RETURN session
 
@@ -910,7 +944,7 @@ QUERY getAgent(agent_id: String) =>
 
 QUERY linkAgentToMemory(agent_id: String, memory_id: String, timestamp: String, method: String) =>
   agent <- N<Agent>::WHERE(_::{agent_id}::EQ(agent_id))::FIRST
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   link <- AddE<AGENT_CREATED>({ timestamp: timestamp, method: method })::From(agent)::To(memory)
   RETURN link
 
@@ -925,7 +959,7 @@ QUERY countAgentMemories(agent_id: String) =>
   RETURN count
 
 QUERY getMemoryAgent(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   agent <- memory::In<AGENT_CREATED>
   RETURN agent
 
@@ -999,13 +1033,13 @@ QUERY getEntityWhole(part_id: String) =>
   RETURN whole
 
 QUERY addMemoryValidIn(memory_id: String, context_id: String, priority: I64, exclusive: I64) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   context <- N<Context>::WHERE(_::{context_id}::EQ(context_id))::FIRST
   link <- AddE<VALID_IN>({ priority: priority, exclusive: exclusive })::From(memory)::To(context)
   RETURN link
 
 QUERY getMemoryValidContexts(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   contexts <- memory::Out<VALID_IN>
   RETURN contexts
 
@@ -1020,12 +1054,12 @@ QUERY addConstraint(constraint_id: String, rule: String, constraint_type: String
 
 QUERY addMemoryHistoryEvent(memory_id: String, event_id: String, action: String, old_value: String, new_value: String, timestamp: String, actor: String) =>
   event <- AddN<HistoryEvent>({ event_id: event_id, memory_id: memory_id, action: action, old_value: old_value, new_value: new_value, timestamp: timestamp, actor: actor })
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   link <- AddE<HAS_HISTORY>::From(memory)::To(event)
   RETURN event
 
 QUERY getMemoryHistory(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   history <- memory::Out<HAS_HISTORY>
   RETURN history
 
@@ -1088,11 +1122,11 @@ QUERY getMemoryRbacScopeByInternalId(internal_id: ID) =>
   RETURN memory, group_links, groups, dedup_links, dedup_groups
 QUERY linkUserToMemoryWithStance(user_id: String, memory_id: String, context: String, stance: String, certainty: I64, linked_at: String) =>
   user <- N<User>::WHERE(_::{user_id}::EQ(user_id))::FIRST
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   link <- AddE<HAS_MEMORY>({ context: context, access_count: 0, stance: stance, certainty: certainty, linked_at: linked_at, last_confirmed: linked_at })::From(user)::To(memory)
   RETURN link
 QUERY getMemoryStances(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   stance_edges <- memory::InE<HAS_MEMORY>
   knowers <- memory::In<HAS_MEMORY>
   RETURN stance_edges, knowers
@@ -1175,18 +1209,25 @@ QUERY addCategoryAlias(alias_id: String, canonical_id: String) =>
   link <- AddE<ALIAS_OF>::From(alias)::To(canonical)
   RETURN link
 QUERY tagMemoryWithCategory(memory_id: String, category_id: String, confidence: I64, source: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
   link <- AddE<TAGGED_AS>({ confidence: confidence, source: source })::From(memory)::To(category)
   RETURN link
 QUERY getMemoryCategories(memory_id: String) =>
-  memory <- N<Memory>::WHERE(_::{memory_id}::EQ(memory_id))::FIRST
+  memory <- N<Memory>({memory_id: memory_id})::FIRST
   categories <- memory::Out<TAGGED_AS>
   RETURN categories
 QUERY getMemoriesByCategory(category_id: String, exclude_memory_id: String, limit: I64) =>
   category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
   memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
   RETURN memories
+// PMI routing needs only stable ids. Keeping this projection separate preserves
+// the content-bearing bridge query while avoiding full Memory row materialization
+// in every daemon category pass.
+QUERY getMemoryIdsByCategory(category_id: String, exclude_memory_id: String, limit: I64) =>
+  category <- N<Category>::WHERE(_::{category_id}::EQ(category_id))::FIRST
+  memories <- category::In<TAGGED_AS>::WHERE(_::{memory_id}::NEQ(exclude_memory_id))::RANGE(0, limit)
+  RETURN memories::{memory_id}
 QUERY dropConceptByInternalId(concept_internal_id: ID) =>
   DROP N<Concept>(concept_internal_id)
   RETURN "deleted"

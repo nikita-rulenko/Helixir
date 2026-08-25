@@ -1,7 +1,7 @@
 use helix_rs::{HelixDB, HelixDBClient, HelixError};
 use serde::{Serialize, de::DeserializeOwned};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -21,6 +21,18 @@ pub enum HelixClientError {
     NotConnected,
     #[error("Retry exhausted after {0} attempts: {1}")]
     RetryExhausted(u32, String),
+}
+
+impl HelixClientError {
+    /// Whether HelixDB resolved the route but its required graph lookup had no row.
+    ///
+    /// This intentionally does not classify a generic HTTP/query "not found"
+    /// as a data miss: an absent deployed HQL route must fail closed instead of
+    /// sending callers down a create-on-miss path.
+    #[must_use]
+    pub fn is_graph_not_found(&self) -> bool {
+        matches!(self, Self::Query(message) if message.to_ascii_lowercase().contains("no value"))
+    }
 }
 
 pub struct HelixClient {
@@ -92,9 +104,18 @@ impl HelixClient {
 
         for attempt in 1..=max_retries {
             debug!("Executing query: {} (attempt {})", query_name, attempt);
+            let started = Instant::now();
 
             match self.inner.query::<P, T>(query_name, params).await {
                 Ok(result) => {
+                    super::query_trace::record(
+                        query_name,
+                        params,
+                        attempt,
+                        "ok",
+                        started.elapsed(),
+                        None,
+                    );
                     if !self.is_connected.load(Ordering::Relaxed) {
                         self.is_connected.store(true, Ordering::Relaxed);
                     }
@@ -103,6 +124,19 @@ impl HelixClient {
                 }
                 Err(e) => {
                     let err_str = e.to_string();
+                    let status = if err_str.contains("not found") || err_str.contains("No value") {
+                        "graph_error"
+                    } else {
+                        "error"
+                    };
+                    super::query_trace::record(
+                        query_name,
+                        params,
+                        attempt,
+                        status,
+                        started.elapsed(),
+                        Some(&err_str),
+                    );
 
                     if err_str.contains("not found") || err_str.contains("No value") {
                         debug!("Query {} returned not found (expected)", query_name);
@@ -147,10 +181,26 @@ impl HelixClient {
         T: DeserializeOwned,
         P: Serialize + Sync,
     {
-        self.inner
-            .query::<P, T>(query_name, params)
-            .await
-            .map_err(|e| HelixClientError::Query(e.to_string()))
+        let started = Instant::now();
+        let result = self.inner.query::<P, T>(query_name, params).await;
+        match result {
+            Ok(value) => {
+                super::query_trace::record(query_name, params, 1, "ok", started.elapsed(), None);
+                Ok(value)
+            }
+            Err(error) => {
+                let message = error.to_string();
+                super::query_trace::record(
+                    query_name,
+                    params,
+                    1,
+                    "error",
+                    started.elapsed(),
+                    Some(&message),
+                );
+                Err(HelixClientError::Query(message))
+            }
+        }
     }
 
     pub async fn health_check(&self) -> Result<(), HelixClientError> {
@@ -210,5 +260,17 @@ mod tests {
                 assert!(client.is_ok());
             },
         );
+    }
+
+    #[test]
+    fn graph_miss_does_not_hide_an_absent_query_route() {
+        let missing_row = HelixClientError::Query(
+            "GRAPH_ERROR: traversal failed because No value was found".to_string(),
+        );
+        let missing_route =
+            HelixClientError::Query("404 QUERY_NOT_FOUND: query not found".to_string());
+
+        assert!(missing_row.is_graph_not_found());
+        assert!(!missing_route.is_graph_not_found());
     }
 }

@@ -59,6 +59,23 @@ pub async fn vector_search_phase(
         None
     };
 
+    let hybrid_active = bm25_memories.is_some();
+    let vector_ranks: HashMap<String, usize> = vector_response
+        .memories
+        .iter()
+        .filter(|memory| !memory.memory_id.is_empty())
+        .enumerate()
+        .map(|(rank, memory)| (memory.memory_id.clone(), rank + 1))
+        .collect();
+    let bm25_ranks: HashMap<String, usize> = bm25_memories
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter(|memory| !memory.memory_id.is_empty())
+        .enumerate()
+        .map(|(rank, memory)| (memory.memory_id.clone(), rank + 1))
+        .collect();
+
     let visit_order: Vec<String> = if let Some(ref bm25_rows) = bm25_memories {
         let v_ids: Vec<String> = vector_response
             .memories
@@ -139,6 +156,7 @@ pub async fn vector_search_phase(
             }
         }
 
+        let rrf_rank = accepted_rank + 1;
         let vector_score = config.rank_base * config.rank_decay.powi(accepted_rank as i32);
         accepted_rank += 1;
 
@@ -178,11 +196,37 @@ pub async fn vector_search_phase(
                 serde_json::Value::String(memory.content_key.clone()),
             );
         }
-        if profile.native_hybrid_bm25() {
+        if hybrid_active {
             meta.insert(
                 "phase1_hybrid".to_string(),
                 serde_json::Value::String("vector_rrf_bm25".to_string()),
             );
+            meta.insert(
+                "rrf_rank".to_string(),
+                serde_json::Value::from(rrf_rank as u64),
+            );
+            meta.insert(
+                "rrf_rank_score".to_string(),
+                serde_json::Value::from(vector_score),
+            );
+            if let Some(rank) = vector_ranks.get(&memory.memory_id) {
+                meta.insert(
+                    "vector_rank".to_string(),
+                    serde_json::Value::from(*rank as u64),
+                );
+            }
+            if let Some(rank) = bm25_ranks.get(&memory.memory_id) {
+                meta.insert(
+                    "bm25_rank".to_string(),
+                    serde_json::Value::from(*rank as u64),
+                );
+                meta.insert(
+                    "bm25_rank_score".to_string(),
+                    serde_json::Value::from(
+                        config.rank_base * config.rank_decay.powi((*rank - 1) as i32),
+                    ),
+                );
+            }
         }
         if profile.result_provenance() {
             meta.insert(

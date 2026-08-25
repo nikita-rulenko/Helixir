@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::json;
 
 mod common;
-use common::{McpClient, db_edge_types_out};
+use common::{McpClient, db_edge_types_out, e2e_actor, e2e_group};
 
 fn token() -> String {
     format!(
@@ -162,7 +162,9 @@ async fn causal_two_cycle_rejected_db() {
 
     let client = helixir::core::helixir_client::HelixirClient::from_env().expect("client from env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = e2e_actor();
+    let group = e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("cycle_{run}");
@@ -181,7 +183,14 @@ async fn causal_two_cycle_rejected_db() {
     })
     .collect();
     let r = client
-        .add_prepared(atoms, &user, None, Some("cycle-guard-e2e"))
+        .add_prepared_as_in_group(
+            &actor,
+            atoms,
+            &user,
+            None,
+            Some("cycle-guard-e2e"),
+            Some(&group),
+        )
         .await
         .expect("prepared add");
     assert_eq!(r.memories_added, 2, "two atoms expected: {r:?}");

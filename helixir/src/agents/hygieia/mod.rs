@@ -95,10 +95,11 @@ pub async fn snapshot(limit: usize) -> HealthSnapshot {
     } else {
         sample_container_memory(&config.container_name).await
     };
-    let newest_backup_age_hours = if config.backup_dir.is_empty() {
+    let newest_backup_age_hours = if config.backup_source_dir.is_empty() {
         None
     } else {
-        newest_backup_age_hours(std::path::Path::new(&config.backup_dir))
+        let backup_dir = backup::resolved_backup_dir(&config.backup_dir, &journal_path());
+        newest_backup_age_hours(&backup_dir)
     };
     HealthSnapshot {
         enabled: config.enabled,

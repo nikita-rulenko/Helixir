@@ -68,7 +68,9 @@ pub(super) async fn serve(config: ControlPlaneConfig) -> anyhow::Result<()> {
         .route("/meta", get(meta))
         .route("/discovery", get(discovery))
         .route("/overview", get(overview))
+        .route("/connection", get(super::connection::gateway))
         .route("/access", get(access))
+        .route("/access/onboarding/assign", post(super::onboarding::assign))
         .route("/access/groups", post(super::admin::create_group))
         .route("/access/groups/add-user", post(super::admin::add_user))
         .route(

@@ -5,12 +5,13 @@
 //! See `memory-charter.md` at the crate root for the human-readable text;
 //! the constitution rules implemented here mirror its §1.
 //!
-//! Current mode (increment 2, #34): **defer, don't destroy** — a destructive
+//! Active charter v1.0 (#34): **defer, don't destroy** — a destructive
 //! verdict that the charter escalates is NOT executed; the new fact is stored
 //! alongside the old, the dispute lives on a `charter_deferred` CONTRADICTS
 //! edge, and `resolve_contradiction` settles it (retract = the supersede
-//! happens then, with history). Non-destructive escalations stay flag-only.
-//! Opt out with `write.charter_blocking = false`.
+//! happens then, with history). C1, C2 and C4 are constitutional and cannot be
+//! disabled. `write.charter_blocking = false` is a diagnostic compatibility
+//! escape for C3/C5 deferral only; escalations are still surfaced.
 
 use crate::llm::decision::{MemoryDecision, MemoryOperation};
 
@@ -18,6 +19,36 @@ use crate::llm::decision::{MemoryDecision, MemoryOperation};
 /// preference / goal / decision may be a real change of mind, a different
 /// context, or an extraction error — only the human knows which.
 pub const PROTECTED_TYPES: [&str; 3] = ["preference", "goal", "opinion"];
+
+/// Constitution-level protection carried by a persisted target memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TargetProtection {
+    pub immutable: bool,
+    pub raw_input: bool,
+}
+
+impl TargetProtection {
+    /// C2 wins over C4 when both flags are present so diagnostics stay stable.
+    #[must_use]
+    pub fn conflict_type(self) -> Option<&'static str> {
+        if self.immutable {
+            Some("immutable_target")
+        } else if self.raw_input {
+            Some("raw_input_target")
+        } else {
+            None
+        }
+    }
+}
+
+/// Decode persisted fields into the executable C2/C4 policy.
+#[must_use]
+pub fn target_protection(immutable: i64, source: &str) -> TargetProtection {
+    TargetProtection {
+        immutable: immutable != 0,
+        raw_input: source == "raw_input",
+    }
+}
 
 /// Returns the charter conflict type if this decision must be surfaced to
 /// the agent, or `None` if Helixir may resolve it silently.
@@ -87,6 +118,14 @@ pub fn suggested_question(conflict_type: &str, new_content: &str, existing: &str
         "auto_delete" => format!(
             "Предлагается удалить память «{old_short}». Память ничего не удаляет \
              автоматически — подтверди удаление."
+        ),
+        "immutable_target" => format!(
+            "Память «{old_short}» защищена charter C2 и не может быть изменена. \
+             Новый факт сохранён отдельно; нужно решить, как связать версии."
+        ),
+        "raw_input_target" => format!(
+            "Память «{old_short}» является исходным raw_input и защищена charter C4. \
+             Новый факт сохранён отдельно; исходный текст останется неизменным."
         ),
         _ => format!("Нужно решение по факту «{new_short}»."),
     }
@@ -199,6 +238,23 @@ mod tests {
         assert_eq!(
             escalation_reason(&decision(MemoryOperation::Noop, 10), "preference", None, 70),
             None
+        );
+    }
+
+    #[test]
+    fn persisted_target_protection_maps_c2_and_c4() {
+        assert_eq!(target_protection(0, "llm_extraction").conflict_type(), None);
+        assert_eq!(
+            target_protection(1, "llm_extraction").conflict_type(),
+            Some("immutable_target")
+        );
+        assert_eq!(
+            target_protection(0, "raw_input").conflict_type(),
+            Some("raw_input_target")
+        );
+        assert_eq!(
+            target_protection(1, "raw_input").conflict_type(),
+            Some("immutable_target")
         );
     }
 

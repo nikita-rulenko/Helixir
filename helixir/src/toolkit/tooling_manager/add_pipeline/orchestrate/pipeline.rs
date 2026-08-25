@@ -180,6 +180,34 @@ impl ToolingManager {
                     .and_then(|m| m.memory_type.as_deref())
             });
 
+            // C2/C4 are hard constitutional guards, independent of the
+            // configurable clarification/deferral policy. Load their fields
+            // from the persisted target before any destructive operation.
+            let destructive = matches!(
+                decision.operation,
+                MemoryOperation::Update | MemoryOperation::Supersede | MemoryOperation::Delete
+            );
+            let protected_conflict_type = if destructive {
+                match target_id.as_deref() {
+                    Some(id) => self.get_memory_protection(id).await?.conflict_type(),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let protected_original_operation = protected_conflict_type
+                .is_some()
+                .then_some(decision.operation);
+            if let Some(conflict_type) = protected_conflict_type {
+                info!(
+                    "Charter {conflict_type}: {:?} of {} forced to ADD",
+                    decision.operation,
+                    target_id.as_deref().unwrap_or("?")
+                );
+                decision.operation = MemoryOperation::Add;
+                decision.merged_content = None;
+            }
+
             // Charter guard (#93): the decision engine over-eagerly labels an
             // atom that merely SHARES A SUBJECT with a neighbour as a
             // Contradict/rewrite, producing false clarifications. A real
@@ -225,23 +253,28 @@ impl ToolingManager {
             // rewritten until a human-level answer exists.
             let mut deferred_target: Option<String> = None;
             let mut clar_idx: Option<usize> = None;
-            if let Some(conflict_type) = crate::core::charter::escalation_reason(
-                &decision,
-                &memory.memory_type,
-                target_type,
-                self.config.write.charter_low_confidence,
-            ) {
-                let existing_content = decision.target_memory_id.as_deref().and_then(|tid| {
+            let escalation = protected_conflict_type.or_else(|| {
+                crate::core::charter::escalation_reason(
+                    &decision,
+                    &memory.memory_type,
+                    target_type,
+                    self.config.write.charter_low_confidence,
+                )
+            });
+            if let Some(conflict_type) = escalation {
+                let existing_content = target_id.as_deref().and_then(|tid| {
                     similar_memories
                         .iter()
                         .find(|m| m.id == tid)
                         .map(|m| m.content.clone())
                 });
-                let blocking = self.config.write.charter_blocking
-                    && crate::core::charter::defers_under_blocking(&decision)
-                    && target_id.is_some();
+                let constitutional_block = protected_conflict_type.is_some();
+                let blocking = constitutional_block
+                    || (self.config.write.charter_blocking
+                        && crate::core::charter::defers_under_blocking(&decision)
+                        && target_id.is_some());
                 let decision_taken = if blocking {
-                    let was = decision.operation;
+                    let was = protected_original_operation.unwrap_or(decision.operation);
                     deferred_target = target_id.clone();
                     info!(
                         "Charter blocking: {:?} of {} DEFERRED ({conflict_type})",
@@ -259,7 +292,7 @@ impl ToolingManager {
                 clarifications.push(super::super::super::types::Clarification {
                     conflict_type: conflict_type.to_string(),
                     new_content: memory.text.clone(),
-                    existing_memory_id: decision.target_memory_id.clone(),
+                    existing_memory_id: target_id.clone(),
                     existing_content: existing_content.clone(),
                     new_memory_id: None,
                     suggested_question: crate::core::charter::suggested_question(

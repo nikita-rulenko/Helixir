@@ -39,6 +39,11 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/lib/helixir-client" \
   "$root/usr/share/helixir-client" "$payload" "$output"
 tar -xzf "$archive" -C "$payload"
 
+if find "$payload" -type f -name backend-image.json -print -quit | grep -q .; then
+  printf '%s\n' 'thin client archive must not contain backend-image.json' >&2
+  exit 1
+fi
+
 # Release archives assembled on macOS may contain AppleDouble sidecars even
 # when the source tree itself is clean. They are Finder metadata, not Helixir
 # payload, and must never be installed under /usr/share.

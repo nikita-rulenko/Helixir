@@ -21,6 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use helixir::core::HelixirClient;
 
+mod common;
+
 fn token() -> String {
     format!(
         "{:x}",
@@ -38,7 +40,9 @@ async fn clotho_autotag_dictionary() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let group = common::e2e_group();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
 
     let run = token();
     let user = format!("clotho_{run}");
@@ -58,12 +62,18 @@ async fn clotho_autotag_dictionary() {
                  whose price drives drilling costs.";
     let arts = "The violin concerto moved the entire audience to tears at last night's premiere.";
 
-    let a = client.add(agri, &user, None, None).await.expect("add agri");
+    let a = client
+        .add_as_in_group(&actor, agri, &user, None, None, Some(&group))
+        .await
+        .expect("add agri");
     let b = client
-        .add(petro, &user, None, None)
+        .add_as_in_group(&actor, petro, &user, None, None, Some(&group))
         .await
         .expect("add petro");
-    let c = client.add(arts, &user, None, None).await.expect("add arts");
+    let c = client
+        .add_as_in_group(&actor, arts, &user, None, None, Some(&group))
+        .await
+        .expect("add arts");
 
     // 3) Auto-tag by embedding match. Tag every produced memory with its own
     //    stored fact text. Calibrated bar: on-target cosine ≈ 0.74, off-target
@@ -118,7 +128,8 @@ async fn clotho_autotag_dictionary() {
 
     // 4) OBSERVE the cross-domain bridge on auto-tags (not a gate — see header).
     let bridge = client
-        .connect_memories(
+        .connect_memories_as(
+            &actor,
             "monsoon grain harvest crop yield",
             "shale fracking petrochemical fluid additive cost",
             &user,

@@ -10,6 +10,7 @@ type Draft = {
   mode: SettingsSnapshot["mode"];
   reasoningProvider: string; reasoningModel: string; reasoningUrl: string; reasoningTemperature: string; reasoningKey: string;
   embeddingProvider: string; embeddingModel: string; embeddingUrl: string; embeddingKey: string;
+  gatewayUrl: string;
   activeWindow: string; presenceTtl: string; watchdogEnabled: boolean; sampleInterval: string;
   alertPct: string; restartPct: string; allowRestart: boolean; allowReclaim: boolean; backupInterval: string; backupKeep: string;
 };
@@ -21,6 +22,7 @@ function toDraft(value: SettingsSnapshot): Draft {
     reasoningUrl: value.reasoning.base_url, reasoningTemperature: String(value.reasoning.temperature), reasoningKey: "",
     embeddingProvider: value.embeddings.provider, embeddingModel: value.embeddings.model,
     embeddingUrl: value.embeddings.url, embeddingKey: "",
+    gatewayUrl: value.gateway.public_url,
     activeWindow: String(value.swarm.active_window_secs), presenceTtl: String(value.swarm.presence_ttl_secs),
     watchdogEnabled: value.watchdog.enabled, sampleInterval: String(value.watchdog.sample_interval_secs),
     alertPct: String(value.watchdog.mem_alert_pct), restartPct: String(value.watchdog.mem_restart_pct),
@@ -44,6 +46,7 @@ function patchFrom(draft: Draft, original: SettingsSnapshot): SettingsPatch {
   set("embedding_model", draft.embeddingModel, original.embeddings.model);
   set("embedding_url", draft.embeddingUrl, original.embeddings.url);
   if (draft.embeddingKey) patch.embedding_api_key = draft.embeddingKey;
+  set("gateway_public_url", draft.gatewayUrl, original.gateway.public_url);
   set("swarm_active_window_secs", Number(draft.activeWindow), original.swarm.active_window_secs);
   set("swarm_presence_ttl_secs", Number(draft.presenceTtl), original.swarm.presence_ttl_secs);
   set("watchdog_enabled", draft.watchdogEnabled, original.watchdog.enabled);
@@ -62,6 +65,7 @@ const labels: Record<keyof SettingsPatch, string> = {
   reasoning_base_url: "Reasoning endpoint", reasoning_temperature: "Reasoning temperature", reasoning_api_key: "Reasoning credential",
   embedding_provider: "Embedding provider", embedding_model: "Embedding model", embedding_url: "Embedding endpoint",
   embedding_api_key: "Embedding credential", swarm_active_window_secs: "Online window", swarm_presence_ttl_secs: "Presence retention",
+  gateway_public_url: "Client gateway address",
   watchdog_enabled: "Hygieia policy", watchdog_sample_interval_secs: "Sampling interval", watchdog_mem_alert_pct: "Memory warning",
   watchdog_mem_restart_pct: "Recovery threshold", watchdog_allow_container_restart: "Container recovery",
   watchdog_allow_cache_reclaim: "Cache reclamation", backup_interval_hours: "Backup cadence", backup_keep: "Backup retention",
@@ -115,7 +119,7 @@ export function SettingsPage({ hostOperationsAvailable }: { hostOperationsAvaila
     <div className="page-heading"><div><p className="eyebrow"><span>07</span> governed configuration and recovery</p><h1>Stewardship</h1><p className="section-lede">Change the machine deliberately. Secrets stay write-only; every restore begins with a safety snapshot.</p></div><button className="ghost-action" onClick={() => void load()}>Refresh state</button></div>
     <PageState loading={loading} error={!loading && (!settings || !draft || !vault) ? problem : null} />
     {settings && draft && vault && <>
-      <section className="settings-ledger"><div><span>Configuration</span><strong>{settings.config_path}</strong></div><div><span>Database</span><strong>{settings.database.host}:{settings.database.port}</strong><small>{settings.database.instance}</small></div><div><span>Host bridge</span><strong className={hostOperationsAvailable ? "is-mint" : "is-warn-text"}>{hostOperationsAvailable ? "AVAILABLE" : "NATIVE MODE"}</strong></div><div><span>Locked by environment</span><strong>{settings.locked_fields.length}</strong></div></section>
+      <section className="settings-ledger"><div><span>Configuration</span><strong>{settings.config_path}</strong></div><div><span>Database</span><strong>{settings.database.host}:{settings.database.port}</strong><small>{settings.database.instance}</small></div><div><span>MCP gateway bind</span><strong>{settings.gateway.bind}</strong><small>{settings.gateway.auth_enabled ? "bearer auth enabled" : "trusted network"}</small></div><div><span>Locked by environment</span><strong>{settings.locked_fields.length}</strong></div></section>
       {(problem || receipt) && <p className={receipt ? "mutation-status is-ok" : "mutation-status"} role="status">{receipt ?? problem}</p>}
       <section className="settings-grid">
         <SettingsCard number="01" title="Memory posture" note="Mode changes collective recall and whether the Moirai generative layer runs.">
@@ -136,7 +140,11 @@ export function SettingsPage({ hostOperationsAvailable }: { hostOperationsAvaila
           <Field label="Endpoint" locked={locked("embedding_url")}><input disabled={locked("embedding_url")} value={draft.embeddingUrl} onChange={event => update("embeddingUrl", event.target.value)} /></Field>
           <Field label={settings.embeddings.api_key_configured ? "Replace configured API key" : "Remote API key"} locked={locked("embedding_api_key")}><input autoComplete="new-password" disabled={locked("embedding_api_key")} type="password" value={draft.embeddingKey} onChange={event => update("embeddingKey", event.target.value)} placeholder="write-only" /></Field>
         </SettingsCard>
-        <SettingsCard number="04" title="Hygieia policy" note="Thresholds are validated together. A zero recovery threshold disables automatic restart.">
+        <SettingsCard number="04" title="Client handoff" note="This is the network-reachable MCP URL shown to administrators. It is never the HelixDB port.">
+          <Field label="Public gateway URL" locked={locked("gateway_public_url")}><input disabled={locked("gateway_public_url")} value={draft.gatewayUrl} onChange={event => update("gatewayUrl", event.target.value)} placeholder="https://memory.example.com/mcp" /></Field>
+          <Field label="Listener bind" locked><input disabled value={settings.gateway.bind} /></Field>
+        </SettingsCard>
+        <SettingsCard number="05" title="Hygieia policy" note="Thresholds are validated together. A zero recovery threshold disables automatic restart.">
           <Toggle label="Enable watchdog" checked={draft.watchdogEnabled} onChange={value => update("watchdogEnabled", value)} />
           <Toggle label="Allow cache reclamation" checked={draft.allowReclaim} onChange={value => update("allowReclaim", value)} />
           <Toggle label="Allow container recovery" checked={draft.allowRestart} onChange={value => update("allowRestart", value)} />

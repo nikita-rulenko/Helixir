@@ -6,20 +6,23 @@ import {
   type AgentFamilyProjection,
   type AgentProjection,
   type GroupProjection,
+  type GatewayConnectionProjection,
   type MutationReceipt,
   type PrincipalProjection,
   type RoleMutation,
 } from "../api";
 import { StatusDot } from "../components";
 import { PageState, relativeAge, useResource } from "./shared";
+import { GatewayHandoff, OnboardingRegistry } from "./AccessOnboarding";
 
-export type AccessTab = "agents" | "principals" | "groups";
+export type AccessTab = "onboarding" | "agents" | "principals" | "groups";
 type Notice = { ok: boolean; text: string } | null;
-const pageSizes: Record<AccessTab, number> = { agents: 8, principals: 10, groups: 6 };
+const pageSizes: Record<AccessTab, number> = { onboarding: 8, agents: 8, principals: 10, groups: 6 };
 const groupRoles: RoleMutation["role"][] = ["groupadmin", "moderator", "worker", "viewer"];
 
 export function AccessPage({ initialTab = "groups", initialOnlineOnly = false }: { initialTab?: AccessTab; initialOnlineOnly?: boolean }) {
   const { data, error, loading, refresh } = useResource<AccessProjection>("/access", { pollMs: 15_000 });
+  const connection = useResource<GatewayConnectionProjection>("/connection", { pollMs: 60_000 });
   const [tab, setTab] = useState<AccessTab>(initialTab);
   const [query, setQuery] = useState("");
   const [exactPrincipal, setExactPrincipal] = useState<string | null>(null);
@@ -30,20 +33,23 @@ export function AccessPage({ initialTab = "groups", initialOnlineOnly = false }:
   const filteredAgents = useMemo(() => data?.agent_families.filter(family => (!onlineOnly || family.active) && searchable(family).includes(query.toLowerCase())) ?? [], [data, query, onlineOnly]);
   const filteredPrincipals = useMemo(() => data?.principals.filter(item => exactPrincipal ? item.subject_id === exactPrincipal : principalText(item).includes(query.toLowerCase())) ?? [], [data, query, exactPrincipal]);
   const filteredGroups = useMemo(() => data?.groups.filter(item => searchable(item).includes(query.toLowerCase())) ?? [], [data, query]);
-  const activeRows = tab === "agents" ? filteredAgents : tab === "principals" ? filteredPrincipals : filteredGroups;
+  const filteredOnboarding = useMemo(() => (data?.onboarding_principals ?? []).filter(item => principalText(item).includes(query.toLowerCase())), [data, query]);
+  const activeRows = tab === "onboarding" ? filteredOnboarding : tab === "agents" ? filteredAgents : tab === "principals" ? filteredPrincipals : filteredGroups;
   const pageCount = Math.max(1, Math.ceil(activeRows.length / pageSizes[tab]));
   const offset = (Math.min(page, pageCount) - 1) * pageSizes[tab];
   useEffect(() => setPage(1), [tab, query]);
 
   return <div className="page-canvas section-page access-page">
-    <div className="page-heading"><div><p className="eyebrow"><span>03</span> graph-backed administration</p><h1>Access graph</h1><p className="section-lede">The operational console for identities, memberships, roles and shared dedup domains.</p></div><button className="ghost-action" onClick={refresh}>Refresh live state</button></div>
-    <section className="mini-metrics" aria-label="Access registry views"><button aria-pressed={tab === "agents"} className={tab === "agents" ? "is-active" : ""} onClick={() => { setTab("agents"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Logical agents</span><strong>{data?.agent_families.length ?? "—"}</strong><small>{activeFamilies} agents online · {activeSubagents} subagents online</small><i>↗</i></button><button aria-pressed={tab === "principals"} className={tab === "principals" ? "is-active" : ""} onClick={() => { setTab("principals"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Principals</span><strong>{data?.principals.length ?? "—"}</strong><small>RBAC identities · inspect roles</small><i>↗</i></button><button aria-pressed={tab === "groups"} className={tab === "groups" ? "is-active" : ""} onClick={() => { setTab("groups"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Groups</span><strong>{data?.groups.length ?? "—"}</strong><small>security domains · administer</small><i>↗</i></button></section>
+    <div className="page-heading"><div><p className="eyebrow"><span>03</span> graph-backed administration</p><h1>Access graph</h1><p className="section-lede">The operational console for client handoff, admissions, identities, memberships and shared dedup domains.</p></div><button className="ghost-action" onClick={() => { refresh(); connection.refresh(); }}>Refresh live state</button></div>
+    <GatewayHandoff data={connection.data} error={connection.error} loading={connection.loading} />
+    <section className="mini-metrics is-four" aria-label="Access registry views"><button aria-pressed={tab === "onboarding"} className={tab === "onboarding" ? "is-active" : ""} onClick={() => { setTab("onboarding"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Awaiting placement</span><strong>{data ? (data.onboarding_principals ?? []).length : "—"}</strong><small>new principals · action required</small><i>↗</i></button><button aria-pressed={tab === "agents"} className={tab === "agents" ? "is-active" : ""} onClick={() => { setTab("agents"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Logical agents</span><strong>{data?.agent_families.length ?? "—"}</strong><small>{activeFamilies} agents online · {activeSubagents} subagents online</small><i>↗</i></button><button aria-pressed={tab === "principals"} className={tab === "principals" ? "is-active" : ""} onClick={() => { setTab("principals"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Principals</span><strong>{data?.principals.length ?? "—"}</strong><small>RBAC identities · inspect roles</small><i>↗</i></button><button aria-pressed={tab === "groups"} className={tab === "groups" ? "is-active" : ""} onClick={() => { setTab("groups"); setOnlineOnly(false); setQuery(""); setExactPrincipal(null); setPage(1); }}><span>Groups</span><strong>{data?.groups.length ?? "—"}</strong><small>security domains · administer</small><i>↗</i></button></section>
     <details className="operator-guide"><summary><span>How access works</span><b>Open field guide</b><i>＋</i></summary><div><article><strong>1. Admit</strong><p>New identities begin in <code>onboarding</code>. They remain visible in the registry even after removal.</p></article><article><strong>2. Assign</strong><p>Open a group, add a principal and choose a role. A principal may belong to several groups.</p></article><article><strong>3. Govern</strong><p>Removing a member revokes every active role in that group while keeping the audit history.</p></article><article><strong>4. Federate</strong><p>Dedup federations share visibility for new memories; detaching preserves historical access.</p></article></div></details>
     <PageState loading={loading} error={error} />
     {data && <>
       <section className="contributors-panel"><header><div><p className="eyebrow">Memory stewardship</p><h2>Top contributors</h2></div><span>bounded sample / {data.contributor_sample_size} memories</span></header><div>{data.contributors.map((contributor, index) => <button aria-label={`Show principal ${contributor.user_id}`} key={contributor.user_id} onClick={() => { setTab("principals"); setOnlineOnly(false); setQuery(contributor.user_id); setExactPrincipal(contributor.user_id); setPage(1); }} type="button"><b>{String(index + 1).padStart(2, "0")}</b><strong>{contributor.user_id}</strong><span>{contributor.memories} memories</span><i style={{ width: `${Math.max(8, contributor.memories / Math.max(data.contributors[0]?.memories ?? 1, 1) * 100)}%` }} /></button>)}</div></section>
       <section className="data-panel access-registry">
-        <header className="data-toolbar"><div className="segmented">{(["groups", "principals", "agents"] as const).map(item => <button aria-pressed={tab === item} className={tab === item ? "is-active" : ""} onClick={() => { setTab(item); setQuery(""); setExactPrincipal(null); setPage(1); if (item !== "agents") setOnlineOnly(false); }} key={item}>{item}</button>)}</div><div className="toolbar-filters">{tab === "agents" && <button aria-pressed={onlineOnly} className={onlineOnly ? "live-filter is-active" : "live-filter"} onClick={() => setOnlineOnly(value => !value)}><StatusDot ok={onlineOnly} pulse={onlineOnly} />Online only</button>}<label className="search-box"><span>⌕</span><input aria-label="Search access registry" onChange={event => { setQuery(event.target.value); setExactPrincipal(null); setPage(1); }} placeholder="Search id, role, host or group" value={query} /></label></div></header>
+        <header className="data-toolbar"><div className="segmented">{(["onboarding", "groups", "principals", "agents"] as const).map(item => <button aria-pressed={tab === item} className={tab === item ? "is-active" : ""} onClick={() => { setTab(item); setQuery(""); setExactPrincipal(null); setPage(1); if (item !== "agents") setOnlineOnly(false); }} key={item}>{item}</button>)}</div><div className="toolbar-filters">{tab === "agents" && <button aria-pressed={onlineOnly} className={onlineOnly ? "live-filter is-active" : "live-filter"} onClick={() => setOnlineOnly(value => !value)}><StatusDot ok={onlineOnly} pulse={onlineOnly} />Online only</button>}<label className="search-box"><span>⌕</span><input aria-label="Search access registry" onChange={event => { setQuery(event.target.value); setExactPrincipal(null); setPage(1); }} placeholder="Search id, role, host or group" value={query} /></label></div></header>
+        {tab === "onboarding" && <OnboardingRegistry data={data} principals={filteredOnboarding.slice(offset, offset + pageSizes.onboarding)} onChanged={refresh} onOpenGroups={() => { setTab("groups"); setPage(1); }} />}
         {tab === "groups" && <GroupRegistry data={data} groups={filteredGroups.slice(offset, offset + pageSizes.groups)} onChanged={refresh} />}
         {tab === "principals" && <PrincipalRegistry data={data} principals={filteredPrincipals.slice(offset, offset + pageSizes.principals)} onChanged={refresh} />}
         {tab === "agents" && <AgentRegistry data={data} agents={filteredAgents.slice(offset, offset + pageSizes.agents)} onChanged={refresh} />}

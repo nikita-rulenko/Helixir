@@ -1,19 +1,17 @@
-//! #43/#55 backstop — the contradiction-safe paraphrase merge.
+//! Contradiction-safe paraphrase consolidation (#43/#55/#168).
 //!
-//! The exact-match fingerprint (`content_key`) groups identical facts. This pass
-//! catches the rest: facts that MEAN the same but are worded differently, so they
-//! carry different fingerprints and don't group. It finds high-cosine neighbours
-//! (cheap, embeddings), then lets the local NLI judge make the safe final call —
-//! unifying two fingerprint groups ONLY when the judge confirms "same fact" and
-//! rules out contradiction. Opposites (dark vs light theme) are never merged.
-//!
-//! Each user keeps their own node; only the shared fingerprint changes. The pass
-//! is idempotent and replay-safe (already-unified pairs are skipped).
+//! Candidate discovery uses a private bounded vector path; it must never call
+//! the public recall pipeline. NLI-confirmed equivalences are first assembled
+//! into deterministic connected components and only then written, preventing
+//! stale-key and traversal-order bugs in transitive merges.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::llm::nli::{NliJudge, NliLabel};
+use crate::llm::nli::NliJudge;
+use crate::toolkit::tooling_manager::paraphrase::ParaphrasePair;
 
 use super::Atropos;
 
@@ -27,9 +25,9 @@ pub struct MergeSummary {
 }
 
 impl Atropos<'_> {
-    /// Scan a user's memories for paraphrase duplicates and unify their
-    /// fingerprints. `cosine_threshold` is the cheap embedding pre-filter; the
-    /// NLI judge makes the contradiction-safe final decision.
+    /// Scan recent memories for semantic duplicates and unify their fingerprint
+    /// groups. Embeddings are only a candidate filter; the local NLI model is
+    /// the final contradiction-safe judge.
     pub async fn merge_paraphrases(
         &self,
         limit: i64,
@@ -38,127 +36,167 @@ impl Atropos<'_> {
         let mut judge = NliJudge::load(&NliJudge::default_dir()).context(
             "NLI model unavailable — run `helixir model download`; the judge is required in every memory mode",
         )?;
+        let briefs = self
+            .tooling
+            .list_recent_briefs(limit)
+            .await
+            .context("merge: list recent memory briefs")?;
+        let pairs = self
+            .tooling
+            .paraphrase_pairs(&briefs, cosine_threshold, 8)
+            .await
+            .context("merge: bounded vector candidate discovery")?;
+        let mut summary = MergeSummary {
+            scanned: briefs.len(),
+            candidates: pairs.len(),
+            ..MergeSummary::default()
+        };
 
-        let briefs = self.tooling.list_recent_briefs(limit).await;
-        let mut summary = MergeSummary::default();
-        let mut seen: std::collections::HashSet<(String, String)> =
-            std::collections::HashSet::new();
-
-        for brief in &briefs {
-            summary.scanned += 1;
-            if brief.content.trim().is_empty() {
-                continue;
+        let mut confirmed = Vec::new();
+        for pair in pairs {
+            let verdict = judge
+                .pair_verdict(&pair.seed_content, &pair.candidate_content)
+                .with_context(|| {
+                    format!(
+                        "merge: NLI verdict for {} and {}",
+                        pair.seed_id, pair.candidate_id
+                    )
+                })?;
+            if verdict.same_fact {
+                debug!(
+                    "merge: NLI-confirmed pair {} ↔ {} (cosine {:.4})",
+                    pair.seed_id, pair.candidate_id, pair.cosine
+                );
+                confirmed.push(pair);
+            } else if verdict.contradiction {
+                summary.contradictions_blocked += 1;
+                debug!(
+                    "merge: NLI blocked contradiction {} ↔ {}",
+                    pair.seed_id, pair.candidate_id
+                );
             }
-            // #68: never seed a merge pair from a raw_input node. A raw source
-            // contains ALL its extracted atoms nearly verbatim, so atom↔raw
-            // passes the entailment gate and fingerprint unification then chains
-            // TRANSITIVELY (atomA ↔ raw ↔ atomB), conflating distinct facts into
-            // one group — which the collective collapse folds into one row.
-            if brief.memory_id.starts_with("raw_") {
-                continue;
-            }
-            // Cheap pre-filter: cosine neighbours across the collective. A wide
-            // temporal window so age never hides a paraphrase.
-            let neighbours = match self
-                .tooling
-                .search_memory(
-                    &brief.content,
-                    "merge", // collective scope ignores the user_id
-                    crate::toolkit::tooling_manager::MemorySearchOptions {
-                        limit: Some(8),
-                        temporal_days: Some(36500.0),
-                        scope: "collective".to_string(),
-                        ..crate::toolkit::tooling_manager::MemorySearchOptions::new("contextual")
-                    },
-                )
-                .await
-            {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(
-                        "merge: neighbour search failed for {}: {e}",
-                        brief.memory_id
-                    );
-                    continue;
-                }
-            };
+        }
 
-            for n in neighbours {
-                if n.memory_id == brief.memory_id || n.score < cosine_threshold {
-                    continue;
-                }
-                // #68: raw_input nodes are excluded from BOTH sides of a pair.
-                if n.memory_id.starts_with("raw_") {
-                    continue;
-                }
-                let neighbour_domain = crate::core::RbacManager::new(self.tooling.db.clone())
-                    .memory_security_domains(std::slice::from_ref(&n.memory_id))
+        for component in equivalence_components(&confirmed) {
+            let before = summary.nodes_restamped;
+            for noncanonical in component.keys.iter().skip(1) {
+                let restamped = self
+                    .tooling
+                    .restamp_content_key_group(noncanonical, &component.canonical)
                     .await
-                    .ok()
-                    .and_then(|domains| domains.get(&n.memory_id).cloned())
-                    .unwrap_or_else(|| "unknown".to_string());
-                if brief.security_domain != neighbour_domain {
-                    continue;
-                }
-                let pair = order_pair(&brief.memory_id, &n.memory_id);
-                if !seen.insert(pair) {
-                    continue;
-                }
-
-                // Fingerprints — skip if already grouped or unkeyed.
-                let ck_a = if brief.content_key.is_empty() {
-                    self.tooling.content_key_of(&brief.memory_id).await
-                } else {
-                    brief.content_key.clone()
-                };
-                let ck_b = self.tooling.content_key_of(&n.memory_id).await;
-                if ck_a.is_empty() || ck_b.is_empty() || ck_a == ck_b {
-                    continue;
-                }
-                summary.candidates += 1;
-
-                // Contradiction-safe judgment (both directions inside is_same_fact).
-                if judge
-                    .is_same_fact(&brief.content, &n.content)
-                    .unwrap_or(false)
-                {
-                    let canonical = ck_a.clone().min(ck_b.clone());
-                    match self
-                        .tooling
-                        .unify_content_keys(&ck_a, &ck_b, &canonical)
-                        .await
-                    {
-                        Ok(restamped) => {
-                            summary.merged_groups += 1;
-                            summary.nodes_restamped += restamped;
-                            info!(
-                                "merge: NLI-confirmed paraphrase → unified {} node(s) onto one fingerprint",
-                                restamped
-                            );
-                        }
-                        Err(e) => warn!("merge: unify failed: {e}"),
-                    }
-                } else if judge
-                    .classify(&brief.content, &n.content)
-                    .map(|(l, _)| l == NliLabel::Contradiction)
-                    .unwrap_or(false)
-                {
-                    summary.contradictions_blocked += 1;
-                    debug!(
-                        "merge: NLI blocked a contradiction ({} ↔ {}) from merging",
-                        brief.memory_id, n.memory_id
-                    );
-                }
+                    .with_context(|| {
+                        format!(
+                            "merge: restamp content-key group {} in domain {}",
+                            noncanonical, component.security_domain
+                        )
+                    })?;
+                summary.merged_groups += 1;
+                summary.nodes_restamped += restamped;
             }
+            info!(
+                "merge: unified {} fingerprint groups in {} onto {} ({} nodes updated)",
+                component.keys.len(),
+                component.security_domain,
+                component.canonical,
+                summary.nodes_restamped - before
+            );
         }
         Ok(summary)
     }
 }
 
-fn order_pair(a: &str, b: &str) -> (String, String) {
-    if a <= b {
-        (a.to_string(), b.to_string())
-    } else {
-        (b.to_string(), a.to_string())
+#[derive(Debug, PartialEq, Eq)]
+struct MergeComponent {
+    security_domain: String,
+    canonical: String,
+    keys: Vec<String>,
+}
+
+fn equivalence_components(pairs: &[ParaphrasePair]) -> Vec<MergeComponent> {
+    let mut graphs: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
+    for pair in pairs {
+        let graph = graphs.entry(pair.security_domain.clone()).or_default();
+        graph
+            .entry(pair.seed_content_key.clone())
+            .or_default()
+            .insert(pair.candidate_content_key.clone());
+        graph
+            .entry(pair.candidate_content_key.clone())
+            .or_default()
+            .insert(pair.seed_content_key.clone());
+    }
+
+    let mut components = Vec::new();
+    for (security_domain, graph) in graphs {
+        let mut visited = BTreeSet::new();
+        for root in graph.keys() {
+            if visited.contains(root) {
+                continue;
+            }
+            let mut stack = vec![root.clone()];
+            let mut keys = BTreeSet::new();
+            while let Some(key) = stack.pop() {
+                if !visited.insert(key.clone()) {
+                    continue;
+                }
+                keys.insert(key.clone());
+                if let Some(neighbours) = graph.get(&key) {
+                    stack.extend(neighbours.iter().cloned());
+                }
+            }
+            if keys.len() < 2 {
+                continue;
+            }
+            let keys = keys.into_iter().collect::<Vec<_>>();
+            components.push(MergeComponent {
+                security_domain: security_domain.clone(),
+                canonical: keys[0].clone(),
+                keys,
+            });
+        }
+    }
+    components
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pair(domain: &str, left: &str, right: &str) -> ParaphrasePair {
+        ParaphrasePair {
+            seed_id: format!("mem_{left}"),
+            seed_content: left.to_string(),
+            seed_content_key: left.to_string(),
+            candidate_id: format!("mem_{right}"),
+            candidate_content: right.to_string(),
+            candidate_content_key: right.to_string(),
+            security_domain: domain.to_string(),
+            cosine: 0.99,
+        }
+    }
+
+    #[test]
+    fn transitive_pairs_form_one_order_independent_component() {
+        let forward = equivalence_components(&[
+            pair("rbac:group:a", "b", "c"),
+            pair("rbac:group:a", "a", "b"),
+        ]);
+        let reverse = equivalence_components(&[
+            pair("rbac:group:a", "a", "b"),
+            pair("rbac:group:a", "b", "c"),
+        ]);
+        assert_eq!(forward, reverse);
+        assert_eq!(forward[0].canonical, "a");
+        assert_eq!(forward[0].keys, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn identical_keys_in_different_domains_never_join() {
+        let components = equivalence_components(&[
+            pair("rbac:group:a", "a", "b"),
+            pair("rbac:group:b", "a", "c"),
+        ]);
+        assert_eq!(components.len(), 2);
+        assert_ne!(components[0].security_domain, components[1].security_domain);
     }
 }

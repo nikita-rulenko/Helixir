@@ -1,9 +1,9 @@
 # Data model (datadesign)
 
-> _Reflects code as of `v0.17.1`. Last verified: 2026-08-23._
+> _Reflects code as of `v0.18.0`. Last verified: 2026-08-25._
 
 Authoritative source: `helixir/schema/schema.hx` (node + edge definitions)
-and `helixir/schema/queries.hx` (185 HQL queries that materialize the
+and `helixir/schema/queries.hx` (191 HQL queries that materialize the
 contract). Anything below disagreeing with those files is the bug.
 
 ## 1. Storage at a glance
@@ -32,7 +32,7 @@ flowchart LR
 ```
 
 The physical contract declares **22 node types**, **5 vector-index types**, **30
-edge types**, and **185 named HQL queries**. Declaration is not the same as
+edge types**, and **191 named HQL queries**. Declaration is not the same as
 runtime use. The tables below label every surface as **active**, **optional**,
 or **reserved**; reserved entries have no live producer and are not product
 capabilities. The default embedding dimension is 768.
@@ -59,7 +59,7 @@ categories, buffering, and a reserved document pipeline.
 | **MemoryChunk** | active | Oversized raw-source reconstruction; chunks are not retrieval units (#86). |
 | **Entity** | active | Extracted and deduplicated named entity. |
 | **Concept** | active | Fixed ontology hierarchy and memory classification target. |
-| **Context** | active | Situational validity such as `work` or `project:name`. |
+| **Context** | active | Situational validity such as `work` or `project:name`. `name` is indexed and the write pipeline reuses an exact-name match before creating a node. A transport or missing-route error is never treated as a graph miss. |
 | **HistoryEvent** | active | UPDATE/SUPERSEDE/DELETE audit trail. |
 | **PendingInput** | active, transient | Buffered write queue; successful entries are drained. |
 | **MemoryNotice** | active, transient | Deferred write outcomes delivered back to the owner. |

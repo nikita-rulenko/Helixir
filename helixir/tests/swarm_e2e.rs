@@ -35,7 +35,8 @@ async fn two_hosts_appear_in_one_roster() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let actor = common::e2e_actor();
+    let admin = client.admin_as(&actor).await.expect("RBAC admin");
     let tooling = admin.tooling();
 
     let run = token();
@@ -195,7 +196,8 @@ async fn mcp_presence_is_activity_driven_and_farewell_stays_terminal() {
 
     let client = HelixirClient::from_env().expect("from_env");
     client.initialize().await.expect("initialize observer");
-    let admin = client.admin_as("codex").await.expect("RBAC admin");
+    let admin_actor = common::e2e_actor();
+    let admin = client.admin_as(&admin_actor).await.expect("RBAC admin");
     // Transport initialization and passive status reads are not agent leases.
     // Establish a terminal row, then prove swarm_status does not resurrect it.
     admin

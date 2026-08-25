@@ -24,6 +24,7 @@ const access: AccessProjection = {
   ],
   subagents: instances.filter(instance => instance.agent_id !== instance.principal_id),
   principals: [{ subject_id: "codex", global_roles: ["admin"], groups: [] }],
+  onboarding_principals: [],
   groups: [],
   dedup_groups: [],
   contributors: [],
@@ -38,7 +39,7 @@ afterEach(() => {
 
 test("keeps one logical Codex online through three child leases while its root is stale", async () => {
   setControlPlaneToken("a".repeat(64));
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(access), { status: 200, headers: { "Content-Type": "application/json" } })));
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => json(String(input).endsWith("/connection") ? gateway : access)));
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -59,6 +60,56 @@ test("keeps one logical Codex online through three child leases while its root i
 
   await act(async () => root.unmount());
 });
+
+test("shows the client endpoint and atomically places a pending principal", async () => {
+  setControlPlaneToken("b".repeat(64));
+  const newcomer = { subject_id: "remote-cursor", global_roles: [], groups: [{ group_id: "onboarding", roles: ["worker"] }] };
+  const pending: AccessProjection = {
+    ...access,
+    principals: [...access.principals, newcomer],
+    onboarding_principals: [newcomer],
+    groups: [{ group_id: "development", name: "Development", description: "Product engineering", dedup_group_id: null, member_count: 0, reserved: false }],
+  };
+  let posted: unknown = null;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/connection")) return json(gateway);
+    if (path.endsWith("/access/onboarding/assign") && init?.method === "POST") {
+      posted = JSON.parse(String(init.body));
+      return json({ principal_id: "remote-cursor", group_id: "development", group_created: false, requested_role: "worker", active_roles: ["worker"], onboarding_active: false, onboarding_roles_revoked: ["worker"], readable_groups: ["development"], can_write_own_memories: true, memory_scope: "group:development" });
+    }
+    return json(pending);
+  }));
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  await act(async () => { root.render(<AccessPage initialTab="onboarding" />); await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  expect(host.textContent).toContain("https://memory.example.test/mcp");
+  expect(host.textContent).toContain("remote-cursor");
+  await act(async () => { button(host, "Assign & admit").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+  expect(posted).toEqual({ principal_id: "remote-cursor", group_id: "development", role: "worker" });
+  expect(host.textContent).toContain("Effective scope: group:development");
+  await act(async () => root.unmount());
+});
+
+test("copies the client endpoint with a legacy fallback when clipboard access is blocked", async () => {
+  setControlPlaneToken("c".repeat(64));
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => json(String(input).endsWith("/connection") ? gateway : access)));
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+  const copy = vi.fn().mockReturnValue(true);
+  Object.defineProperty(document, "execCommand", { configurable: true, value: copy });
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  await act(async () => { root.render(<AccessPage initialTab="onboarding" />); await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  await act(async () => { button(host, "Copy endpoint").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+  expect(copy).toHaveBeenCalledWith("copy");
+  expect(host.textContent).toContain("Copied");
+  expect(host.textContent).toContain("configured bind 0.0.0.0:8765");
+  await act(async () => root.unmount());
+  Reflect.deleteProperty(document, "execCommand");
+});
+
+const gateway = { bind: "0.0.0.0:8765", client_url: "https://memory.example.test/mcp", advertised: true, shareable: true, auth_enabled: true, warning: null };
+function json(value: unknown): Response { return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } }); }
 
 function button(host: HTMLElement, name: string): HTMLButtonElement {
   const found = [...host.querySelectorAll("button")].find(candidate => candidate.textContent?.includes(name));

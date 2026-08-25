@@ -26,6 +26,7 @@ jobs:
         run: |
           cargo fmt --manifest-path helixir/Cargo.toml --all -- --check
           cargo fmt --manifest-path helixir-client/Cargo.toml --all -- --check
+          cargo fmt --manifest-path helixdb-mock/Cargo.toml --all -- --check
 
   docs-lint:
     name: docs freshness
@@ -38,6 +39,23 @@ jobs:
       - name: docs lint
         run: python3 .github/scripts/docs_lint.py
 
+  memory-boundary-contract:
+    name: HelixDB emulator and memory harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helixdb-mock
+          key: helixdb-mock
+      - name: Verify bounded emulator and fail-closed harness
+        run: |
+          make check-memory-boundary
+          make test-helixdb-fork
+
   packaging:
     name: package-manager contracts
     runs-on: ubuntu-latest
@@ -49,8 +67,8 @@ jobs:
         run: |
           mkdir -p fixture/schema fixture/skills/helixir-memory fixture/integration \
             client-fixture/skills/helixir-memory client-fixture/integration \
-            packages-a packages-b packages-arm packages-old packages-index \
-            client-a client-b client-arm
+            packages-a packages-b packages-arm packages-old packages-index packages-missing \
+            client-a client-b client-arm client-contaminated
           printf '#!/bin/sh\nprintf "helixir 9.9.9\\n"\n' > fixture/helixir
           printf '#!/bin/sh\nprintf "helixir-mcp 9.9.9\\n"\n' > fixture/helixir-mcp
           printf '#!/bin/sh\nprintf "helixir-deploy 9.9.9\\n"\n' > fixture/helixir-deploy
@@ -59,6 +77,9 @@ jobs:
           touch fixture/schema/schema.hx fixture/schema/queries.hx fixture/helix.toml
           touch fixture/skills/helixir-memory/SKILL.md
           touch fixture/integration/AGENTS.md fixture/integration/SKILLS.md
+          tar -C fixture -czf helixir-fixture-missing-backend.tar.gz .
+          printf '%s\n' '{"format_version":1,"image":"ghcr.io/example/helixir-helixdb@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+            > fixture/backend-image.json
           tar -C fixture -czf helixir-fixture.tar.gz .
           cp fixture/helixir-client client-fixture/
           cp fixture/skills/helixir-memory/SKILL.md client-fixture/skills/helixir-memory/
@@ -67,6 +88,9 @@ jobs:
           touch client-fixture/skills/helixir-memory/._SKILL.md client-fixture/integration/.DS_Store
           tar -C client-fixture -czf helixir-client-macos-fixture.tar.gz .
           rm client-fixture/skills/helixir-memory/._SKILL.md client-fixture/integration/.DS_Store
+          cp fixture/backend-image.json client-fixture/
+          tar -C client-fixture -czf helixir-client-contaminated-fixture.tar.gz .
+          rm client-fixture/backend-image.json
           printf '#!/bin/sh\nprintf "helixir 9.9.8\\n"\n' > fixture/helixir
           tar -C fixture -czf helixir-fixture-old.tar.gz .
           sha=$(sha256sum helixir-fixture.tar.gz | awk '{print $1}')
@@ -86,12 +110,15 @@ jobs:
           ruby -c Formula/helixir.rb
           grep -q '^  version "9.9.9"' Formula/helixir.rb
           ! grep -q 'bin.install_symlink libexec/"helixir-client"' Formula/helixir.rb
+          grep -q 'assert_path_exists libexec/"backend-image.json"' Formula/helixir.rb
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
             --package helixir-client --output Formula/helixir-client.rb
           ruby -c Formula/helixir-client.rb
           grep -q '^  version "9.9.9"' Formula/helixir-client.rb
           grep -q 'class HelixirClient < Formula' Formula/helixir-client.rb
           grep -q 'helixir-client-macos-arm64.tar.gz' Formula/helixir-client.rb
+          grep -q 'refute_path_exists libexec/"backend-image.json"' \
+            Formula/helixir-client.rb
           tools/render_homebrew_formula.py --tag v9.9.9 --checksums SHA256SUMS \
             --base-url file:///tmp/helixir-assets --output Formula/helixir-local.rb
           grep -q 'file:///tmp/helixir-assets/helixir-macos-arm64.tar.gz' \
@@ -120,12 +147,22 @@ jobs:
             --arch arm64 --output packages-arm
           tools/build_deb.sh --archive helixir-fixture-old.tar.gz --version 9.9.8 \
             --arch amd64 --output packages-old
+          if tools/build_deb.sh --archive helixir-fixture-missing-backend.tar.gz \
+            --version 9.9.9 --arch amd64 --output packages-missing; then
+            echo 'server archive without backend-image.json unexpectedly produced a package' >&2
+            exit 1
+          fi
           tools/build_client_deb.sh --archive helixir-client-fixture.tar.gz --version 9.9.9 \
             --arch amd64 --output client-a
           tools/build_client_deb.sh --archive helixir-client-fixture.tar.gz --version 9.9.9 \
             --arch amd64 --output client-b
           tools/build_client_deb.sh --archive helixir-client-macos-fixture.tar.gz --version 9.9.9 \
             --arch arm64 --output client-arm
+          if tools/build_client_deb.sh --archive helixir-client-contaminated-fixture.tar.gz \
+            --version 9.9.9 --arch amd64 --output client-contaminated; then
+            echo 'contaminated client archive unexpectedly produced a package' >&2
+            exit 1
+          fi
           test "$(sha256sum packages-a/*.deb | awk '{print $1}')" = \
             "$(sha256sum packages-b/*.deb | awk '{print $1}')"
           dpkg-deb --info packages-a/*.deb
@@ -137,8 +174,10 @@ jobs:
           test "$(dpkg-deb --field client-arm/*.deb Architecture)" = arm64
           dpkg-deb --extract packages-a/*.deb extracted
           test "$(extracted/usr/bin/helixir --version)" = 'helixir 9.9.9'
+          test -f extracted/usr/lib/helixir/backend-image.json
           dpkg-deb --extract client-a/*.deb extracted-client
           test "$(extracted-client/usr/bin/helixir-client --version)" = 'helixir-client 9.9.9'
+          test ! -e extracted-client/usr/lib/helixir-client/backend-image.json
           test ! -e extracted-client/usr/lib/helixir-client/helixir-mcp
           test ! -e extracted-client/usr/lib/helixir-client/schema
           dpkg-deb --extract client-arm/*.deb extracted-client-arm
@@ -305,8 +344,10 @@ jobs:
           workspaces: |
             helixir
             helixir-client
+            helixdb-mock
           key: msrv
       - name: cargo check
         run: |
           cargo check --manifest-path helixir/Cargo.toml --all-targets
           cargo check --manifest-path helixir-client/Cargo.toml --all-targets
+          cargo check --manifest-path helixdb-mock/Cargo.toml --all-targets

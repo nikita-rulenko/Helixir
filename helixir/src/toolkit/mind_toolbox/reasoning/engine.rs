@@ -7,8 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use lru::LruCache;
-use serde::Deserialize;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::db::HelixClient;
 use crate::llm::providers::base::LlmProvider;
@@ -56,7 +55,7 @@ impl ReasoningEngine {
     pub async fn warm_up_cache(
         &self,
         memory_id: Option<&str>,
-        limit: usize,
+        _limit: usize,
     ) -> Result<usize, ReasoningError> {
         use std::sync::atomic::Ordering;
 
@@ -66,37 +65,11 @@ impl ReasoningEngine {
         }
 
         info!(
-            "Warming up reasoning cache (memory={:?}, limit={})",
-            memory_id, limit
+            "Reasoning cache warm-up uses write-through state only (memory={:?})",
+            memory_id
         );
-
-        #[derive(Deserialize)]
-        struct QueryResult {
-            relations: Option<Vec<serde_json::Value>>,
-        }
-
-        match self
-            .client
-            .execute_query::<QueryResult, _>(
-                "getRecentRelations",
-                &serde_json::json!({
-                    "limit": limit,
-                    "memory_id": memory_id,
-                }),
-            )
-            .await
-        {
-            Ok(result) => {
-                let relations = result.relations.map(|r| r.len()).unwrap_or(0);
-                self.is_warmed_up.store(true, Ordering::Relaxed);
-                info!("Cache warmup complete: {} relations loaded", relations);
-                Ok(relations)
-            }
-            Err(e) => {
-                debug!("Cache warmup skipped (query not available): {}", e);
-                Ok(0)
-            }
-        }
+        self.is_warmed_up.store(true, Ordering::Relaxed);
+        Ok(self.relation_cache.lock().len())
     }
 
     #[must_use]

@@ -98,6 +98,8 @@ impl SearchEngine {
             ]),
             vector_weight: t.vector_weight,
             temporal_weight,
+            hybrid_vector_weight: self.config.vector_weight,
+            hybrid_bm25_weight: self.config.bm25_weight,
             graph_semantic_weight: t.graph_semantic_weight,
             graph_graph_weight: t.graph_graph_weight,
             graph_temporal_weight: t.graph_temporal_weight,

@@ -14,6 +14,20 @@ use crate::toolkit::mind_toolbox::reasoning::ReasoningType;
 
 use super::super::{ToolingError, ToolingManager};
 
+fn enforce_rule_persistence(decision: &mut MemoryDecision, is_charter_rule: bool) {
+    if !is_charter_rule || matches!(decision.operation, MemoryOperation::Noop) {
+        return;
+    }
+    // A constitution rule is never merged into or substituted for an
+    // ordinary fact. Exact duplicates may NOOP and get promoted; every other
+    // adoption creates a dedicated immutable rule node atomically.
+    decision.operation = MemoryOperation::Add;
+    decision.target_memory_id = None;
+    decision.merged_content = None;
+    decision.supersedes_memory_id = None;
+    decision.contradicts_memory_id = None;
+}
+
 impl ToolingManager {
     #[allow(clippy::too_many_arguments)] // intentional: write-side fan-out into the orchestrator's accumulators.
     pub(super) async fn handle_memory_operation(
@@ -47,7 +61,16 @@ impl ToolingManager {
                     shape.trim()
                 )
             });
+        let mut governed_decision = decision.clone();
+        enforce_rule_persistence(&mut governed_decision, rule_tag.is_some());
+        let decision = &governed_decision;
         let tags: &str = rule_tag.as_deref().unwrap_or(tags);
+        let source = if rule_tag.is_some() {
+            "charter_rule"
+        } else {
+            "llm_extraction"
+        };
+        let immutable = rule_tag.is_some();
         let fingerprint_scope = scope.fingerprint_scope();
         let fingerprint_scope = fingerprint_scope.as_deref();
 
@@ -56,6 +79,11 @@ impl ToolingManager {
                 debug!("NOOP: duplicate memory");
                 *skipped += 1;
                 if let Some(target_id) = &decision.target_memory_id {
+                    // A re-submitted learned rule may deduplicate to a rule
+                    // written before charter v1.0. Harden that existing node.
+                    if rule_tag.is_some() {
+                        self.set_memory_immutable(target_id).await?;
+                    }
                     // #44: surface the existing memory the write deduped to, so the
                     // agent sees "linked to X" rather than an empty/silent result.
                     deduped_ids.push(target_id.clone());
@@ -73,7 +101,15 @@ impl ToolingManager {
                             &merged.chars().take(60).collect::<String>()
                         );
                         let (new_id, new_chunks) = self
-                            .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                            .store_new_memory_with_policy(
+                                memory,
+                                user_id,
+                                vector,
+                                tags,
+                                fingerprint_scope,
+                                source,
+                                immutable,
+                            )
                             .await?;
                         *chunks_created += new_chunks;
                         let _ = self
@@ -105,7 +141,15 @@ impl ToolingManager {
                     }
                 } else {
                     let (new_id, new_chunks) = self
-                        .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                        .store_new_memory_with_policy(
+                            memory,
+                            user_id,
+                            vector,
+                            tags,
+                            fingerprint_scope,
+                            source,
+                            immutable,
+                        )
                         .await?;
                     *chunks_created += new_chunks;
                     let _ = self
@@ -116,7 +160,15 @@ impl ToolingManager {
             }
             MemoryOperation::Supersede => {
                 let (new_id, new_chunks) = self
-                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .store_new_memory_with_policy(
+                        memory,
+                        user_id,
+                        vector,
+                        tags,
+                        fingerprint_scope,
+                        source,
+                        immutable,
+                    )
                     .await?;
                 *chunks_created += new_chunks;
                 let _ = self
@@ -132,10 +184,10 @@ impl ToolingManager {
                         superseded_at: String,
                         is_contradiction: i64,
                     }
-                    let _ = self
+                    let supersession = self
                         .db
                         .execute_query::<serde_json::Value, _>(
-                            "addMemorySupersession",
+                            "addMutableMemorySupersession",
                             &SupersedeParams {
                                 new_id: new_id.clone(),
                                 old_id: old_id.clone(),
@@ -144,7 +196,16 @@ impl ToolingManager {
                                 is_contradiction: 0,
                             },
                         )
-                        .await;
+                        .await
+                        .map_err(|error| ToolingError::Database(error.to_string()))?;
+                    if supersession
+                        .get("supersedes")
+                        .is_none_or(serde_json::Value::is_null)
+                    {
+                        return Err(ToolingError::Memory(format!(
+                            "charter rejected supersession target {old_id}"
+                        )));
+                    }
                     *relations_created += 1;
                     let _ = self
                         .add_memory_history_event(old_id, "SUPERSEDE", "", &new_id, user_id)
@@ -156,7 +217,15 @@ impl ToolingManager {
             }
             MemoryOperation::Contradict => {
                 let (new_id, new_chunks) = self
-                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .store_new_memory_with_policy(
+                        memory,
+                        user_id,
+                        vector,
+                        tags,
+                        fingerprint_scope,
+                        source,
+                        immutable,
+                    )
                     .await?;
                 *chunks_created += new_chunks;
                 let _ = self
@@ -186,7 +255,15 @@ impl ToolingManager {
                 // supersession reason and the charter escalates it to the
                 // agent via needs_clarification.
                 let (new_id, new_chunks) = self
-                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .store_new_memory_with_policy(
+                        memory,
+                        user_id,
+                        vector,
+                        tags,
+                        fingerprint_scope,
+                        source,
+                        immutable,
+                    )
                     .await?;
                 *chunks_created += new_chunks;
                 let _ = self
@@ -208,7 +285,7 @@ impl ToolingManager {
                     let _ = self
                         .db
                         .execute_query::<serde_json::Value, _>(
-                            "addMemorySupersession",
+                            "addMutableMemorySupersession",
                             &SupersedeParams {
                                 new_id: new_id.clone(),
                                 old_id: target_id.clone(),
@@ -242,7 +319,15 @@ impl ToolingManager {
             }
             MemoryOperation::Add => {
                 let (new_id, new_chunks) = self
-                    .store_new_memory(memory, user_id, vector, tags, fingerprint_scope)
+                    .store_new_memory_with_policy(
+                        memory,
+                        user_id,
+                        vector,
+                        tags,
+                        fingerprint_scope,
+                        source,
+                        immutable,
+                    )
                     .await?;
                 *chunks_created += new_chunks;
                 let _ = self
@@ -320,5 +405,29 @@ impl ToolingManager {
         }
 
         Ok(Some(memory_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adopted_rule_never_rewrites_an_ordinary_memory() {
+        let mut decision = MemoryDecision::supersede("mem_old", 90, "rule adoption");
+        decision.target_memory_id = Some("mem_other".to_string());
+        enforce_rule_persistence(&mut decision, true);
+        assert_eq!(decision.operation, MemoryOperation::Add);
+        assert!(decision.target_memory_id.is_none());
+        assert!(decision.supersedes_memory_id.is_none());
+    }
+
+    #[test]
+    fn exact_rule_duplicate_can_promote_existing_memory() {
+        let mut decision = MemoryDecision::noop(100, "exact rule");
+        decision.target_memory_id = Some("mem_rule".to_string());
+        enforce_rule_persistence(&mut decision, true);
+        assert_eq!(decision.operation, MemoryOperation::Noop);
+        assert_eq!(decision.target_memory_id.as_deref(), Some("mem_rule"));
     }
 }

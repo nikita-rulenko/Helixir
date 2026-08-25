@@ -1,22 +1,28 @@
-//! Hive (cross-user) end-to-end test: full stack HelixDB + embeddings + LLM extraction + Phase 2 collective dedup.
+//! Deterministic Hive consensus end-to-end test against live HelixDB.
 //!
-//! **Not run by default** (`#[ignore]`). Requires live infrastructure:
-//! - `HELIX_HOST`, `HELIX_PORT` (HelixDB)
-//! - LLM + embedding env vars (same as MCP / `HelixirConfig::from_env`)
+//! This test owns the physical fingerprint-group invariant: two author-level
+//! memories with the same scoped `content_key` must project two distinct
+//! holders. The full LLM extraction and MCP write path is covered separately
+//! by `mcp_multi_consumer_e2e::multi_consumer_collective_invariants`; keeping
+//! extraction out of this test prevents model wording variance from changing
+//! the input to the consensus assertion.
 //!
-//! Run:
-//! ```text
-//! HELIX_E2E=1 cargo test -p helixir hive_cross_user_collective_link_e2e -- --ignored --nocapture
-//! ```
-//!
-//! LLM decisions (`LINK_EXISTING` / `NOOP` with link) are non-deterministic; if this flakes, retry or
-//! adjust the prompt/model. The message uses a unique UUID so vector search can find the first user's memory.
+//! **Not run by default** (`#[ignore]`). Requires a disposable HelixDB:
+//! `HELIX_HOST`, `HELIX_PORT`, and `HELIX_E2E=1`.
 
-use helixir::core::HelixirClient;
-use std::time::{SystemTime, UNIX_EPOCH};
+use helixir::db::HelixClient;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Deserialize)]
+struct CountResult {
+    #[serde(default)]
+    count: i64,
+}
 
 #[tokio::test]
-#[ignore = "needs HELIX_E2E=1 and live HelixDB + LLM + embeddings; see module doc"]
+#[ignore = "needs HELIX_E2E=1 and a disposable HelixDB; see module doc"]
 async fn hive_cross_user_collective_link_e2e() {
     assert_eq!(
         std::env::var("HELIX_E2E").unwrap_or_default(),
@@ -31,93 +37,80 @@ async fn hive_cross_user_collective_link_e2e() {
             .expect("clock")
             .as_nanos()
     );
-    // A SHORT, atomic, hard-to-rephrase fact with the token embedded in a
-    // proper noun: both users' extractions land on the same text → the same
-    // content_key → a real consensus group. A long/abstract sentence (the old
-    // message) atomized differently per call, yielding mismatched content_keys
-    // and the spurious flakiness — the extractor variance, not the Hive logic.
-    let message = format!("Project kappa{token} runs PostgreSQL 16 in production.");
+    let content_key = format!("e2e:hive:rbac:group:default:{token}");
+    let content = format!("Service atlas{token} ships every Thursday at 14:00 UTC.");
+    let now = chrono::Utc::now().to_rfc3339();
+    let users = [format!("e2e_hive_{token}_a"), format!("e2e_hive_{token}_b")];
 
-    let user_a = format!("e2e_hive_{token}_a");
-    let user_b = format!("e2e_hive_{token}_b");
+    let host = std::env::var("HELIX_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("HELIX_PORT")
+        .unwrap_or_else(|_| "6969".to_string())
+        .parse::<u16>()
+        .expect("HELIX_PORT must be a u16");
+    let db = HelixClient::new(&host, port).expect("HelixClient::new");
+    db.connect().await.expect("connect to disposable HelixDB");
 
-    // Hive (cross-user collective linking) is opt-in — enable it for this suite.
-    unsafe {
-        std::env::set_var("HELIXIR_MODE", "collective");
+    for (index, user_id) in users.iter().enumerate() {
+        let memory_id = format!("mem_hive_{token}_{index}");
+        db.execute_query::<Value, _>("ensureUser", &json!({"user_id": user_id, "name": user_id}))
+            .await
+            .expect("ensure Hive holder");
+        db.execute_query::<Value, _>(
+            "addMemoryKeyedScopedProtected",
+            &json!({
+                "memory_id": memory_id,
+                "content_key": content_key,
+                "rbac_scope": "rbac:group:default",
+                "user_id": user_id,
+                "content": content,
+                "memory_type": "fact",
+                "certainty": 100,
+                "importance": 80,
+                "created_at": now,
+                "updated_at": now,
+                "valid_from": now,
+                "context_tags": "e2e,hive",
+                "source": "hive_memory_e2e",
+                "metadata": "{}",
+                "immutable": 0
+            }),
+        )
+        .await
+        .expect("create exact Hive memory");
+        db.execute_query::<Value, _>(
+            "linkUserToMemoryWithStance",
+            &json!({
+                "user_id": user_id,
+                "memory_id": memory_id,
+                "context": "created",
+                "stance": "asserts",
+                "certainty": 100,
+                "linked_at": now
+            }),
+        )
+        .await
+        .expect("link Hive holder to memory");
     }
-    let client = HelixirClient::from_env().expect("HelixirClient::from_env");
-    client
-        .initialize()
-        .await
-        .expect("initialize (health + ontology)");
 
-    let r_a = client
-        .add(&message, &user_a, None, None)
-        .await
-        .expect("user_a add_memory");
-    let mem_a = r_a
-        .memory_ids
-        .first()
-        .cloned()
-        .expect("user_a should produce at least one memory id");
-
-    let r_b = client
-        .add(&message, &user_b, None, None)
-        .await
-        .expect("user_b add_memory");
-
-    let _ = (&mem_a, &r_b); // ids kept for clarity; consensus is checked by token below
-
-    // Cross-user consensus settles ASYNCHRONOUSLY (Phase 2 link + content_key
-    // grouping), so a single immediate read races it. Poll the collective view
-    // until SOME memory from this run (token in content) reaches user_count >= 2
-    // — the "one fact, many knowers" invariant. (The previous version read once
-    // and so flaked on timing; #43 makes the grouping itself deterministic.)
-    let mut ok = false;
-    let mut last5: Vec<(String, u64, String)> = vec![];
-    for _ in 0..15 {
-        let results = client
-            .search(
-                &token,
-                &user_b,
-                helixir::core::helixir_client::SearchParams {
-                    limit: Some(20),
-                    search_mode: Some("full".to_string()),
-                    scope: Some("collective".to_string()),
-                    ..Default::default()
-                },
+    let mut observed = 0i64;
+    for _ in 0..20 {
+        let result = db
+            .execute_query::<CountResult, _>(
+                "getContentKeyGroupUserCount",
+                &json!({"content_key": content_key}),
             )
             .await
-            .expect("collective search");
-        ok = results.iter().any(|r| {
-            r.content.contains(&token)
-                && r.metadata
-                    .get("user_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
-                    >= 2
-        });
-        if ok {
+            .expect("read Hive fingerprint consensus");
+        observed = observed.max(result.count);
+        if observed == 2 {
             break;
         }
-        last5 = results
-            .iter()
-            .take(5)
-            .map(|r| {
-                let uc = r
-                    .metadata
-                    .get("user_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                (r.id.clone(), uc, r.content.chars().take(80).collect())
-            })
-            .collect();
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    assert!(
-        ok,
-        "expected a memory from this run to reach user_count >= 2 within the \
-         polling window (cross-user 'one fact, many knowers'); last 5: {last5:?}"
+    assert_eq!(
+        observed, 2,
+        "two exact author-level memories must project two Hive holders"
     );
+    println!("==== hive_memory_e2e ==== exact fingerprint projects {observed} holders");
 }
