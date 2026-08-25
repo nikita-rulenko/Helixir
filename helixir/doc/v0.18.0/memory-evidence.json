@@ -12,14 +12,13 @@
     "max_abort_fraction": 0.85
   },
   "runtime_source": {
-    "algorithm": "sha256-path-nul-content-nul-v1",
+    "algorithm": "sha256-nonignored-path-nul-content-nul-v2",
     "includes": [
       "helixir/Cargo.lock",
       "helixir/Cargo.toml",
       "helixir/schema",
-      "helixir/src/agents",
-      "helixir/src/db",
-      "helixir/src/toolkit/tooling_manager",
+      "helixir/memory-charter.md",
+      "helixir/src",
       "helixir/tests/daemon_e2e.rs",
       "helixdb/Cargo.lock",
       "helixdb/Cargo.toml",

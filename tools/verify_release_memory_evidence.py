@@ -8,6 +8,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,7 @@ def _relative_path(repo_root: Path, raw: Any) -> Path:
 
 
 def runtime_source_fingerprint(repo_root: Path, includes: list[Any]) -> tuple[str, int]:
-    """Hash an exact path set as path-NUL-content-NUL in lexical path order."""
+    """Hash non-ignored source files as path-NUL-content-NUL in lexical order."""
 
     repo_root = repo_root.resolve()
     normalized = [_relative_path(repo_root, raw) for raw in includes]
@@ -105,6 +106,7 @@ def runtime_source_fingerprint(repo_root: Path, includes: list[Any]) -> tuple[st
                 )
             if candidate.is_file():
                 files.add(candidate.relative_to(repo_root))
+    files.difference_update(_git_ignored_files(repo_root, files))
     if not files:
         raise EvidenceError("runtime source path set is empty")
     digest = hashlib.sha256()
@@ -116,6 +118,45 @@ def runtime_source_fingerprint(repo_root: Path, includes: list[Any]) -> tuple[st
                 digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest(), len(files)
+
+
+def _git_ignored_files(repo_root: Path, files: set[Path]) -> set[Path]:
+    """Return ignored untracked files without excluding tracked source files.
+
+    A release checkout or ``git archive`` contains only tracked files. Local
+    faithful runs may also contain Python bytecode, ``.DS_Store`` and other
+    ignored machine artifacts below an included directory. Those files are not
+    candidate source and must not make the public fingerprint host-dependent.
+    """
+
+    if not files or not (repo_root / ".git").exists():
+        return set()
+    payload = b"".join(
+        relative.as_posix().encode("utf-8") + b"\0"
+        for relative in sorted(files, key=lambda item: item.as_posix())
+    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "check-ignore", "-z", "--stdin"],
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as error:
+        raise EvidenceError(
+            f"cannot classify ignored runtime source files: {error}"
+        ) from error
+    if result.returncode not in {0, 1}:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise EvidenceError(
+            f"cannot classify ignored runtime source files: {detail or result.returncode}"
+        )
+    return {
+        Path(raw.decode("utf-8"))
+        for raw in result.stdout.split(b"\0")
+        if raw
+    }
 
 
 def _parse_observed_at(value: Any) -> dt.datetime:
@@ -162,7 +203,10 @@ def verify_evidence(
         raise EvidenceError("faithful evidence is stale")
 
     source = evidence.get("runtime_source")
-    if not isinstance(source, dict) or source.get("algorithm") != "sha256-path-nul-content-nul-v1":
+    if (
+        not isinstance(source, dict)
+        or source.get("algorithm") != "sha256-nonignored-path-nul-content-nul-v2"
+    ):
         raise EvidenceError("unsupported runtime source fingerprint")
     includes = source.get("includes")
     if not isinstance(includes, list):

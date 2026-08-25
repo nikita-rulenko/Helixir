@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,7 +40,7 @@ class ReleaseMemoryEvidenceTests(unittest.TestCase):
                 "max_abort_fraction": 0.85,
             },
             "runtime_source": {
-                "algorithm": "sha256-path-nul-content-nul-v1",
+                "algorithm": "sha256-nonignored-path-nul-content-nul-v2",
                 "includes": ["runtime"],
                 "sha256": digest,
                 "file_count": count,
@@ -125,6 +126,37 @@ class ReleaseMemoryEvidenceTests(unittest.TestCase):
         (self.root / "runtime/a.rs").write_text("fn changed() {}\n", encoding="utf-8")
         with self.assertRaisesRegex(verifier.EvidenceError, "fingerprint drifted"):
             verifier.verify_evidence(self.path, self.root, "v0.18.0", now=NOW)
+
+    def test_ignored_machine_artifacts_do_not_change_runtime_fingerprint(self) -> None:
+        subprocess.run(
+            ["git", "init", "--quiet", str(self.root)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        (self.root / ".gitignore").write_text(
+            ".DS_Store\n__pycache__/\n*.pyc\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", ".gitignore", "runtime/a.rs"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        before = verifier.runtime_source_fingerprint(self.root, ["runtime"])
+        (self.root / "runtime/.DS_Store").write_bytes(b"host metadata")
+        cache = self.root / "runtime/__pycache__"
+        cache.mkdir()
+        (cache / "a.cpython-313.pyc").write_bytes(b"bytecode")
+        self.assertEqual(
+            verifier.runtime_source_fingerprint(self.root, ["runtime"]), before
+        )
+
+    def test_nonignored_untracked_source_changes_runtime_fingerprint(self) -> None:
+        before = verifier.runtime_source_fingerprint(self.root, ["runtime"])
+        (self.root / "runtime/new.rs").write_text("fn new() {}\n", encoding="utf-8")
+        after = verifier.runtime_source_fingerprint(self.root, ["runtime"])
+        self.assertNotEqual(after, before)
 
     def test_failed_verdict_fails_closed(self) -> None:
         self.evidence["canonical_verdict"] = "fail"

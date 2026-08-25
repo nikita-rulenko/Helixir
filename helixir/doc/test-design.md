@@ -149,6 +149,11 @@ is absent from `queries.hx`; `health` is the sole transport-level exception.
 Clippy, unit/golden tests, the symbolized profiling build and the Docker-free
 harness contract tests in CI.
 
+The public release-evidence fingerprint covers the complete `helixir/src`
+runtime plus its Cargo, charter, schema, maintained-HelixDB and harness inputs.
+Git-ignored host artifacts are excluded, so the same tracked candidate has one
+source identity in a developer checkout, Actions checkout and source archive.
+
 `make test-helixdb-fork` additionally proves existing-node index reconstruction
 is restart-idempotent, the reader pool defaults to two workers per core, bulk
 indexed `UPDATE` preserves scalar versus collection response shapes, and the

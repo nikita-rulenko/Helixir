@@ -289,6 +289,13 @@ an abort, OOM, restart, cold-state drift, backend-image drift, or source drift.
 The primary representative workload must also have a checksum-consistent
 repeat. The release workflow runs this verifier before builds begin.
 
+Directory includes cover the complete Helixir runtime source rather than a
+hand-picked module subset. Git-ignored machine artifacts such as Python
+bytecode and `.DS_Store` are excluded from the fingerprint; tracked files and
+non-ignored local source remain covered. This makes a faithful local run and a
+clean release checkout produce the same source identity without allowing an
+uncommitted runtime change to pass.
+
 Documentation and workflow-only edits do not invalidate a faithful run because
 they are outside the explicit runtime path set. Any change inside that set
 changes its fingerprint and therefore requires fresh faithful evidence; do not
